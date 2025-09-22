@@ -147,3 +147,115 @@ func Parts[T contentPart](inputs ...T) []Part {
 func NewMessageID() string {
 	return uuid.NewString()
 }
+
+// NewTextPart creates a new TextPart from a string.
+func NewTextPart(text string) TextPart {
+	return TextPart{Text: text}
+}
+
+// NewFilePart creates a new FilePart with the given name, URI, and mime type.
+func NewFilePart(name, uri string, mimeType MimeType) FilePart {
+	return FilePart{
+		Name:     name,
+		URI:      uri,
+		MimeType: mimeType,
+	}
+}
+
+// NewDataPart creates a new DataPart with the given name, bytes, and mime type.
+func NewDataPart(name string, data []byte, mimeType MimeType) DataPart {
+	return DataPart{
+		Name:     name,
+		Bytes:    data,
+		MimeType: mimeType,
+	}
+}
+
+// NewImagePart creates a new FilePart or DataPart for an image.
+// uriOrBase64 can be either a URI or base64 encoded data (with or without data URL prefix).
+// If mimeType is provided, it will be used; otherwise, it will be auto-detected.
+func NewImagePart(name, uriOrBase64 string, mimeType ...MimeType) Part {
+	var mime MimeType
+	if len(mimeType) > 0 {
+		// Use explicitly provided MIME type
+		mime = mimeType[0]
+	} else {
+		// Auto-detect MIME type
+		mime = MimeImagePNG // default
+		if isBase64Data(uriOrBase64) {
+			// For base64 data, try to extract MIME from data URL prefix
+			if strings.HasPrefix(uriOrBase64, "data:") {
+				mime = extractMimeFromDataURL(uriOrBase64)
+			}
+		} else {
+			// For URI, detect from file extension
+			uriPath := extractPathFromURI(uriOrBase64)
+			if strings.HasSuffix(strings.ToLower(uriPath), ".jpg") || strings.HasSuffix(strings.ToLower(uriPath), ".jpeg") {
+				mime = MimeImageJPEG
+			}
+		}
+	}
+
+	if isBase64Data(uriOrBase64) {
+		// Return DataPart for base64 data
+		data := extractBase64Data(uriOrBase64)
+		return DataPart{
+			Name:     name,
+			Bytes:    data,
+			MimeType: mime,
+		}
+	} else {
+		// Return FilePart for URI
+		return FilePart{
+			Name:     name,
+			URI:      uriOrBase64,
+			MimeType: mime,
+		}
+	}
+}
+
+// NewAudioPart creates a new FilePart or DataPart for an audio file.
+// uriOrBase64 can be either a URI or base64 encoded data (with or without data URL prefix).
+// If mimeType is provided, it will be used; otherwise, it will be auto-detected.
+func NewAudioPart(name, uriOrBase64 string, mimeType ...MimeType) Part {
+	var mime MimeType
+	if len(mimeType) > 0 {
+		// Use explicitly provided MIME type
+		mime = mimeType[0]
+	} else {
+		// Auto-detect MIME type
+		mime = MimeAudioWAV // default
+		if isBase64Data(uriOrBase64) {
+			// For base64 data, try to extract MIME from data URL prefix
+			if strings.HasPrefix(uriOrBase64, "data:") {
+				mime = extractMimeFromDataURL(uriOrBase64)
+			}
+		} else {
+			// For URI, detect from file extension
+			uriPath := extractPathFromURI(uriOrBase64)
+			lowerPath := strings.ToLower(uriPath)
+			if strings.HasSuffix(lowerPath, ".mp3") {
+				mime = MimeAudioMP3
+			} else if strings.HasSuffix(lowerPath, ".ogg") {
+				mime = MimeAudioOGG
+			}
+		}
+	}
+
+	if isBase64Data(uriOrBase64) {
+		// Return DataPart for base64 data
+		data := extractBase64Data(uriOrBase64)
+		return DataPart{
+			Name:     name,
+			Bytes:    data,
+			MimeType: mime,
+		}
+	} else {
+		// Return FilePart for URI
+		return FilePart{
+			Name:     name,
+			URI:      uriOrBase64,
+			MimeType: mime,
+		}
+	}
+}

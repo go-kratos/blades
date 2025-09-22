@@ -2,9 +2,11 @@ package openai
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
+	"strings"
 
 	"github.com/go-kratos/blades"
 	"github.com/openai/openai-go/v2"
@@ -249,9 +251,110 @@ func toContentParts(message *blades.Message) []openai.ChatCompletionContentPartU
 		switch v := part.(type) {
 		case blades.TextPart:
 			parts = append(parts, openai.TextContentPart(v.Text))
+		case blades.FilePart:
+			// Handle different content types based on MIME type
+			contentType := getContentType(v.MimeType)
+			switch contentType {
+			case "image":
+				parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+					URL: v.URI,
+				}))
+			case "audio":
+				// Use native audio content part
+				parts = append(parts, openai.InputAudioContentPart(openai.ChatCompletionContentPartInputAudioInputAudioParam{
+					Data:   v.URI, // For URI-based audio
+					Format: getAudioFormat(v.MimeType),
+				}))
+			default: // file
+				// Use native file content part
+				fileParam := openai.ChatCompletionContentPartFileFileParam{}
+				// For URI-based files, we might need to set FileID if it's an uploaded file
+				// Or convert to base64 if it's a data URL
+				if strings.HasPrefix(v.URI, "data:") {
+					// Handle data URLs by extracting base64 content
+					fileParam.FileData = param.NewOpt(extractBase64FromDataURL(v.URI))
+				} else {
+					// For regular URLs, we might need to download and encode, or use FileID
+					// This depends on the specific use case
+					fileParam.FileID = param.NewOpt(v.URI) // Assuming URI is a file ID
+				}
+				fileParam.Filename = param.NewOpt(v.Name)
+				parts = append(parts, openai.FileContentPart(fileParam))
+			}
+		case blades.DataPart:
+			// Handle different content types based on MIME type
+			contentType := getContentType(v.MimeType)
+			switch contentType {
+			case "image":
+				mimeType := string(v.MimeType)
+				base64Data := "data:" + mimeType + ";base64," + encodeBase64(v.Bytes)
+				parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+					URL: base64Data,
+				}))
+			case "audio":
+				// Use native audio content part with base64 data
+				base64Data := encodeBase64(v.Bytes)
+				parts = append(parts, openai.InputAudioContentPart(openai.ChatCompletionContentPartInputAudioInputAudioParam{
+					Data:   base64Data,
+					Format: getAudioFormat(v.MimeType),
+				}))
+			default: // file
+				// For file data, use native file content part with base64 encoding
+				fileParam := openai.ChatCompletionContentPartFileFileParam{
+					FileData: param.NewOpt(encodeBase64(v.Bytes)),
+					Filename: param.NewOpt(v.Name),
+				}
+				parts = append(parts, openai.FileContentPart(fileParam))
+			}
 		}
 	}
 	return parts
+}
+
+// encodeBase64 encodes byte data to base64 string.
+func encodeBase64(data []byte) string {
+	return base64.StdEncoding.EncodeToString(data)
+}
+
+// getContentType determines the content type based on MIME type.
+func getContentType(mimeType blades.MimeType) string {
+	mimeStr := string(mimeType)
+	switch {
+	case strings.HasPrefix(mimeStr, "image/"):
+		return "image"
+	case strings.HasPrefix(mimeStr, "audio/"):
+		return "audio"
+	default:
+		return "file"
+	}
+}
+
+// getAudioFormat converts MIME type to OpenAI audio format.
+func getAudioFormat(mimeType blades.MimeType) string {
+	switch mimeType {
+	case blades.MimeAudioWAV:
+		return "wav"
+	case blades.MimeAudioMP3:
+		return "mp3"
+	case blades.MimeAudioOGG:
+		return "ogg"
+	default:
+		// Default to the file extension part of MIME type
+		mimeStr := string(mimeType)
+		if parts := strings.Split(mimeStr, "/"); len(parts) == 2 {
+			return parts[1]
+		}
+		return "wav" // fallback
+	}
+}
+
+// extractBase64FromDataURL extracts base64 data from a data URL.
+func extractBase64FromDataURL(dataURL string) string {
+	// Format: data:mime/type;base64,<data>
+	if idx := strings.Index(dataURL, ","); idx != -1 {
+		return dataURL[idx+1:]
+	}
+	return dataURL
 }
 
 // toolCall invokes a tool by name with the given arguments.
@@ -315,7 +418,7 @@ func choiceToResponse(ctx context.Context, tools []*blades.Tool, choices []opena
 			}
 		}
 		if choice.Message.Content != "" {
-			msg.Parts = append(msg.Parts, blades.TextPart{choice.Message.Content})
+			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Message.Content})
 		}
 		// Attach metadata when available.
 		if choice.FinishReason != "" || choice.Message.Refusal != "" {
@@ -351,7 +454,7 @@ func chunkChoiceToResponse(ctx context.Context, tools []*blades.Tool, choices []
 			}
 		}
 		if choice.Delta.Content != "" {
-			msg.Parts = append(msg.Parts, blades.TextPart{choice.Delta.Content})
+			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Delta.Content})
 		}
 		if choice.FinishReason != "" {
 			msg.Metadata = map[string]string{"finish_reason": choice.FinishReason}
