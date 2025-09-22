@@ -104,7 +104,7 @@ func (a *Agent) addMemory(ctx context.Context, prompt *Prompt, res *ModelRespons
 	if a.memory != nil {
 		messages := make([]*Message, 0, len(prompt.Messages)+1)
 		messages = append(messages, prompt.Messages...)
-		messages = append(messages, res.Message)
+		messages = append(messages, res.Messages...)
 		if err := a.memory.AddMessages(ctx, prompt.ConversationID, messages); err != nil {
 			return err
 		}
@@ -127,7 +127,7 @@ func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*
 			if err := a.addMemory(ctx, p, res); err != nil {
 				return nil, err
 			}
-			return &Generation{res.Message}, nil
+			return &Generation{res.Messages}, nil
 		},
 	}).Run(ctx, prompt, opts...)
 }
@@ -148,7 +148,7 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 				if err := a.addMemory(ctx, p, m); err != nil {
 					return nil, err
 				}
-				return &Generation{m.Message}, nil
+				return &Generation{m.Messages}, nil
 			}), nil
 		},
 	}).RunStream(ctx, prompt, opts...)

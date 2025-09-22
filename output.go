@@ -38,7 +38,7 @@ func (o *OutputConverter[T]) Run(ctx context.Context, prompt *Prompt, opts ...Mo
 	if err != nil {
 		return result, err
 	}
-	text := res.Message.AsText()
+	text := res.AsText()
 	text = strings.TrimSpace(text)
 	text = strings.Trim(text, "```json")
 	text = strings.Trim(text, "```")
@@ -54,7 +54,7 @@ func (o *OutputConverter[T]) RunStream(ctx context.Context, prompt *Prompt, opts
 	if err != nil {
 		return nil, err
 	}
-    stream := NewStreamPipe[T]()
+	stream := NewStreamPipe[T]()
 	stream.Send(result)
 	stream.Close()
 	return stream, nil

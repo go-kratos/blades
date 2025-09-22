@@ -37,7 +37,18 @@ func (p *Prompt) String() string {
 
 // Generation represents a single generation of a response from the model.
 type Generation struct {
-	Message *Message `json:"message"`
+	Messages []*Message `json:"message"`
+}
+
+func (g *Generation) AsText() string {
+	for _, msg := range g.Messages {
+		for _, part := range msg.Parts {
+			if text, ok := part.(TextPart); ok {
+				return text.Text
+			}
+		}
+	}
+	return ""
 }
 
 // Streamer yields a sequence of assistant responses until completion.

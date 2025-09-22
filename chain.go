@@ -32,7 +32,7 @@ func (c *Chain) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*
 		if err != nil {
 			return nil, err
 		}
-		prompt = NewPrompt(last.Message)
+		prompt = NewPrompt(last.Messages...)
 	}
 	return last, nil
 }
@@ -51,9 +51,11 @@ func (c *Chain) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 		wg.Add(1)
 		out = NewMappedStream[*Generation, *Generation](stream, func(m *Generation) (*Generation, error) {
 			// Update the prompt with the latest message for the next runner
-			if m.Message.Status == StatusCompleted {
-				prompt = NewPrompt(m.Message)
-				wg.Done()
+			for _, msg := range m.Messages {
+				if msg.Status == StatusCompleted {
+					prompt = NewPrompt(m.Messages...)
+					wg.Done()
+				}
 			}
 			return m, nil
 		})

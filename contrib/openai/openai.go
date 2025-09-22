@@ -36,6 +36,12 @@ func NewProvider(opts ...option.RequestOption) blades.ModelProvider {
 	return &Provider{client: openai.NewClient(opts...)}
 }
 
+func (p *Provider) Execute(ctx context.Context,
+	params openai.ChatCompletionNewParams, tools []*blades.Tool, opts blades.ModelOptions) (*blades.ModelResponse, error) {
+	// Execute a non-streaming chat completion request.
+	return &blades.ModelResponse{}, nil
+}
+
 // Generate executes a non-streaming chat completion request.
 func (p *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
 	opt := blades.ModelOptions{MaxIterations: 3}
@@ -62,13 +68,15 @@ func (p *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts 
 	if err != nil {
 		return nil, err
 	}
-	switch m.Message.Role {
-	case blades.RoleTool:
-		if len(m.Message.ToolCalls) == 0 {
-			return nil, ErrEmptyToolCalls
+	for _, msg := range m.Messages {
+		switch msg.Role {
+		case blades.RoleTool:
+			if len(msg.ToolCalls) == 0 {
+				return nil, ErrEmptyToolCalls
+			}
+			req.Messages = append(req.Messages, m.Messages...)
+			return p.Generate(ctx, req, opts...)
 		}
-		req.Messages = append(req.Messages, m.Message)
-		return p.Generate(ctx, req, opts...)
 	}
 	return m, nil
 }
@@ -114,22 +122,24 @@ func (p *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts
 			return err
 		}
 		pipe.Send(lastResponse)
-		switch lastResponse.Message.Role {
-		case blades.RoleTool:
-			if len(lastResponse.Message.ToolCalls) == 0 {
-				return ErrEmptyToolCalls
-			}
-			req.Messages = append(req.Messages, lastResponse.Message)
-			toolStream, err := p.NewStream(ctx, req, opts...)
-			if err != nil {
-				return err
-			}
-			for toolStream.Next() {
-				res, err := toolStream.Current()
+		for _, msg := range lastResponse.Messages {
+			switch msg.Role {
+			case blades.RoleTool:
+				if len(msg.ToolCalls) == 0 {
+					return ErrEmptyToolCalls
+				}
+				req.Messages = append(req.Messages, msg)
+				toolStream, err := p.NewStream(ctx, req, opts...)
 				if err != nil {
 					return err
 				}
-				pipe.Send(res)
+				for toolStream.Next() {
+					res, err := toolStream.Current()
+					if err != nil {
+						return err
+					}
+					pipe.Send(res)
+				}
 			}
 		}
 		return nil
@@ -255,11 +265,12 @@ func toolCall(ctx context.Context, tools []*blades.Tool, name, arguments string)
 }
 
 func choiceToToolCalls(ctx context.Context, tools []*blades.Tool, choices []openai.ChatCompletionChoice) (*blades.ModelResponse, error) {
-	msg := &blades.Message{
-		Role:   blades.RoleTool,
-		Status: blades.StatusCompleted,
-	}
+	res := &blades.ModelResponse{}
 	for _, choice := range choices {
+		msg := &blades.Message{
+			Role:   blades.RoleTool,
+			Status: blades.StatusCompleted,
+		}
 		if len(choice.Message.ToolCalls) > 0 {
 			for _, call := range choice.Message.ToolCalls {
 				result, err := toolCall(ctx, tools, call.Function.Name, call.Function.Arguments)
@@ -275,17 +286,19 @@ func choiceToToolCalls(ctx context.Context, tools []*blades.Tool, choices []open
 				})
 			}
 		}
+		res.Messages = append(res.Messages, msg)
 	}
-	return &blades.ModelResponse{msg}, nil
+	return res, nil
 }
 
 // choiceToResponse converts a non-streaming choice to a ModelResponse.
 func choiceToResponse(ctx context.Context, tools []*blades.Tool, choices []openai.ChatCompletionChoice) (*blades.ModelResponse, error) {
-	msg := &blades.Message{
-		Role:   blades.RoleAssistant,
-		Status: blades.StatusCompleted,
-	}
+	res := &blades.ModelResponse{}
 	for _, choice := range choices {
+		msg := &blades.Message{
+			Role:   blades.RoleAssistant,
+			Status: blades.StatusCompleted,
+		}
 		if len(choice.Message.ToolCalls) > 0 {
 			for _, call := range choice.Message.ToolCalls {
 				result, err := toolCall(ctx, tools, call.Function.Name, call.Function.Arguments)
@@ -300,7 +313,6 @@ func choiceToResponse(ctx context.Context, tools []*blades.Tool, choices []opena
 					Result:    result,
 				})
 			}
-			return &blades.ModelResponse{Message: msg}, nil
 		}
 		if choice.Message.Content != "" {
 			msg.Parts = append(msg.Parts, blades.TextPart{choice.Message.Content})
@@ -315,19 +327,19 @@ func choiceToResponse(ctx context.Context, tools []*blades.Tool, choices []opena
 				msg.Metadata["refusal"] = choice.Message.Refusal
 			}
 		}
+		res.Messages = append(res.Messages, msg)
 	}
-	return &blades.ModelResponse{Message: msg}, nil
+	return res, nil
 }
 
 // chunkChoiceToResponse converts a streaming chunk choice to a ModelResponse.
 func chunkChoiceToResponse(ctx context.Context, tools []*blades.Tool, choices []openai.ChatCompletionChunkChoice) (*blades.ModelResponse, error) {
-	var (
-		msg = &blades.Message{
-			Role:   blades.RoleAssistant,
-			Status: blades.StatusInProgress,
-		}
-	)
+	res := &blades.ModelResponse{}
 	for _, choice := range choices {
+		msg := &blades.Message{
+			Role:   blades.RoleAssistant,
+			Status: blades.StatusIncomplete,
+		}
 		if len(choice.Delta.ToolCalls) > 0 {
 			for _, call := range choice.Delta.ToolCalls {
 				msg.Role = blades.RoleTool
@@ -344,7 +356,7 @@ func chunkChoiceToResponse(ctx context.Context, tools []*blades.Tool, choices []
 		if choice.FinishReason != "" {
 			msg.Metadata = map[string]string{"finish_reason": choice.FinishReason}
 		}
-		msg.Status = blades.StatusIncomplete
+		res.Messages = append(res.Messages, msg)
 	}
-	return &blades.ModelResponse{Message: msg}, nil
+	return res, nil
 }
