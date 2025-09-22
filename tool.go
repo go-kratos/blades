@@ -11,5 +11,5 @@ type Tool struct {
 	Name        string                                        `json:"name"`
 	Description string                                        `json:"description"`
 	InputSchema *jsonschema.Schema                            `json:"inputSchema"`
-	Call        func(context.Context, string) (string, error) `json:"-"`
+	Handle      func(context.Context, string) (string, error) `json:"-"`
 }

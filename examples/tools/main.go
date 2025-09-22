@@ -21,7 +21,7 @@ func main() {
 				},
 				Required: []string{"location"},
 			},
-			Call: func(ctx context.Context, input string) (string, error) {
+			Handle: func(ctx context.Context, input string) (string, error) {
 				log.Println("Fetching weather for:", input)
 				return "Sunny, 25°C", nil
 			},
