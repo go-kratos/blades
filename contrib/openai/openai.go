@@ -18,6 +18,8 @@ var (
 	ErrEmptyResponse = errors.New("empty completion response")
 	// ErrToolNotFound indicates a tool call was made to an unknown tool.
 	ErrToolNotFound = errors.New("tool not found")
+	// ErrEmptyToolCalls indicates a tool call response returned no tool calls.
+	ErrEmptyToolCalls = errors.New("tool call response missing tool calls")
 	// ErrTooManyIterations indicates the max iterations option is less than 1.
 	ErrTooManyIterations = errors.New("too many iterations requested")
 )
@@ -60,7 +62,11 @@ func (p *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts 
 	if err != nil {
 		return nil, err
 	}
-	if m.Message.Role == blades.RoleTool {
+	switch m.Message.Role {
+	case blades.RoleTool:
+		if len(m.Message.ToolCalls) == 0 {
+			return nil, ErrEmptyToolCalls
+		}
 		req.Messages = append(req.Messages, m.Message)
 		return p.Generate(ctx, req, opts...)
 	}
@@ -85,54 +91,49 @@ func (p *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts
 	}
 	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
 	pipe := blades.NewStreamPipe[*blades.ModelResponse]()
-	go func() {
-		defer pipe.Close()
-		var (
-			err          error
-			acc          = openai.ChatCompletionAccumulator{}
-			lastResposne *blades.ModelResponse
-		)
+	pipe.Go(func() error {
+		acc := openai.ChatCompletionAccumulator{}
 		for stream.Next() {
 			chunk := stream.Current()
 			if len(chunk.Choices) == 0 {
 				continue
 			}
 			acc.AddChunk(chunk)
-			lastResposne, err = chunkChoiceToResponse(ctx, req.Tools, chunk.Choices)
+			res, err := chunkChoiceToResponse(ctx, req.Tools, chunk.Choices)
 			if err != nil {
-				pipe.SetError(err)
-				return
+				return err
 			}
-			pipe.Send(lastResposne)
+			pipe.Send(res)
 		}
 		if err := stream.Err(); err != nil {
-			pipe.SetError(err)
-			return
+			return err
 		}
 		// If the final accumulated response includes tool calls, invoke them
-		toolResponse, err := choiceToToolCalls(ctx, req.Tools, acc.ChatCompletion.Choices)
+		lastResponse, err := choiceToResponse(ctx, req.Tools, acc.ChatCompletion.Choices)
 		if err != nil {
-			pipe.SetError(err)
-			return
+			return err
 		}
-		if toolResponse.Message.Role == blades.RoleTool && len(toolResponse.Message.ToolCalls) > 0 {
-			req.Messages = append(req.Messages, toolResponse.Message)
+		pipe.Send(lastResponse)
+		switch lastResponse.Message.Role {
+		case blades.RoleTool:
+			if len(lastResponse.Message.ToolCalls) == 0 {
+				return ErrEmptyToolCalls
+			}
+			req.Messages = append(req.Messages, lastResponse.Message)
 			toolStream, err := p.NewStream(ctx, req, opts...)
 			if err != nil {
-				pipe.SetError(err)
-				return
+				return err
 			}
-			defer toolStream.Close()
 			for toolStream.Next() {
 				res, err := toolStream.Current()
 				if err != nil {
-					pipe.SetError(err)
-					return
+					return err
 				}
 				pipe.Send(res)
 			}
 		}
-	}()
+		return nil
+	})
 	return pipe, nil
 }
 
@@ -341,9 +342,9 @@ func chunkChoiceToResponse(ctx context.Context, tools []*blades.Tool, choices []
 			msg.Parts = append(msg.Parts, blades.TextPart{choice.Delta.Content})
 		}
 		if choice.FinishReason != "" {
-			msg.Status = blades.StatusCompleted
 			msg.Metadata = map[string]string{"finish_reason": choice.FinishReason}
 		}
+		msg.Status = blades.StatusIncomplete
 	}
 	return &blades.ModelResponse{Message: msg}, nil
 }

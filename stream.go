@@ -48,10 +48,6 @@ func (d *StreamPipe[T]) Send(v T) {
 	d.queue <- v
 }
 
-func (d *StreamPipe[T]) SetError(err error) {
-	d.err = err
-}
-
 // Next returns true if there is a value to yield.
 func (d *StreamPipe[T]) Next() bool {
 	v, ok := <-d.queue
@@ -65,6 +61,13 @@ func (d *StreamPipe[T]) Next() bool {
 // Current returns the value and marks it as yielded.
 func (d *StreamPipe[T]) Current() (T, error) {
 	return d.next, d.err
+}
+
+func (d *StreamPipe[T]) Go(fn func() error) {
+	go func() {
+		defer d.Close()
+		d.err = fn()
+	}()
 }
 
 // Close closes the StreamPipe.
