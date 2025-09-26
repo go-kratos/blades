@@ -55,9 +55,6 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 	if voice == "" {
 		voice = defaultAudioVoice
 	}
-	if voice == "" {
-		return nil, errAudioVoiceRequired
-	}
 
 	params := openai.AudioSpeechNewParams{
 		Input: input,
