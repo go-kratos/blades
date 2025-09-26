@@ -11,27 +11,35 @@ import (
 // OutputConverter is a wrapper around a Runnable runner that ensures the output conforms to a specified type T using JSON schema validation.
 type OutputConverter[T any] struct {
 	runner Runner
+	schema string // cached JSON schema for type T
 }
 
 // NewOutput creates a new Output instance that wraps the given Runnable runner.
 func NewOutputConverter[T any](runner Runner) *OutputConverter[T] {
-	return &OutputConverter[T]{runner: runner}
+	var zero T
+	schemaBytes, err := json.Marshal(jsonschema.Reflect(zero))
+	if err != nil {
+		// Fallback to an empty schema if reflection fails
+		schemaBytes = []byte("{}")
+	}
+	return &OutputConverter[T]{
+		runner: runner,
+		schema: string(schemaBytes),
+	}
 }
 
 // Run processes the given prompt using the wrapped runner and ensures the output conforms to type T.
 func (o *OutputConverter[T]) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (T, error) {
 	var result T
-	schema, err := json.Marshal(jsonschema.Reflect(result))
-	if err != nil {
-		return result, err
-	}
+
 	buf := strings.Builder{}
 	buf.WriteString(`Your response should be in JSON format.
 				Do not include any explanations, only provide a RFC8259 compliant JSON response following this format without deviation.
 				Do not include markdown code blocks in your response.
 				Here is the JSON Schema instance your output must adhere to:
 				`)
-	buf.WriteString(string(schema))
+	buf.WriteString(o.schema)
+	
 	p := NewPrompt(SystemMessage(buf.String()))
 	p.Messages = append(p.Messages, prompt.Messages...)
 	res, err := o.runner.Run(ctx, p, opts...)
