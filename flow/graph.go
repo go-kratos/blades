@@ -85,7 +85,7 @@ func (g *Graph) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.M
 		visited = make(map[string]struct{})
 		current = start
 		last    *blades.Generation
-		state   = NewState(prompt)
+		state   = NewGraphState(prompt)
 	)
 	ctx = NewStateContext(ctx, state)
 	for {
@@ -130,7 +130,7 @@ func (g *Graph) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.M
 
 // RunStream executes the graph and yields each node's generation in order.
 func (g *Graph) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
-	state := NewState(prompt)
+	state := NewGraphState(prompt)
 	ctx = NewStateContext(ctx, state)
 	pipe := blades.NewStreamPipe[*blades.Generation]()
 	pipe.Go(func() error {
@@ -210,8 +210,8 @@ func (g *Graph) nextNode(ctx context.Context, current string) (string, error) {
 	return "", nil
 }
 
-// findRoot finds the single root node (in-degree 0) of the graph.
-// Returns an error if none or multiple roots exist.
+// findStart finds the start node of the graph as defined by the sentinel key and edges.
+// Returns an error if the start node is not defined or not found.
 func (g *Graph) findStart() (string, error) {
 	if len(g.nodes) == 0 {
 		return "", fmt.Errorf("graph has no nodes")
@@ -222,5 +222,5 @@ func (g *Graph) findStart() (string, error) {
 		}
 		return start, nil
 	}
-	return "", fmt.Errorf("graph start not defined; add AddEdge(START, \"<node>\")")
+	return "", fmt.Errorf("graph start not defined; add AddStart(name, node)")
 }
