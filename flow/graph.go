@@ -61,7 +61,7 @@ func (g *Graph) AddChain(name string, nodes ...blades.Runner) {
 // AddEnd adds the named end node to the graph.
 func (g *Graph) AddEnd(name string, node blades.Runner) {
 	g.nodes[name] = node
-	g.edges[endKey] = name
+	g.edges[name] = endKey
 }
 
 // AddEdge sets a directed edge from one node to another.
