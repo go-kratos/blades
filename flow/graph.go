@@ -53,6 +53,11 @@ func (g *Graph) AddNode(name string, node blades.Runner) {
 	g.nodes[name] = node
 }
 
+// AddChain adds a named chain of nodes to the graph as a single node.
+func (g *Graph) AddChain(name string, nodes ...blades.Runner) {
+	g.nodes[name] = NewChain(nodes...)
+}
+
 // AddEnd adds the named end node to the graph.
 func (g *Graph) AddEnd(name string, node blades.Runner) {
 	g.nodes[name] = node
