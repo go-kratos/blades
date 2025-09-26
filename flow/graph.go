@@ -53,6 +53,7 @@ func (g *Graph) AddNode(name string, node blades.Runner) {
 	g.nodes[name] = node
 }
 
+// AddEnd adds the named end node to the graph.
 func (g *Graph) AddEnd(name string, node blades.Runner) {
 	g.nodes[name] = node
 	g.edges[endKey] = name
@@ -66,7 +67,7 @@ func (g *Graph) AddEdge(from string, to string) {
 
 // AddBranch sets a runtime condition for choosing the next node from "from".
 // If present, the condition result overrides the default edge.
-func (g Graph) AddBranch(from string, to Condition) {
+func (g *Graph) AddBranch(from string, to Condition) {
 	g.conditions[from] = to
 }
 
