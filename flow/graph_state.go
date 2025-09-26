@@ -6,8 +6,8 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-// ctxStateKey is an unexported type for keys defined in this package.
-type ctxStateKey struct{}
+// ctxGraphKey is an unexported type for keys defined in this package.
+type ctxGraphKey struct{}
 
 // GraphState holds the current state of the graph execution.
 type GraphState struct {
@@ -25,13 +25,13 @@ func NewGraphState(prompt *blades.Prompt) *GraphState {
 	}
 }
 
-// NewStateContext returns a new Context that carries value.
-func NewStateContext(ctx context.Context, state *GraphState) context.Context {
-	return context.WithValue(ctx, ctxStateKey{}, state)
+// NewGraphContext returns a new Context that carries value.
+func NewGraphContext(ctx context.Context, state *GraphState) context.Context {
+	return context.WithValue(ctx, ctxGraphKey{}, state)
 }
 
-// FromStateContext retrieves the StateContext from the context.
-func FromStateContext(ctx context.Context) (*GraphState, bool) {
-	state, ok := ctx.Value(ctxStateKey{}).(*GraphState)
+// FromGraphContext retrieves the StateContext from the context.
+func FromGraphContext(ctx context.Context) (*GraphState, bool) {
+	state, ok := ctx.Value(ctxGraphKey{}).(*GraphState)
 	return state, ok
 }

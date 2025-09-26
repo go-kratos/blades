@@ -93,7 +93,7 @@ func (g *Graph) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.M
 		last    *blades.Generation
 		state   = NewGraphState(prompt)
 	)
-	ctx = NewStateContext(ctx, state)
+	ctx = NewGraphContext(ctx, state)
 	for {
 		if _, seen := visited[current]; seen {
 			return nil, fmt.Errorf("cycle detected at node %q: graph is not a DAG", current)
@@ -137,7 +137,7 @@ func (g *Graph) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.M
 // RunStream executes the graph and yields each node's generation in order.
 func (g *Graph) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
 	state := NewGraphState(prompt)
-	ctx = NewStateContext(ctx, state)
+	ctx = NewGraphContext(ctx, state)
 	pipe := blades.NewStreamPipe[*blades.Generation]()
 	pipe.Go(func() error {
 		start, err := g.findStart()
