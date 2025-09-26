@@ -2,6 +2,13 @@
 Blades is a multimodal AI Agent framework in Go, supporting custom models, tools, memory, middleware, and more. It is well-suited for multi-turn conversations, chain reasoning, and structured output.
 > The name comes from the game God of War, set in Greek mythology, which tells the story of Kratos, who becomes a god of war and embarks on a divine slaughter. Blades are Kratos's iconic weapons.
 
+## Installation
+Use Go modules to install Blades.
+
+```shell
+go get github.com/go-kratos/blades
+```
+
 ## Architecture Design
 Blades leverages the characteristics of Go to provide a flexible and efficient AI Agent solution. Its core lies in achieving high decoupling and extensibility through a unified interface and pluggable components. The overall architecture is as follows:
 ![architecture](./docs/images/architecture.png)
