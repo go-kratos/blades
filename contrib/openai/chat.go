@@ -118,12 +118,10 @@ func (p *ChatProvider) NewStreaming(ctx context.Context,
 				for toolStream.Next() {
 					res, err := toolStream.Current()
 					if err != nil {
-						toolStream.Close()
 						return err
 					}
 					pipe.Send(res)
 				}
-				toolStream.Close()
 			}
 		}
 		return nil
