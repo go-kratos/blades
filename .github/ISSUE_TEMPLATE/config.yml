@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation issue
+    url: https://github.com/go-kratos/blades
+    about: For documentation issues, open a pull request at the https://github.com/go-kratos/blades repository
