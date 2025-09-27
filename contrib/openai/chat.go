@@ -87,6 +87,7 @@ func (p *ChatProvider) NewStreaming(ctx context.Context,
 	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
 	pipe := blades.NewStreamPipe[*blades.ModelResponse]()
 	pipe.Go(func() error {
+		defer stream.Close()
 		acc := openai.ChatCompletionAccumulator{}
 		for stream.Next() {
 			chunk := stream.Current()
