@@ -86,11 +86,11 @@ func main() {
 	var (
 		routes = map[string]string{
 			"math_agent":    "You provide help with math problems. Explain your reasoning at each step and include examples.",
-			"histroy_agent": "You provide assistance with historical queries. Explain important events and context clearly.",
+			"history_agent": "You provide assistance with historical queries. Explain important events and context clearly.",
 		}
 	)
 	routing := NewRoutingWorkflow(routes)
-	// Example prompt that will be routed to the histroy_agent
+	// Example prompt that will be routed to the history_agent
 	prompt := blades.NewPrompt(
 		blades.UserMessage("What is the capital of France?"),
 	)

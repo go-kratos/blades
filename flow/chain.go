@@ -41,14 +41,17 @@ func (c *Chain) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.M
 // RunStream executes the chain of runners sequentially, streaming the output of the last runner.
 func (c *Chain) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
 	pipe := blades.NewStreamPipe[*blades.Generation]()
-	defer pipe.Close()
-	for _, runner := range c.runners {
-		last, err := runner.Run(ctx, prompt, opts...)
-		if err != nil {
-			return nil, err
+	pipe.Go(func() error {
+		for _, runner := range c.runners {
+			last, err := runner.Run(ctx, prompt, opts...)
+			if err != nil {
+				return err
+			}
+			pipe.Send(last)
+			prompt = blades.NewPrompt(last.Messages...)
 		}
-		pipe.Send(last)
-		prompt = blades.NewPrompt(last.Messages...)
-	}
+		return nil
+	})
 	return pipe, nil
 }
+

@@ -40,6 +40,7 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			defer stream.Close()
 			for stream.Next() {
 				chunk, err := stream.Current()
 				if err != nil {
