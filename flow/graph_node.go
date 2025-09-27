@@ -14,7 +14,7 @@ var (
 // GraphNodeOption defines options for configuring a GraphNode.
 type GraphNodeOption func(*GraphNode)
 
-// WithCondition sets the condition function for branching or looping.
+// WithMaxIterations sets the maximum number of iterations for loop nodes.
 func WithMaxIterations(max int) GraphNodeOption {
 	return func(n *GraphNode) {
 		n.maxIterations = max
