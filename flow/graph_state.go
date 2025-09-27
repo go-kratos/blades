@@ -11,7 +11,6 @@ type ctxGraphKey struct{}
 
 // GraphState holds the current state of the graph execution.
 type GraphState struct {
-	Current  string
 	Prompt   *blades.Prompt
 	History  []*blades.Message
 	Metadata map[string]any
