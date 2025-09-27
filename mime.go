@@ -12,10 +12,15 @@ const (
 	// Common image mime types.
 	MimeImagePNG  MimeType = "image/png"
 	MimeImageJPEG MimeType = "image/jpeg"
+	MimeImageWEBP MimeType = "image/webp"
 	// Common audio mime types (non-exhaustive).
-	MimeAudioWAV MimeType = "audio/wav"
-	MimeAudioMP3 MimeType = "audio/mpeg"
-	MimeAudioOGG MimeType = "audio/ogg"
+	MimeAudioWAV  MimeType = "audio/wav"
+	MimeAudioMP3  MimeType = "audio/mpeg"
+	MimeAudioOGG  MimeType = "audio/ogg"
+	MimeAudioAAC  MimeType = "audio/aac"
+	MimeAudioFLAC MimeType = "audio/flac"
+	MimeAudioOpus MimeType = "audio/opus"
+	MimeAudioPCM  MimeType = "audio/pcm"
 	// Common video mime types (non-exhaustive).
 	MimeVideoMP4 MimeType = "video/mp4"
 	MimeVideoOGG MimeType = "video/ogg"

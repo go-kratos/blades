@@ -15,6 +15,32 @@ type ModelOptions struct {
 	Temperature     float64
 	TopP            float64
 	ReasoningEffort string
+	Image           ImageOptions
+	Audio           AudioOptions
+}
+
+// ImageOptions holds configuration for image generation requests.
+type ImageOptions struct {
+	Background        string
+	Size              string
+	Quality           string
+	ResponseFormat    string
+	OutputFormat      string
+	Moderation        string
+	Style             string
+	User              string
+	Count             int
+	PartialImages     int
+	OutputCompression int
+}
+
+// AudioOptions holds configuration for text-to-speech style requests.
+type AudioOptions struct {
+	Voice          string
+	ResponseFormat string
+	StreamFormat   string
+	Instructions   string
+	Speed          float64
 }
 
 // ModelRequest is a multimodal chat-style request to the provider.
