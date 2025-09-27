@@ -46,16 +46,16 @@ func main() {
 	)
 
 	// Branch condition: choose scifiWriter if recent assistant output mentions "scifi".
-	branchCond := func(ctx context.Context) (bool, error) {
+	branchCond := func(ctx context.Context) (string, error) {
 		state, ok := flow.FromGraphContext(ctx)
 		if !ok {
-			return false, flow.ErrNoGraphState
+			return "", flow.ErrNoGraphState
 		}
 		text := strings.ToLower(state.Prompt.String())
 		if strings.Contains(text, "scifi") || strings.Contains(text, "sci-fi") {
-			return true, nil // choose scifiWriter
+			return "scifi", nil // choose scifiWriter
 		}
-		return false, nil // choose generalWriter
+		return "general", nil // choose generalWriter
 	}
 
 	// Loop condition: run refineAgent up to 2 times.
@@ -67,7 +67,10 @@ func main() {
 	// Build graph: outline -> checker -> branch (scifi/general) -> loop refine -> end
 	a := flow.NewNode(storyOutline)
 	b := flow.NewNode(storyChecker)
-	c := flow.NewBranch(branchCond, scifiWriter, generalWriter)
+	c := flow.NewBranch(branchCond, map[string]blades.Runner{
+		"scifi":   scifiWriter,
+		"general": generalWriter,
+	})
 	d := flow.NewLoop(loopCond, refineAgent, flow.WithMaxIterations(2))
 
 	// Define edges

@@ -3,6 +3,7 @@ package flow
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/go-kratos/blades"
 )
@@ -21,9 +22,12 @@ func WithMaxIterations(max int) GraphNodeOption {
 	}
 }
 
-// Condition decides branching or loop continuation.
+// LoopCondition decides branching or loop continuation.
 // Return true to select the first branch or continue the loop.
-type Condition func(context.Context) (bool, error)
+type LoopCondition func(context.Context) (bool, error)
+
+// BranchCondition decides which branch to take.
+type BranchCondition func(context.Context) (string, error)
 
 // GraphNode represents a node in a prompt processing graph.
 // A node can be one of:
@@ -31,11 +35,15 @@ type Condition func(context.Context) (bool, error)
 // - branch with two runners (`branch` with `condition`)
 // - loop runner (`loop` with optional `condition`)
 type GraphNode struct {
-	next          *GraphNode
-	node          blades.Runner
-	loop          blades.Runner
-	branch        []blades.Runner // len == 2 when used
-	condition     Condition       // used for branch/loop
+	next *GraphNode
+	node blades.Runner
+	// loop
+	loop      blades.Runner
+	condition LoopCondition
+	// branch
+	branch   map[string]blades.Runner
+	selector BranchCondition
+	// maxIterations limits loop iterations; defaults to 2 if not set.
 	maxIterations int
 }
 
@@ -47,7 +55,7 @@ func NewNode(runner blades.Runner) *GraphNode {
 // NewLoop creates a loop node that will run the runner.
 // If a condition is set via `WithCondition`, it continues while condition is true;
 // otherwise it runs exactly once.
-func NewLoop(condition Condition, runner blades.Runner, opts ...GraphNodeOption) *GraphNode {
+func NewLoop(condition LoopCondition, runner blades.Runner, opts ...GraphNodeOption) *GraphNode {
 	n := &GraphNode{condition: condition, loop: runner, maxIterations: 2}
 	for _, opt := range opts {
 		opt(n)
@@ -56,8 +64,8 @@ func NewLoop(condition Condition, runner blades.Runner, opts ...GraphNodeOption)
 }
 
 // NewBranch creates a branch node; when condition is true it uses `a`, otherwise `b`.
-func NewBranch(condition Condition, a, b blades.Runner) *GraphNode {
-	return &GraphNode{condition: condition, branch: []blades.Runner{a, b}}
+func NewBranch(condition BranchCondition, branch map[string]blades.Runner) *GraphNode {
+	return &GraphNode{selector: condition, branch: branch}
 }
 
 // To links this node to the next node and returns the next for chaining.
@@ -106,16 +114,14 @@ func (n *GraphNode) Run(ctx context.Context, prompt *blades.Prompt, opts ...blad
 			state.Prompt = blades.NewPrompt(last.Messages...)
 			state.History = append(state.History, last.Messages...)
 		}
-	case len(n.branch) == 2:
-		var runner blades.Runner
-		choose, err := n.condition(ctx)
+	case len(n.branch) > 0:
+		choose, err := n.selector(ctx)
 		if err != nil {
 			return nil, err
 		}
-		if choose {
-			runner = n.branch[0]
-		} else {
-			runner = n.branch[1]
+		runner, ok := n.branch[choose]
+		if !ok {
+			return nil, fmt.Errorf("invalid branch choice: %s", choose)
 		}
 		last, err = runner.Run(ctx, state.Prompt, opts...)
 		if err != nil {
@@ -166,16 +172,14 @@ func (n *GraphNode) RunStream(ctx context.Context, prompt *blades.Prompt, opts .
 			state.Prompt = blades.NewPrompt(last.Messages...)
 			state.History = append(state.History, last.Messages...)
 		}
-	case len(n.branch) == 2:
-		var runner blades.Runner
-		choose, err := n.condition(ctx)
+	case len(n.branch) > 0:
+		choose, err := n.selector(ctx)
 		if err != nil {
 			return nil, err
 		}
-		if choose {
-			runner = n.branch[0]
-		} else {
-			runner = n.branch[1]
+		runner, ok := n.branch[choose]
+		if !ok {
+			return nil, fmt.Errorf("invalid branch choice: %s", choose)
 		}
 		last, err := runner.Run(ctx, state.Prompt, opts...)
 		if err != nil {
