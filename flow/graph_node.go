@@ -115,7 +115,7 @@ func (n *GraphNode) Run(ctx context.Context, prompt *blades.Prompt, opts ...blad
 		if choose {
 			runner = n.branch[0]
 		} else {
-			runner = n.branch[0]
+			runner = n.branch[1]
 		}
 		last, err = runner.Run(ctx, state.Prompt, opts...)
 		if err != nil {
