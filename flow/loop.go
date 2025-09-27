@@ -88,7 +88,12 @@ func (n *LoopNode) RunStream(ctx context.Context, prompt *blades.Prompt, opts ..
 	state.Prompt = prompt
 	pipe := blades.NewStreamPipe[*blades.Generation]()
 	defer pipe.Close()
+	iterations := 0
 	for {
+		if iterations >= n.maxIterations {
+			break
+		}
+		iterations++
 		loop, err := n.shouldContinue(ctx)
 		if err != nil {
 			return nil, err
