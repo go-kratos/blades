@@ -51,12 +51,9 @@ func main() {
 		if !ok {
 			return false, flow.ErrNoGraphState
 		}
-		msg := state.History[len(state.History)-1]
-		if msg.Role == blades.RoleAssistant {
-			text := strings.ToLower(msg.AsText())
-			if strings.Contains(text, "scifi") || strings.Contains(text, "sci-fi") {
-				return true, nil // choose scifiWriter
-			}
+		text := strings.ToLower(state.Prompt.String())
+		if strings.Contains(text, "scifi") || strings.Contains(text, "sci-fi") {
+			return true, nil // choose scifiWriter
 		}
 		return false, nil // choose generalWriter
 	}
