@@ -70,8 +70,8 @@ func main() {
 	// Build graph: outline -> checker -> branch (scifi/general) -> loop refine -> end
 	a := flow.NewNode(storyOutline)
 	b := flow.NewNode(storyChecker)
-	c := flow.NewBranchNode(branchCond, scifiWriter, generalWriter)
-	d := flow.NewLoopNode(loopCond, refineAgent, flow.WithMaxIterations(2))
+	c := flow.NewBranch(branchCond, scifiWriter, generalWriter)
+	d := flow.NewLoop(loopCond, refineAgent, flow.WithMaxIterations(2))
 
 	// Define edges
 	a.To(b).To(c).To(d)

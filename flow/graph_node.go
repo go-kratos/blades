@@ -44,10 +44,10 @@ func NewNode(runner blades.Runner) *GraphNode {
 	return &GraphNode{node: runner}
 }
 
-// NewLoopNode creates a loop node that will run the runner.
+// NewLoop creates a loop node that will run the runner.
 // If a condition is set via `WithCondition`, it continues while condition is true;
 // otherwise it runs exactly once.
-func NewLoopNode(condition Condition, runner blades.Runner, opts ...GraphNodeOption) *GraphNode {
+func NewLoop(condition Condition, runner blades.Runner, opts ...GraphNodeOption) *GraphNode {
 	n := &GraphNode{condition: condition, loop: runner, maxIterations: 2}
 	for _, opt := range opts {
 		opt(n)
@@ -55,8 +55,8 @@ func NewLoopNode(condition Condition, runner blades.Runner, opts ...GraphNodeOpt
 	return n
 }
 
-// NewBranchNode creates a branch node; when condition is true it uses `a`, otherwise `b`.
-func NewBranchNode(condition Condition, a, b blades.Runner) *GraphNode {
+// NewBranch creates a branch node; when condition is true it uses `a`, otherwise `b`.
+func NewBranch(condition Condition, a, b blades.Runner) *GraphNode {
 	return &GraphNode{condition: condition, branch: []blades.Runner{a, b}}
 }
 
