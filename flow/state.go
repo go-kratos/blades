@@ -2,8 +2,14 @@ package flow
 
 import (
 	"context"
+	"errors"
 
 	"github.com/go-kratos/blades"
+)
+
+var (
+	// ErrNoGraphState is returned when there is no graph state in the context.
+	ErrNoGraphState = errors.New("no graph state in context")
 )
 
 // ctxGraphKey is an unexported type for keys defined in this package.

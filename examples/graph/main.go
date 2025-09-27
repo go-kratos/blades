@@ -67,14 +67,18 @@ func main() {
 	// Build graph: outline -> checker -> branch (scifi/general) -> loop refine -> end
 	a := flow.NewNode(storyOutline)
 	b := flow.NewNode(storyChecker)
-	c := flow.NewBranch(branchCond, map[string]blades.Runner{
-		"scifi":   scifiWriter,
-		"general": generalWriter,
-	})
-	d := flow.NewLoop(loopCond, refineAgent, flow.WithMaxIterations(2))
+	c := flow.NewNode(scifiWriter)
+	d := flow.NewNode(generalWriter)
+	e := flow.NewLoop(loopCond, refineAgent, flow.LoopMaxIterations(2))
+	branch := flow.NewBranch(branchCond)
+	branch.Add("scifi", scifiWriter)
+	branch.Add("general", generalWriter)
 
 	// Define edges
-	a.To(b).To(c).To(d)
+	a.To(b)
+	b.To(branch) // -> branch to choose between c and d
+	c.To(e)
+	d.To(e)
 
 	prompt := blades.NewPrompt(
 		blades.UserMessage("A brave knight embarks on a quest to find a hidden treasure."),

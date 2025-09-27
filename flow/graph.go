@@ -8,11 +8,11 @@ import (
 
 // Graph represents a directed acyclic graph (DAG) of nodes for processing prompts.
 type Graph struct {
-	head *GraphNode
+	head blades.Runner
 }
 
 // NewGraph creates a new Graph with the given head node.
-func NewGraph(head *GraphNode) *Graph {
+func NewGraph(head blades.Runner) *Graph {
 	return &Graph{head: head}
 }
 
