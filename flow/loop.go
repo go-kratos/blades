@@ -82,6 +82,9 @@ func (n *Loop) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.Mo
 	if n.next != nil {
 		return n.next.Run(ctx, state.Prompt, opts...)
 	}
+	if last == nil {
+		return nil, ErrNoFlowResult
+	}
 	return last, nil
 }
 

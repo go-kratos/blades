@@ -2,8 +2,14 @@ package flow
 
 import (
 	"context"
+	"errors"
 
 	"github.com/go-kratos/blades"
+)
+
+var (
+	// ErrNoFlowResult is returned when a flow does not produce a result.
+	ErrNoFlowResult = errors.New("no flow result")
 )
 
 // Node is an interface that represents a processing unit in the flow graph.
