@@ -7,6 +7,8 @@ import (
 	"github.com/go-kratos/blades"
 )
 
+var _ Node = (*Branch)(nil)
+
 // BranchSelector is a function that selects which branch to take.
 type BranchSelector func(context.Context) (string, error)
 

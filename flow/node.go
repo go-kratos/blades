@@ -6,6 +6,8 @@ import (
 	"github.com/go-kratos/blades"
 )
 
+var _ Flowable = (*FlowNode)(nil)
+
 // FlowNode is a node in a flow graph that runs a single runner and passes its output to the next node.
 type FlowNode struct {
 	next   Node
@@ -13,7 +15,7 @@ type FlowNode struct {
 }
 
 // NewNode creates a simple node that runs the provided runner once.
-func NewNode(runner blades.Runner) Flowable {
+func NewNode(runner blades.Runner) *FlowNode {
 	return &FlowNode{runner: runner}
 }
 

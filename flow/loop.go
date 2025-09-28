@@ -6,6 +6,8 @@ import (
 	"github.com/go-kratos/blades"
 )
 
+var _ Flowable = (*Loop)(nil)
+
 // LoopOption defines options for configuring a Loop.
 type LoopOption func(*Loop)
 
@@ -30,7 +32,7 @@ type Loop struct {
 // NewLoop creates a loop node that will run the runner.
 // If a condition is set via `WithCondition`, it continues while condition is true;
 // otherwise it runs exactly once.
-func NewLoop(shouldContinue ShouldContinue, runner blades.Runner, opts ...LoopOption) Flowable {
+func NewLoop(shouldContinue ShouldContinue, runner blades.Runner, opts ...LoopOption) *Loop {
 	n := &Loop{shouldContinue: shouldContinue, runner: runner, maxIterations: 2}
 	for _, opt := range opts {
 		opt(n)

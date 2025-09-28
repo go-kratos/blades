@@ -6,6 +6,8 @@ import (
 	"github.com/go-kratos/blades"
 )
 
+var _ Flowable = (*Chain)(nil)
+
 // Chain represents a sequence of Runnable runners that process input sequentially.
 type Chain struct {
 	next    Node
@@ -13,7 +15,7 @@ type Chain struct {
 }
 
 // NewChain creates a new Chain with the given runners.
-func NewChain(runners ...blades.Runner) Flowable {
+func NewChain(runners ...blades.Runner) *Chain {
 	return &Chain{
 		runners: runners,
 	}
