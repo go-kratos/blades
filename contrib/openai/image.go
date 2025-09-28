@@ -15,8 +15,10 @@ import (
 )
 
 var (
-	errPromptRequired       = errors.New("openai: text prompt is required")
-	errImageGenerationEmpty = errors.New("openai/image: provider returned no images")
+	// ErrPromptRequired is returned when no prompt is provided.
+	ErrPromptRequired = errors.New("openai: text prompt is required")
+	// ErrImageGenerationEmpty is returned when no images are generated.
+	ErrImageGenerationEmpty = errors.New("openai/image: provider returned no images")
 )
 
 // ImageProvider calls OpenAI's image generation endpoints.
@@ -70,7 +72,7 @@ func (p *ImageProvider) NewStream(ctx context.Context, req *blades.ModelRequest,
 
 func promptFromMessages(messages []*blades.Message) (string, error) {
 	if len(messages) == 0 {
-		return "", errPromptRequired
+		return "", ErrPromptRequired
 	}
 	var sections []string
 	for _, msg := range messages {
@@ -91,7 +93,7 @@ func promptFromMessages(messages []*blades.Message) (string, error) {
 		}
 	}
 	if len(sections) == 0 {
-		return "", errPromptRequired
+		return "", ErrPromptRequired
 	}
 	return strings.Join(sections, "\n\n"), nil
 }
@@ -107,10 +109,7 @@ func applyImageOptions(params *openai.ImageGenerateParams, model string, cfg bla
 		params.Quality = openai.ImageGenerateParamsQuality(cfg.Quality)
 	}
 	if cfg.ResponseFormat != "" {
-		lowerModel := strings.ToLower(model)
-		if lowerModel == "" || strings.HasPrefix(lowerModel, "dall-e-") {
-			params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(cfg.ResponseFormat)
-		}
+		params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(cfg.ResponseFormat)
 	}
 	if cfg.OutputFormat != "" {
 		params.OutputFormat = openai.ImageGenerateParamsOutputFormat(cfg.OutputFormat)
@@ -137,7 +136,7 @@ func applyImageOptions(params *openai.ImageGenerateParams, model string, cfg bla
 
 func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) {
 	if res == nil || len(res.Data) == 0 {
-		return nil, errImageGenerationEmpty
+		return nil, ErrImageGenerationEmpty
 	}
 	message := &blades.Message{
 		Role:     blades.RoleAssistant,
@@ -186,7 +185,7 @@ func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) 
 		}
 	}
 	if len(message.Parts) == 0 {
-		return nil, errImageGenerationEmpty
+		return nil, ErrImageGenerationEmpty
 	}
 	return &blades.ModelResponse{Messages: []*blades.Message{message}}, nil
 }

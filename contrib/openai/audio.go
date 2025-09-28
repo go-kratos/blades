@@ -14,10 +14,14 @@ import (
 )
 
 var (
-	errAudioGenerationEmpty = errors.New("openai/audio: provider returned no audio")
-	errAudioRequestNil      = errors.New("openai/audio: request is nil")
-	errAudioModelRequired   = errors.New("openai/audio: model is required")
-	errAudioVoiceRequired   = errors.New("openai/audio: voice is required")
+	// ErrAudioGenerationEmpty is returned when the provider returns no audio data.
+	ErrAudioGenerationEmpty = errors.New("openai/audio: provider returned no audio")
+	// ErrAudioRequestNil is returned when the request is nil.
+	ErrAudioRequestNil = errors.New("openai/audio: request is nil")
+	// ErrAudioModelRequired is returned when the model is not specified.
+	ErrAudioModelRequired = errors.New("openai/audio: model is required")
+	// ErrAudioVoiceRequired is returned when the voice is not specified.
+	ErrAudioVoiceRequired = errors.New("openai/audio: voice is required")
 )
 
 const defaultAudioVoice = "alloy"
@@ -35,10 +39,10 @@ func NewAudioProvider(opts ...option.RequestOption) blades.ModelProvider {
 // Generate generates audio from text input using the configured OpenAI model.
 func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
 	if req == nil {
-		return nil, errAudioRequestNil
+		return nil, ErrAudioRequestNil
 	}
 	if req.Model == "" {
-		return nil, errAudioModelRequired
+		return nil, ErrAudioModelRequired
 	}
 
 	modelOpts := blades.ModelOptions{}
@@ -74,7 +78,7 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 		return nil, err
 	}
 	if len(data) == 0 {
-		return nil, errAudioGenerationEmpty
+		return nil, ErrAudioGenerationEmpty
 	}
 
 	mimeType := audioMimeFromContentType(resp.Header.Get("Content-Type"), params.ResponseFormat)
