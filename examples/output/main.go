@@ -17,7 +17,7 @@ type ActorsFilms struct {
 func main() {
 	agent := blades.NewAgent(
 		"filmography",
-		blades.WithModel("qwen-plus"),
+		blades.WithModel("gpt-5"),
 		blades.WithProvider(openai.NewChatProvider()),
 	)
 	prompt := blades.NewPrompt(

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/invopop/jsonschema"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // OutputConverter is a wrapper around a Runnable runner that ensures the output conforms to a specified type T using JSON schema validation.
@@ -21,7 +21,12 @@ func NewOutputConverter[T any](runner Runner) *OutputConverter[T] {
 // Run processes the given prompt using the wrapped runner and ensures the output conforms to type T.
 func (o *OutputConverter[T]) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (T, error) {
 	var result T
-	schema, err := json.Marshal(jsonschema.Reflect(result))
+	schema, err := jsonschema.For[T](nil)
+	if err != nil {
+		return result, err
+	}
+	// Convert the schema to JSON Schema format
+	b, err := schema.MarshalJSON()
 	if err != nil {
 		return result, err
 	}
@@ -31,7 +36,7 @@ func (o *OutputConverter[T]) Run(ctx context.Context, prompt *Prompt, opts ...Mo
 				Do not include markdown code blocks in your response.
 				Here is the JSON Schema instance your output must adhere to:
 				`)
-	buf.WriteString(string(schema))
+	buf.WriteString(string(b))
 	p := NewPrompt(SystemMessage(buf.String()))
 	p.Messages = append(p.Messages, prompt.Messages...)
 	res, err := o.runner.Run(ctx, p, opts...)
