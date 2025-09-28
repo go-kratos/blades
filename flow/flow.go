@@ -6,19 +6,25 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-// Flowable is an interface that marks a node as part of a flow.
-type Flowable interface {
+// Node is an interface that represents a processing unit in the flow graph.
+type Node interface {
 	blades.Runner
-	isFlowable()
+	isNode()
+}
+
+// Flowable is an interface for nodes that can connect to other nodes.
+type Flowable interface {
+	Node
+	To(Node)
 }
 
 // Flow represents a directed acyclic graph (DAG) of nodes for processing prompts.
 type Flow struct {
-	head Flowable
+	head Node
 }
 
 // New creates a new Flow with the given head node.
-func New(head Flowable) *Flow {
+func New(head Node) *Flow {
 	return &Flow{head: head}
 }
 

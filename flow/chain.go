@@ -6,25 +6,24 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-var (
-	_ blades.Runner = (*Chain)(nil)
-)
-
 // Chain represents a sequence of Runnable runners that process input sequentially.
 type Chain struct {
-	next    Flowable
+	next    Node
 	runners []blades.Runner
 }
 
 // NewChain creates a new Chain with the given runners.
-func NewChain(runners ...blades.Runner) *Chain {
+func NewChain(runners ...blades.Runner) Flowable {
 	return &Chain{
 		runners: runners,
 	}
 }
 
-// To sets the next Flowable in the chain and returns it.
-func (c *Chain) To(next Flowable) {
+// isNode is a marker method to indicate that Chain implements the Node interface.
+func (c *Chain) isNode() {}
+
+// To sets the next node in the chain.
+func (c *Chain) To(next Node) {
 	c.next = next
 }
 

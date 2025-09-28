@@ -21,7 +21,7 @@ type ShouldContinue func(context.Context) (bool, error)
 
 // Loop represents a node that executes a loop.
 type Loop struct {
-	next           Flowable
+	next           Node
 	runner         blades.Runner
 	shouldContinue ShouldContinue
 	maxIterations  int
@@ -30,7 +30,7 @@ type Loop struct {
 // NewLoop creates a loop node that will run the runner.
 // If a condition is set via `WithCondition`, it continues while condition is true;
 // otherwise it runs exactly once.
-func NewLoop(shouldContinue ShouldContinue, runner blades.Runner, opts ...LoopOption) *Loop {
+func NewLoop(shouldContinue ShouldContinue, runner blades.Runner, opts ...LoopOption) Flowable {
 	n := &Loop{shouldContinue: shouldContinue, runner: runner, maxIterations: 2}
 	for _, opt := range opts {
 		opt(n)
@@ -39,10 +39,10 @@ func NewLoop(shouldContinue ShouldContinue, runner blades.Runner, opts ...LoopOp
 }
 
 // isFlowable marks this struct as a Flowable.
-func (b *Loop) isFlowable() {}
+func (b *Loop) isNode() {}
 
 // To links this node to the next node and returns the next for chaining.
-func (n *Loop) To(next Flowable) {
+func (n *Loop) To(next Node) {
 	n.next = next
 }
 

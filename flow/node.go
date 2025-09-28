@@ -6,26 +6,27 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-type Node struct {
-	next   Flowable
+// FlowNode is a node in a flow graph that runs a single runner and passes its output to the next node.
+type FlowNode struct {
+	next   Node
 	runner blades.Runner
 }
 
 // NewNode creates a simple node that runs the provided runner once.
-func NewNode(runner blades.Runner) *Node {
-	return &Node{runner: runner}
+func NewNode(runner blades.Runner) Flowable {
+	return &FlowNode{runner: runner}
 }
 
-// isFlowable is a no-op method to mark this struct as implementing Flowable.
-func (n *Node) isFlowable() {}
+// isNode is a marker method to indicate this struct is a FlowNode.
+func (n *FlowNode) isNode() {}
 
 // To links this node to the next node and returns the next for chaining.
-func (n *Node) To(next Flowable) {
+func (n *FlowNode) To(next Node) {
 	n.next = next
 }
 
 // Run executes the graph from this node onward, returning the final generation.
-func (n *Node) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Generation, error) {
+func (n *FlowNode) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Generation, error) {
 	var (
 		err  error
 		last *blades.Generation
@@ -48,7 +49,7 @@ func (n *Node) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.Mo
 }
 
 // RunStream executes the graph from this node onward and streams each step's generation.
-func (n *Node) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
+func (n *FlowNode) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
 	state, ok := FromContext(ctx)
 	if !ok {
 		return nil, ErrNoFlowState
