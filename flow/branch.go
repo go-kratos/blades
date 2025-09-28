@@ -12,13 +12,13 @@ type BranchSelector func(context.Context) (string, error)
 
 // Branch represents a branching node in a prompt processing graph.
 type Branch struct {
-	branch   map[string]blades.Runner
+	branch   map[string]Flowable
 	selector BranchSelector
 }
 
 // NewBranch creates a branch node with the given selector function.
 func NewBranch(selector BranchSelector) *Branch {
-	return &Branch{selector: selector, branch: make(map[string]blades.Runner)}
+	return &Branch{selector: selector, branch: make(map[string]Flowable)}
 }
 
 // isFlowable marks Branch as implementing the Flowable interface.
