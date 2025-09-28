@@ -54,6 +54,16 @@ func (g *Generation) AsText() string {
 }
 
 // Streamer yields a sequence of assistant responses until completion.
+// The caller of any function that returns a Streamer is responsible for
+// closing it. It is strongly recommended to use a defer statement to
+// ensure the stream is always closed.
+//
+// Example Usage:
+//  stream, err := someFunction()
+//  if err != nil {
+//      // handle error
+//  }
+//  defer stream.Close()
 type Streamer[T any] interface {
 	Next() bool
 	Current() (T, error)
