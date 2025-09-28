@@ -20,7 +20,6 @@ type Node interface {
 
 // Flowable is an interface for nodes that can connect to other nodes.
 type Flowable interface {
-	Node
 	To(Node)
 }
 

@@ -6,7 +6,10 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-var _ Flowable = (*FlowNode)(nil)
+var (
+	_ Node     = (*FlowNode)(nil)
+	_ Flowable = (*FlowNode)(nil)
+)
 
 // FlowNode is a node in a flow graph that runs a single runner and passes its output to the next node.
 type FlowNode struct {

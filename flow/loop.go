@@ -6,7 +6,10 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-var _ Flowable = (*Loop)(nil)
+var (
+	_ Node     = (*Loop)(nil)
+	_ Flowable = (*Loop)(nil)
+)
 
 // LoopOption defines options for configuring a Loop.
 type LoopOption func(*Loop)

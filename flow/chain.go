@@ -6,7 +6,10 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-var _ Flowable = (*Chain)(nil)
+var (
+	_ Node     = (*Chain)(nil)
+	_ Flowable = (*Chain)(nil)
+)
 
 // Chain represents a sequence of Runnable runners that process input sequentially.
 type Chain struct {
