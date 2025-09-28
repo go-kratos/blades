@@ -16,8 +16,11 @@ func NewNode(runner blades.Runner) *NextNode {
 	return &NextNode{runner: runner}
 }
 
+// isNode is a marker method to indicate this struct implements the Node interface.
+func (n *NextNode) isNode() {}
+
 // To links this node to the next node and returns the next for chaining.
-func (n *NextNode) To(next blades.Runner) {
+func (n *NextNode) To(next NodeRunner) {
 	n.next = next
 }
 

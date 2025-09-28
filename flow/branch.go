@@ -21,8 +21,11 @@ func NewBranch(selector BranchSelector) *BranchNode {
 	return &BranchNode{selector: selector, branch: make(map[string]blades.Runner)}
 }
 
+// isNode marks BranchNode as a node type.
+func (b *BranchNode) isNode() {}
+
 // Add adds a branch with the given key and runner.
-func (b *BranchNode) Add(name string, node blades.Runner) {
+func (b *BranchNode) Add(name string, node NodeRunner) {
 	b.branch[name] = node
 }
 

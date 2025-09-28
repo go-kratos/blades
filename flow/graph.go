@@ -6,13 +6,19 @@ import (
 	"github.com/go-kratos/blades"
 )
 
+// NodeRunner is an interface that extends blades.Runner and marks a node in the graph.
+type NodeRunner interface {
+	blades.Runner
+	isNode()
+}
+
 // Graph represents a directed acyclic graph (DAG) of nodes for processing prompts.
 type Graph struct {
-	head blades.Runner
+	head NodeRunner
 }
 
 // NewGraph creates a new Graph with the given head node.
-func NewGraph(head blades.Runner) *Graph {
+func NewGraph(head NodeRunner) *Graph {
 	return &Graph{head: head}
 }
 

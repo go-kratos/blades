@@ -38,8 +38,11 @@ func NewLoop(shouldContinue ShouldContinue, runner blades.Runner, opts ...LoopNo
 	return n
 }
 
+// isNode marks LoopNode as a node type.
+func (b *LoopNode) isNode() {}
+
 // To links this node to the next node and returns the next for chaining.
-func (n *LoopNode) To(next blades.Runner) {
+func (n *LoopNode) To(next NodeRunner) {
 	n.next = next
 }
 
