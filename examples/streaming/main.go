@@ -22,7 +22,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer stream.Close()
 	for stream.Next() {
 		chunk, err := stream.Current()
 		if err != nil {
