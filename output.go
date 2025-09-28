@@ -19,8 +19,7 @@ func NewOutputConverter[T any](runner Runner) *OutputConverter[T] {
 	var zero T
 	schemaBytes, err := json.Marshal(jsonschema.Reflect(zero))
 	if err != nil {
-		// Fallback to an empty schema if reflection fails
-		schemaBytes = []byte("{}")
+		return nil
 	}
 	return &OutputConverter[T]{
 		runner: runner,
