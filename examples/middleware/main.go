@@ -21,7 +21,7 @@ func newLogging() blades.Middleware {
 				if err != nil {
 					log.Printf("generate model: %s prompt: %s error: %v\n", agent.Model, prompt.String(), err)
 				} else {
-					log.Printf("generate model: %s prompt: %s response: %s\n", agent.Model, prompt.String(), res.AsText())
+					log.Printf("generate model: %s prompt: %s response: %s\n", agent.Model, prompt.String(), res.Text())
 				}
 				return res, err
 			}
@@ -37,7 +37,7 @@ func newLogging() blades.Middleware {
 					return nil, err
 				}
 				return blades.NewMappedStream[*blades.Generation, *blades.Generation](stream, func(m *blades.Generation) (*blades.Generation, error) {
-					log.Printf("stream model: %s prompt: %s generation: %s\n", agent.Model, prompt.String(), m.AsText())
+					log.Printf("stream model: %s prompt: %s generation: %s\n", agent.Model, prompt.String(), m.Text())
 					return m, nil
 				}), nil
 			}
@@ -86,5 +86,5 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(result.AsText())
+	log.Println(result.Text())
 }

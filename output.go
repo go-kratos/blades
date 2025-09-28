@@ -43,7 +43,7 @@ func (o *OutputConverter[T]) Run(ctx context.Context, prompt *Prompt, opts ...Mo
 	if err != nil {
 		return result, err
 	}
-	text := res.AsText()
+	text := res.Text()
 	text = strings.TrimSpace(text)
 	text = strings.Trim(text, "```json")
 	text = strings.Trim(text, "```")

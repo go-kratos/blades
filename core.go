@@ -41,8 +41,8 @@ type Generation struct {
 	Messages []*Message `json:"message"`
 }
 
-// AsText extracts the text content from the first text part of the generation.
-func (g *Generation) AsText() string {
+// Text extracts the text content from the first text part of the generation.
+func (g *Generation) Text() string {
 	for _, msg := range g.Messages {
 		for _, part := range msg.Parts {
 			if text, ok := part.(TextPart); ok {
@@ -51,6 +51,30 @@ func (g *Generation) AsText() string {
 		}
 	}
 	return ""
+}
+
+// File returns the first file part of the message, or nil if none exists.
+func (g *Generation) File() *FilePart {
+	for _, msg := range g.Messages {
+		for _, part := range msg.Parts {
+			if file, ok := part.(FilePart); ok {
+				return &file
+			}
+		}
+	}
+	return nil
+}
+
+// Data returns the first data part of the message, or nil if none exists.
+func (g *Generation) Data() *DataPart {
+	for _, msg := range g.Messages {
+		for _, part := range msg.Parts {
+			if data, ok := part.(DataPart); ok {
+				return &data
+			}
+		}
+	}
+	return nil
 }
 
 // Streamer yields a sequence of assistant responses until completion.

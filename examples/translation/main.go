@@ -48,7 +48,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := os.WriteFile(output, []byte(result.AsText()), 0644); err != nil {
+	if err := os.WriteFile(output, []byte(result.Text()), 0644); err != nil {
 		log.Fatal(err)
 	}
 }

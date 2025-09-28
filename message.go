@@ -79,14 +79,34 @@ type Message struct {
 	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
-// AsText returns the first text part of the message, or an empty string if none exists.
-func (m *Message) AsText() string {
+// Text returns the first text part of the message, or an empty string if none exists.
+func (m *Message) Text() string {
 	for _, part := range m.Parts {
 		if text, ok := part.(TextPart); ok {
 			return text.Text
 		}
 	}
 	return ""
+}
+
+// File returns the first file part of the message, or nil if none exists.
+func (m *Message) File() *FilePart {
+	for _, part := range m.Parts {
+		if file, ok := part.(FilePart); ok {
+			return &file
+		}
+	}
+	return nil
+}
+
+// Data returns the first data part of the message, or nil if none exists.
+func (m *Message) Data() *DataPart {
+	for _, part := range m.Parts {
+		if data, ok := part.(DataPart); ok {
+			return &data
+		}
+	}
+	return nil
 }
 
 func (m *Message) String() string {

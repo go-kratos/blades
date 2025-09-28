@@ -28,6 +28,6 @@ func main() {
 		if err != nil {
 			log.Fatalf("stream recv error: %v", err)
 		}
-		log.Print(chunk.AsText())
+		log.Print(chunk.Text())
 	}
 }

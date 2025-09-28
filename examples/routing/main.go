@@ -78,7 +78,7 @@ func (r *RoutingWorkflow) selectRoute(ctx context.Context, prompt *blades.Prompt
 	if err != nil {
 		return nil, err
 	}
-	choice := strings.TrimSpace(res.AsText())
+	choice := strings.TrimSpace(res.Text())
 	return r.agents[choice], nil
 }
 
@@ -98,5 +98,5 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(res.AsText())
+	log.Println(res.Text())
 }

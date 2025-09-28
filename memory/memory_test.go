@@ -22,8 +22,8 @@ func TestInMemory_PerConversationLimit(t *testing.T) {
 	if len(msgsA) != 3 {
 		t.Fatalf("convA expected 3, got %d", len(msgsA))
 	}
-	if msgsA[0].AsText() != "a2" || msgsA[1].AsText() != "a3" || msgsA[2].AsText() != "a4" {
-		t.Fatalf("convA unexpected order: %q, %q, %q", msgsA[0].AsText(), msgsA[1].AsText(), msgsA[2].AsText())
+	if msgsA[0].Text() != "a2" || msgsA[1].Text() != "a3" || msgsA[2].Text() != "a4" {
+		t.Fatalf("convA unexpected order: %q, %q, %q", msgsA[0].Text(), msgsA[1].Text(), msgsA[2].Text())
 	}
 
 	// convB: independent limit
@@ -35,8 +35,8 @@ func TestInMemory_PerConversationLimit(t *testing.T) {
 
 	// ensure convA unchanged by operations on convB
 	msgsA2, _ := mem.ListMessages(ctx, "A")
-	if len(msgsA2) != 3 || msgsA2[2].AsText() != "a4" {
-		t.Fatalf("convA should remain intact; got len=%d last=%q", len(msgsA2), msgsA2[len(msgsA2)-1].AsText())
+	if len(msgsA2) != 3 || msgsA2[2].Text() != "a4" {
+		t.Fatalf("convA should remain intact; got len=%d last=%q", len(msgsA2), msgsA2[len(msgsA2)-1].Text())
 	}
 }
 
