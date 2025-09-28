@@ -60,10 +60,6 @@ func (n *Loop) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.Mo
 	state.Prompt = prompt
 	iterations := 0
 	for {
-		if iterations >= n.maxIterations {
-			break
-		}
-		iterations++
 		loop, err := n.shouldContinue(ctx)
 		if err != nil {
 			return nil, err
@@ -77,6 +73,11 @@ func (n *Loop) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.Mo
 		}
 		state.Prompt = blades.NewPrompt(last.Messages...)
 		state.History = append(state.History, last.Messages...)
+		// Prevent infinite loops by enforcing a maximum iteration count.
+		iterations++
+		if iterations >= n.maxIterations {
+			break
+		}
 	}
 	if n.next != nil {
 		return n.next.Run(ctx, state.Prompt, opts...)
@@ -95,10 +96,6 @@ func (n *Loop) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...bla
 	defer pipe.Close()
 	iterations := 0
 	for {
-		if iterations >= n.maxIterations {
-			break
-		}
-		iterations++
 		loop, err := n.shouldContinue(ctx)
 		if err != nil {
 			return nil, err
@@ -113,6 +110,11 @@ func (n *Loop) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...bla
 		pipe.Send(last)
 		state.Prompt = blades.NewPrompt(last.Messages...)
 		state.History = append(state.History, last.Messages...)
+		// Prevent infinite loops by enforcing a maximum iteration count.
+		iterations++
+		if iterations >= n.maxIterations {
+			break
+		}
 	}
 	// Stream the remainder of the graph using recursion, mirroring Run.
 	if n.next != nil {
