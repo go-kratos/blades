@@ -59,27 +59,14 @@ func (n *Branch) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.
 
 // RunStream executes the graph from this node onward and streams each step's generation.
 func (n *Branch) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
-	state, ok := FromContext(ctx)
-	if !ok {
-		return nil, ErrNoFlowState
-	}
-	state.Prompt = prompt
 	pipe := blades.NewStreamPipe[*blades.Generation]()
-	defer pipe.Close()
-	choose, err := n.selector(ctx)
-	if err != nil {
-		return nil, err
-	}
-	runner, ok := n.branch[choose]
-	if !ok {
-		return nil, fmt.Errorf("invalid branch choice: %s", choose)
-	}
-	last, err := runner.Run(ctx, state.Prompt, opts...)
-	if err != nil {
-		return nil, err
-	}
-	pipe.Send(last)
-	state.Prompt = blades.NewPrompt(last.Messages...)
-	state.History = append(state.History, last.Messages...)
+	pipe.Go(func() error {
+		last, err := n.Run(ctx, prompt, opts...)
+		if err != nil {
+			return err
+		}
+		pipe.Send(last)
+		return nil
+	})
 	return pipe, nil
 }
