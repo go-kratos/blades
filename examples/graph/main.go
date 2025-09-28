@@ -71,8 +71,8 @@ func main() {
 	d := flow.NewNode(generalWriter)
 	e := flow.NewLoop(loopCond, refineAgent, flow.LoopMaxIterations(2))
 	branch := flow.NewBranch(branchCond)
-	branch.Add("scifi", scifiWriter)
-	branch.Add("general", generalWriter)
+	branch.Add("scifi", c)
+	branch.Add("general", d)
 
 	// Define edges
 	a.To(b)
