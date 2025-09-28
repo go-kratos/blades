@@ -6,12 +6,12 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-// LoopNodeOption defines options for configuring a LoopNode.
-type LoopNodeOption func(*LoopNode)
+// LoopOption defines options for configuring a Loop.
+type LoopOption func(*Loop)
 
 // LoopMaxIterations sets the maximum number of iterations for loop nodes.
-func LoopMaxIterations(max int) LoopNodeOption {
-	return func(n *LoopNode) {
+func LoopMaxIterations(max int) LoopOption {
+	return func(n *Loop) {
 		n.maxIterations = max
 	}
 }
@@ -19,10 +19,10 @@ func LoopMaxIterations(max int) LoopNodeOption {
 // ShouldContinue is a function that determines whether to continue looping.
 type ShouldContinue func(context.Context) (bool, error)
 
-// LoopNode represents a node that executes a loop.
-type LoopNode struct {
-	next           blades.Runner
-	loop           blades.Runner
+// Loop represents a node that executes a loop.
+type Loop struct {
+	next           Flowable
+	runner         blades.Runner
 	shouldContinue ShouldContinue
 	maxIterations  int
 }
@@ -30,30 +30,30 @@ type LoopNode struct {
 // NewLoop creates a loop node that will run the runner.
 // If a condition is set via `WithCondition`, it continues while condition is true;
 // otherwise it runs exactly once.
-func NewLoop(shouldContinue ShouldContinue, runner blades.Runner, opts ...LoopNodeOption) *LoopNode {
-	n := &LoopNode{shouldContinue: shouldContinue, loop: runner, maxIterations: 2}
+func NewLoop(shouldContinue ShouldContinue, runner blades.Runner, opts ...LoopOption) *Loop {
+	n := &Loop{shouldContinue: shouldContinue, runner: runner, maxIterations: 2}
 	for _, opt := range opts {
 		opt(n)
 	}
 	return n
 }
 
-// isNode marks LoopNode as a node type.
-func (b *LoopNode) isNode() {}
+// isFlowable marks this struct as a Flowable.
+func (b *Loop) isFlowable() {}
 
 // To links this node to the next node and returns the next for chaining.
-func (n *LoopNode) To(next NodeRunner) {
+func (n *Loop) To(next Flowable) {
 	n.next = next
 }
 
 // Run executes the graph from this node onward, returning the final generation.
-func (n *LoopNode) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Generation, error) {
+func (n *Loop) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Generation, error) {
 	var (
 		last *blades.Generation
 	)
-	state, ok := FromGraphContext(ctx)
+	state, ok := FromContext(ctx)
 	if !ok {
-		return nil, ErrNoGraphState
+		return nil, ErrNoFlowState
 	}
 	state.Prompt = prompt
 	iterations := 0
@@ -69,7 +69,7 @@ func (n *LoopNode) Run(ctx context.Context, prompt *blades.Prompt, opts ...blade
 		if !loop {
 			break
 		}
-		last, err = n.loop.Run(ctx, state.Prompt, opts...)
+		last, err = n.runner.Run(ctx, state.Prompt, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -83,10 +83,10 @@ func (n *LoopNode) Run(ctx context.Context, prompt *blades.Prompt, opts ...blade
 }
 
 // RunStream executes the graph from this node onward and streams each step's generation.
-func (n *LoopNode) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
-	state, ok := FromGraphContext(ctx)
+func (n *Loop) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
+	state, ok := FromContext(ctx)
 	if !ok {
-		return nil, ErrNoGraphState
+		return nil, ErrNoFlowState
 	}
 	state.Prompt = prompt
 	pipe := blades.NewStreamPipe[*blades.Generation]()
@@ -104,7 +104,7 @@ func (n *LoopNode) RunStream(ctx context.Context, prompt *blades.Prompt, opts ..
 		if !loop {
 			break
 		}
-		last, err := n.loop.Run(ctx, state.Prompt, opts...)
+		last, err := n.runner.Run(ctx, state.Prompt, opts...)
 		if err != nil {
 			return nil, err
 		}

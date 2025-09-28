@@ -6,33 +6,33 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-type NextNode struct {
-	next   blades.Runner
+type Node struct {
+	next   Flowable
 	runner blades.Runner
 }
 
 // NewNode creates a simple node that runs the provided runner once.
-func NewNode(runner blades.Runner) *NextNode {
-	return &NextNode{runner: runner}
+func NewNode(runner blades.Runner) *Node {
+	return &Node{runner: runner}
 }
 
-// isNode is a marker method to indicate this struct implements the Node interface.
-func (n *NextNode) isNode() {}
+// isFlowable is a no-op method to mark this struct as implementing Flowable.
+func (n *Node) isFlowable() {}
 
 // To links this node to the next node and returns the next for chaining.
-func (n *NextNode) To(next NodeRunner) {
+func (n *Node) To(next Flowable) {
 	n.next = next
 }
 
 // Run executes the graph from this node onward, returning the final generation.
-func (n *NextNode) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Generation, error) {
+func (n *Node) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Generation, error) {
 	var (
 		err  error
 		last *blades.Generation
 	)
-	state, ok := FromGraphContext(ctx)
+	state, ok := FromContext(ctx)
 	if !ok {
-		return nil, ErrNoGraphState
+		return nil, ErrNoFlowState
 	}
 	state.Prompt = prompt
 	last, err = n.runner.Run(ctx, state.Prompt, opts...)
@@ -48,10 +48,10 @@ func (n *NextNode) Run(ctx context.Context, prompt *blades.Prompt, opts ...blade
 }
 
 // RunStream executes the graph from this node onward and streams each step's generation.
-func (n *NextNode) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
-	state, ok := FromGraphContext(ctx)
+func (n *Node) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
+	state, ok := FromContext(ctx)
 	if !ok {
-		return nil, ErrNoGraphState
+		return nil, ErrNoFlowState
 	}
 	state.Prompt = prompt
 	pipe := blades.NewStreamPipe[*blades.Generation]()

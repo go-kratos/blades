@@ -10,34 +10,34 @@ import (
 // BranchSelector is a function that selects which branch to take.
 type BranchSelector func(context.Context) (string, error)
 
-// BranchNode represents a branching node in a prompt processing graph.
-type BranchNode struct {
+// Branch represents a branching node in a prompt processing graph.
+type Branch struct {
 	branch   map[string]blades.Runner
 	selector BranchSelector
 }
 
 // NewBranch creates a branch node with the given selector function.
-func NewBranch(selector BranchSelector) *BranchNode {
-	return &BranchNode{selector: selector, branch: make(map[string]blades.Runner)}
+func NewBranch(selector BranchSelector) *Branch {
+	return &Branch{selector: selector, branch: make(map[string]blades.Runner)}
 }
 
-// isNode marks BranchNode as a node type.
-func (b *BranchNode) isNode() {}
+// isFlowable marks Branch as implementing the Flowable interface.
+func (b *Branch) isFlowable() {}
 
 // Add adds a branch with the given key and runner.
-func (b *BranchNode) Add(name string, node NodeRunner) {
+func (b *Branch) Add(name string, node Flowable) {
 	b.branch[name] = node
 }
 
 // Run executes the graph from this node onward, returning the final generation.
-func (n *BranchNode) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Generation, error) {
+func (n *Branch) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Generation, error) {
 	var (
 		err  error
 		last *blades.Generation
 	)
-	state, ok := FromGraphContext(ctx)
+	state, ok := FromContext(ctx)
 	if !ok {
-		return nil, ErrNoGraphState
+		return nil, ErrNoFlowState
 	}
 	state.Prompt = prompt
 	choose, err := n.selector(ctx)
@@ -58,10 +58,10 @@ func (n *BranchNode) Run(ctx context.Context, prompt *blades.Prompt, opts ...bla
 }
 
 // RunStream executes the graph from this node onward and streams each step's generation.
-func (n *BranchNode) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
-	state, ok := FromGraphContext(ctx)
+func (n *Branch) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
+	state, ok := FromContext(ctx)
 	if !ok {
-		return nil, ErrNoGraphState
+		return nil, ErrNoFlowState
 	}
 	state.Prompt = prompt
 	pipe := blades.NewStreamPipe[*blades.Generation]()

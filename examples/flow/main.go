@@ -47,9 +47,9 @@ func main() {
 
 	// Branch condition: choose scifiWriter if recent assistant output mentions "scifi".
 	branchCond := func(ctx context.Context) (string, error) {
-		state, ok := flow.FromGraphContext(ctx)
+		state, ok := flow.FromContext(ctx)
 		if !ok {
-			return "", flow.ErrNoGraphState
+			return "", flow.ErrNoFlowState
 		}
 		text := strings.ToLower(state.Prompt.String())
 		if strings.Contains(text, "scifi") || strings.Contains(text, "sci-fi") {
@@ -84,7 +84,7 @@ func main() {
 		blades.UserMessage("A brave knight embarks on a quest to find a hidden treasure."),
 	)
 
-	g := flow.NewGraph(a)
+	g := flow.New(a)
 	result, err := g.Run(context.Background(), prompt)
 	if err != nil {
 		log.Fatal(err)

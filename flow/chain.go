@@ -12,6 +12,7 @@ var (
 
 // Chain represents a sequence of Runnable runners that process input sequentially.
 type Chain struct {
+	next    Flowable
 	runners []blades.Runner
 }
 
@@ -20,6 +21,11 @@ func NewChain(runners ...blades.Runner) *Chain {
 	return &Chain{
 		runners: runners,
 	}
+}
+
+// To sets the next Flowable in the chain and returns it.
+func (c *Chain) To(next Flowable) {
+	c.next = next
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.
