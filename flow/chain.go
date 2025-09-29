@@ -7,11 +7,13 @@ import (
 )
 
 var (
-	_ blades.Runner = (*Chain)(nil)
+	_ Node     = (*Chain)(nil)
+	_ Flowable = (*Chain)(nil)
 )
 
 // Chain represents a sequence of Runnable runners that process input sequentially.
 type Chain struct {
+	next    Node
 	runners []blades.Runner
 }
 
@@ -20,6 +22,14 @@ func NewChain(runners ...blades.Runner) *Chain {
 	return &Chain{
 		runners: runners,
 	}
+}
+
+// isNode is a marker method to indicate that Chain implements the Node interface.
+func (c *Chain) isNode() {}
+
+// To sets the next node in the chain.
+func (c *Chain) To(next Node) {
+	c.next = next
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.
@@ -54,4 +64,3 @@ func (c *Chain) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...bl
 	})
 	return pipe, nil
 }
-
