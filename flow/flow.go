@@ -46,6 +46,8 @@ func (f *Flow[I, O]) Run(ctx context.Context, input I, opts ...blades.ModelOptio
 	if err != nil {
 		return o, err
 	}
+	state := NewFlowState(input, prompt)
+	ctx = NewFlowContext(ctx, state)
 	return f.conv.Run(ctx, prompt, opts...)
 }
 
@@ -57,5 +59,7 @@ func (f *Flow[I, O]) RunStream(ctx context.Context, input I, opts ...blades.Mode
 	if err != nil {
 		return nil, err
 	}
+	state := NewFlowState(input, prompt)
+	ctx = NewFlowContext(ctx, state)
 	return f.conv.RunStream(ctx, prompt, opts...)
 }

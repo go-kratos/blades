@@ -40,3 +40,28 @@ func FromGraphContext(ctx context.Context) (*GraphState, bool) {
 	state, ok := ctx.Value(ctxGraphKey{}).(*GraphState)
 	return state, ok
 }
+
+// ctxFlowKey is an unexported type for keys defined in this package.
+type ctxFlowKey struct{}
+
+// FlowState is the state of a flow execution.
+type FlowState[I any] struct {
+	Input  I
+	Prompt *blades.Prompt
+}
+
+// NewFlowContext returns a new Context that carries value.
+func NewFlowState[I any](input I, prompt *blades.Prompt) *FlowState[I] {
+	return &FlowState[I]{Input: input, Prompt: prompt}
+}
+
+// NewFlowContext returns a new Context that carries value.
+func NewFlowContext[I any](ctx context.Context, state *FlowState[I]) context.Context {
+	return context.WithValue(ctx, ctxFlowKey{}, state)
+}
+
+// FromFlowContext retrieves the FlowState from the context.
+func FromFlowContext[I any](ctx context.Context) (*FlowState[I], bool) {
+	state, ok := ctx.Value(ctxFlowKey{}).(*FlowState[I])
+	return state, ok
+}
