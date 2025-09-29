@@ -25,7 +25,6 @@ type Graph struct {
 	edges    map[blades.Runner]blades.Runner
 	branches map[blades.Runner]*graphBranch
 	start    blades.Runner
-	ends     map[blades.Runner]struct{}
 }
 
 // NewGraph creates and returns a new empty Graph.
@@ -34,7 +33,6 @@ func NewGraph() *Graph {
 		nodes:    make(map[blades.Runner]struct{}),
 		edges:    make(map[blades.Runner]blades.Runner),
 		branches: make(map[blades.Runner]*graphBranch),
-		ends:     make(map[blades.Runner]struct{}),
 	}
 }
 
@@ -54,7 +52,6 @@ func (g *Graph) AddEdgeStart(to blades.Runner) { g.start = to }
 // AddEdgeEnd adds an edge from 'from' node to the special end node.
 func (g *Graph) AddEdgeEnd(from blades.Runner) {
 	delete(g.edges, from)
-	g.ends[from] = struct{}{}
 }
 
 // AddBranch adds a branching condition to the graph.

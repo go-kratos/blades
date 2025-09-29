@@ -47,7 +47,7 @@ func main() {
 
 	// Branch condition: choose scifiWriter if recent assistant output mentions "scifi".
 	branchCond := func(ctx context.Context) (string, error) {
-		state, ok := flow.FromContext(ctx)
+		state, ok := flow.FromGraphContext(ctx)
 		if !ok {
 			return "", flow.ErrNoFlowState
 		}
