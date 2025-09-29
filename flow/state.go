@@ -10,6 +10,8 @@ import (
 var (
 	// ErrNoFlowState is returned when there is no flow state in the context.
 	ErrNoFlowState = errors.New("no flow state in context")
+	// ErrNoGraphState is returned when there is no graph state in the context.
+	ErrNoGraphState = errors.New("no graph state in context")
 )
 
 // ctxGraphKey is an unexported type for keys defined in this package.

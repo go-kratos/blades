@@ -34,10 +34,14 @@ func (f *Flow[I, O]) WithSystemTemplate(tmpl string) *Flow[I, O] {
 
 // buildPrompt constructs a Prompt from the input using the templates.
 func (f *Flow[I, O]) buildPrompt(input I) (*blades.Prompt, error) {
-	return blades.NewPromptTemplate().
-		System(f.systemTemplate, input).
-		User(f.userTemplate, input).
-		Build()
+	t := blades.NewPromptTemplate()
+	if f.userTemplate == "" {
+		t.User(f.userTemplate, input)
+	}
+	if f.systemTemplate != "" {
+		t.System(f.systemTemplate, input)
+	}
+	return t.Build()
 }
 
 // Run executes the flow with the given input and options, returning the output.
