@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/packages/param"
 )
 
@@ -31,9 +30,11 @@ type AudioProvider struct {
 	client openai.Client
 }
 
-// NewAudioProvider creates a new instance of AudioProvider.
-func NewAudioProvider(opts ...option.RequestOption) blades.ModelProvider {
-	return &AudioProvider{client: openai.NewClient(opts...)}
+// NewAudioProvider creates a new instance of AudioProvider with wrapped configuration options.
+// This avoids exposing external library types directly.
+func NewAudioProvider(opts ...Option) blades.ModelProvider {
+	config := NewConfig(opts...)
+	return &AudioProvider{client: openai.NewClient(config.toRequestOptions()...)}
 }
 
 // Generate generates audio from text input using the configured OpenAI model.

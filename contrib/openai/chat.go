@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/packages/param"
 	"github.com/openai/openai-go/v2/shared"
 )
@@ -28,11 +27,11 @@ type ChatProvider struct {
 	client openai.Client
 }
 
-// NewChatProvider constructs an OpenAI provider. The API key is read from
-// the OPENAI_API_KEY environment variable. If OPENAI_BASE_URL is set,
-// it is used as the API base URL; otherwise the library default is used.
-func NewChatProvider(opts ...option.RequestOption) blades.ModelProvider {
-	return &ChatProvider{client: openai.NewClient(opts...)}
+// NewChatProvider constructs an OpenAI provider with wrapped configuration options.
+// This avoids exposing external library types directly.
+func NewChatProvider(opts ...Option) blades.ModelProvider {
+	config := NewConfig(opts...)
+	return &ChatProvider{client: openai.NewClient(config.toRequestOptions()...)}
 }
 
 // New executes a non-streaming chat completion request.

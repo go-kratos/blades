@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/packages/param"
 )
 
@@ -25,9 +24,11 @@ type ImageProvider struct {
 	client openai.Client
 }
 
-// NewImageProvider creates a new instance of ImageProvider.
-func NewImageProvider(opts ...option.RequestOption) blades.ModelProvider {
-	return &ImageProvider{client: openai.NewClient(opts...)}
+// NewImageProvider creates a new instance of ImageProvider with wrapped configuration options.
+// This avoids exposing external library types directly.
+func NewImageProvider(opts ...Option) blades.ModelProvider {
+	config := NewConfig(opts...)
+	return &ImageProvider{client: openai.NewClient(config.toRequestOptions()...)}
 }
 
 // Generate generates images using the configured OpenAI model.
