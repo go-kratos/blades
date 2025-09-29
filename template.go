@@ -2,7 +2,6 @@ package blades
 
 import (
 	"fmt"
-	"maps"
 	"strings"
 	"text/template"
 )
@@ -14,7 +13,7 @@ type templateText struct {
 	// template is the raw Go text/template string
 	template string
 	// vars holds the data used to render the template
-	vars map[string]any
+	vars any
 	// name is an identifier for this template instance (useful for debugging)
 	name string
 }
@@ -34,25 +33,13 @@ func NewPromptTemplate() *PromptTemplate {
 	return &PromptTemplate{}
 }
 
-// mergeParams combines multiple param maps into one.
-func (p *PromptTemplate) mergeParams(params ...map[string]any) map[string]any {
-	out := make(map[string]any)
-	for _, kv := range params {
-		if kv == nil {
-			continue
-		}
-		maps.Copy(out, kv)
-	}
-	return out
-}
-
 // User appends a user message rendered from the provided template and params.
 // Params may be a map or struct accessible via Go text/template (e.g., {{.name}}).
-func (p *PromptTemplate) User(tmpl string, params ...map[string]any) *PromptTemplate {
+func (p *PromptTemplate) User(tmpl string, vars any) *PromptTemplate {
 	p.tmpls = append(p.tmpls, &templateText{
 		role:     RoleUser,
 		template: tmpl,
-		vars:     p.mergeParams(params...),
+		vars:     vars,
 		name:     fmt.Sprintf("user-%d", len(p.tmpls)),
 	})
 	return p
@@ -60,11 +47,11 @@ func (p *PromptTemplate) User(tmpl string, params ...map[string]any) *PromptTemp
 
 // System appends a system message rendered from the provided template and params.
 // Params may be a map or struct accessible via Go text/template (e.g., {{.name}}).
-func (p *PromptTemplate) System(tmpl string, params ...map[string]any) *PromptTemplate {
+func (p *PromptTemplate) System(tmpl string, vars any) *PromptTemplate {
 	p.tmpls = append(p.tmpls, &templateText{
 		role:     RoleSystem,
 		template: tmpl,
-		vars:     p.mergeParams(params...),
+		vars:     vars,
 		name:     fmt.Sprintf("system-%d", len(p.tmpls)),
 	})
 	return p

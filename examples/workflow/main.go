@@ -58,34 +58,33 @@ func main() {
 		return "general", nil // choose generalWriter
 	}
 
-	// Loop condition: run refineAgent up to 2 times.
-	loopCond := func(ctx context.Context) (bool, error) {
-		// In this example, we always return true to allow up to max iterations.
-		return true, nil
+	// Build graph: outline -> checker -> branch (scifi/general) -> refine -> end
+	g := flow.NewGraph()
+	g.AddNode(storyOutline)
+	g.AddNode(storyChecker)
+	g.AddNode(scifiWriter)
+	g.AddNode(generalWriter)
+	g.AddNode(refineAgent)
+	// Add edges and branches
+	g.AddEdgeStart(storyOutline)
+	g.AddEdge(storyOutline, storyChecker)
+	g.AddBranch(storyChecker, branchCond, map[string]blades.Runner{
+		"scifi":   scifiWriter,
+		"general": generalWriter,
+	})
+	g.AddEdge(scifiWriter, refineAgent)
+	g.AddEdge(generalWriter, refineAgent)
+	g.AddEdgeEnd(refineAgent)
+	// Compile the graph into a single runner
+	runner, err := g.Compile()
+	if err != nil {
+		log.Fatal(err)
 	}
-
-	// Build graph: outline -> checker -> branch (scifi/general) -> loop refine -> end
-	a := flow.NewNode(storyOutline)
-	b := flow.NewNode(storyChecker)
-	c := flow.NewNode(scifiWriter)
-	d := flow.NewNode(generalWriter)
-	e := flow.NewLoop(loopCond, refineAgent, flow.LoopMaxIterations(2))
-	branch := flow.NewBranch(branchCond)
-	branch.Add("scifi", c)
-	branch.Add("general", d)
-
-	// Define edges
-	a.To(b)
-	b.To(branch) // -> branch to choose between c and d
-	c.To(e)
-	d.To(e)
-
+	// Run the graph with an initial prompt
 	prompt := blades.NewPrompt(
 		blades.UserMessage("A brave knight embarks on a quest to find a hidden treasure."),
 	)
-
-	g := flow.New(a)
-	result, err := g.Run(context.Background(), prompt)
+	result, err := runner.Run(context.Background(), prompt)
 	if err != nil {
 		log.Fatal(err)
 	}

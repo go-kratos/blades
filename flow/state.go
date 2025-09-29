@@ -12,31 +12,31 @@ var (
 	ErrNoFlowState = errors.New("no flow state in context")
 )
 
-// ctxStateKey is an unexported type for keys defined in this package.
-type ctxStateKey struct{}
+// ctxGraphKey is an unexported type for keys defined in this package.
+type ctxGraphKey struct{}
 
-// State is the state of a flow execution.
-type State struct {
+// GraphState is the state of a graph execution.
+type GraphState struct {
 	Prompt   *blades.Prompt
 	History  []*blades.Message
 	Metadata map[string]any
 }
 
-// NewState returns a new GraphState with the given prompt and empty history and metadata.
-func NewState(prompt *blades.Prompt) *State {
-	return &State{
+// NewGraphState returns a new GraphState with the given prompt and empty history and metadata.
+func NewGraphState(prompt *blades.Prompt) *GraphState {
+	return &GraphState{
 		Prompt:   prompt,
 		Metadata: make(map[string]any),
 	}
 }
 
-// NewContext returns a new Context that carries value.
-func NewContext(ctx context.Context, state *State) context.Context {
-	return context.WithValue(ctx, ctxStateKey{}, state)
+// NewGraphContext returns a new Context that carries value.
+func NewGraphContext(ctx context.Context, state *GraphState) context.Context {
+	return context.WithValue(ctx, ctxGraphKey{}, state)
 }
 
-// FromContext retrieves the StateContext from the context.
-func FromContext(ctx context.Context) (*State, bool) {
-	state, ok := ctx.Value(ctxStateKey{}).(*State)
+// FromGraphContext retrieves the StateContext from the context.
+func FromGraphContext(ctx context.Context) (*GraphState, bool) {
+	state, ok := ctx.Value(ctxGraphKey{}).(*GraphState)
 	return state, ok
 }
