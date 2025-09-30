@@ -13,6 +13,7 @@ import (
 //
 // All nodes share the same input/output/option types to keep the API simple and predictable.
 type Graph[I, O, Option any] struct {
+	name   string
 	nodes  map[string]blades.Runner[I, O, Option]
 	edges  map[string][]string
 	starts []string
@@ -20,32 +21,33 @@ type Graph[I, O, Option any] struct {
 }
 
 // NewGraph creates an empty graph.
-func NewGraph[I, O, Option any]() *Graph[I, O, Option] {
+func NewGraph[I, O, Option any](name string) *Graph[I, O, Option] {
 	return &Graph[I, O, Option]{
+		name:  name,
 		nodes: make(map[string]blades.Runner[I, O, Option]),
 		edges: make(map[string][]string),
 	}
 }
 
 // AddNode registers a named runner node.
-func (g *Graph[I, O, Option]) AddNode(name string, runner blades.Runner[I, O, Option]) {
-	g.nodes[name] = runner
+func (g *Graph[I, O, Option]) AddNode(runner blades.Runner[I, O, Option]) {
+	g.nodes[runner.Name()] = runner
 }
 
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
-func (g *Graph[I, O, Option]) AddEdge(from, to string) {
-	g.edges[from] = append(g.edges[from], to)
+func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runner[I, O, Option]) {
+	g.edges[from.Name()] = append(g.edges[from.Name()], to.Name())
 }
 
 // AddStart marks a node as a start entry.
-func (g *Graph[I, O, Option]) AddStart(start string) {
-	g.starts = append(g.starts, start)
+func (g *Graph[I, O, Option]) AddStart(start blades.Runner[I, O, Option]) {
+	g.starts = append(g.starts, start.Name())
 }
 
 // AddEnd marks a node as a terminal.
-func (g *Graph[I, O, Option]) AddEnd(end string) {
-	g.ends = append(g.ends, end)
+func (g *Graph[I, O, Option]) AddEnd(end blades.Runner[I, O, Option]) {
+	g.ends = append(g.ends, end.Name())
 }
 
 // Compile returns a blades.Runner that executes the graph.
@@ -67,6 +69,10 @@ func (g *Graph[I, O, Option]) Compile() (blades.Runner[I, O, Option], error) {
 // graphRunner executes a compiled Graph.
 type graphRunner[I, O, Option any] struct {
 	graph *Graph[I, O, Option]
+}
+
+func (gr *graphRunner[I, O, Option]) Name() string {
+	return gr.graph.name
 }
 
 // Run executes the graph to completion and returns the final node's generation.

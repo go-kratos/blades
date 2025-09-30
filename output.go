@@ -18,6 +18,11 @@ func NewOutputConverter[T any](runner Runner[*Prompt, *Generation, ModelOption])
 	return &OutputConverter[T]{runner: runner}
 }
 
+// Name returns the name of the wrapped runner.
+func (o *OutputConverter[T]) Name() string {
+	return o.runner.Name()
+}
+
 // Run processes the given prompt using the wrapped runner and ensures the output conforms to type T.
 func (o *OutputConverter[T]) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (T, error) {
 	var result T

@@ -21,6 +21,10 @@ func NewModelNode(runner blades.Runner[*blades.Prompt, *blades.Generation, blade
 	}
 }
 
+func (n *ModelNode) Name() string {
+	return n.runner.Name()
+}
+
 func (n *ModelNode) Run(ctx context.Context, input *NodeInput, opts ...NodeOption) (*NodeOutput, error) {
 	input, err := n.transformer(input)
 	if err != nil {
