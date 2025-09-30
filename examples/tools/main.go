@@ -10,22 +10,23 @@ import (
 )
 
 func main() {
-	tools := []*blades.Tool{
-		{
-			Name:        "get_weather",
-			Description: "Get the current weather for a given city",
-			InputSchema: &jsonschema.Schema{
-				Type: "object",
-				Properties: map[string]*jsonschema.Schema{
-					"location": {Type: "string"},
-				},
-				Required: []string{"location"},
+	weatherHandler := blades.NewFuncTool(
+		"get_weather",
+		"Get the current weather for a given city",
+		&jsonschema.Schema{
+			Type: "object",
+			Properties: map[string]*jsonschema.Schema{
+				"location": {Type: "string"},
 			},
-			Handle: func(ctx context.Context, input string) (string, error) {
-				log.Println("Fetching weather for:", input)
-				return "Sunny, 25°C", nil
-			},
+			Required: []string{"location"},
 		},
+		func(ctx context.Context, input string) (string, error) {
+			log.Println("Fetching weather for:", input)
+			return "Sunny, 25°C", nil
+		},
+	)
+	tools := []*blades.Tool{
+		weatherHandler,
 	}
 	agent := blades.NewAgent(
 		"Weather Agent",
