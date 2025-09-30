@@ -76,6 +76,11 @@ func NewAgent(name string, opts ...Option) *Agent {
 	return a
 }
 
+// Name returns the name of the Agent.
+func (a *Agent) Name() string {
+	return a.name
+}
+
 func (a *Agent) buildContext(ctx context.Context) context.Context {
 	return NewContext(ctx, &AgentContext{
 		Model:        a.model,
