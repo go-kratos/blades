@@ -5,7 +5,7 @@ import (
 )
 
 var (
-	_ Runner = (*Agent)(nil)
+	_ Runner[*Prompt, *Generation, ModelOption] = (*Agent)(nil)
 )
 
 // Option is an option for configuring the Agent.

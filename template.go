@@ -36,6 +36,9 @@ func NewPromptTemplate() *PromptTemplate {
 // User appends a user message rendered from the provided template and params.
 // Params may be a map or struct accessible via Go text/template (e.g., {{.name}}).
 func (p *PromptTemplate) User(tmpl string, vars any) *PromptTemplate {
+	if tmpl == "" {
+		return p
+	}
 	p.tmpls = append(p.tmpls, &templateText{
 		role:     RoleUser,
 		template: tmpl,
@@ -48,6 +51,9 @@ func (p *PromptTemplate) User(tmpl string, vars any) *PromptTemplate {
 // System appends a system message rendered from the provided template and params.
 // Params may be a map or struct accessible via Go text/template (e.g., {{.name}}).
 func (p *PromptTemplate) System(tmpl string, vars any) *PromptTemplate {
+	if tmpl == "" {
+		return p
+	}
 	p.tmpls = append(p.tmpls, &templateText{
 		role:     RoleSystem,
 		template: tmpl,

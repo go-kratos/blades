@@ -49,7 +49,7 @@ func main() {
 	branchCond := func(ctx context.Context) (string, error) {
 		state, ok := flow.FromGraphContext(ctx)
 		if !ok {
-			return "", flow.ErrNoFlowState
+			return "", flow.ErrNoGraphState
 		}
 		text := strings.ToLower(state.Prompt.String())
 		if strings.Contains(text, "scifi") || strings.Contains(text, "sci-fi") {

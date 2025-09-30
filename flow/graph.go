@@ -7,210 +7,104 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-// Branch is a function that determines the next node to execute based on the context.
-type Branch func(context.Context) (string, error)
-
-type graphBranch struct {
-	branch Branch
-	nodes  map[string]blades.Runner
+// Graph is a lightweight directed acyclic execution graph that runs nodes in BFS order
+// starting from declared start nodes and stopping at terminal nodes. Edges optionally
+// transform a node's output into the next node's input.
+//
+// All nodes share the same input/output/option types to keep the API simple and predictable.
+type Graph[I, O, Option any] struct {
+	nodes  map[string]blades.Runner[I, O, Option]
+	edges  map[string][]string
+	starts []string
+	ends   []string
 }
 
-// Graph represents a directed acyclic processing graph of runners.
-// - Nodes are registered by name and must be unique.
-// - Edges encode the default next node (at most one per node).
-// - Conditions optionally override the next node at runtime.
-// Execution starts from the single root (node with in-degree 0).
-type Graph struct {
-	nodes    map[blades.Runner]struct{}
-	edges    map[blades.Runner]blades.Runner
-	branches map[blades.Runner]*graphBranch
-	start    blades.Runner
-}
-
-// NewGraph creates and returns a new empty Graph.
-func NewGraph() *Graph {
-	return &Graph{
-		nodes:    make(map[blades.Runner]struct{}),
-		edges:    make(map[blades.Runner]blades.Runner),
-		branches: make(map[blades.Runner]*graphBranch),
+// NewGraph creates an empty graph.
+func NewGraph[I, O, Option any]() *Graph[I, O, Option] {
+	return &Graph[I, O, Option]{
+		nodes: make(map[string]blades.Runner[I, O, Option]),
+		edges: make(map[string][]string),
 	}
 }
 
-// AddNode adds a node (runner) to the graph.
-func (g *Graph) AddNode(r blades.Runner) {
-	g.nodes[r] = struct{}{}
+// AddNode registers a named runner node.
+func (g *Graph[I, O, Option]) AddNode(name string, runner blades.Runner[I, O, Option]) {
+	g.nodes[name] = runner
 }
 
-// AddEdge adds a directed edge from 'from' node to 'to' node.
-func (g *Graph) AddEdge(from, to blades.Runner) {
-	g.edges[from] = to
+// AddEdge connects two named nodes. Optionally supply a transformer that maps
+// the upstream node's output (O) into the downstream node's input (I).
+func (g *Graph[I, O, Option]) AddEdge(from, to string) {
+	g.edges[from] = append(g.edges[from], to)
 }
 
-// AddEdgeStart adds an edge from the special start node to 'to' node.
-func (g *Graph) AddEdgeStart(to blades.Runner) { g.start = to }
-
-// AddEdgeEnd adds an edge from 'from' node to the special end node.
-func (g *Graph) AddEdgeEnd(from blades.Runner) {
-	delete(g.edges, from)
+// AddStart marks a node as a start entry.
+func (g *Graph[I, O, Option]) AddStart(start string) {
+	g.starts = append(g.starts, start)
 }
 
-// AddBranch adds a branching condition to the graph.
-func (g *Graph) AddBranch(from blades.Runner, branch Branch, nodes map[string]blades.Runner) {
-	g.branches[from] = &graphBranch{branch: branch, nodes: nodes}
+// AddEnd marks a node as a terminal.
+func (g *Graph[I, O, Option]) AddEnd(end string) {
+	g.ends = append(g.ends, end)
 }
 
-// Compile validates the graph structure and prepares it for execution.
-func (g *Graph) Compile() (blades.Runner, error) {
-	// Validate start node exists and is registered
-	if g.start == nil {
-		return nil, fmt.Errorf("graph: start node not defined")
-	}
-	if _, ok := g.nodes[g.start]; !ok {
-		return nil, fmt.Errorf("graph: start node not registered")
-	}
-	// Validate nodes referenced by edges are registered
+// Compile returns a blades.Runner that executes the graph.
+func (g *Graph[I, O, Option]) Compile() (blades.Runner[I, O, Option], error) {
+	// Basic validation for missing nodes referenced by edges.
 	for from, to := range g.edges {
 		if _, ok := g.nodes[from]; !ok {
-			return nil, fmt.Errorf("graph: edge from node not registered")
+			return nil, fmt.Errorf("graph: edge references unknown node %q", from)
 		}
-		if to != nil {
-			if _, ok := g.nodes[to]; !ok {
-				return nil, fmt.Errorf("graph: edge to node not registered")
+		for _, e := range to {
+			if _, ok := g.nodes[e]; !ok {
+				return nil, fmt.Errorf("graph: edge %q -> %q references unknown node", from, e)
 			}
 		}
 	}
-	// Validate branch targets are registered
-	for from, b := range g.branches {
-		if _, ok := g.nodes[from]; !ok {
-			return nil, fmt.Errorf("graph: branch from node not registered")
-		}
-		if b == nil || b.branch == nil {
-			return nil, fmt.Errorf("graph: branch function not defined")
-		}
-		for label, node := range b.nodes {
-			if node == nil {
-				return nil, fmt.Errorf("graph: branch target is nil")
-			}
-			if _, ok := g.nodes[node]; !ok {
-				return nil, fmt.Errorf("graph: branch target node not registered: %s", label)
-			}
-		}
-	}
-	// Detect cycles in default edges (ignoring dynamic branches)
-	visiting := make(map[blades.Runner]uint8) // 0=unseen,1=visiting,2=done
-	var dfs func(n blades.Runner) error
-	dfs = func(n blades.Runner) error {
-		if n == nil {
-			return nil
-		}
-		switch visiting[n] {
-		case 1:
-			return fmt.Errorf("graph: cycle detected in default edges")
-		case 2:
-			return nil
-		}
-		visiting[n] = 1
-		if to, ok := g.edges[n]; ok {
-			if err := dfs(to); err != nil {
-				return err
-			}
-		}
-		visiting[n] = 2
-		return nil
-	}
-	if err := dfs(g.start); err != nil {
-		return nil, err
-	}
-	// Return compiled runner
-	return &graphRunner{graph: g, start: g.start}, nil
+	return &graphRunner[I, O, Option]{graph: g}, nil
 }
 
 // graphRunner executes a compiled Graph.
-type graphRunner struct {
-	graph *Graph
-	start blades.Runner
-}
-
-// next returns the next node given the current 'from' node.
-func (gr *graphRunner) next(ctx context.Context, from blades.Runner) (blades.Runner, error) {
-	if b, ok := gr.graph.branches[from]; ok && b != nil && b.branch != nil {
-		label, err := b.branch(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("graph: branch eval failed: %w", err)
-		}
-		next, ok := b.nodes[label]
-		if !ok || next == nil {
-			return nil, fmt.Errorf("graph: branch target not found: %s", label)
-		}
-		return next, nil
-	}
-	if to, ok := gr.graph.edges[from]; ok {
-		return to, nil
-	}
-	// If no edge, treat as end
-	return nil, nil
+type graphRunner[I, O, Option any] struct {
+	graph *Graph[I, O, Option]
 }
 
 // Run executes the graph to completion and returns the final node's generation.
-func (gr *graphRunner) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Generation, error) {
-	state := NewGraphState(prompt)
-	ctx = NewGraphContext(ctx, state)
+func (gr *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (O, error) {
 	var (
-		err  error
-		last *blades.Generation
+		err    error
+		output O
 	)
-	current := gr.start
-	for current != nil {
-		last, err = current.Run(ctx, state.Prompt, opts...)
+	state := NewGraphState()
+	ctx = NewGraphContext(ctx, state)
+	for _, start := range gr.graph.starts {
+		node := gr.graph.nodes[start]
+		output, err = node.Run(ctx, input, opts...)
 		if err != nil {
-			return nil, err
+			return output, err
 		}
-		state.Prompt = blades.NewPrompt(last.Messages...)
-		state.History = append(state.History, last.Messages...)
-		next, err := gr.next(ctx, current)
-		if err != nil {
-			return nil, err
+		for _, to := range gr.graph.edges[start] {
+			node := gr.graph.nodes[to]
+			output, err = node.Run(ctx, input, opts...)
+			if err != nil {
+				return output, err
+			}
 		}
-		current = next
 	}
-	if last == nil {
-		return &blades.Generation{}, nil
-	}
-	return last, nil
+	return output, nil
 }
 
 // RunStream executes the graph and streams each node's output sequentially.
-func (gr *graphRunner) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
-	state := NewGraphState(prompt)
+func (gr *graphRunner[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamer[O], error) {
+	state := NewGraphState()
 	ctx = NewGraphContext(ctx, state)
-	pipe := blades.NewStreamPipe[*blades.Generation]()
+	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
-		current := gr.start
-		for current != nil {
-			stream, err := current.RunStream(ctx, state.Prompt, opts...)
-			if err != nil {
-				return err
-			}
-			var last *blades.Generation
-			for stream.Next() {
-				last, err = stream.Current()
-				if err != nil {
-					_ = stream.Close()
-					return err
-				}
-				pipe.Send(last)
-			}
-			if err := stream.Close(); err != nil {
-				return err
-			}
-			state.Prompt = blades.NewPrompt(last.Messages...)
-			state.History = append(state.History, last.Messages...)
-			next, err := gr.next(ctx, current)
-			if err != nil {
-				return err
-			}
-			current = next
+		output, err := gr.Run(ctx, input, opts...)
+		if err != nil {
+			return err
 		}
+		pipe.Send(output)
 		return nil
 	})
 	return pipe, nil
