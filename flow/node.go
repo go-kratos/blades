@@ -36,6 +36,4 @@ type NodeOutput struct {
 
 type NodeOption struct{}
 
-type Transformer[I any] func(I) (I, error)
-
 type Node blades.Runner[*NodeInput, *NodeOutput, NodeOption]

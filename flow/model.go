@@ -10,7 +10,6 @@ var _ Node = (*ModelNode)(nil)
 
 type ModelNode struct {
 	runner         *blades.OutputConverter[*NodeOutput]
-	transformer    Transformer[*NodeInput]
 	userTemplate   string
 	systemTemplate string
 }
@@ -26,10 +25,6 @@ func (n *ModelNode) Name() string {
 }
 
 func (n *ModelNode) Run(ctx context.Context, input *NodeInput, opts ...NodeOption) (*NodeOutput, error) {
-	input, err := n.transformer(input)
-	if err != nil {
-		return nil, err
-	}
 	params := make(map[string]any)
 	for _, param := range input.Inputs {
 		params[param.Name] = param.Value

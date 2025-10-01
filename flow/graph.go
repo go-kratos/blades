@@ -7,6 +7,11 @@ import (
 	"github.com/go-kratos/blades"
 )
 
+type graphEdge[T any] struct {
+	name         string
+	stateHandler GraphStateHandler[T]
+}
+
 // Graph is a lightweight directed acyclic execution graph that runs nodes in BFS order
 // starting from declared start nodes and stopping at terminal nodes. Edges optionally
 // transform a node's output into the next node's input.
@@ -15,7 +20,7 @@ import (
 type Graph[I, O, Option any] struct {
 	name   string
 	nodes  map[string]blades.Runner[I, O, Option]
-	edges  map[string][]string
+	edges  map[string][]*graphEdge[I]
 	starts []string
 	ends   []string
 }
@@ -25,7 +30,7 @@ func NewGraph[I, O, Option any](name string) *Graph[I, O, Option] {
 	return &Graph[I, O, Option]{
 		name:  name,
 		nodes: make(map[string]blades.Runner[I, O, Option]),
-		edges: make(map[string][]string),
+		edges: make(map[string][]*graphEdge[I]),
 	}
 }
 
@@ -36,8 +41,11 @@ func (g *Graph[I, O, Option]) AddNode(runner blades.Runner[I, O, Option]) {
 
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
-func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runner[I, O, Option]) {
-	g.edges[from.Name()] = append(g.edges[from.Name()], to.Name())
+func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runner[I, O, Option], stateHandler GraphStateHandler[I]) {
+	g.edges[from.Name()] = append(g.edges[from.Name()], &graphEdge[I]{
+		name:         to.Name(),
+		stateHandler: stateHandler,
+	})
 }
 
 // AddStart marks a node as a start entry.
@@ -58,7 +66,7 @@ func (g *Graph[I, O, Option]) Compile() (blades.Runner[I, O, Option], error) {
 			return nil, fmt.Errorf("graph: edge references unknown node %q", from)
 		}
 		for _, e := range to {
-			if _, ok := g.nodes[e]; !ok {
+			if _, ok := g.nodes[e.name]; !ok {
 				return nil, fmt.Errorf("graph: edge %q -> %q references unknown node", from, e)
 			}
 		}
@@ -90,7 +98,11 @@ func (gr *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...O
 			return output, err
 		}
 		for _, to := range gr.graph.edges[start] {
-			node := gr.graph.nodes[to]
+			node := gr.graph.nodes[to.name]
+			input, err := to.stateHandler(ctx, state)
+			if err != nil {
+				return output, err
+			}
 			output, err = node.Run(ctx, input, opts...)
 			if err != nil {
 				return output, err
