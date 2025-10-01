@@ -17,6 +17,9 @@ type ModelOptions struct {
 	ReasoningEffort string
 	Image           ImageOptions
 	Audio           AudioOptions
+	// Think Model options
+	ThinkingBudget  *int32 // Token budget for reasoning (Gemini)
+	IncludeThoughts *bool  // Whether to include thinking process in response (Gemini)
 }
 
 // ImageOptions holds configuration for image generation requests.

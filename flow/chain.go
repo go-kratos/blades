@@ -54,4 +54,3 @@ func (c *Chain) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...bl
 	})
 	return pipe, nil
 }
-
