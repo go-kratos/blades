@@ -6,17 +6,13 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-var (
-	_ blades.Runner = (*Chain)(nil)
-)
-
 // Chain represents a sequence of Runnable runners that process input sequentially.
 type Chain struct {
-	runners []blades.Runner
+	runners []blades.Runner[*blades.Prompt, *blades.Generation, blades.ModelOption]
 }
 
 // NewChain creates a new Chain with the given runners.
-func NewChain(runners ...blades.Runner) *Chain {
+func NewChain(runners ...blades.Runner[*blades.Prompt, *blades.Generation, blades.ModelOption]) *Chain {
 	return &Chain{
 		runners: runners,
 	}
@@ -54,4 +50,3 @@ func (c *Chain) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...bl
 	})
 	return pipe, nil
 }
-

@@ -5,7 +5,7 @@ import (
 )
 
 var (
-	_ Runner = (*Agent)(nil)
+	_ Runner[*Prompt, *Generation, ModelOption] = (*Agent)(nil)
 )
 
 // Option is an option for configuring the Agent.
@@ -74,6 +74,11 @@ func NewAgent(name string, opts ...Option) *Agent {
 		opt(a)
 	}
 	return a
+}
+
+// Name returns the name of the Agent.
+func (a *Agent) Name() string {
+	return a.name
 }
 
 func (a *Agent) buildContext(ctx context.Context) context.Context {
