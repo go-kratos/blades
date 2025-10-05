@@ -14,18 +14,19 @@ import (
 func main() {
 	ctx := context.Background()
 
-	provider := openai.NewImageProvider()
+	agent := blades.NewAgent(
+		"Image Agent",
+		blades.WithModel("gpt-image-1"),
+		blades.WithProvider(openai.NewImageProvider()),
+	)
 
-	req := &blades.ModelRequest{
-		Model: "gpt-image-1",
-		Messages: []*blades.Message{
-			blades.UserMessage("A watercolor illustration of a mountain cabin at sunrise"),
-		},
-	}
+	prompt := blades.NewPrompt(
+		blades.UserMessage("A watercolor illustration of a mountain cabin at sunrise"),
+	)
 
-	res, err := provider.Generate(
+	res, err := agent.Run(
 		ctx,
-		req,
+		prompt,
 		blades.ImageSize("1024x1024"),
 		blades.ImageOutputFormat("png"),
 	)

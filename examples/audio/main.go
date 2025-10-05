@@ -14,18 +14,19 @@ import (
 func main() {
 	ctx := context.Background()
 
-	provider := openai.NewAudioProvider()
+	agent := blades.NewAgent(
+		"Audio Agent",
+		blades.WithModel("gpt-4o-mini-tts"),
+		blades.WithProvider(openai.NewAudioProvider()),
+	)
 
-	req := &blades.ModelRequest{
-		Model: "gpt-4o-mini-tts",
-		Messages: []*blades.Message{
-			blades.UserMessage("Welcome to the Blades audio demo!"),
-		},
-	}
+	prompt := blades.NewPrompt(
+		blades.UserMessage("Welcome to the Blades audio demo!"),
+	)
 
-	res, err := provider.Generate(
+	res, err := agent.Run(
 		ctx,
-		req,
+		prompt,
 		blades.AudioVoice("alloy"),
 		blades.AudioResponseFormat("mp3"),
 	)
