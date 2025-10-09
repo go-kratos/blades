@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"strings"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
@@ -45,36 +44,23 @@ func main() {
 		blades.WithInstructions("Refine the story to improve clarity and flow."),
 	)
 
-	// Branch condition: choose scifiWriter if recent assistant output mentions "scifi".
-	branchCond := func(ctx context.Context) (string, error) {
-		state, ok := flow.FromGraphContext(ctx)
-		if !ok {
-			return "", flow.ErrNoGraphState
-		}
-		text := strings.ToLower(state.Prompt.String())
-		if strings.Contains(text, "scifi") || strings.Contains(text, "sci-fi") {
-			return "scifi", nil // choose scifiWriter
-		}
-		return "general", nil // choose generalWriter
+	stateHandler := func(ctx context.Context, output *blades.Generation) (*blades.Prompt, error) {
+		return blades.NewPrompt(output.Messages...), nil
 	}
 
 	// Build graph: outline -> checker -> branch (scifi/general) -> refine -> end
-	g := flow.NewGraph()
+	g := flow.NewGraph[*blades.Prompt, *blades.Generation, blades.ModelOption]("graph")
 	g.AddNode(storyOutline)
 	g.AddNode(storyChecker)
 	g.AddNode(scifiWriter)
 	g.AddNode(generalWriter)
 	g.AddNode(refineAgent)
 	// Add edges and branches
-	g.AddEdgeStart(storyOutline)
-	g.AddEdge(storyOutline, storyChecker)
-	g.AddBranch(storyChecker, branchCond, map[string]blades.Runner{
-		"scifi":   scifiWriter,
-		"general": generalWriter,
-	})
-	g.AddEdge(scifiWriter, refineAgent)
-	g.AddEdge(generalWriter, refineAgent)
-	g.AddEdgeEnd(refineAgent)
+	g.AddStart(storyOutline)
+	g.AddEdge(storyOutline, storyChecker, stateHandler)
+	g.AddEdge(scifiWriter, refineAgent, stateHandler)
+	g.AddEdge(generalWriter, refineAgent, stateHandler)
+	g.AddEnd(refineAgent)
 	// Compile the graph into a single runner
 	runner, err := g.Compile()
 	if err != nil {

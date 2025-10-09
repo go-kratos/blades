@@ -10,11 +10,11 @@ import (
 
 // OutputConverter is a wrapper around a Runnable runner that ensures the output conforms to a specified type T using JSON schema validation.
 type OutputConverter[T any] struct {
-	runner Runner[*Prompt, *Generation, ModelOption]
+	runner ModelRunner
 }
 
 // NewOutput creates a new Output instance that wraps the given Runnable runner.
-func NewOutputConverter[T any](runner Runner[*Prompt, *Generation, ModelOption]) *OutputConverter[T] {
+func NewOutputConverter[T any](runner ModelRunner) *OutputConverter[T] {
 	return &OutputConverter[T]{runner: runner}
 }
 

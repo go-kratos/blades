@@ -7,9 +7,13 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-type graphEdge[T any] struct {
+// GraphStateHandler is a function that handles the graph state.
+type GraphStateHandler[I, O any] func(ctx context.Context, output O) (I, error)
+
+// graphEdge represents a directed edge between two nodes in the graph.
+type graphEdge[I, O any] struct {
 	name         string
-	stateHandler GraphStateHandler[T]
+	stateHandler GraphStateHandler[I, O]
 }
 
 // Graph is a lightweight directed acyclic execution graph that runs nodes in BFS order
@@ -20,7 +24,7 @@ type graphEdge[T any] struct {
 type Graph[I, O, Option any] struct {
 	name   string
 	nodes  map[string]blades.Runner[I, O, Option]
-	edges  map[string][]*graphEdge[I]
+	edges  map[string][]*graphEdge[I, O]
 	starts []string
 	ends   []string
 }
@@ -30,7 +34,7 @@ func NewGraph[I, O, Option any](name string) *Graph[I, O, Option] {
 	return &Graph[I, O, Option]{
 		name:  name,
 		nodes: make(map[string]blades.Runner[I, O, Option]),
-		edges: make(map[string][]*graphEdge[I]),
+		edges: make(map[string][]*graphEdge[I, O]),
 	}
 }
 
@@ -41,8 +45,8 @@ func (g *Graph[I, O, Option]) AddNode(runner blades.Runner[I, O, Option]) {
 
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
-func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runner[I, O, Option], stateHandler GraphStateHandler[I]) {
-	g.edges[from.Name()] = append(g.edges[from.Name()], &graphEdge[I]{
+func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runner[I, O, Option], stateHandler GraphStateHandler[I, O]) {
+	g.edges[from.Name()] = append(g.edges[from.Name()], &graphEdge[I, O]{
 		name:         to.Name(),
 		stateHandler: stateHandler,
 	})
@@ -99,7 +103,7 @@ func (gr *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...O
 		}
 		for _, to := range gr.graph.edges[start] {
 			node := gr.graph.nodes[to.name]
-			input, err := to.stateHandler(ctx, state)
+			input, err := to.stateHandler(ctx, output)
 			if err != nil {
 				return output, err
 			}
@@ -107,6 +111,8 @@ func (gr *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...O
 			if err != nil {
 				return output, err
 			}
+			state.Inputs.Store(to.name, input)
+			state.Outputs.Store(to.name, output)
 		}
 	}
 	return output, nil

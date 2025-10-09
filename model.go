@@ -65,3 +65,6 @@ type ModelProvider interface {
 	// NewStream executes the request and returns a stream of assistant responses.
 	NewStream(context.Context, *ModelRequest, ...ModelOption) (Streamer[*ModelResponse], error)
 }
+
+// ModelRunner is a Runner specialized for processing Prompts and generating Generations with ModelOptions.
+type ModelRunner Runner[*Prompt, *Generation, ModelOption]

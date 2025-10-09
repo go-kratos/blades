@@ -13,30 +13,14 @@ var (
 	ErrNoGraphState = errors.New("no graph state in context")
 )
 
-// GraphStateHandler is a function that handles the graph state.
-type GraphStateHandler[T any] func(ctx context.Context, state *GraphState) (T, error)
-
 // ctxGraphKey is an unexported type for keys defined in this package.
 type ctxGraphKey struct{}
 
-// NodeState is the state of a node execution.
-type NodeState[I, O any] struct {
-	Input  I
-	Output O
-}
-
-// NewNodeState returns a new NodeState with the given input and output.
-func NewNodeState[I, O any](input I, output O) *NodeState[I, O] {
-	return &NodeState[I, O]{
-		Input:  input,
-		Output: output,
-	}
-}
-
 // GraphState is the state of a graph execution.
 type GraphState struct {
-	States   sync.Map // node -> state
-	Metadata sync.Map
+	Inputs   sync.Map // node -> input
+	Outputs  sync.Map // node -> output
+	Metadata sync.Map // name -> value
 }
 
 // NewGraphState returns a new GraphState with the given prompt and empty history and metadata.

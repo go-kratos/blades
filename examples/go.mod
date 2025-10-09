@@ -1,6 +1,8 @@
 module github.com/go-kratos/blades/examples
 
-go 1.24
+go 1.24.0
+
+toolchain go1.24.6
 
 replace (
 	github.com/go-kratos/blades => ../
