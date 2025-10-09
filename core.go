@@ -85,7 +85,10 @@ type Streamer[T any] interface {
 }
 
 // Runner represents an entity that can process prompts and generate responses.
-type Runner interface {
-	Run(context.Context, *Prompt, ...ModelOption) (*Generation, error)
-	RunStream(context.Context, *Prompt, ...ModelOption) (Streamer[*Generation], error)
+type Runner[Input, Output, Option any] interface {
+	Run(context.Context, Input, ...Option) (Output, error)
+	RunStream(context.Context, Input, ...Option) (Streamer[Output], error)
 }
+
+// ModelRunner is a Runner specialized for processing Prompts and generating Generations with ModelOptions.
+type ModelRunner Runner[*Prompt, *Generation, ModelOption]
