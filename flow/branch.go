@@ -8,16 +8,16 @@ import (
 )
 
 // BranchSelector is a function that selects a branch name based on the context.
-type BranchSelector func(context.Context) (string, error)
+type BranchSelector[I any] func(context.Context, I) (string, error)
 
 // Branch represents a branching structure of Runnable runners that process input based on a selector function.
 type Branch[I, O, Option any] struct {
-	selector BranchSelector
+	selector BranchSelector[I]
 	runners  map[string]blades.Runner[I, O, Option]
 }
 
 // NewBranch creates a new Branch with the given selector and runners.
-func NewBranch[I, O, Option any](selector BranchSelector, runners map[string]blades.Runner[I, O, Option]) *Branch[I, O, Option] {
+func NewBranch[I, O, Option any](selector BranchSelector[I], runners map[string]blades.Runner[I, O, Option]) *Branch[I, O, Option] {
 	return &Branch[I, O, Option]{
 		selector: selector,
 		runners:  runners,
@@ -30,7 +30,7 @@ func (c *Branch[I, O, Option]) Run(ctx context.Context, input I, opts ...Option)
 		err    error
 		output O
 	)
-	name, err := c.selector(ctx)
+	name, err := c.selector(ctx, input)
 	if err != nil {
 		return output, err
 	}
