@@ -7,9 +7,6 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-// GraphStateHandler is a function that handles the graph state.
-type GraphStateHandler[I, O any] func(ctx context.Context, output O) (I, error)
-
 // graphEdge represents a directed edge between two nodes in the graph.
 type graphEdge[I, O any] struct {
 	name         string
@@ -22,7 +19,6 @@ type graphEdge[I, O any] struct {
 //
 // All nodes share the same input/output/option types to keep the API simple and predictable.
 type Graph[I, O, Option any] struct {
-	name   string
 	nodes  map[string]blades.Runner[I, O, Option]
 	edges  map[string][]*graphEdge[I, O]
 	starts []string
@@ -30,36 +26,35 @@ type Graph[I, O, Option any] struct {
 }
 
 // NewGraph creates an empty graph.
-func NewGraph[I, O, Option any](name string) *Graph[I, O, Option] {
+func NewGraph[I, O, Option any]() *Graph[I, O, Option] {
 	return &Graph[I, O, Option]{
-		name:  name,
 		nodes: make(map[string]blades.Runner[I, O, Option]),
 		edges: make(map[string][]*graphEdge[I, O]),
 	}
 }
 
 // AddNode registers a named runner node.
-func (g *Graph[I, O, Option]) AddNode(runner blades.Runner[I, O, Option]) {
-	g.nodes[runner.Name()] = runner
+func (g *Graph[I, O, Option]) AddNode(name string, runner blades.Runner[I, O, Option]) {
+	g.nodes[name] = runner
 }
 
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
-func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runner[I, O, Option], stateHandler GraphStateHandler[I, O]) {
-	g.edges[from.Name()] = append(g.edges[from.Name()], &graphEdge[I, O]{
-		name:         to.Name(),
+func (g *Graph[I, O, Option]) AddEdge(from, to string, stateHandler GraphStateHandler[I, O]) {
+	g.edges[from] = append(g.edges[from], &graphEdge[I, O]{
+		name:         to,
 		stateHandler: stateHandler,
 	})
 }
 
 // AddStart marks a node as a start entry.
-func (g *Graph[I, O, Option]) AddStart(start blades.Runner[I, O, Option]) {
-	g.starts = append(g.starts, start.Name())
+func (g *Graph[I, O, Option]) AddStart(start string) {
+	g.starts = append(g.starts, start)
 }
 
 // AddEnd marks a node as a terminal.
-func (g *Graph[I, O, Option]) AddEnd(end blades.Runner[I, O, Option]) {
-	g.ends = append(g.ends, end.Name())
+func (g *Graph[I, O, Option]) AddEnd(end string) {
+	g.ends = append(g.ends, end)
 }
 
 // Compile returns a blades.Runner that executes the graph.
@@ -81,10 +76,6 @@ func (g *Graph[I, O, Option]) Compile() (blades.Runner[I, O, Option], error) {
 // graphRunner executes a compiled Graph.
 type graphRunner[I, O, Option any] struct {
 	graph *Graph[I, O, Option]
-}
-
-func (gr *graphRunner[I, O, Option]) Name() string {
-	return gr.graph.name
 }
 
 // Run executes the graph to completion and returns the final node's generation.

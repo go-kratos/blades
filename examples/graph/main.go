@@ -49,18 +49,18 @@ func main() {
 	}
 
 	// Build graph: outline -> checker -> branch (scifi/general) -> refine -> end
-	g := flow.NewGraph[*blades.Prompt, *blades.Generation, blades.ModelOption]("graph")
-	g.AddNode(storyOutline)
-	g.AddNode(storyChecker)
-	g.AddNode(scifiWriter)
-	g.AddNode(generalWriter)
-	g.AddNode(refineAgent)
+	g := flow.NewGraph[*blades.Prompt, *blades.Generation, blades.ModelOption]()
+	g.AddNode("outline", storyOutline)
+	g.AddNode("checker", storyChecker)
+	g.AddNode("scifi", scifiWriter)
+	g.AddNode("general", generalWriter)
+	g.AddNode("refine", refineAgent)
 	// Add edges and branches
-	g.AddStart(storyOutline)
-	g.AddEdge(storyOutline, storyChecker, stateHandler)
-	g.AddEdge(scifiWriter, refineAgent, stateHandler)
-	g.AddEdge(generalWriter, refineAgent, stateHandler)
-	g.AddEnd(refineAgent)
+	g.AddStart("outline")
+	g.AddEdge("outline", "checker", stateHandler)
+	g.AddEdge("scifi", "refine", stateHandler)
+	g.AddEdge("general", "refine", stateHandler)
+	g.AddEnd("refine")
 	// Compile the graph into a single runner
 	runner, err := g.Compile()
 	if err != nil {

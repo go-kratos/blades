@@ -43,11 +43,11 @@ func main() {
 			Text: string(content),
 		}),
 	)
-	result, err := tr.Run(context.Background(), prompt)
+	res, err := tr.Run(context.Background(), prompt)
 	if err != nil {
 		log.Fatal(err)
 	}
-	result, err = refine.Run(context.Background(), blades.NewPrompt(result.Messages...))
+	res, err := tr.Run(context.Background(), prompt)
 	if err != nil {
 		log.Fatal(err)
 	}
