@@ -10,7 +10,7 @@ import (
 // graphEdge represents a directed edge between two nodes in the graph.
 type graphEdge[I, O any] struct {
 	name         string
-	stateHandler GraphStateHandler[I, O]
+	stateHandler StateHandler[I, O]
 }
 
 // Graph is a lightweight directed acyclic execution graph that runs nodes in BFS order
@@ -40,7 +40,7 @@ func (g *Graph[I, O, Option]) AddNode(name string, runner blades.Runner[I, O, Op
 
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
-func (g *Graph[I, O, Option]) AddEdge(from, to string, stateHandler GraphStateHandler[I, O]) {
+func (g *Graph[I, O, Option]) AddEdge(from, to string, stateHandler StateHandler[I, O]) {
 	g.edges[from] = append(g.edges[from], &graphEdge[I, O]{
 		name:         to,
 		stateHandler: stateHandler,

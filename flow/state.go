@@ -13,8 +13,8 @@ var (
 	ErrNoGraphState = errors.New("no graph state in context")
 )
 
-// GraphStateHandler is a function that handles the graph state.
-type GraphStateHandler[I, O any] func(ctx context.Context, output O) (I, error)
+// StateHandler is a function that handles the graph state.
+type StateHandler[I, O any] func(ctx context.Context, output O) (I, error)
 
 // ctxGraphKey is an unexported type for keys defined in this package.
 type ctxGraphKey struct{}
