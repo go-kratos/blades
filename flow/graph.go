@@ -68,6 +68,27 @@ func (g *Graph[I, O, Option]) Compile() (blades.Runner[I, O, Option], error) {
 			if _, ok := g.nodes[e.name]; !ok {
 				return nil, fmt.Errorf("graph: edge %s -> %s references unknown node", from, e.name)
 			}
+			for _, start := range g.starts {
+				if e.name == start {
+					return nil, fmt.Errorf("graph: start node %s has incoming edges", start)
+				}
+			}
+		}
+	}
+	for _, start := range g.starts {
+		if _, ok := g.nodes[start]; !ok {
+			return nil, fmt.Errorf("graph: edge references unknown node %s", start)
+		}
+		if _, ok := g.edges[start]; !ok {
+			return nil, fmt.Errorf("graph: start node %s has no outgoing edges", start)
+		}
+	}
+	for _, end := range g.ends {
+		if _, ok := g.nodes[end]; !ok {
+			return nil, fmt.Errorf("graph: edge references unknown node %s", end)
+		}
+		if _, ok := g.edges[end]; ok {
+			return nil, fmt.Errorf("graph: end node %s has outgoing edges", end)
 		}
 	}
 	return &graphRunner[I, O, Option]{graph: g}, nil
