@@ -62,11 +62,11 @@ func (g *Graph[I, O, Option]) Compile() (blades.Runner[I, O, Option], error) {
 	// Basic validation for missing nodes referenced by edges.
 	for from, to := range g.edges {
 		if _, ok := g.nodes[from]; !ok {
-			return nil, fmt.Errorf("graph: edge references unknown node %q", from)
+			return nil, fmt.Errorf("graph: edge references unknown node %s", from)
 		}
 		for _, e := range to {
 			if _, ok := g.nodes[e.name]; !ok {
-				return nil, fmt.Errorf("graph: edge %q -> %q references unknown node", from, e)
+				return nil, fmt.Errorf("graph: edge %s -> %s references unknown node", from, e.name)
 			}
 		}
 	}
