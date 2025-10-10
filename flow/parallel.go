@@ -34,7 +34,7 @@ func (c *Parallel[I, O, Option]) Name() string {
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.
 func (c *Parallel[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (o O, err error) {
 	var (
-		outputs = make([]O, 0, len(c.runners))
+		outputs = make([]O, len(c.runners))
 	)
 	eg, ctx := errgroup.WithContext(ctx)
 	for idx, runner := range c.runners {
