@@ -45,19 +45,13 @@ func main() {
 		blades.WithInstructions("Refine the story to improve clarity and flow."),
 	)
 
-	branch := flow.NewBranch[*blades.Prompt, *blades.Generation, blades.ModelOption](
-		func(ctx context.Context, prompt *blades.Prompt) (string, error) {
-			text := strings.ToLower(prompt.String())
-			if strings.Contains(text, "scifi") || strings.Contains(text, "sci-fi") {
-				return "scifi", nil // choose scifiWriter
-			}
-			return "general", nil // choose generalWriter
-		},
-		map[string]blades.Runner[*blades.Prompt, *blades.Generation, blades.ModelOption]{
-			"scifi":   scifiWriter,
-			"general": generalWriter,
-		},
-	)
+	branchChoose := func(ctx context.Context, prompt *blades.Prompt) (string, error) {
+		text := strings.ToLower(prompt.String())
+		if strings.Contains(text, "scifi") || strings.Contains(text, "sci-fi") {
+			return "scifi", nil // choose scifiWriter
+		}
+		return "general", nil // choose generalWriter
+	}
 
 	stateHandler := func(ctx context.Context, output *blades.Generation) (*blades.Prompt, error) {
 		return blades.NewPrompt(output.Messages...), nil
@@ -69,8 +63,8 @@ func main() {
 	g.AddNode("checker", storyChecker)
 	g.AddNode("scifi", scifiWriter)
 	g.AddNode("general", generalWriter)
-	g.AddNode("branch", branch)
 	g.AddNode("refine", refineAgent)
+	g.AddBranch("branch", branchChoose)
 	// Add edges and branches
 	g.AddStart("outline")
 	g.AddEdge("outline", "checker", stateHandler)

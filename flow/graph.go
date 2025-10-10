@@ -44,6 +44,10 @@ func (g *Graph[I, O, Option]) AddNode(name string, runner blades.Runner[I, O, Op
 	return nil
 }
 
+func (g *Graph[I, O, Option]) AddBranch(name string, selector BranchSelector[I]) error {
+	return g.AddNode(name, NewBranch(selector, g.nodes))
+}
+
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
 func (g *Graph[I, O, Option]) AddEdge(from, to string, stateHandler StateHandler[I, O]) error {
