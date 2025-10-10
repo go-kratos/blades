@@ -8,16 +8,23 @@ import (
 
 // Chain represents a sequence of Runnable runners that process input sequentially.
 type Chain[I, O, Option any] struct {
+	name         string
 	stateHandler StateHandler[I, O]
 	runners      []blades.Runner[I, O, Option]
 }
 
 // NewChain creates a new Chain with the given runners.
-func NewChain[I, O, Option any](stateHandler StateHandler[I, O], runners ...blades.Runner[I, O, Option]) *Chain[I, O, Option] {
+func NewChain[I, O, Option any](name string, stateHandler StateHandler[I, O], runners ...blades.Runner[I, O, Option]) *Chain[I, O, Option] {
 	return &Chain[I, O, Option]{
-		stateHandler: stateHandler,
+		name:         name,
 		runners:      runners,
+		stateHandler: stateHandler,
 	}
+}
+
+// Name returns the name of the chain.
+func (c *Chain[I, O, Option]) Name() string {
+	return c.name
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.

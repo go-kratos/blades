@@ -9,14 +9,21 @@ import (
 
 // Parallel represents a sequence of Runnable runners that process input sequentially.
 type Parallel[I, O, Option any] struct {
+	name    string
 	runners []blades.Runner[I, O, Option]
 }
 
 // NewParallel creates a new Parallel with the given runners.
-func NewParallel[I, O, Option any](runners ...blades.Runner[I, O, Option]) *Parallel[I, O, Option] {
+func NewParallel[I, O, Option any](name string, runners ...blades.Runner[I, O, Option]) *Parallel[I, O, Option] {
 	return &Parallel[I, O, Option]{
+		name:    name,
 		runners: runners,
 	}
+}
+
+// Name returns the name of the Parallel.
+func (c *Parallel[I, O, Option]) Name() string {
+	return c.name
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.

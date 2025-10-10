@@ -12,16 +12,27 @@ type BranchSelector[I any] func(context.Context, I) (string, error)
 
 // Branch represents a branching structure of Runnable runners that process input based on a selector function.
 type Branch[I, O, Option any] struct {
+	name     string
 	selector BranchSelector[I]
 	runners  map[string]blades.Runner[I, O, Option]
 }
 
 // NewBranch creates a new Branch with the given selector and runners.
-func NewBranch[I, O, Option any](selector BranchSelector[I], runners map[string]blades.Runner[I, O, Option]) *Branch[I, O, Option] {
-	return &Branch[I, O, Option]{
-		selector: selector,
-		runners:  runners,
+func NewBranch[I, O, Option any](name string, selector BranchSelector[I], runners ...blades.Runner[I, O, Option]) *Branch[I, O, Option] {
+	m := make(map[string]blades.Runner[I, O, Option])
+	for _, runner := range runners {
+		m[runner.Name()] = runner
 	}
+	return &Branch[I, O, Option]{
+		name:     name,
+		selector: selector,
+		runners:  m,
+	}
+}
+
+// Name returns the name of the Branch.
+func (c *Branch[I, O, Option]) Name() string {
+	return c.name
 }
 
 // Run executes the selected runner based on the selector function.

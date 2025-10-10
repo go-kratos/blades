@@ -19,6 +19,7 @@ type graphEdge[I, O any] struct {
 //
 // All nodes share the same input/output/option types to keep the API simple and predictable.
 type Graph[I, O, Option any] struct {
+	name   string
 	nodes  map[string]blades.Runner[I, O, Option]
 	edges  map[string][]*graphEdge[I, O]
 	starts map[string]struct{}
@@ -26,8 +27,9 @@ type Graph[I, O, Option any] struct {
 }
 
 // NewGraph creates an empty graph.
-func NewGraph[I, O, Option any]() *Graph[I, O, Option] {
+func NewGraph[I, O, Option any](name string) *Graph[I, O, Option] {
 	return &Graph[I, O, Option]{
+		name:   name,
 		nodes:  make(map[string]blades.Runner[I, O, Option]),
 		edges:  make(map[string][]*graphEdge[I, O]),
 		starts: make(map[string]struct{}),
@@ -36,46 +38,42 @@ func NewGraph[I, O, Option any]() *Graph[I, O, Option] {
 }
 
 // AddNode registers a named runner node.
-func (g *Graph[I, O, Option]) AddNode(name string, runner blades.Runner[I, O, Option]) error {
-	if _, ok := g.nodes[name]; ok {
-		return fmt.Errorf("graph: node %s already exists", name)
+func (g *Graph[I, O, Option]) AddNode(runner blades.Runner[I, O, Option]) error {
+	if _, ok := g.nodes[runner.Name()]; ok {
+		return fmt.Errorf("graph: node %s already exists", runner.Name())
 	}
-	g.nodes[name] = runner
+	g.nodes[runner.Name()] = runner
 	return nil
-}
-
-func (g *Graph[I, O, Option]) AddBranch(name string, selector BranchSelector[I]) error {
-	return g.AddNode(name, NewBranch(selector, g.nodes))
 }
 
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
-func (g *Graph[I, O, Option]) AddEdge(from, to string, stateHandler StateHandler[I, O]) error {
-	if _, ok := g.edges[from]; ok {
+func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runner[I, O, Option], stateHandler StateHandler[I, O]) error {
+	if _, ok := g.edges[from.Name()]; ok {
 		return fmt.Errorf("graph: edge from %s already exists", from)
 	}
-	g.edges[from] = append(g.edges[from], &graphEdge[I, O]{
-		name:         to,
+	g.edges[from.Name()] = append(g.edges[from.Name()], &graphEdge[I, O]{
+		name:         to.Name(),
 		stateHandler: stateHandler,
 	})
 	return nil
 }
 
 // AddStart marks a node as a start entry.
-func (g *Graph[I, O, Option]) AddStart(start string) error {
-	if _, ok := g.starts[start]; ok {
+func (g *Graph[I, O, Option]) AddStart(start blades.Runner[I, O, Option]) error {
+	if _, ok := g.starts[start.Name()]; ok {
 		return fmt.Errorf("graph: start node %s already exists", start)
 	}
-	g.starts[start] = struct{}{}
+	g.starts[start.Name()] = struct{}{}
 	return nil
 }
 
 // AddEnd marks a node as a terminal.
-func (g *Graph[I, O, Option]) AddEnd(end string) error {
-	if _, ok := g.ends[end]; ok {
+func (g *Graph[I, O, Option]) AddEnd(end blades.Runner[I, O, Option]) error {
+	if _, ok := g.ends[end.Name()]; ok {
 		return fmt.Errorf("graph: end node %s already exists", end)
 	}
-	g.ends[end] = struct{}{}
+	g.ends[end.Name()] = struct{}{}
 	return nil
 }
 
@@ -142,6 +140,10 @@ func (g *Graph[I, O, Option]) Compile() (blades.Runner[I, O, Option], error) {
 type graphRunner[I, O, Option any] struct {
 	graph    *Graph[I, O, Option]
 	compiled map[string][]*graphEdge[I, O]
+}
+
+func (gr *graphRunner[I, O, Option]) Name() string {
+	return gr.graph.name
 }
 
 // Run executes the graph to completion and returns the final node's generation.

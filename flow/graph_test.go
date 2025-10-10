@@ -9,7 +9,12 @@ import (
 
 // runnerStub is a minimal blades.Runner used for tests.
 type runnerStub[I, O, Option any] struct {
-	run func(context.Context, I, ...Option) (O, error)
+	name string
+	run  func(context.Context, I, ...Option) (O, error)
+}
+
+func (r *runnerStub[I, O, Option]) Name() string {
+	return r.name
 }
 
 func (r *runnerStub[I, O, Option]) Run(ctx context.Context, in I, opts ...Option) (O, error) {
@@ -31,8 +36,9 @@ func (r *runnerStub[I, O, Option]) RunStream(ctx context.Context, in I, opts ...
 
 func TestGraph_LinearChain(t *testing.T) {
 	// Each node adds a fixed number to the input
-	add := func(n int) *runnerStub[int, int, struct{}] {
+	add := func(name string, n int) *runnerStub[int, int, struct{}] {
 		return &runnerStub[int, int, struct{}]{
+			name: name,
 			run: func(ctx context.Context, in int, _ ...struct{}) (int, error) {
 				return in + n, nil
 			},
@@ -40,14 +46,18 @@ func TestGraph_LinearChain(t *testing.T) {
 	}
 	state := func(ctx context.Context, out int) (int, error) { return out, nil }
 
-	g := NewGraph[int, int, struct{}]()
-	g.AddNode("A", add(1))
-	g.AddNode("B", add(2))
-	g.AddNode("C", add(3))
-	g.AddStart("A")
-	g.AddEdge("A", "B", state)
-	g.AddEdge("B", "C", state)
-	g.AddEnd("C")
+	a := add("A", 1)
+	b := add("B", 2)
+	c := add("C", 3)
+
+	g := NewGraph[int, int, struct{}]("test")
+	g.AddNode(a)
+	g.AddNode(b)
+	g.AddNode(c)
+	g.AddStart(a)
+	g.AddEdge(a, b, state)
+	g.AddEdge(b, c, state)
+	g.AddEnd(c)
 
 	runner, err := g.Compile()
 	if err != nil {
