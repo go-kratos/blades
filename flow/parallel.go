@@ -7,16 +7,21 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// / ParallelMerger is a function that merges the outputs of multiple runners into a single output.
+type ParallelMerger[O any] func(ctx context.Context, outputs []O) (O, error)
+
 // Parallel represents a sequence of Runnable runners that process input sequentially.
 type Parallel[I, O, Option any] struct {
 	name    string
+	merger  ParallelMerger[O]
 	runners []blades.Runner[I, O, Option]
 }
 
 // NewParallel creates a new Parallel with the given runners.
-func NewParallel[I, O, Option any](name string, runners ...blades.Runner[I, O, Option]) *Parallel[I, O, Option] {
+func NewParallel[I, O, Option any](name string, merger ParallelMerger[O], runners ...blades.Runner[I, O, Option]) *Parallel[I, O, Option] {
 	return &Parallel[I, O, Option]{
 		name:    name,
+		merger:  merger,
 		runners: runners,
 	}
 }
@@ -27,25 +32,25 @@ func (c *Parallel[I, O, Option]) Name() string {
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.
-func (c *Parallel[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (O, error) {
+func (c *Parallel[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (o O, err error) {
 	var (
-		err    error
-		output O
+		outputs = make([]O, 0, len(c.runners))
 	)
 	eg, ctx := errgroup.WithContext(ctx)
-	for _, runner := range c.runners {
+	for idx, runner := range c.runners {
 		eg.Go(func() error {
-			output, err = runner.Run(ctx, input, opts...)
+			output, err := runner.Run(ctx, input, opts...)
 			if err != nil {
 				return err
 			}
+			outputs[idx] = output
 			return nil
 		})
 	}
-	if err := eg.Wait(); err != nil {
-		return output, err
+	if err = eg.Wait(); err != nil {
+		return
 	}
-	return output, nil
+	return c.merger(ctx, outputs)
 }
 
 // RunStream executes the chain of runners sequentially, streaming the output of the last runner.
