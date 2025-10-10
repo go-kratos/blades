@@ -32,7 +32,7 @@ func main() {
 	stateHandler := func(ctx context.Context, output *blades.Generation) (*blades.Prompt, error) {
 		return blades.NewPrompt(output.Messages...), nil
 	}
-	chain := flow.NewChain("story_chain", stateHandler, storyOutline, storyChecker, storyAgent)
+	chain := flow.NewPipeline("story_chain", stateHandler, storyOutline, storyChecker, storyAgent)
 	// Input prompt
 	prompt := blades.NewPrompt(
 		blades.UserMessage("A brave knight embarks on a quest to find a hidden treasure."),

@@ -6,16 +6,16 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-// Chain represents a sequence of Runnable runners that process input sequentially.
-type Chain[I, O, Option any] struct {
+// Pipeline represents a sequence of Runnable runners that process input sequentially.
+type Pipeline[I, O, Option any] struct {
 	name         string
 	stateHandler StateHandler[I, O]
 	runners      []blades.Runner[I, O, Option]
 }
 
-// NewChain creates a new Chain with the given runners.
-func NewChain[I, O, Option any](name string, stateHandler StateHandler[I, O], runners ...blades.Runner[I, O, Option]) *Chain[I, O, Option] {
-	return &Chain[I, O, Option]{
+// NewPipeline creates a new Pipeline with the given runners.
+func NewPipeline[I, O, Option any](name string, stateHandler StateHandler[I, O], runners ...blades.Runner[I, O, Option]) *Pipeline[I, O, Option] {
+	return &Pipeline[I, O, Option]{
 		name:         name,
 		runners:      runners,
 		stateHandler: stateHandler,
@@ -23,12 +23,12 @@ func NewChain[I, O, Option any](name string, stateHandler StateHandler[I, O], ru
 }
 
 // Name returns the name of the chain.
-func (c *Chain[I, O, Option]) Name() string {
+func (c *Pipeline[I, O, Option]) Name() string {
 	return c.name
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.
-func (c *Chain[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (O, error) {
+func (c *Pipeline[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (O, error) {
 	var (
 		err    error
 		output O
@@ -47,7 +47,7 @@ func (c *Chain[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) 
 }
 
 // RunStream executes the chain of runners sequentially, streaming the output of the last runner.
-func (c *Chain[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamer[O], error) {
+func (c *Pipeline[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamer[O], error) {
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
 		for _, runner := range c.runners {
