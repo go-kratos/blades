@@ -9,8 +9,7 @@ import (
 
 // graphEdge represents a directed edge between two nodes in the graph.
 type graphEdge[I, O any] struct {
-	name         string
-	stateHandler StateHandler[I, O]
+	name string
 }
 
 // Graph is a lightweight directed acyclic execution graph that runs nodes in BFS order
@@ -48,13 +47,12 @@ func (g *Graph[I, O, Option]) AddNode(runner blades.Runner[I, O, Option]) error 
 
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
-func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runner[I, O, Option], stateHandler StateHandler[I, O]) error {
+func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runner[I, O, Option]) error {
 	if _, ok := g.edges[from.Name()]; ok {
 		return fmt.Errorf("graph: edge from %s already exists", from)
 	}
 	g.edges[from.Name()] = append(g.edges[from.Name()], &graphEdge[I, O]{
-		name:         to.Name(),
-		stateHandler: stateHandler,
+		name: to.Name(),
 	})
 	return nil
 }
@@ -152,18 +150,11 @@ func (gr *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...O
 		err    error
 		output O
 	)
-	state := NewGraphState()
-	ctx = NewGraphContext(ctx, state)
 	for _, queue := range gr.compiled {
 		for len(queue) > 0 {
 			next := queue[0]
 			queue = queue[1:]
 			node := gr.graph.nodes[next.name]
-			if next.stateHandler != nil {
-				if input, err = next.stateHandler(ctx, output); err != nil {
-					return output, err
-				}
-			}
 			output, err = node.Run(ctx, input, opts...)
 			if err != nil {
 				return output, err
@@ -175,8 +166,6 @@ func (gr *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...O
 
 // RunStream executes the graph and streams each node's output sequentially.
 func (gr *graphRunner[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamer[O], error) {
-	state := NewGraphState()
-	ctx = NewGraphContext(ctx, state)
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
 		output, err := gr.Run(ctx, input, opts...)

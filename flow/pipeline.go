@@ -8,17 +8,15 @@ import (
 
 // Pipeline represents a sequence of Runnable runners that process input sequentially.
 type Pipeline[I, O, Option any] struct {
-	name         string
-	stateHandler StateHandler[I, O]
-	runners      []blades.Runner[I, O, Option]
+	name    string
+	runners []blades.Runner[I, O, Option]
 }
 
 // NewPipeline creates a new Pipeline with the given runners.
-func NewPipeline[I, O, Option any](name string, stateHandler StateHandler[I, O], runners ...blades.Runner[I, O, Option]) *Pipeline[I, O, Option] {
+func NewPipeline[I, O, Option any](name string, runners ...blades.Runner[I, O, Option]) *Pipeline[I, O, Option] {
 	return &Pipeline[I, O, Option]{
-		name:         name,
-		runners:      runners,
-		stateHandler: stateHandler,
+		name:    name,
+		runners: runners,
 	}
 }
 
@@ -34,12 +32,7 @@ func (c *Pipeline[I, O, Option]) Run(ctx context.Context, input I, opts ...Optio
 		output O
 	)
 	for _, runner := range c.runners {
-		output, err = runner.Run(ctx, input, opts...)
-		if err != nil {
-			return output, err
-		}
-		input, err = c.stateHandler(ctx, output)
-		if err != nil {
+		if output, err = runner.Run(ctx, input, opts...); err != nil {
 			return output, err
 		}
 	}

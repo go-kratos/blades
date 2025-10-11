@@ -39,6 +39,7 @@ func (p *Prompt) String() string {
 // Generation represents a single generation of a response from the model.
 type Generation struct {
 	Messages []*Message `json:"message"`
+	Finish   bool       `json:"finish,omitempty"`
 }
 
 // Text extracts the text content from the first text part of the generation.

@@ -2,6 +2,11 @@ package blades
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
+	"text/template"
+
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 var (
@@ -18,6 +23,13 @@ func WithModel(model string) Option {
 	}
 }
 
+// WithDescription sets the description for the Agent.
+func WithDescription(description string) Option {
+	return func(a *Agent) {
+		a.description = description
+	}
+}
+
 // WithInstructions sets the instructions for the Agent.
 func WithInstructions(instructions string) Option {
 	return func(a *Agent) {
@@ -25,10 +37,24 @@ func WithInstructions(instructions string) Option {
 	}
 }
 
+// WithOutputSchema sets the output schema for the Agent.
+func WithOutputSchema(schema *jsonschema.Schema) Option {
+	return func(a *Agent) {
+		a.outputSchema = schema
+	}
+}
+
 // WithProvider sets the model provider for the Agent.
 func WithProvider(provider ModelProvider) Option {
 	return func(a *Agent) {
 		a.provider = provider
+	}
+}
+
+// WithState sets the state for the Agent.
+func WithState(s *State) Option {
+	return func(a *Agent) {
+		a.state = s
 	}
 }
 
@@ -57,11 +83,14 @@ func WithMiddleware(m Middleware) Option {
 type Agent struct {
 	name         string
 	model        string
+	description  string
 	instructions string
+	outputSchema *jsonschema.Schema
 	middleware   Middleware
 	provider     ModelProvider
 	memory       Memory
 	tools        []*Tool
+	state        *State
 }
 
 // NewAgent creates a new Agent with the given name and options.
@@ -81,19 +110,46 @@ func (a *Agent) Name() string {
 	return a.name
 }
 
+// Description returns the description of the Agent.
+func (a *Agent) Description() string {
+	return a.description
+}
+
+// buildContext builds the context for the Agent by embedding the AgentContext.
 func (a *Agent) buildContext(ctx context.Context) context.Context {
 	return NewContext(ctx, &AgentContext{
+		Name:         a.name,
 		Model:        a.model,
+		Description:  a.description,
 		Instructions: a.instructions,
 	})
 }
 
+func (a *Agent) buildInstructions() (string, error) {
+	if a.state != nil {
+		var buf strings.Builder
+		tmpl, err := template.New("system").Parse(a.instructions)
+		if err != nil {
+			return "", err
+		}
+		if err := tmpl.Execute(&buf, a.state.Clone()); err != nil {
+			return "", err
+		}
+		return buf.String(), nil
+	}
+	return a.instructions, nil
+}
+
 // buildRequest builds the request for the Agent by combining system instructions and user messages.
 func (a *Agent) buildRequest(ctx context.Context, prompt *Prompt) (*ModelRequest, error) {
-	req := ModelRequest{Model: a.model, Tools: a.tools}
+	req := ModelRequest{Model: a.model, Tools: a.tools, OutputSchema: a.outputSchema}
 	// system messages
 	if a.instructions != "" {
-		req.Messages = append(req.Messages, SystemMessage(a.instructions))
+		instructions, err := a.buildInstructions()
+		if err != nil {
+			return nil, err
+		}
+		req.Messages = append(req.Messages, SystemMessage(instructions))
 	}
 	// memory messages
 	if a.memory != nil {
@@ -144,6 +200,22 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 	return handler.Stream(ctx, prompt, opts...)
 }
 
+// storeState stores the output of the generation to the state if the generation is finished.
+func (a *Agent) storeState(gen *Generation) error {
+	if a.state != nil && gen.Finish {
+		if a.outputSchema != nil {
+			m := map[string]any{}
+			if err := json.Unmarshal([]byte(gen.Text()), &m); err != nil {
+				return err
+			}
+			a.state.Store(a.name, m)
+		} else {
+			a.state.Store(a.name, gen.Text())
+		}
+	}
+	return nil
+}
+
 // handler constructs the default handlers for Run and Stream using the provider.
 func (a *Agent) handler(req *ModelRequest) Handler {
 	return Handler{
@@ -155,18 +227,26 @@ func (a *Agent) handler(req *ModelRequest) Handler {
 			if err := a.addMemory(ctx, p, res); err != nil {
 				return nil, err
 			}
-			return &Generation{res.Messages}, nil
+			gen := &Generation{Messages: res.Messages, Finish: res.Finish}
+			if err := a.storeState(gen); err != nil {
+				return nil, err
+			}
+			return gen, nil
 		},
 		Stream: func(ctx context.Context, p *Prompt, opts ...ModelOption) (Streamer[*Generation], error) {
 			stream, err := a.provider.NewStream(ctx, req, opts...)
 			if err != nil {
 				return nil, err
 			}
-			return NewMappedStream[*ModelResponse, *Generation](stream, func(m *ModelResponse) (*Generation, error) {
-				if err := a.addMemory(ctx, p, m); err != nil {
+			return NewMappedStream[*ModelResponse, *Generation](stream, func(res *ModelResponse) (*Generation, error) {
+				if err := a.addMemory(ctx, p, res); err != nil {
 					return nil, err
 				}
-				return &Generation{m.Messages}, nil
+				gen := &Generation{Messages: res.Messages, Finish: res.Finish}
+				if err := a.storeState(gen); err != nil {
+					return nil, err
+				}
+				return gen, nil
 			}), nil
 		},
 	}
