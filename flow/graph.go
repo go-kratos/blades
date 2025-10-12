@@ -128,7 +128,7 @@ func (r *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Op
 			queue = queue[1:]
 			runner := r.graph.runners[next.name]
 			if handle {
-				if input, err = r.graph.stateHandler(ctx, next.name, output); err != nil {
+				if input, err = r.graph.stateHandler(ctx, next.name, output, state); err != nil {
 					return output, err
 				}
 			}

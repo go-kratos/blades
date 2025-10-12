@@ -54,7 +54,7 @@ func main() {
 	}
 	branchWriter := flow.NewBranch("branch", branchChoose, scifiWriter, generalWriter)
 	// Define state handler to convert output to input
-	stateHandler := func(ctx context.Context, current string, output *blades.Generation) (*blades.Prompt, error) {
+	stateHandler := func(ctx context.Context, current string, output *blades.Generation, state *flow.State[*blades.Prompt, *blades.Generation]) (*blades.Prompt, error) {
 		return blades.NewPrompt(output.Messages...), nil
 	}
 	// Build graph: outline -> checker -> branch (scifi/general) -> refine -> end
