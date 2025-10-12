@@ -7,26 +7,26 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-// BranchSelector is a function that selects a branch name based on the context.
-type BranchSelector[I any] func(context.Context, I) (string, error)
+// BranchCondition is a function that selects a branch name based on the context.
+type BranchCondition[I any] func(context.Context, I) (string, error)
 
 // Branch represents a branching structure of Runnable runners that process input based on a selector function.
 type Branch[I, O, Option any] struct {
-	name     string
-	selector BranchSelector[I]
-	runners  map[string]blades.Runner[I, O, Option]
+	name      string
+	condition BranchCondition[I]
+	runners   map[string]blades.Runner[I, O, Option]
 }
 
 // NewBranch creates a new Branch with the given selector and runners.
-func NewBranch[I, O, Option any](name string, selector BranchSelector[I], runners ...blades.Runner[I, O, Option]) *Branch[I, O, Option] {
+func NewBranch[I, O, Option any](name string, condition BranchCondition[I], runners ...blades.Runner[I, O, Option]) *Branch[I, O, Option] {
 	m := make(map[string]blades.Runner[I, O, Option])
 	for _, runner := range runners {
 		m[runner.Name()] = runner
 	}
 	return &Branch[I, O, Option]{
-		name:     name,
-		selector: selector,
-		runners:  m,
+		name:      name,
+		condition: condition,
+		runners:   m,
 	}
 }
 
@@ -41,7 +41,7 @@ func (c *Branch[I, O, Option]) Run(ctx context.Context, input I, opts ...Option)
 		err    error
 		output O
 	)
-	name, err := c.selector(ctx, input)
+	name, err := c.condition(ctx, input)
 	if err != nil {
 		return output, err
 	}
