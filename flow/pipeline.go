@@ -36,7 +36,7 @@ func (c *Sequential[I, O, Option]) Run(ctx context.Context, input I, opts ...Opt
 	state, ctx := EnsureState[I, O](ctx)
 	for idx, runner := range c.runners {
 		if idx > 0 {
-			if input, err = c.stateHandler(ctx, runner.Name(), output, state); err != nil {
+			if input, err = c.stateHandler(ctx, runner.Name(), output); err != nil {
 				return output, err
 			}
 		}

@@ -54,11 +54,11 @@ func main() {
 	}
 	branchWriter := flow.NewBranch("branch", branchChoose, scifiWriter, generalWriter)
 	// Define state handler to convert output to input
-	stateHandler := func(ctx context.Context, output *blades.Generation) (*blades.Prompt, error) {
+	stateHandler := func(ctx context.Context, current string, output *blades.Generation) (*blades.Prompt, error) {
 		return blades.NewPrompt(output.Messages...), nil
 	}
 	// Build graph: outline -> checker -> branch (scifi/general) -> refine -> end
-	g := flow.NewGraph[*blades.Prompt, *blades.Generation, blades.ModelOption]("story")
+	g := flow.NewGraph[*blades.Prompt, *blades.Generation, blades.ModelOption]("story", stateHandler)
 	g.AddNode(storyOutline)
 	g.AddNode(storyChecker)
 	g.AddNode(scifiWriter)
@@ -66,11 +66,10 @@ func main() {
 	g.AddNode(refineAgent)
 	// Add edges and branches
 	g.AddStart(storyOutline)
-	g.AddEdge(storyOutline, storyChecker, stateHandler)
-	g.AddEdge(storyChecker, branchWriter, stateHandler)
-	g.AddEdge(scifiWriter, refineAgent, stateHandler)
-	g.AddEdge(generalWriter, refineAgent, stateHandler)
-	g.AddEnd(refineAgent)
+	g.AddEdge(storyOutline, storyChecker)
+	g.AddEdge(storyChecker, branchWriter)
+	g.AddEdge(scifiWriter, refineAgent)
+	g.AddEdge(generalWriter, refineAgent)
 	// Compile the graph into a single runner
 	runner, err := g.Compile()
 	if err != nil {

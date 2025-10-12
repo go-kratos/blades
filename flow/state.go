@@ -6,7 +6,7 @@ import (
 )
 
 // StateHandler is a function that handles the state of a flow.
-type StateHandler[I, O any] func(ctx context.Context, current string, output O, state *State[I, O]) (I, error)
+type StateHandler[I, O any] func(ctx context.Context, current string, output O) (I, error)
 
 // ctxStqateKey is an unexported type for keys defined in this package.
 type ctxStateKey struct{}
