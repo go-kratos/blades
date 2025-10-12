@@ -44,20 +44,21 @@ func TestGraph_LinearChain(t *testing.T) {
 			},
 		}
 	}
-	state := func(ctx context.Context, out int) (int, error) { return out, nil }
+	state := func(ctx context.Context, current string, output int, state *State[int, int]) (int, error) {
+		return output, nil
+	}
 
 	a := add("A", 1)
 	b := add("B", 2)
 	c := add("C", 3)
 
-	g := NewGraph[int, int, struct{}]("test")
+	g := NewGraph[int, int, struct{}]("test", state)
 	g.AddNode(a)
 	g.AddNode(b)
 	g.AddNode(c)
 	g.AddStart(a)
-	g.AddEdge(a, b, state)
-	g.AddEdge(b, c, state)
-	g.AddEnd(c)
+	g.AddEdge(a, b)
+	g.AddEdge(b, c)
 
 	runner, err := g.Compile()
 	if err != nil {

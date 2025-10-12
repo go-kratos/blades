@@ -2,9 +2,6 @@ package blades
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
-	"text/template"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -51,13 +48,6 @@ func WithProvider(provider ModelProvider) Option {
 	}
 }
 
-// WithState sets the state for the Agent.
-func WithState(s *State) Option {
-	return func(a *Agent) {
-		a.state = s
-	}
-}
-
 // WithTools sets the tools for the Agent.
 func WithTools(tools ...*Tool) Option {
 	return func(a *Agent) {
@@ -89,7 +79,6 @@ type Agent struct {
 	middleware   Middleware
 	provider     ModelProvider
 	memory       Memory
-	state        *State
 	tools        []*Tool
 }
 
@@ -125,31 +114,12 @@ func (a *Agent) buildContext(ctx context.Context) context.Context {
 	})
 }
 
-func (a *Agent) buildInstructions() (string, error) {
-	if a.state != nil {
-		var buf strings.Builder
-		tmpl, err := template.New("system").Parse(a.instructions)
-		if err != nil {
-			return "", err
-		}
-		if err := tmpl.Execute(&buf, a.state.Clone()); err != nil {
-			return "", err
-		}
-		return buf.String(), nil
-	}
-	return a.instructions, nil
-}
-
 // buildRequest builds the request for the Agent by combining system instructions and user messages.
 func (a *Agent) buildRequest(ctx context.Context, prompt *Prompt) (*ModelRequest, error) {
 	req := ModelRequest{Model: a.model, Tools: a.tools, OutputSchema: a.outputSchema}
 	// system messages
 	if a.instructions != "" {
-		instructions, err := a.buildInstructions()
-		if err != nil {
-			return nil, err
-		}
-		req.Messages = append(req.Messages, SystemMessage(instructions))
+		req.Messages = append(req.Messages, SystemMessage(a.instructions))
 	}
 	// memory messages
 	if a.memory != nil {
@@ -200,22 +170,6 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 	return handler.Stream(ctx, prompt, opts...)
 }
 
-// storeState stores the output of the generation to the state if the generation is finished.
-func (a *Agent) storeState(gen *Generation) error {
-	if a.state != nil && gen.Finish {
-		if a.outputSchema != nil {
-			m := map[string]any{}
-			if err := json.Unmarshal([]byte(gen.Text()), &m); err != nil {
-				return err
-			}
-			a.state.Store(a.name, m)
-		} else {
-			a.state.Store(a.name, gen.Text())
-		}
-	}
-	return nil
-}
-
 // handler constructs the default handlers for Run and Stream using the provider.
 func (a *Agent) handler(req *ModelRequest) Handler {
 	return Handler{
@@ -227,11 +181,7 @@ func (a *Agent) handler(req *ModelRequest) Handler {
 			if err := a.addMemory(ctx, p, res); err != nil {
 				return nil, err
 			}
-			gen := &Generation{Messages: res.Messages, Finish: res.Finish}
-			if err := a.storeState(gen); err != nil {
-				return nil, err
-			}
-			return gen, nil
+			return &Generation{Messages: res.Messages, Finish: res.Finish}, nil
 		},
 		Stream: func(ctx context.Context, p *Prompt, opts ...ModelOption) (Streamer[*Generation], error) {
 			stream, err := a.provider.NewStream(ctx, req, opts...)
@@ -242,11 +192,7 @@ func (a *Agent) handler(req *ModelRequest) Handler {
 				if err := a.addMemory(ctx, p, res); err != nil {
 					return nil, err
 				}
-				gen := &Generation{Messages: res.Messages, Finish: res.Finish}
-				if err := a.storeState(gen); err != nil {
-					return nil, err
-				}
-				return gen, nil
+				return &Generation{Messages: res.Messages, Finish: res.Finish}, nil
 			}), nil
 		},
 	}

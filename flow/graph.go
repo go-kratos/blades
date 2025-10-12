@@ -24,19 +24,21 @@ type graphEdge struct {
 //
 // All nodes share the same input/output/option types to keep the API simple and predictable.
 type Graph[I, O, Option any] struct {
-	name    string
-	runners map[string]blades.Runner[I, O, Option]
-	nodes   map[string]*graphNode
-	starts  map[string]struct{}
+	name         string
+	runners      map[string]blades.Runner[I, O, Option]
+	nodes        map[string]*graphNode
+	starts       map[string]struct{}
+	stateHandler StateHandler[I, O]
 }
 
 // NewGraph creates an empty graph.
-func NewGraph[I, O, Option any](name string) *Graph[I, O, Option] {
+func NewGraph[I, O, Option any](name string, stateHandler StateHandler[I, O]) *Graph[I, O, Option] {
 	return &Graph[I, O, Option]{
-		name:    name,
-		runners: make(map[string]blades.Runner[I, O, Option]),
-		nodes:   make(map[string]*graphNode),
-		starts:  make(map[string]struct{}),
+		name:         name,
+		stateHandler: stateHandler,
+		runners:      make(map[string]blades.Runner[I, O, Option]),
+		nodes:        make(map[string]*graphNode),
+		starts:       make(map[string]struct{}),
 	}
 }
 
@@ -108,35 +110,44 @@ type graphRunner[I, O, Option any] struct {
 	compiled map[string][]*graphNode
 }
 
-func (gr *graphRunner[I, O, Option]) Name() string {
-	return gr.graph.name
+func (r *graphRunner[I, O, Option]) Name() string {
+	return r.graph.name
 }
 
 // Run executes the graph to completion and returns the final node's generation.
-func (gr *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (O, error) {
+func (r *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (O, error) {
 	var (
 		err    error
 		output O
 	)
-	for _, queue := range gr.compiled {
+	state, ctx := EnsureState[I, O](ctx)
+	for _, queue := range r.compiled {
+		handle := false
 		for len(queue) > 0 {
 			next := queue[0]
 			queue = queue[1:]
-			runner := gr.graph.runners[next.name]
-			output, err = runner.Run(ctx, input, opts...)
-			if err != nil {
+			runner := r.graph.runners[next.name]
+			if handle {
+				if input, err = r.graph.stateHandler(ctx, next.name, output, state); err != nil {
+					return output, err
+				}
+			}
+			handle = true
+			if output, err = runner.Run(ctx, input, opts...); err != nil {
 				return output, err
 			}
+			state.Inputs.Store(next.name, input)
+			state.Outputs.Store(next.name, output)
 		}
 	}
 	return output, nil
 }
 
 // RunStream executes the graph and streams each node's output sequentially.
-func (gr *graphRunner[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamer[O], error) {
+func (r *graphRunner[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamer[O], error) {
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
-		output, err := gr.Run(ctx, input, opts...)
+		output, err := r.Run(ctx, input, opts...)
 		if err != nil {
 			return err
 		}
