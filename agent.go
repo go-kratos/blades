@@ -89,8 +89,8 @@ type Agent struct {
 	middleware   Middleware
 	provider     ModelProvider
 	memory       Memory
-	tools        []*Tool
 	state        *State
+	tools        []*Tool
 }
 
 // NewAgent creates a new Agent with the given name and options.
