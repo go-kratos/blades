@@ -1,6 +1,6 @@
 module github.com/go-kratos/blades
 
-go 1.24.6
+go 1.24.0
 
 require (
 	github.com/go-kratos/generics v0.0.0-20251013145023-89b16312d7dd

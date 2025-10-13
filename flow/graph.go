@@ -127,7 +127,7 @@ func (r *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Op
 			next := queue[0]
 			queue = queue[1:]
 			if handle {
-				if input, err = r.graph.transition(ctx, Transition{Previous: last.Name(), Current: next.name}, output); err != nil {
+				if input, err = r.graph.transition(ctx, Transition{From: last.Name(), To: next.name}, output); err != nil {
 					return output, err
 				}
 			}

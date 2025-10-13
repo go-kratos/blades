@@ -1,6 +1,6 @@
 module github.com/go-kratos/blades/contrib/claude
 
-go 1.25.1
+go 1.24.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.13.0
@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	github.com/go-kratos/generics v0.0.0-20251013145023-89b16312d7dd // indirect
 	github.com/google/jsonschema-go v0.2.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect

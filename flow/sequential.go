@@ -36,7 +36,7 @@ func (c *Sequential[I, O, Option]) Run(ctx context.Context, input I, opts ...Opt
 	)
 	for idx, runner := range c.runners {
 		if idx > 0 {
-			if input, err = c.transition(ctx, Transition{Previous: last.Name(), Current: runner.Name()}, output); err != nil {
+			if input, err = c.transition(ctx, Transition{From: last.Name(), To: runner.Name()}, output); err != nil {
 				return output, err
 			}
 		}

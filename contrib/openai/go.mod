@@ -1,6 +1,6 @@
 module github.com/go-kratos/blades/contrib/openai
 
-go 1.24.6
+go 1.24.0
 
 require (
 	github.com/go-kratos/blades v0.0.0-20250928061855-93360cba17ff
@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	github.com/go-kratos/generics v0.0.0-20251013145023-89b16312d7dd // indirect
 	github.com/google/jsonschema-go v0.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect

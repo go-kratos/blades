@@ -348,20 +348,19 @@ func ConvertGenAIToBlades(resp *genai.GenerateContentResponse) (*blades.ModelRes
 		return nil, fmt.Errorf("response cannot be nil")
 	}
 
-	messages := make([]*blades.Message, 0, len(resp.Candidates))
+	response := &blades.ModelResponse{}
 
 	for _, candidate := range resp.Candidates {
+		if candidate.Content == nil {
+			continue
+		}
 		msg, err := convertGenAICandidateToBlades(candidate)
 		if err != nil {
 			return nil, fmt.Errorf("converting candidate: %w", err)
 		}
 		if msg != nil {
-			messages = append(messages, msg)
+			response.Message = msg
 		}
-	}
-
-	response := &blades.ModelResponse{
-		Messages: messages,
 	}
 
 	return response, nil
@@ -369,10 +368,6 @@ func ConvertGenAIToBlades(resp *genai.GenerateContentResponse) (*blades.ModelRes
 
 // convertGenAICandidateToBlades converts a GenAI Candidate to Blades Message
 func convertGenAICandidateToBlades(candidate *genai.Candidate) (*blades.Message, error) {
-	if candidate == nil || candidate.Content == nil {
-		return nil, nil
-	}
-
 	parts := make([]blades.Part, 0, len(candidate.Content.Parts))
 	var toolCalls []*blades.ToolCall
 

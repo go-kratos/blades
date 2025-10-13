@@ -1,6 +1,6 @@
 module github.com/go-kratos/blades/contrib/gemini
 
-go 1.25.1
+go 1.24.0
 
 require (
 	github.com/go-kratos/blades v0.0.0-20250928061855-93360cba17ff
@@ -11,6 +11,7 @@ require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.8.4 // indirect
+	github.com/go-kratos/generics v0.0.0-20251013145023-89b16312d7dd // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/jsonschema-go v0.2.3 // indirect
