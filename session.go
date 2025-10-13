@@ -13,7 +13,7 @@ type Session struct {
 	History generics.Slice[*Message]
 	Inputs  generics.Map[string, *Prompt]
 	Outputs generics.Map[string, *Message]
-	State   State
+	State   generics.Map[string, any]
 }
 
 // NewSession creates a new Session instance with a unique ID.
