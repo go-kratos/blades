@@ -49,6 +49,3 @@ type Runner[Input, Output, Option any] interface {
 	Run(context.Context, Input, ...Option) (Output, error)
 	RunStream(context.Context, Input, ...Option) (Streamer[Output], error)
 }
-
-// ModelRunner is a Runner specialized for processing Prompts and generating Generations with ModelOptions.
-type ModelRunner Runner[*Prompt, *Message, ModelOption]
