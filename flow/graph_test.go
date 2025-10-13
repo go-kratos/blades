@@ -21,7 +21,7 @@ func (r *runnerStub[I, O, Option]) Run(ctx context.Context, in I, opts ...Option
 	return r.run(ctx, in, opts...)
 }
 
-func (r *runnerStub[I, O, Option]) RunStream(ctx context.Context, in I, opts ...Option) (blades.Streamer[O], error) {
+func (r *runnerStub[I, O, Option]) RunStream(ctx context.Context, in I, opts ...Option) (blades.Streamable[O], error) {
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
 		out, err := r.run(ctx, in, opts...)
@@ -44,7 +44,11 @@ func TestGraph_LinearChain(t *testing.T) {
 			},
 		}
 	}
-	state := func(ctx context.Context, current string, output int, state *State[int, int]) (int, error) {
+	state := func(ctx context.Context, previous, current string, state *State[int, int]) (int, error) {
+		output, ok := state.Outputs.Load(previous)
+		if !ok {
+			return 0, nil
+		}
 		return output, nil
 	}
 

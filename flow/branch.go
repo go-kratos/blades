@@ -47,7 +47,7 @@ func (c *Branch[I, O, Option]) Run(ctx context.Context, input I, opts ...Option)
 	}
 	runner, ok := c.runners[name]
 	if !ok {
-		return output, fmt.Errorf("Branch: runner not found: %s", name)
+		return output, fmt.Errorf("branch: runner not found: %s", name)
 	}
 	return runner.Run(ctx, input, opts...)
 }

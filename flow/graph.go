@@ -119,6 +119,7 @@ func (r *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Op
 	var (
 		err    error
 		output O
+		last   blades.Runnable[I, O, Option]
 	)
 	state, ctx := EnsureState[I, O](ctx)
 	for _, queue := range r.compiled {
@@ -126,16 +127,17 @@ func (r *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Op
 		for len(queue) > 0 {
 			next := queue[0]
 			queue = queue[1:]
-			runner := r.graph.runners[next.name]
 			if handle {
-				if input, err = r.graph.stateHandler(ctx, next.name, output, state); err != nil {
+				if input, err = r.graph.stateHandler(ctx, Transition{Previous: last.Name(), Current: next.name}, state); err != nil {
 					return output, err
 				}
 			}
 			handle = true
+			runner := r.graph.runners[next.name]
 			if output, err = runner.Run(ctx, input, opts...); err != nil {
 				return output, err
 			}
+			last = runner
 			state.History.Append(output)
 			state.Inputs.Store(next.name, input)
 			state.Outputs.Store(next.name, output)

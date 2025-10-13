@@ -6,8 +6,14 @@ import (
 	"github.com/go-kratos/generics"
 )
 
+// Transition represents a state transition.
+type Transition struct {
+	Previous string
+	Current  string
+}
+
 // StateHandler is a function that handles the state of a flow.
-type StateHandler[I, O any] func(ctx context.Context, current string, output O, state *State[I, O]) (I, error)
+type StateHandler[I, O any] func(ctx context.Context, transition Transition, state *State[I, O]) (I, error)
 
 // ctxStqateKey is an unexported type for keys defined in this package.
 type ctxStateKey struct{}
