@@ -136,12 +136,12 @@ func (a *Agent) buildRequest(ctx context.Context, prompt *Prompt) (*ModelRequest
 	return &req, nil
 }
 
-func (a *Agent) addMemory(ctx context.Context, prompt *Prompt, res *ModelResponse) error {
+func (a *Agent) addMemory(ctx context.Context, session *Session, prompt *Prompt, res *ModelResponse) error {
 	if a.memory != nil {
 		messages := make([]*Message, 0, len(prompt.Messages)+1)
 		messages = append(messages, prompt.Messages...)
 		messages = append(messages, res.Message)
-		if err := a.memory.AddMessages(ctx, prompt.ConversationID, messages); err != nil {
+		if err := a.memory.AddMessages(ctx, session.ID, messages); err != nil {
 			return err
 		}
 	}
@@ -174,33 +174,33 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 func (a *Agent) handler(req *ModelRequest) Handler {
 	return Handler{
 		Run: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
-			state, ctx := EnsureState(ctx)
+			session, ctx := EnsureSession(ctx)
 			res, err := a.provider.Generate(ctx, req, opts...)
 			if err != nil {
 				return nil, err
 			}
-			if err := a.addMemory(ctx, prompt, res); err != nil {
+			if err := a.addMemory(ctx, session, prompt, res); err != nil {
 				return nil, err
 			}
-			state.Inputs.Store(a.name, prompt)
-			state.Outputs.Store(a.name, res.Message)
-			state.History.Append(res.Message)
+			session.Inputs.Store(a.name, prompt)
+			session.Outputs.Store(a.name, res.Message)
+			session.History.Append(res.Message)
 			return res.Message, nil
 		},
 		Stream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
-			state, ctx := EnsureState(ctx)
+			session, ctx := EnsureSession(ctx)
 			stream, err := a.provider.NewStream(ctx, req, opts...)
 			if err != nil {
 				return nil, err
 			}
 			return NewMappedStream[*ModelResponse, *Message](stream, func(res *ModelResponse) (*Message, error) {
 				if res.Message.Status == StatusCompleted {
-					if err := a.addMemory(ctx, prompt, res); err != nil {
+					if err := a.addMemory(ctx, session, prompt, res); err != nil {
 						return nil, err
 					}
-					state.Inputs.Store(a.name, prompt)
-					state.Outputs.Store(a.name, res.Message)
-					state.History.Append(res.Message)
+					session.Inputs.Store(a.name, prompt)
+					session.Outputs.Store(a.name, res.Message)
+					session.History.Append(res.Message)
 				}
 				return res.Message, nil
 			}), nil

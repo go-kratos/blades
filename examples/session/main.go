@@ -18,11 +18,12 @@ func main() {
 		blades.WithMemory(memory.NewInMemory(10)),
 	)
 	// Example conversation in memory
-	prompt := blades.NewConversation(
-		"conversation_123",
+	prompt := blades.NewPrompt(
 		blades.UserMessage("Can you tell me about the causes of World War II?"),
 	)
-	result, err := agent.Run(context.Background(), prompt)
+	session := blades.NewSession("conversation_123")
+	ctx := blades.NewSessionContext(context.Background(), session)
+	result, err := agent.Run(ctx, prompt)
 	if err != nil {
 		log.Fatal(err)
 	}
