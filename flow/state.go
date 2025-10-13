@@ -2,7 +2,8 @@ package flow
 
 import (
 	"context"
-	"sync"
+
+	"github.com/go-kratos/generics"
 )
 
 // StateHandler is a function that handles the state of a flow.
@@ -13,9 +14,10 @@ type ctxStateKey struct{}
 
 // State holds the state of a flow.
 type State[I, O any] struct {
-	Inputs   sync.Map
-	Outputs  sync.Map
-	Metadata sync.Map
+	History  generics.List[O]
+	Inputs   generics.Map[string, I]
+	Outputs  generics.Map[string, O]
+	Metadata generics.Map[string, any]
 }
 
 // NewState creates a new State instance.

@@ -136,6 +136,7 @@ func (r *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Op
 			if output, err = runner.Run(ctx, input, opts...); err != nil {
 				return output, err
 			}
+			state.History.Append(output)
 			state.Inputs.Store(next.name, input)
 			state.Outputs.Store(next.name, output)
 		}

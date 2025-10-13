@@ -43,6 +43,7 @@ func (c *Sequential[I, O, Option]) Run(ctx context.Context, input I, opts ...Opt
 		if output, err = runner.Run(ctx, input, opts...); err != nil {
 			return output, err
 		}
+		state.History.Append(output)
 		state.Inputs.Store(runner.Name(), input)
 		state.Outputs.Store(runner.Name(), output)
 	}
