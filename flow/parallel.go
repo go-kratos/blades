@@ -7,7 +7,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// / ParallelMerger is a function that merges the outputs of multiple runners into a single output.
+// ParallelMerger is a function that merges the outputs of multiple runners into a single output.
 type ParallelMerger[O any] func(ctx context.Context, outputs []O) (O, error)
 
 // Parallel represents a sequence of Runnable runners that process input sequentially.
@@ -38,12 +38,13 @@ func (c *Parallel[I, O, Option]) Run(ctx context.Context, input I, opts ...Optio
 	)
 	eg, ctx := errgroup.WithContext(ctx)
 	for idx, runner := range c.runners {
+		idxCopy := idx
 		eg.Go(func() error {
 			output, err := runner.Run(ctx, input, opts...)
 			if err != nil {
 				return err
 			}
-			outputs[idx] = output
+			outputs[idxCopy] = output
 			return nil
 		})
 	}

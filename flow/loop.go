@@ -50,18 +50,20 @@ func (l *Loop[I, O, Option]) Name() string {
 func (l *Loop[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (O, error) {
 	var (
 		err    error
-		exit   bool
 		output O
 	)
-	for !exit {
+	for {
 		if output, err = l.runner.Run(ctx, input, opts...); err != nil {
 			return output, err
 		}
-		if exit, err = l.condition(ctx, output); err != nil {
+		ok, err := l.condition(ctx, output)
+		if err != nil {
 			return output, err
 		}
+		if !ok {
+			return output, nil
+		}
 	}
-	return output, nil
 }
 
 // RunStream executes the Loop in a streaming manner, returning a Streamer that emits the final output.

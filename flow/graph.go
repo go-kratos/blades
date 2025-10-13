@@ -64,7 +64,7 @@ func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runnable[I, O, Option]) er
 // AddStart marks a node as a start entry.
 func (g *Graph[I, O, Option]) AddStart(start blades.Runnable[I, O, Option]) error {
 	if _, ok := g.starts[start.Name()]; ok {
-		return fmt.Errorf("graph: start node %s already exists", start)
+		return fmt.Errorf("graph: start node %s already exists", start.Name())
 	}
 	g.starts[start.Name()] = struct{}{}
 	return nil
