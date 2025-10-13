@@ -173,24 +173,34 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 // handler constructs the default handlers for Run and Stream using the provider.
 func (a *Agent) handler(req *ModelRequest) Handler {
 	return Handler{
-		Run: func(ctx context.Context, p *Prompt, opts ...ModelOption) (*Message, error) {
+		Run: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
+			state, ctx := EnsureState(ctx)
 			res, err := a.provider.Generate(ctx, req, opts...)
 			if err != nil {
 				return nil, err
 			}
-			if err := a.addMemory(ctx, p, res); err != nil {
+			if err := a.addMemory(ctx, prompt, res); err != nil {
 				return nil, err
 			}
+			state.Inputs.Store(a.name, prompt)
+			state.Outputs.Store(a.name, res.Message)
+			state.History.Append(res.Message)
 			return res.Message, nil
 		},
-		Stream: func(ctx context.Context, p *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
+		Stream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
+			state, ctx := EnsureState(ctx)
 			stream, err := a.provider.NewStream(ctx, req, opts...)
 			if err != nil {
 				return nil, err
 			}
 			return NewMappedStream[*ModelResponse, *Message](stream, func(res *ModelResponse) (*Message, error) {
-				if err := a.addMemory(ctx, p, res); err != nil {
-					return nil, err
+				if res.Message.Status == StatusCompleted {
+					if err := a.addMemory(ctx, prompt, res); err != nil {
+						return nil, err
+					}
+					state.Inputs.Store(a.name, prompt)
+					state.Outputs.Store(a.name, res.Message)
+					state.History.Append(res.Message)
 				}
 				return res.Message, nil
 			}), nil

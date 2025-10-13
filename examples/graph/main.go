@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strings"
 
@@ -55,15 +54,11 @@ func main() {
 	}
 	branchWriter := flow.NewBranch("branch", branchChoose, scifiWriter, generalWriter)
 	// Define state handler to convert output to input
-	stateHandler := func(ctx context.Context, transition flow.Transition, state *flow.State[*blades.Prompt, *blades.Message]) (*blades.Prompt, error) {
-		output, ok := state.Outputs.Load(transition.Previous)
-		if !ok {
-			return nil, fmt.Errorf("no output from previous node: %s", transition.Previous)
-		}
+	transitionHandler := func(ctx context.Context, transition flow.Transition, output *blades.Message) (*blades.Prompt, error) {
 		return blades.NewPrompt(output), nil
 	}
 	// Build graph: outline -> checker -> branch (scifi/general) -> refine -> end
-	g := flow.NewGraph[*blades.Prompt, *blades.Message, blades.ModelOption]("story", stateHandler)
+	g := flow.NewGraph[*blades.Prompt, *blades.Message, blades.ModelOption]("story", transitionHandler)
 	g.AddNode(storyOutline)
 	g.AddNode(storyChecker)
 	g.AddNode(scifiWriter)

@@ -44,11 +44,8 @@ func TestGraph_LinearChain(t *testing.T) {
 			},
 		}
 	}
-	state := func(ctx context.Context, previous, current string, state *State[int, int]) (int, error) {
-		output, ok := state.Outputs.Load(previous)
-		if !ok {
-			return 0, nil
-		}
+
+	transition := func(ctx context.Context, transition Transition, output int) (int, error) {
 		return output, nil
 	}
 
@@ -56,7 +53,7 @@ func TestGraph_LinearChain(t *testing.T) {
 	b := add("B", 2)
 	c := add("C", 3)
 
-	g := NewGraph[int, int, struct{}]("test", state)
+	g := NewGraph[int, int, struct{}]("test", transition)
 	g.AddNode(a)
 	g.AddNode(b)
 	g.AddNode(c)

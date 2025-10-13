@@ -24,21 +24,21 @@ type graphEdge struct {
 //
 // All nodes share the same input/output/option types to keep the API simple and predictable.
 type Graph[I, O, Option any] struct {
-	name         string
-	runners      map[string]blades.Runnable[I, O, Option]
-	nodes        map[string]*graphNode
-	starts       map[string]struct{}
-	stateHandler StateHandler[I, O]
+	name       string
+	runners    map[string]blades.Runnable[I, O, Option]
+	nodes      map[string]*graphNode
+	starts     map[string]struct{}
+	transition TransitionHandler[I, O]
 }
 
 // NewGraph creates an empty graph.
-func NewGraph[I, O, Option any](name string, stateHandler StateHandler[I, O]) *Graph[I, O, Option] {
+func NewGraph[I, O, Option any](name string, transition TransitionHandler[I, O]) *Graph[I, O, Option] {
 	return &Graph[I, O, Option]{
-		name:         name,
-		stateHandler: stateHandler,
-		runners:      make(map[string]blades.Runnable[I, O, Option]),
-		nodes:        make(map[string]*graphNode),
-		starts:       make(map[string]struct{}),
+		name:       name,
+		transition: transition,
+		runners:    make(map[string]blades.Runnable[I, O, Option]),
+		nodes:      make(map[string]*graphNode),
+		starts:     make(map[string]struct{}),
 	}
 }
 
@@ -121,14 +121,13 @@ func (r *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Op
 		output O
 		last   blades.Runnable[I, O, Option]
 	)
-	state, ctx := EnsureState[I, O](ctx)
 	for _, queue := range r.compiled {
 		handle := false
 		for len(queue) > 0 {
 			next := queue[0]
 			queue = queue[1:]
 			if handle {
-				if input, err = r.graph.stateHandler(ctx, Transition{Previous: last.Name(), Current: next.name}, state); err != nil {
+				if input, err = r.graph.transition(ctx, Transition{Previous: last.Name(), Current: next.name}, output); err != nil {
 					return output, err
 				}
 			}
@@ -138,9 +137,6 @@ func (r *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Op
 				return output, err
 			}
 			last = runner
-			state.History.Append(output)
-			state.Inputs.Store(next.name, input)
-			state.Outputs.Store(next.name, output)
 		}
 	}
 	return output, nil

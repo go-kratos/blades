@@ -8,17 +8,17 @@ import (
 
 // Sequential represents a sequence of Runnable runners that process input sequentially.
 type Sequential[I, O, Option any] struct {
-	name         string
-	runners      []blades.Runnable[I, O, Option]
-	stateHandler StateHandler[I, O]
+	name       string
+	runners    []blades.Runnable[I, O, Option]
+	transition TransitionHandler[I, O]
 }
 
 // NewSequential creates a new Sequential with the given runners.
-func NewSequential[I, O, Option any](name string, stateHandler StateHandler[I, O], runners ...blades.Runnable[I, O, Option]) *Sequential[I, O, Option] {
+func NewSequential[I, O, Option any](name string, transition TransitionHandler[I, O], runners ...blades.Runnable[I, O, Option]) *Sequential[I, O, Option] {
 	return &Sequential[I, O, Option]{
-		name:         name,
-		runners:      runners,
-		stateHandler: stateHandler,
+		name:       name,
+		runners:    runners,
+		transition: transition,
 	}
 }
 
@@ -34,10 +34,9 @@ func (c *Sequential[I, O, Option]) Run(ctx context.Context, input I, opts ...Opt
 		output O
 		last   blades.Runnable[I, O, Option]
 	)
-	state, ctx := EnsureState[I, O](ctx)
 	for idx, runner := range c.runners {
 		if idx > 0 {
-			if input, err = c.stateHandler(ctx, Transition{Previous: last.Name(), Current: runner.Name()}, state); err != nil {
+			if input, err = c.transition(ctx, Transition{Previous: last.Name(), Current: runner.Name()}, output); err != nil {
 				return output, err
 			}
 		}
@@ -45,9 +44,6 @@ func (c *Sequential[I, O, Option]) Run(ctx context.Context, input I, opts ...Opt
 			return output, err
 		}
 		last = runner
-		state.History.Append(output)
-		state.Inputs.Store(runner.Name(), input)
-		state.Outputs.Store(runner.Name(), output)
 	}
 	return output, nil
 }
