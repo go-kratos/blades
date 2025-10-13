@@ -120,7 +120,12 @@ func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prom
 	req := ModelRequest{Model: a.model, Tools: a.tools, OutputSchema: a.outputSchema}
 	// system messages
 	if a.instructions != "" {
-		req.Messages = append(req.Messages, SystemMessage(a.instructions))
+		state := session.State.ToMap()
+		message, err := NewTemplateMessage(RoleSystem, a.instructions, state)
+		if err != nil {
+			return nil, err
+		}
+		req.Messages = append(req.Messages, message)
 	}
 	// memory messages
 	if a.memory != nil {
