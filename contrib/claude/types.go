@@ -122,8 +122,8 @@ func convertPartsToContent(parts []blades.Part) ([]anthropic.ContentBlockParamUn
 			textBlock := anthropic.NewTextBlock(p.Text)
 			content = append(content, textBlock)
 
-		// Note: Image and Document parts are not yet defined in blades, skipping for now
-		// Will be added when base types are ready
+			// Note: Image and Document parts are not yet defined in blades, skipping for now
+			// Will be added when base types are ready
 		}
 	}
 
@@ -177,8 +177,6 @@ func convertBladesToolsToClaude(tools []*blades.Tool) ([]anthropic.ToolUnionPara
 
 // ConvertClaudeToBlades converts a Claude Message to Blades ModelResponse
 func ConvertClaudeToBlades(message *anthropic.Message) (*blades.ModelResponse, error) {
-	var messages []*blades.Message
-
 	// Convert content blocks to Blades parts
 	var parts []blades.Part
 	var toolCalls []*blades.ToolCall
@@ -209,10 +207,8 @@ func ConvertClaudeToBlades(message *anthropic.Message) (*blades.ModelResponse, e
 		ToolCalls: toolCalls,
 	}
 
-	messages = append(messages, msg)
-
 	return &blades.ModelResponse{
-		Messages: messages,
+		Message: msg,
 	}, nil
 }
 
@@ -228,7 +224,7 @@ func ConvertStreamDeltaToBlades(event anthropic.ContentBlockDeltaEvent) (*blades
 			},
 		}
 		return &blades.ModelResponse{
-			Messages: []*blades.Message{msg},
+			Message: msg,
 		}, nil
 
 	case anthropic.InputJSONDelta:

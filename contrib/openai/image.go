@@ -158,7 +158,7 @@ func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) 
 	if len(message.Parts) == 0 {
 		return nil, ErrImageGenerationEmpty
 	}
-	return &blades.ModelResponse{Messages: []*blades.Message{message}}, nil
+	return &blades.ModelResponse{Message: message}, nil
 }
 
 func mimeFromOutputFormat(format openai.ImagesResponseOutputFormat) blades.MimeType {

@@ -12,7 +12,7 @@ import (
 func newLogging() blades.Middleware {
 	return blades.ChainMiddlewares(
 		blades.Unary(func(next blades.RunHandler) blades.RunHandler {
-			return func(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Generation, error) {
+			return func(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
 				agent, ok := blades.FromContext(ctx)
 				if !ok {
 					return nil, errors.New("agent not found in context")
@@ -27,7 +27,7 @@ func newLogging() blades.Middleware {
 			}
 		}),
 		blades.Streaming(func(next blades.StreamHandler) blades.StreamHandler {
-			return func(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
+			return func(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Message], error) {
 				agent, ok := blades.FromContext(ctx)
 				if !ok {
 					return nil, errors.New("agent not found in context")
@@ -36,7 +36,7 @@ func newLogging() blades.Middleware {
 				if err != nil {
 					return nil, err
 				}
-				return blades.NewMappedStream[*blades.Generation, *blades.Generation](stream, func(m *blades.Generation) (*blades.Generation, error) {
+				return blades.NewMappedStream[*blades.Message, *blades.Message](stream, func(m *blades.Message) (*blades.Message, error) {
 					log.Printf("stream model: %s prompt: %s generation: %s\n", agent.Model, prompt.String(), m.Text())
 					return m, nil
 				}), nil
@@ -48,14 +48,14 @@ func newLogging() blades.Middleware {
 func newGuardrails() blades.Middleware {
 	return blades.ChainMiddlewares(
 		blades.Unary(func(next blades.RunHandler) blades.RunHandler {
-			return func(ctx context.Context, p *blades.Prompt, opts ...blades.ModelOption) (*blades.Generation, error) {
+			return func(ctx context.Context, p *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
 				// Pre-processing: Add guardrails to the prompt
 				log.Println("Applying guardrails to the prompt")
 				return next(ctx, p, opts...)
 			}
 		}),
 		blades.Streaming(func(next blades.StreamHandler) blades.StreamHandler {
-			return func(ctx context.Context, p *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Generation], error) {
+			return func(ctx context.Context, p *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Message], error) {
 				// Pre-processing: Add guardrails to the prompt
 				log.Println("Applying guardrails to the prompt (streaming)")
 				return next(ctx, p, opts...)

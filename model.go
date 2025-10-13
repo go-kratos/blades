@@ -58,8 +58,8 @@ type ModelRequest struct {
 
 // ModelResponse is a single assistant message as a result of generation.
 type ModelResponse struct {
-	Messages []*Message `json:"message"`
-	Finish   bool       `json:"finish"`
+	Message *Message `json:"message"`
+	Finish  bool     `json:"finish"`
 }
 
 // ModelProvider is an interface for multimodal chat-style models.

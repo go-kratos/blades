@@ -40,20 +40,18 @@ func main() {
 	}
 
 	saved := 0
-	for _, msg := range res.Messages {
-		for _, part := range msg.Parts {
-			switch img := part.(type) {
-			case blades.DataPart:
-				saved++
-				name := fmt.Sprintf("image-%d.%s", saved, img.MimeType.Format())
-				path := filepath.Join(outputDir, name)
-				if err := os.WriteFile(path, img.Bytes, 0o644); err != nil {
-					log.Fatalf("write file %s: %v", path, err)
-				}
-				log.Printf("saved %s", path)
-			case blades.FilePart:
-				log.Printf("image url: %s", img.URI)
+	for _, part := range res.Parts {
+		switch img := part.(type) {
+		case blades.DataPart:
+			saved++
+			name := fmt.Sprintf("image-%d.%s", saved, img.MimeType.Format())
+			path := filepath.Join(outputDir, name)
+			if err := os.WriteFile(path, img.Bytes, 0o644); err != nil {
+				log.Fatalf("write file %s: %v", path, err)
 			}
+			log.Printf("saved %s", path)
+		case blades.FilePart:
+			log.Printf("image url: %s", img.URI)
 		}
 	}
 }

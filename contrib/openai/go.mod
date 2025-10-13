@@ -2,6 +2,8 @@ module github.com/go-kratos/blades/contrib/openai
 
 go 1.24.0
 
+toolchain go1.24.6
+
 require (
 	github.com/go-kratos/blades v0.0.0-20250928061855-93360cba17ff
 	github.com/openai/openai-go/v2 v2.7.0

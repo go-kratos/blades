@@ -3,10 +3,10 @@ package blades
 import "context"
 
 // RunHandler represents the core synchronous execution function.
-type RunHandler func(context.Context, *Prompt, ...ModelOption) (*Generation, error)
+type RunHandler func(context.Context, *Prompt, ...ModelOption) (*Message, error)
 
 // StreamHandler represents the core streaming execution function.
-type StreamHandler func(context.Context, *Prompt, ...ModelOption) (Streamer[*Generation], error)
+type StreamHandler func(context.Context, *Prompt, ...ModelOption) (Streamer[*Message], error)
 
 // Handler bundles both Run and Stream handlers.
 type Handler struct {

@@ -47,7 +47,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	result, err = refine.Run(context.Background(), blades.NewPrompt(result.Messages...))
+	result, err = refine.Run(context.Background(), blades.NewPrompt(result))
 	if err != nil {
 		log.Fatal(err)
 	}

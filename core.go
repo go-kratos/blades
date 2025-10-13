@@ -36,48 +36,6 @@ func (p *Prompt) String() string {
 	return buf.String()
 }
 
-// Generation represents a single generation of a response from the model.
-type Generation struct {
-	Messages []*Message `json:"message"`
-	Finish   bool       `json:"finish,omitempty"`
-}
-
-// Text extracts the text content from the first text part of the generation.
-func (g *Generation) Text() string {
-	for _, msg := range g.Messages {
-		for _, part := range msg.Parts {
-			if text, ok := part.(TextPart); ok {
-				return text.Text
-			}
-		}
-	}
-	return ""
-}
-
-// File returns the first file part of the message, or nil if none exists.
-func (g *Generation) File() *FilePart {
-	for _, msg := range g.Messages {
-		for _, part := range msg.Parts {
-			if file, ok := part.(FilePart); ok {
-				return &file
-			}
-		}
-	}
-	return nil
-}
-
-// Data returns the first data part of the message, or nil if none exists.
-func (g *Generation) Data() *DataPart {
-	for _, msg := range g.Messages {
-		for _, part := range msg.Parts {
-			if data, ok := part.(DataPart); ok {
-				return &data
-			}
-		}
-	}
-	return nil
-}
-
 // Streamer yields a sequence of assistant responses until completion.
 type Streamer[T any] interface {
 	Next() bool
@@ -93,4 +51,4 @@ type Runner[Input, Output, Option any] interface {
 }
 
 // ModelRunner is a Runner specialized for processing Prompts and generating Generations with ModelOptions.
-type ModelRunner Runner[*Prompt, *Generation, ModelOption]
+type ModelRunner Runner[*Prompt, *Message, ModelOption]

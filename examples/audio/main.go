@@ -40,25 +40,23 @@ func main() {
 	}
 
 	saved := 0
-	for _, msg := range res.Messages {
-		for _, part := range msg.Parts {
-			switch audio := part.(type) {
-			case blades.DataPart:
-				saved++
-				ext := "bin"
-				if format := msg.Metadata["response_format"]; format != "" {
-					ext = format
-				} else if mimeExt := audio.MimeType.Format(); mimeExt != "" {
-					ext = mimeExt
-				}
-				path := filepath.Join(outputDir, fmt.Sprintf("speech-%d.%s", saved, ext))
-				if err := os.WriteFile(path, audio.Bytes, 0o644); err != nil {
-					log.Fatalf("write file %s: %v", path, err)
-				}
-				log.Printf("saved %s", path)
-			case blades.FilePart:
-				log.Printf("streamed audio url: %s", audio.URI)
+	for _, part := range res.Parts {
+		switch audio := part.(type) {
+		case blades.DataPart:
+			saved++
+			ext := "bin"
+			if format := res.Metadata["response_format"]; format != "" {
+				ext = format
+			} else if mimeExt := audio.MimeType.Format(); mimeExt != "" {
+				ext = mimeExt
 			}
+			path := filepath.Join(outputDir, fmt.Sprintf("speech-%d.%s", saved, ext))
+			if err := os.WriteFile(path, audio.Bytes, 0o644); err != nil {
+				log.Fatalf("write file %s: %v", path, err)
+			}
+			log.Printf("saved %s", path)
+		case blades.FilePart:
+			log.Printf("streamed audio url: %s", audio.URI)
 		}
 	}
 }

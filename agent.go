@@ -140,7 +140,7 @@ func (a *Agent) addMemory(ctx context.Context, prompt *Prompt, res *ModelRespons
 	if a.memory != nil {
 		messages := make([]*Message, 0, len(prompt.Messages)+1)
 		messages = append(messages, prompt.Messages...)
-		messages = append(messages, res.Messages...)
+		messages = append(messages, res.Message)
 		if err := a.memory.AddMessages(ctx, prompt.ConversationID, messages); err != nil {
 			return err
 		}
@@ -149,7 +149,7 @@ func (a *Agent) addMemory(ctx context.Context, prompt *Prompt, res *ModelRespons
 }
 
 // Run runs the agent with the given prompt and options, returning the response message.
-func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Generation, error) {
+func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
 	req, err := a.buildRequest(ctx, prompt)
 	if err != nil {
 		return nil, err
@@ -160,7 +160,7 @@ func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*
 }
 
 // RunStream runs the agent with the given prompt and options, returning a streamable response.
-func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamer[*Generation], error) {
+func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamer[*Message], error) {
 	req, err := a.buildRequest(ctx, prompt)
 	if err != nil {
 		return nil, err
@@ -173,7 +173,7 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 // handler constructs the default handlers for Run and Stream using the provider.
 func (a *Agent) handler(req *ModelRequest) Handler {
 	return Handler{
-		Run: func(ctx context.Context, p *Prompt, opts ...ModelOption) (*Generation, error) {
+		Run: func(ctx context.Context, p *Prompt, opts ...ModelOption) (*Message, error) {
 			res, err := a.provider.Generate(ctx, req, opts...)
 			if err != nil {
 				return nil, err
@@ -181,18 +181,18 @@ func (a *Agent) handler(req *ModelRequest) Handler {
 			if err := a.addMemory(ctx, p, res); err != nil {
 				return nil, err
 			}
-			return &Generation{Messages: res.Messages, Finish: res.Finish}, nil
+			return res.Message, nil
 		},
-		Stream: func(ctx context.Context, p *Prompt, opts ...ModelOption) (Streamer[*Generation], error) {
+		Stream: func(ctx context.Context, p *Prompt, opts ...ModelOption) (Streamer[*Message], error) {
 			stream, err := a.provider.NewStream(ctx, req, opts...)
 			if err != nil {
 				return nil, err
 			}
-			return NewMappedStream[*ModelResponse, *Generation](stream, func(res *ModelResponse) (*Generation, error) {
+			return NewMappedStream[*ModelResponse, *Message](stream, func(res *ModelResponse) (*Message, error) {
 				if err := a.addMemory(ctx, p, res); err != nil {
 					return nil, err
 				}
-				return &Generation{Messages: res.Messages, Finish: res.Finish}, nil
+				return res.Message, nil
 			}), nil
 		},
 	}

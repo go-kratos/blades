@@ -29,8 +29,8 @@ func main() {
 		blades.WithProvider(provider),
 		blades.WithInstructions("Write a short story based on the given outline."),
 	)
-	stateHandler := func(ctx context.Context, current string, output *blades.Generation, state *flow.State[*blades.Prompt, *blades.Generation]) (*blades.Prompt, error) {
-		return blades.NewPrompt(output.Messages...), nil
+	stateHandler := func(ctx context.Context, current string, output *blades.Message, state *flow.State[*blades.Prompt, *blades.Message]) (*blades.Prompt, error) {
+		return blades.NewPrompt(output), nil
 	}
 	seq := flow.NewSequential("story", stateHandler, storyOutline, storyChecker, storyAgent)
 	// Input prompt
