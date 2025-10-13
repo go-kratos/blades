@@ -6,7 +6,7 @@ import (
 	"github.com/go-kratos/generics"
 )
 
-// ctxStqateKey is an unexported type for keys defined in this package.
+// ctxStateKey is an unexported type for keys defined in this package.
 type ctxStateKey struct{}
 
 // State holds the state of a flow.

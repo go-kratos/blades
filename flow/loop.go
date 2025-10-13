@@ -52,7 +52,7 @@ func (l *Loop[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (
 		err    error
 		output O
 	)
-	for {
+	for i := 0; i < l.maxIterations; i++ {
 		if output, err = l.runner.Run(ctx, input, opts...); err != nil {
 			return output, err
 		}
@@ -61,9 +61,10 @@ func (l *Loop[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (
 			return output, err
 		}
 		if !ok {
-			return output, nil
+			break
 		}
 	}
+	return output, nil
 }
 
 // RunStream executes the Loop in a streaming manner, returning a Streamer that emits the final output.
