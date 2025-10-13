@@ -4,12 +4,12 @@ import "sync/atomic"
 
 // MappedStream maps the output of one Streamer to another type.
 type MappedStream[M any, T any] struct {
-	stream   Streamer[M]
+	stream   Streamable[M]
 	transfer func(M) (T, error)
 }
 
 // NewMappedStream creates a new MappedStream.
-func NewMappedStream[M any, T any](stream Streamer[M], transfer func(M) (T, error)) *MappedStream[M, T] {
+func NewMappedStream[M any, T any](stream Streamable[M], transfer func(M) (T, error)) *MappedStream[M, T] {
 	return &MappedStream[M, T]{stream: stream, transfer: transfer}
 }
 

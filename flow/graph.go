@@ -25,7 +25,7 @@ type graphEdge struct {
 // All nodes share the same input/output/option types to keep the API simple and predictable.
 type Graph[I, O, Option any] struct {
 	name         string
-	runners      map[string]blades.Runner[I, O, Option]
+	runners      map[string]blades.Runnable[I, O, Option]
 	nodes        map[string]*graphNode
 	starts       map[string]struct{}
 	stateHandler StateHandler[I, O]
@@ -36,14 +36,14 @@ func NewGraph[I, O, Option any](name string, stateHandler StateHandler[I, O]) *G
 	return &Graph[I, O, Option]{
 		name:         name,
 		stateHandler: stateHandler,
-		runners:      make(map[string]blades.Runner[I, O, Option]),
+		runners:      make(map[string]blades.Runnable[I, O, Option]),
 		nodes:        make(map[string]*graphNode),
 		starts:       make(map[string]struct{}),
 	}
 }
 
 // AddNode registers a named runner node.
-func (g *Graph[I, O, Option]) AddNode(runner blades.Runner[I, O, Option]) error {
+func (g *Graph[I, O, Option]) AddNode(runner blades.Runnable[I, O, Option]) error {
 	name := runner.Name()
 	if _, ok := g.nodes[name]; ok {
 		return fmt.Errorf("graph: node %s already exists", runner.Name())
@@ -55,14 +55,14 @@ func (g *Graph[I, O, Option]) AddNode(runner blades.Runner[I, O, Option]) error 
 
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
-func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runner[I, O, Option]) error {
+func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runnable[I, O, Option]) error {
 	node := g.nodes[from.Name()]
 	node.edges = append(node.edges, &graphEdge{name: to.Name()})
 	return nil
 }
 
 // AddStart marks a node as a start entry.
-func (g *Graph[I, O, Option]) AddStart(start blades.Runner[I, O, Option]) error {
+func (g *Graph[I, O, Option]) AddStart(start blades.Runnable[I, O, Option]) error {
 	if _, ok := g.starts[start.Name()]; ok {
 		return fmt.Errorf("graph: start node %s already exists", start)
 	}
@@ -71,7 +71,7 @@ func (g *Graph[I, O, Option]) AddStart(start blades.Runner[I, O, Option]) error 
 }
 
 // Compile returns a blades.Runner that executes the graph.
-func (g *Graph[I, O, Option]) Compile() (blades.Runner[I, O, Option], error) {
+func (g *Graph[I, O, Option]) Compile() (blades.Runnable[I, O, Option], error) {
 	// Validate starts and ends exist
 	if len(g.starts) == 0 {
 		return nil, fmt.Errorf("graph: no start nodes defined")
@@ -145,7 +145,7 @@ func (r *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Op
 }
 
 // RunStream executes the graph and streams each node's output sequentially.
-func (r *graphRunner[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamer[O], error) {
+func (r *graphRunner[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
 		output, err := r.Run(ctx, input, opts...)

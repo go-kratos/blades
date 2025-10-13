@@ -113,7 +113,7 @@ func (c *Client) generateWithIterations(ctx context.Context, req *blades.ModelRe
 }
 
 // NewStream executes the request and returns a stream of assistant responses
-func (c *Client) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamer[*blades.ModelResponse], error) {
+func (c *Client) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
 	// Apply model options with default MaxIterations
 	opt := blades.ModelOptions{MaxIterations: 3}
 	for _, apply := range opts {
@@ -124,7 +124,7 @@ func (c *Client) NewStream(ctx context.Context, req *blades.ModelRequest, opts .
 }
 
 // generateStream generates streaming content using the Claude API
-func (c *Client) generateStream(ctx context.Context, req *blades.ModelRequest, opt blades.ModelOptions) (blades.Streamer[*blades.ModelResponse], error) {
+func (c *Client) generateStream(ctx context.Context, req *blades.ModelRequest, opt blades.ModelOptions) (blades.Streamable[*blades.ModelResponse], error) {
 	// Ensure we have at least one iteration left
 	if opt.MaxIterations < 1 {
 		return nil, ErrTooManyIterations

@@ -56,7 +56,7 @@ func (p *ImageProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 }
 
 // NewStream wraps Generate with a single-yield stream for API compatibility.
-func (p *ImageProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamer[*blades.ModelResponse], error) {
+func (p *ImageProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
 	pipe := blades.NewStreamPipe[*blades.ModelResponse]()
 	pipe.Go(func() error {
 		res, err := p.Generate(ctx, req, opts...)

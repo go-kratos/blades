@@ -12,9 +12,9 @@ import (
 
 // RoutingWorkflow is a workflow that routes requests to different agents based on the content of the prompt.
 type RoutingWorkflow struct {
-	router blades.ModelRunner
+	router blades.Runnable[*blades.Prompt, *blades.Message, blades.ModelOption]
 	routes map[string]string
-	agents map[string]blades.ModelRunner
+	agents map[string]blades.Runnable[*blades.Prompt, *blades.Message, blades.ModelOption]
 }
 
 // NewRoutingWorkflow creates a new RoutingWorkflow with the given model provider and routes.
@@ -26,7 +26,7 @@ func NewRoutingWorkflow(routes map[string]string) *RoutingWorkflow {
 		blades.WithProvider(provider),
 		blades.WithInstructions("You determine which agent to use based on the user's homework question"),
 	)
-	agents := make(map[string]blades.ModelRunner, len(routes))
+	agents := make(map[string]blades.Runnable[*blades.Prompt, *blades.Message, blades.ModelOption], len(routes))
 	for name, instructions := range routes {
 		agents[name] = blades.NewAgent(
 			name,
@@ -52,7 +52,7 @@ func (r *RoutingWorkflow) Run(ctx context.Context, prompt *blades.Prompt, opts .
 }
 
 // RunStream selects a route using the prompt content and streams from the chosen runner.
-func (r *RoutingWorkflow) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Message], error) {
+func (r *RoutingWorkflow) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
 	runner, err := r.selectRoute(ctx, prompt)
 	if err != nil {
 		return nil, err
@@ -61,7 +61,7 @@ func (r *RoutingWorkflow) RunStream(ctx context.Context, prompt *blades.Prompt, 
 }
 
 // selectRoute determines the best route key and runner for the given prompt.
-func (r *RoutingWorkflow) selectRoute(ctx context.Context, prompt *blades.Prompt) (blades.ModelRunner, error) {
+func (r *RoutingWorkflow) selectRoute(ctx context.Context, prompt *blades.Prompt) (blades.Runnable[*blades.Prompt, *blades.Message, blades.ModelOption], error) {
 	var buf strings.Builder
 	buf.WriteString("You are a routing agent.\n")
 	buf.WriteString("Choose the single best route key for handling the user's request.\n")

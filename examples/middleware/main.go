@@ -27,7 +27,7 @@ func newLogging() blades.Middleware {
 			}
 		}),
 		blades.Streaming(func(next blades.StreamHandler) blades.StreamHandler {
-			return func(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Message], error) {
+			return func(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
 				agent, ok := blades.FromContext(ctx)
 				if !ok {
 					return nil, errors.New("agent not found in context")
@@ -55,7 +55,7 @@ func newGuardrails() blades.Middleware {
 			}
 		}),
 		blades.Streaming(func(next blades.StreamHandler) blades.StreamHandler {
-			return func(ctx context.Context, p *blades.Prompt, opts ...blades.ModelOption) (blades.Streamer[*blades.Message], error) {
+			return func(ctx context.Context, p *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
 				// Pre-processing: Add guardrails to the prompt
 				log.Println("Applying guardrails to the prompt (streaming)")
 				return next(ctx, p, opts...)

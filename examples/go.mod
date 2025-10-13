@@ -1,8 +1,6 @@
 module github.com/go-kratos/blades/examples
 
-go 1.24.0
-
-toolchain go1.24.6
+go 1.24.6
 
 replace (
 	github.com/go-kratos/blades => ../
@@ -16,6 +14,7 @@ require (
 )
 
 require (
+	github.com/go-kratos/generics v0.0.0-20251013122419-613f49d67c64 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/openai/openai-go/v2 v2.7.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect

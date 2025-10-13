@@ -36,16 +36,16 @@ func (p *Prompt) String() string {
 	return buf.String()
 }
 
-// Streamer yields a sequence of assistant responses until completion.
-type Streamer[T any] interface {
+// Streamable yields a sequence of assistant responses until completion.
+type Streamable[T any] interface {
 	Next() bool
 	Current() (T, error)
 	Close() error
 }
 
-// Runner represents an entity that can process prompts and generate responses.
-type Runner[Input, Output, Option any] interface {
+// Runnable represents an entity that can process prompts and generate responses.
+type Runnable[Input, Output, Option any] interface {
 	Name() string
 	Run(context.Context, Input, ...Option) (Output, error)
-	RunStream(context.Context, Input, ...Option) (Streamer[Output], error)
+	RunStream(context.Context, Input, ...Option) (Streamable[Output], error)
 }

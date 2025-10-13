@@ -14,11 +14,11 @@ type ParallelMerger[O any] func(ctx context.Context, outputs []O) (O, error)
 type Parallel[I, O, Option any] struct {
 	name    string
 	merger  ParallelMerger[O]
-	runners []blades.Runner[I, O, Option]
+	runners []blades.Runnable[I, O, Option]
 }
 
 // NewParallel creates a new Parallel with the given runners.
-func NewParallel[I, O, Option any](name string, merger ParallelMerger[O], runners ...blades.Runner[I, O, Option]) *Parallel[I, O, Option] {
+func NewParallel[I, O, Option any](name string, merger ParallelMerger[O], runners ...blades.Runnable[I, O, Option]) *Parallel[I, O, Option] {
 	return &Parallel[I, O, Option]{
 		name:    name,
 		merger:  merger,
@@ -54,7 +54,7 @@ func (c *Parallel[I, O, Option]) Run(ctx context.Context, input I, opts ...Optio
 }
 
 // RunStream executes the chain of runners sequentially, streaming the output of the last runner.
-func (c *Parallel[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamer[O], error) {
+func (c *Parallel[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
 		for _, runner := range c.runners {

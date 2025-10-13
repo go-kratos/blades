@@ -10,11 +10,11 @@ import (
 
 // OutputConverter is a wrapper around a Runnable runner that ensures the output conforms to a specified type T using JSON schema validation.
 type OutputConverter[T any] struct {
-	runner Runner[*Prompt, *Message, ModelOption]
+	runner Runnable[*Prompt, *Message, ModelOption]
 }
 
 // NewOutput creates a new Output instance that wraps the given Runnable runner.
-func NewOutputConverter[T any](runner Runner[*Prompt, *Message, ModelOption]) *OutputConverter[T] {
+func NewOutputConverter[T any](runner Runnable[*Prompt, *Message, ModelOption]) *OutputConverter[T] {
 	return &OutputConverter[T]{runner: runner}
 }
 
@@ -54,7 +54,7 @@ func (o *OutputConverter[T]) Run(ctx context.Context, prompt *Prompt, opts ...Mo
 }
 
 // RunStream processes the given prompt using the wrapped runner and returns a Streamable that yields a single output of type T.
-func (o *OutputConverter[T]) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamer[T], error) {
+func (o *OutputConverter[T]) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[T], error) {
 	result, err := o.Run(ctx, prompt, opts...)
 	if err != nil {
 		return nil, err

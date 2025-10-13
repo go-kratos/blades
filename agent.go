@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	_ Runner[*Prompt, *Message, ModelOption] = (*Agent)(nil)
+	_ Runnable[*Prompt, *Message, ModelOption] = (*Agent)(nil)
 )
 
 // Option is an option for configuring the Agent.
@@ -160,7 +160,7 @@ func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*
 }
 
 // RunStream runs the agent with the given prompt and options, returning a streamable response.
-func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamer[*Message], error) {
+func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
 	req, err := a.buildRequest(ctx, prompt)
 	if err != nil {
 		return nil, err
@@ -183,7 +183,7 @@ func (a *Agent) handler(req *ModelRequest) Handler {
 			}
 			return res.Message, nil
 		},
-		Stream: func(ctx context.Context, p *Prompt, opts ...ModelOption) (Streamer[*Message], error) {
+		Stream: func(ctx context.Context, p *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
 			stream, err := a.provider.NewStream(ctx, req, opts...)
 			if err != nil {
 				return nil, err

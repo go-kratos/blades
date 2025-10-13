@@ -14,12 +14,12 @@ type BranchCondition[I any] func(context.Context, I) (string, error)
 type Branch[I, O, Option any] struct {
 	name      string
 	condition BranchCondition[I]
-	runners   map[string]blades.Runner[I, O, Option]
+	runners   map[string]blades.Runnable[I, O, Option]
 }
 
 // NewBranch creates a new Branch with the given selector and runners.
-func NewBranch[I, O, Option any](name string, condition BranchCondition[I], runners ...blades.Runner[I, O, Option]) *Branch[I, O, Option] {
-	m := make(map[string]blades.Runner[I, O, Option])
+func NewBranch[I, O, Option any](name string, condition BranchCondition[I], runners ...blades.Runnable[I, O, Option]) *Branch[I, O, Option] {
+	m := make(map[string]blades.Runnable[I, O, Option])
 	for _, runner := range runners {
 		m[runner.Name()] = runner
 	}
@@ -53,7 +53,7 @@ func (c *Branch[I, O, Option]) Run(ctx context.Context, input I, opts ...Option)
 }
 
 // RunStream executes the selected runner based on the selector function and streams its output.
-func (c *Branch[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamer[O], error) {
+func (c *Branch[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
 		for _, runner := range c.runners {

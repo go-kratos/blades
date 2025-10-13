@@ -77,7 +77,7 @@ func (p *ChatProvider) Generate(ctx context.Context, req *blades.ModelRequest, o
 
 // NewStreaming executes a streaming chat completion request.
 func (p *ChatProvider) NewStreaming(ctx context.Context,
-	params openai.ChatCompletionNewParams, tools []*blades.Tool, opts blades.ModelOptions) (blades.Streamer[*blades.ModelResponse], error) {
+	params openai.ChatCompletionNewParams, tools []*blades.Tool, opts blades.ModelOptions) (blades.Streamable[*blades.ModelResponse], error) {
 	// Ensure we have at least one iteration left.
 	if opts.MaxIterations < 1 {
 		return nil, ErrTooManyIterations
@@ -127,7 +127,7 @@ func (p *ChatProvider) NewStreaming(ctx context.Context,
 
 // NewStream streams chat completion chunks and converts each choice delta
 // into a ModelResponse for incremental consumption.
-func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamer[*blades.ModelResponse], error) {
+func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
 	opt := blades.ModelOptions{MaxIterations: 3}
 	for _, apply := range opts {
 		apply(&opt)

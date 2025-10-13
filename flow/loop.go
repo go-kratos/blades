@@ -24,11 +24,11 @@ type Loop[I, O, Option any] struct {
 	name          string
 	maxIterations int
 	condition     LoopCondition[O]
-	runner        blades.Runner[I, O, Option]
+	runner        blades.Runnable[I, O, Option]
 }
 
 // NewLoop creates a new Loop instance with the specified name, condition, runner, and options.
-func NewLoop[I, O, Option any](name string, condition LoopCondition[O], runner blades.Runner[I, O, Option], opts ...LoopOption[I, O, Option]) *Loop[I, O, Option] {
+func NewLoop[I, O, Option any](name string, condition LoopCondition[O], runner blades.Runnable[I, O, Option], opts ...LoopOption[I, O, Option]) *Loop[I, O, Option] {
 	l := &Loop[I, O, Option]{
 		name:          name,
 		maxIterations: 3,
@@ -65,7 +65,7 @@ func (l *Loop[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (
 }
 
 // RunStream executes the Loop in a streaming manner, returning a Streamer that emits the final output.
-func (l *Loop[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamer[O], error) {
+func (l *Loop[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
 		output, err := l.runner.Run(ctx, input, opts...)

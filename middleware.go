@@ -6,7 +6,7 @@ import "context"
 type RunHandler func(context.Context, *Prompt, ...ModelOption) (*Message, error)
 
 // StreamHandler represents the core streaming execution function.
-type StreamHandler func(context.Context, *Prompt, ...ModelOption) (Streamer[*Message], error)
+type StreamHandler func(context.Context, *Prompt, ...ModelOption) (Streamable[*Message], error)
 
 // Handler bundles both Run and Stream handlers.
 type Handler struct {
