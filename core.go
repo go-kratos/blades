@@ -7,23 +7,13 @@ import (
 
 // Prompt represents a sequence of messages exchanged between a user and an assistant.
 type Prompt struct {
-	ConversationID string     `json:"conversation_id,omitempty"`
-	Messages       []*Message `json:"messages"`
+	Messages []*Message `json:"messages"`
 }
 
 // NewPrompt creates a new Prompt with the given messages.
 func NewPrompt(messages ...*Message) *Prompt {
 	return &Prompt{
 		Messages: messages,
-	}
-}
-
-// NewConversation creates a new Prompt bound to a conversation ID.
-// When used with memory, the conversation history keyed by this ID is loaded.
-func NewConversation(conversationID string, messages ...*Message) *Prompt {
-	return &Prompt{
-		ConversationID: conversationID,
-		Messages:       messages,
 	}
 }
 

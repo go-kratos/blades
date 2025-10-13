@@ -105,17 +105,18 @@ func (a *Agent) Description() string {
 }
 
 // buildContext builds the context for the Agent by embedding the AgentContext.
-func (a *Agent) buildContext(ctx context.Context) context.Context {
+func (a *Agent) buildContext(ctx context.Context) (context.Context, *Session) {
+	session, ctx := EnsureSession(ctx)
 	return NewContext(ctx, &AgentContext{
 		Name:         a.name,
 		Model:        a.model,
 		Description:  a.description,
 		Instructions: a.instructions,
-	})
+	}), session
 }
 
 // buildRequest builds the request for the Agent by combining system instructions and user messages.
-func (a *Agent) buildRequest(ctx context.Context, prompt *Prompt) (*ModelRequest, error) {
+func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prompt) (*ModelRequest, error) {
 	req := ModelRequest{Model: a.model, Tools: a.tools, OutputSchema: a.outputSchema}
 	// system messages
 	if a.instructions != "" {
@@ -123,7 +124,7 @@ func (a *Agent) buildRequest(ctx context.Context, prompt *Prompt) (*ModelRequest
 	}
 	// memory messages
 	if a.memory != nil {
-		history, err := a.memory.ListMessages(ctx, prompt.ConversationID)
+		history, err := a.memory.ListMessages(ctx, session.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -150,31 +151,30 @@ func (a *Agent) addMemory(ctx context.Context, session *Session, prompt *Prompt,
 
 // Run runs the agent with the given prompt and options, returning the response message.
 func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
-	req, err := a.buildRequest(ctx, prompt)
+	ctx, session := a.buildContext(ctx)
+	req, err := a.buildRequest(ctx, session, prompt)
 	if err != nil {
 		return nil, err
 	}
-	ctx = a.buildContext(ctx)
-	handler := a.middleware(a.handler(req))
+	handler := a.middleware(a.handler(session, req))
 	return handler.Run(ctx, prompt, opts...)
 }
 
 // RunStream runs the agent with the given prompt and options, returning a streamable response.
 func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
-	req, err := a.buildRequest(ctx, prompt)
+	ctx, session := a.buildContext(ctx)
+	req, err := a.buildRequest(ctx, session, prompt)
 	if err != nil {
 		return nil, err
 	}
-	ctx = a.buildContext(ctx)
-	handler := a.middleware(a.handler(req))
+	handler := a.middleware(a.handler(session, req))
 	return handler.Stream(ctx, prompt, opts...)
 }
 
 // handler constructs the default handlers for Run and Stream using the provider.
-func (a *Agent) handler(req *ModelRequest) Handler {
+func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
 	return Handler{
 		Run: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
-			session, ctx := EnsureSession(ctx)
 			res, err := a.provider.Generate(ctx, req, opts...)
 			if err != nil {
 				return nil, err
@@ -188,7 +188,6 @@ func (a *Agent) handler(req *ModelRequest) Handler {
 			return res.Message, nil
 		},
 		Stream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
-			session, ctx := EnsureSession(ctx)
 			stream, err := a.provider.NewStream(ctx, req, opts...)
 			if err != nil {
 				return nil, err

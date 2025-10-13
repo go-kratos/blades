@@ -9,11 +9,11 @@ import (
 
 // Session holds the state of a flow along with a unique session ID.
 type Session struct {
-	ID      string
-	History generics.Slice[*Message]
-	Inputs  generics.Map[string, *Prompt]
-	Outputs generics.Map[string, *Message]
-	State   generics.Map[string, any]
+	ID      string                         `json:"id"` // Unique identifier for the session
+	History generics.Slice[*Message]       `json:"history"`
+	Inputs  generics.Map[string, *Prompt]  `json:"inputs"`
+	Outputs generics.Map[string, *Message] `json:"outputs"`
+	State   generics.Map[string, any]      `json:"state"`
 }
 
 // NewSession creates a new Session instance with a unique ID.
