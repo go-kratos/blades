@@ -11,7 +11,7 @@ type ctxStateKey struct{}
 
 // State holds the state of a flow.
 type State struct {
-	History  generics.List[*Message]
+	History  generics.Slice[*Message]
 	Inputs   generics.Map[string, *Prompt]
 	Outputs  generics.Map[string, *Message]
 	Metadata generics.Map[string, any]
