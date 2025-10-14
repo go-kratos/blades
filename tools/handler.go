@@ -15,3 +15,6 @@ type HandleFunc func(context.Context, string) (string, error)
 func (f HandleFunc) Handle(ctx context.Context, input string) (string, error) {
 	return f(ctx, input)
 }
+
+// ToolAdapter is a function that takes an input of type I and returns an output of type O or an error.
+type ToolAdapter[I, O any] func(context.Context, I) (O, error)

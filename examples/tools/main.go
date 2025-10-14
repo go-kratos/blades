@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 
 	"github.com/go-kratos/blades"
@@ -24,17 +23,9 @@ func main() {
 	weatherTool, err := tools.NewTool[WeatherReq, WeatherRes](
 		"get_weather",
 		"Get the current weather for a given city",
-		tools.HandleFunc(func(ctx context.Context, input string) (string, error) {
-			var req WeatherReq
-			if err := json.Unmarshal([]byte(input), &req); err != nil {
-				return "", err
-			}
-			b, err := json.Marshal(&WeatherRes{Forecast: "Sunny, 25°C"})
-			if err != nil {
-				return "", err
-			}
-			log.Println("Fetching weather for:", req.Location, "->", string(b))
-			return string(b), nil
+		tools.ToolAdapter[WeatherReq, WeatherRes](func(ctx context.Context, req WeatherReq) (WeatherRes, error) {
+			log.Println("Fetching weather for:", req.Location)
+			return WeatherRes{Forecast: "Sunny, 25°C"}, nil
 		}),
 	)
 	agent := blades.NewAgent(
