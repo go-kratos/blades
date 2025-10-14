@@ -61,15 +61,13 @@ func main() {
 	g := flow.NewGraph[*blades.Prompt, *blades.Message, blades.ModelOption]("story", transitionHandler)
 	g.AddNode(storyOutline)
 	g.AddNode(storyChecker)
-	g.AddNode(scifiWriter)
-	g.AddNode(generalWriter)
+	g.AddNode(branchWriter)
 	g.AddNode(refineAgent)
 	// Add edges and branches
 	g.AddStart(storyOutline)
 	g.AddEdge(storyOutline, storyChecker)
 	g.AddEdge(storyChecker, branchWriter)
-	g.AddEdge(scifiWriter, refineAgent)
-	g.AddEdge(generalWriter, refineAgent)
+	g.AddEdge(branchWriter, refineAgent)
 	// Compile the graph into a single runner
 	runner, err := g.Compile()
 	if err != nil {
