@@ -176,7 +176,7 @@ func (a *Agent) addMemory(ctx context.Context, session *Session, prompt *Prompt,
 }
 
 func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
-	if a.outputKey == "" || res.Message.Status != StatusCompleted {
+	if a.outputKey == "" {
 		return nil
 	}
 	if a.outputSchema != nil {
