@@ -53,6 +53,7 @@ type ModelRequest struct {
 	Model        string             `json:"model"`
 	Tools        []*Tool            `json:"tools,omitempty"`
 	Messages     []*Message         `json:"messages"`
+	InputSchema  *jsonschema.Schema `json:"inputSchema,omitempty"`
 	OutputSchema *jsonschema.Schema `json:"outputSchema,omitempty"`
 }
 

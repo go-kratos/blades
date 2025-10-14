@@ -34,6 +34,13 @@ func WithInstructions(instructions string) Option {
 	}
 }
 
+// WithInputSchema sets the input schema for the Agent.
+func WithInputSchema(schema *jsonschema.Schema) Option {
+	return func(a *Agent) {
+		a.inputSchema = schema
+	}
+}
+
 // WithOutputSchema sets the output schema for the Agent.
 func WithOutputSchema(schema *jsonschema.Schema) Option {
 	return func(a *Agent) {
@@ -75,6 +82,7 @@ type Agent struct {
 	model        string
 	description  string
 	instructions string
+	inputSchema  *jsonschema.Schema
 	outputSchema *jsonschema.Schema
 	middleware   Middleware
 	provider     ModelProvider
@@ -117,7 +125,12 @@ func (a *Agent) buildContext(ctx context.Context) (context.Context, *Session) {
 
 // buildRequest builds the request for the Agent by combining system instructions and user messages.
 func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prompt) (*ModelRequest, error) {
-	req := ModelRequest{Model: a.model, Tools: a.tools, OutputSchema: a.outputSchema}
+	req := ModelRequest{
+		Model:        a.model,
+		Tools:        a.tools,
+		InputSchema:  a.inputSchema,
+		OutputSchema: a.outputSchema,
+	}
 	// system messages
 	if a.instructions != "" {
 		state := session.State.ToMap()
@@ -150,6 +163,22 @@ func (a *Agent) addMemory(ctx context.Context, session *Session, prompt *Prompt,
 		if err := a.memory.AddMessages(ctx, session.ID, messages); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
+	if res.Message.Status != StatusCompleted {
+		return nil
+	}
+	if a.outputSchema != nil {
+		value, err := parseMessageState(a.outputSchema, res.Message)
+		if err != nil {
+			return err
+		}
+		session.State.Store(a.name, value)
+	} else {
+		session.State.Store(a.name, res.Message.Text())
 	}
 	return nil
 }
