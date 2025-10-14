@@ -155,6 +155,22 @@ func toChatCompletionParams(req *blades.ModelRequest, opt blades.ModelOptions) (
 		Model:    req.Model,
 		Messages: make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages)),
 	}
+	if req.OutputSchema != nil {
+		schemaParam := openai.ResponseFormatJSONSchemaJSONSchemaParam{
+			Name:   "structured_outputs",
+			Schema: req.OutputSchema,
+			Strict: openai.Bool(true),
+		}
+		if req.OutputSchema.Title != "" {
+			schemaParam.Name = req.OutputSchema.Title
+		}
+		if req.OutputSchema.Description != "" {
+			schemaParam.Description = openai.String(req.OutputSchema.Description)
+		}
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{JSONSchema: schemaParam},
+		}
+	}
 	if opt.TopP > 0 {
 		params.TopP = param.NewOpt(opt.TopP)
 	}
