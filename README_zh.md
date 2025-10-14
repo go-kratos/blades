@@ -29,9 +29,9 @@ Blades 框架通过一系列精心设计的核心组件，实现了其强大的�
 // Runner represents an entity that can process prompts and generate responses.
 type Runner interface {
     // Run 执行一个同步的、非流式的操作，返回一个完整的 Generation 结果。
-    Run(context.Context, *Prompt, ...ModelOption) (*Generation, error)
-	// RunStream 执行一个异步的、流式的操作，返回一个 Streamer，用于逐步接收 Generation 结果。
-    RunStream(context.Context, *Prompt, ...ModelOption) (Streamer[*Generation], error)
+    Run(context.Context, *Prompt, ...ModelOption) (*Message, error)
+	// RunStream 执行一个异步的、流式的操作，返回一个 Streamable，用于逐步接收 Generation 结果。
+    RunStream(context.Context, *Prompt, ...ModelOption) (Streamable[*Message], error)
 }
 ```
 ![runner](docs/images/runner.png)
@@ -44,8 +44,8 @@ type Runner interface {
 type ModelProvider interface {
     // Generate 执行一个完整的生成请求，并一次性返回结果。适用于不需要实时反馈的场景。
     Generate(context.Context, *ModelRequest, ...ModelOption) (*ModelResponse, error)
-    // NewStream 发起一个流式请求。该方法会立即返回一个 Streamer 对象，调用者可以通过这个对象逐步接收模型生成的内容，适用于构建实时的、打字机效果的对话应用。
-    NewStream(context.Context, *ModelRequest, ...ModelOption) (Streamer[*ModelResponse], error)
+    // NewStream 发起一个流式请求。该方法会立即返回一个 Streamable 对象，调用者可以通过这个对象逐步接收模型生成的内容，适用于构建实时的、打字机效果的对话应用。
+    NewStream(context.Context, *ModelRequest, ...ModelOption) (Streamable[*ModelResponse], error)
 }
 ```
 ![ModelProvider](./docs/images/model.png)

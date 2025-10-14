@@ -29,9 +29,9 @@ The Blades framework achieves its powerful functionality and flexibility through
 // Runner represents an entity that can process prompts and generate responses.
 type Runner interface {
     // Run performs a synchronous, non-streaming operation, returning a complete Generation result.
-    Run(context.Context, *Prompt, ...ModelOption) (*Generation, error)
-    // RunStream performs an asynchronous, streaming operation, returning a Streamer for receiving Generation results step by step.
-    RunStream(context.Context, *Prompt, ...ModelOption) (Streamer[*Generation], error)
+    Run(context.Context, *Prompt, ...ModelOption) (*Message, error)
+    // RunStream performs an asynchronous, streaming operation, returning a Streamable for receiving Generation results step by step.
+    RunStream(context.Context, *Prompt, ...ModelOption) (Streamable[*Message], error)
 }
 ```
 ![runner](docs/images/runner.png)
@@ -43,8 +43,8 @@ type Runner interface {
 type ModelProvider interface {
     // Generate performs a complete generation request and returns the result at once. Suitable for scenarios where real-time feedback is not needed.
     Generate(context.Context, *ModelRequest, ...ModelOption) (*ModelResponse, error)
-    // NewStream initiates a streaming request. This method immediately returns a Streamer object, through which the caller can receive the generated content from the model step by step, suitable for building real-time, typewriter-effect conversation applications.
-    NewStream(context.Context, *ModelRequest, ...ModelOption) (Streamer[*ModelResponse], error)
+    // NewStream initiates a streaming request. This method immediately returns a Streamable object, through which the caller can receive the generated content from the model step by step, suitable for building real-time, typewriter-effect conversation applications.
+    NewStream(context.Context, *ModelRequest, ...ModelOption) (Streamable[*ModelResponse], error)
 }
 ```
 ![ModelProvider](./docs/images/model.png)
