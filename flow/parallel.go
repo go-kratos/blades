@@ -54,7 +54,8 @@ func (c *Parallel[I, O, Option]) Run(ctx context.Context, input I, opts ...Optio
 	return c.merger(ctx, outputs)
 }
 
-// RunStream executes the chain of runners sequentially, streaming the output of the last runner.
+// RunStream executes the runners sequentially, streaming each output as it is produced.
+// Note: Although this method belongs to the Parallel struct, it runs runners one after another, not in parallel.
 func (c *Parallel[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {

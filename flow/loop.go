@@ -67,7 +67,7 @@ func (l *Loop[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (
 	return output, nil
 }
 
-// RunStream executes the Loop in a streaming manner, returning a Streamer that emits the final output.
+// RunStream executes the Loop in a streaming manner, returning a Streamable that emits the final output.
 func (l *Loop[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
