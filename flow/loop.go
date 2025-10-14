@@ -71,7 +71,7 @@ func (l *Loop[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (
 func (l *Loop[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
-		output, err := l.runner.Run(ctx, input, opts...)
+		output, err := l.Run(ctx, input, opts...)
 		if err != nil {
 			return err
 		}

@@ -56,13 +56,11 @@ func (c *Branch[I, O, Option]) Run(ctx context.Context, input I, opts ...Option)
 func (c *Branch[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
 	pipe := blades.NewStreamPipe[O]()
 	pipe.Go(func() error {
-		for _, runner := range c.runners {
-			output, err := runner.Run(ctx, input, opts...)
-			if err != nil {
-				return err
-			}
-			pipe.Send(output)
+		output, err := c.Run(ctx, input, opts...)
+		if err != nil {
+			return err
 		}
+		pipe.Send(output)
 		return nil
 	})
 	return pipe, nil
