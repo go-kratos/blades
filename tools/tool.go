@@ -17,7 +17,7 @@ type Tool struct {
 }
 
 // NewTool creates a new Tool with the given name, description, input and output types, and handler.
-func NewTool[I, O any](name string, description string, handler ToolAdapter[I, O]) (*Tool, error) {
+func NewTool[I, O any](name string, description string, handler ToolFunc[I, O]) (*Tool, error) {
 	inputSchema, err := jsonschema.For[I](nil)
 	if err != nil {
 		return nil, err
