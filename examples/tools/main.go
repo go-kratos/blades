@@ -7,49 +7,44 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
-	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/go-kratos/blades/tools"
 )
 
+// WeatherReq represents a request for weather information.
+type WeatherReq struct {
+	Location string `json:"location" jsonschema:"Get the current weather for a given city"`
+}
+
+// WeatherRes represents a response containing weather information.
+type WeatherRes struct {
+	Forecast string `json:"forecast" jsonschema:"The weather forecast"`
+}
+
 func main() {
-	weatherTool := &blades.Tool{
-		Name:        "get_weather",
-		Description: "Get the current weather for a given city",
-		InputSchema: &jsonschema.Schema{
-			Type: "object",
-			Properties: map[string]*jsonschema.Schema{
-				"location": {Type: "string"},
-			},
-			Required: []string{"location"},
-		},
-		Handler: blades.HandleFunc(func(ctx context.Context, input string) (string, error) {
-			var payload struct {
-				Location string `json:"location"`
-			}
-			if err := json.Unmarshal([]byte(input), &payload); err != nil {
+	weatherTool, err := tools.NewTool[WeatherReq, WeatherRes](
+		"get_weather",
+		"Get the current weather for a given city",
+		tools.HandleFunc(func(ctx context.Context, input string) (string, error) {
+			var req WeatherReq
+			if err := json.Unmarshal([]byte(input), &req); err != nil {
 				return "", err
 			}
-			log.Println("Fetching weather for:", payload.Location)
-
-			result := struct {
-				Forecast string `json:"forecast"`
-			}{Forecast: "Sunny, 25°C"}
-			encoded, err := json.Marshal(result)
+			b, err := json.Marshal(&WeatherRes{Forecast: "Sunny, 25°C"})
 			if err != nil {
 				return "", err
 			}
-			return string(encoded), nil
+			log.Println("Fetching weather for:", req.Location, "->", string(b))
+			return string(b), nil
 		}),
-	}
-	tools := []*blades.Tool{
-		weatherTool,
-	}
+	)
 	agent := blades.NewAgent(
 		"Weather Agent",
 		blades.WithModel("qwen-plus"),
 		blades.WithInstructions("You are a helpful assistant that provides weather information."),
 		blades.WithProvider(openai.NewChatProvider()),
-		blades.WithTools(tools...),
+		blades.WithTools(weatherTool),
 	)
+	// Create a prompt asking for the weather in New York City
 	prompt := blades.NewPrompt(
 		blades.UserMessage("What is the weather in New York City?"),
 	)

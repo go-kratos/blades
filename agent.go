@@ -3,6 +3,7 @@ package blades
 import (
 	"context"
 
+	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
@@ -63,7 +64,7 @@ func WithProvider(provider ModelProvider) Option {
 }
 
 // WithTools sets the tools for the Agent.
-func WithTools(tools ...*Tool) Option {
+func WithTools(tools ...*tools.Tool) Option {
 	return func(a *Agent) {
 		a.tools = tools
 	}
@@ -95,7 +96,7 @@ type Agent struct {
 	middleware   Middleware
 	provider     ModelProvider
 	memory       Memory
-	tools        []*Tool
+	tools        []*tools.Tool
 }
 
 // NewAgent creates a new Agent with the given name and options.

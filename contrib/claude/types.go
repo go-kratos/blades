@@ -7,6 +7,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/tools"
 )
 
 // ConvertBladesToClaude converts a Blades ModelRequest to Claude MessageNewParams
@@ -131,7 +132,7 @@ func convertPartsToContent(parts []blades.Part) ([]anthropic.ContentBlockParamUn
 }
 
 // convertBladesToolsToClaude converts Blades Tools to Claude ToolParams
-func convertBladesToolsToClaude(tools []*blades.Tool) ([]anthropic.ToolUnionParam, error) {
+func convertBladesToolsToClaude(tools []*tools.Tool) ([]anthropic.ToolUnionParam, error) {
 	var claudeTools []anthropic.ToolUnionParam
 
 	for _, tool := range tools {

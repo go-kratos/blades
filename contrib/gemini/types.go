@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/tools"
 	"google.golang.org/genai"
 )
 
@@ -261,7 +262,7 @@ func parseDataURL(dataURL string) (string, []byte, error) {
 }
 
 // ConvertBladesToolsToGenAI converts Blades Tools to GenAI Tools
-func ConvertBladesToolsToGenAI(tools []*blades.Tool) ([]*genai.Tool, error) {
+func ConvertBladesToolsToGenAI(tools []*tools.Tool) ([]*genai.Tool, error) {
 	genaiTools := make([]*genai.Tool, 0, len(tools))
 
 	for _, tool := range tools {
@@ -278,7 +279,7 @@ func ConvertBladesToolsToGenAI(tools []*blades.Tool) ([]*genai.Tool, error) {
 }
 
 // convertBladesToolToGenAI converts a single Blades Tool to GenAI Tool
-func convertBladesToolToGenAI(tool *blades.Tool) (*genai.Tool, error) {
+func convertBladesToolToGenAI(tool *tools.Tool) (*genai.Tool, error) {
 	if tool == nil {
 		return nil, nil
 	}

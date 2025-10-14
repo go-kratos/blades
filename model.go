@@ -3,6 +3,7 @@ package blades
 import (
 	"context"
 
+	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
@@ -51,7 +52,7 @@ type AudioOptions struct {
 // ModelRequest is a multimodal chat-style request to the provider.
 type ModelRequest struct {
 	Model        string             `json:"model"`
-	Tools        []*Tool            `json:"tools,omitempty"`
+	Tools        []*tools.Tool      `json:"tools,omitempty"`
 	Messages     []*Message         `json:"messages"`
 	InputSchema  *jsonschema.Schema `json:"inputSchema,omitempty"`
 	OutputSchema *jsonschema.Schema `json:"outputSchema,omitempty"`

@@ -8,6 +8,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/tools"
 )
 
 var (
@@ -232,7 +233,7 @@ func (c *Client) generateStream(ctx context.Context, req *blades.ModelRequest, o
 }
 
 // toolCall invokes a tool by name with the given arguments.
-func toolCall(ctx context.Context, tools []*blades.Tool, name, arguments string) (string, error) {
+func toolCall(ctx context.Context, tools []*tools.Tool, name, arguments string) (string, error) {
 	for _, tool := range tools {
 		if tool.Name == name {
 			return tool.Handler.Handle(ctx, arguments)

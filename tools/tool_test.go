@@ -1,4 +1,4 @@
-package blades
+package tools
 
 import (
 	"context"
