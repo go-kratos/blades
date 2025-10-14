@@ -48,6 +48,13 @@ func WithOutputSchema(schema *jsonschema.Schema) Option {
 	}
 }
 
+// WithOutputKey sets the output key for storing the Agent's output in the session state.
+func WithOutputKey(key string) Option {
+	return func(a *Agent) {
+		a.outputKey = key
+	}
+}
+
 // WithProvider sets the model provider for the Agent.
 func WithProvider(provider ModelProvider) Option {
 	return func(a *Agent) {
@@ -82,6 +89,7 @@ type Agent struct {
 	model        string
 	description  string
 	instructions string
+	outputKey    string
 	inputSchema  *jsonschema.Schema
 	outputSchema *jsonschema.Schema
 	middleware   Middleware
@@ -168,7 +176,7 @@ func (a *Agent) addMemory(ctx context.Context, session *Session, prompt *Prompt,
 }
 
 func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
-	if res.Message.Status != StatusCompleted {
+	if a.outputKey == "" || res.Message.Status != StatusCompleted {
 		return nil
 	}
 	if a.outputSchema != nil {
@@ -176,9 +184,9 @@ func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
 		if err != nil {
 			return err
 		}
-		session.State.Store(a.name, value)
+		session.State.Store(a.outputKey, value)
 	} else {
-		session.State.Store(a.name, res.Message.Text())
+		session.State.Store(a.outputKey, res.Message.Text())
 	}
 	return nil
 }
@@ -218,7 +226,11 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
 			}
 			session.Inputs.Store(a.name, prompt)
 			session.Outputs.Store(a.name, res.Message)
+			session.History.Append(prompt.Messages...)
 			session.History.Append(res.Message)
+			if err := a.storeOutputToState(session, res); err != nil {
+				return nil, err
+			}
 			return res.Message, nil
 		},
 		Stream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
@@ -233,7 +245,11 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
 					}
 					session.Inputs.Store(a.name, prompt)
 					session.Outputs.Store(a.name, res.Message)
+					session.History.Append(prompt.Messages...)
 					session.History.Append(res.Message)
+					if err := a.storeOutputToState(session, res); err != nil {
+						return nil, err
+					}
 				}
 				return res.Message, nil
 			}), nil
