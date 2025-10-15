@@ -3,43 +3,38 @@ package memory
 import (
 	"context"
 	"strings"
-	"sync"
+
+	"github.com/go-kratos/generics"
 )
 
 // InMemoryStore is an in-memory implementation of MemoryStore.
 type InMemoryStore struct {
-	mu       sync.RWMutex
-	memories []*Memory
+	memories generics.Slice[*Memory]
 }
 
 // NewInMemoryStore creates a new instance of InMemoryStore.
 func NewInMemoryStore() *InMemoryStore {
-	return &InMemoryStore{
-		memories: make([]*Memory, 0),
-	}
+	return &InMemoryStore{}
 }
 
 // AddMemory adds a new memory to the in-memory store.
 func (s *InMemoryStore) AddMemory(ctx context.Context, m *Memory) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.memories = append(s.memories, m)
+	s.memories.Append(m)
 	return nil
 }
 
 // SearchMemory searches for memories containing the given query string.
 func (s *InMemoryStore) SearchMemory(ctx context.Context, query string) ([]*Memory, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var results []*Memory
 	// Simple case-insensitive substring match
 	words := strings.Fields(strings.ToLower(query))
-	for _, word := range words {
-		for _, m := range s.memories {
+	sets := generics.NewSet[*Memory]()
+	s.memories.Range(func(i int, m *Memory) bool {
+		for _, word := range words {
 			if strings.Contains(strings.ToLower(m.Content.Text()), word) {
-				results = append(results, m)
+				sets.Insert(m)
 			}
 		}
-	}
-	return results, nil
+		return true
+	})
+	return sets.ToSlice(), nil
 }
