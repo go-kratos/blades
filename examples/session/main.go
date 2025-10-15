@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
-	"github.com/go-kratos/blades/memory"
 )
 
 func main() {
@@ -15,9 +14,7 @@ func main() {
 		blades.WithModel("qwen-plus"),
 		blades.WithInstructions("You are a knowledgeable history tutor. Provide detailed and accurate information on historical events."),
 		blades.WithProvider(openai.NewChatProvider()),
-		blades.WithMemory(memory.NewInMemory(10)),
 	)
-	// Example conversation in memory
 	prompt := blades.NewPrompt(
 		blades.UserMessage("Can you tell me about the causes of World War II?"),
 	)

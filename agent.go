@@ -70,13 +70,6 @@ func WithTools(tools ...*tools.Tool) Option {
 	}
 }
 
-// WithMemory sets the memory for the Agent.
-func WithMemory(m Memory) Option {
-	return func(a *Agent) {
-		a.memory = m
-	}
-}
-
 // WithMiddleware sets the middleware for the Agent.
 func WithMiddleware(m Middleware) Option {
 	return func(a *Agent) {
@@ -95,7 +88,6 @@ type Agent struct {
 	outputSchema *jsonschema.Schema
 	middleware   Middleware
 	provider     ModelProvider
-	memory       Memory
 	tools        []*tools.Tool
 }
 
@@ -149,31 +141,11 @@ func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prom
 		}
 		req.Messages = append(req.Messages, message)
 	}
-	// memory messages
-	if a.memory != nil {
-		history, err := a.memory.ListMessages(ctx, session.ID)
-		if err != nil {
-			return nil, err
-		}
-		req.Messages = append(req.Messages, history...)
-	}
 	// user messages
 	if len(prompt.Messages) > 0 {
 		req.Messages = append(req.Messages, prompt.Messages...)
 	}
 	return &req, nil
-}
-
-func (a *Agent) addMemory(ctx context.Context, session *Session, prompt *Prompt, res *ModelResponse) error {
-	if a.memory != nil {
-		messages := make([]*Message, 0, len(prompt.Messages)+1)
-		messages = append(messages, prompt.Messages...)
-		messages = append(messages, res.Message)
-		if err := a.memory.AddMessages(ctx, session.ID, messages); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
@@ -222,9 +194,6 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
 			if err != nil {
 				return nil, err
 			}
-			if err := a.addMemory(ctx, session, prompt, res); err != nil {
-				return nil, err
-			}
 			session.Inputs.Store(a.name, prompt)
 			session.Outputs.Store(a.name, res.Message)
 			session.History.Append(prompt.Messages...)
@@ -241,9 +210,6 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
 			}
 			return NewMappedStream[*ModelResponse, *Message](stream, func(res *ModelResponse) (*Message, error) {
 				if res.Message.Status == StatusCompleted {
-					if err := a.addMemory(ctx, session, prompt, res); err != nil {
-						return nil, err
-					}
 					session.Inputs.Store(a.name, prompt)
 					session.Outputs.Store(a.name, res.Message)
 					session.History.Append(prompt.Messages...)
