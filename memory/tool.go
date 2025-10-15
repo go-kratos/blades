@@ -12,21 +12,21 @@ type Request struct {
 }
 
 // Response is the response for the memory tool.
-type Resposne struct {
+type Response struct {
 	Memories []*Memory `json:"memories" jsonschema:"The memories found for the query."`
 }
 
 // NewMemoryTool creates a new memory tool with the given memory store.
 func NewMemoryTool(store MemoryStore) (*tools.Tool, error) {
-	return tools.NewTool[Request, Resposne](
+	return tools.NewTool[Request, Response](
 		"Memory",
 		"You have memory. You can use it to answer questions. If any questions need you to look up the memory.",
-		tools.HandleFunc[Request, Resposne](func(ctx context.Context, req Request) (Resposne, error) {
+		tools.HandleFunc[Request, Response](func(ctx context.Context, req Request) (Response, error) {
 			memories, err := store.SearchMemory(ctx, req.Query)
 			if err != nil {
-				return Resposne{}, err
+				return Response{}, err
 			}
-			return Resposne{Memories: memories}, nil
+			return Response{Memories: memories}, nil
 		}),
 	)
 }
