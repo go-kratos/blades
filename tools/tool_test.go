@@ -9,7 +9,7 @@ import (
 )
 
 func TestHandleFunc(t *testing.T) {
-	handler := HandleFunc(func(ctx context.Context, input string) (string, error) {
+	handler := HandleFunc[string, string](func(ctx context.Context, input string) (string, error) {
 		return "processed: " + input, nil
 	})
 
@@ -24,15 +24,6 @@ func TestHandleFunc(t *testing.T) {
 	}
 }
 
-// Test custom ToolHandler implementation
-type CustomHandler struct {
-	prefix string
-}
-
-func (h *CustomHandler) Handle(ctx context.Context, input string) (string, error) {
-	return h.prefix + input, nil
-}
-
 func TestHandleFuncToolCall(t *testing.T) {
 	type request struct {
 		Location string `json:"location"`
@@ -41,7 +32,7 @@ func TestHandleFuncToolCall(t *testing.T) {
 		Forecast string `json:"forecast"`
 	}
 
-	handler := HandleFunc(func(ctx context.Context, input string) (string, error) {
+	handler := HandleFunc[string, string](func(ctx context.Context, input string) (string, error) {
 		var payload request
 		if err := json.Unmarshal([]byte(input), &payload); err != nil {
 			return "", err
@@ -83,7 +74,7 @@ func TestHandleFuncInvalidPayload(t *testing.T) {
 		Location string `json:"location"`
 	}
 
-	handler := HandleFunc(func(ctx context.Context, input string) (string, error) {
+	handler := HandleFunc[string, string](func(ctx context.Context, input string) (string, error) {
 		var payload request
 		if err := json.Unmarshal([]byte(input), &payload); err != nil {
 			return "", err
@@ -100,11 +91,11 @@ func TestHandleFuncInvalidPayload(t *testing.T) {
 
 func TestCustomHandler(t *testing.T) {
 	handler := &struct {
-		Handler
+		Handler[string, string]
 		prefix string
 	}{prefix: "custom: "}
 
-	handler.Handler = HandleFunc(func(ctx context.Context, input string) (string, error) {
+	handler.Handler = HandleFunc[string, string](func(ctx context.Context, input string) (string, error) {
 		return handler.prefix + input, nil
 	})
 
@@ -122,5 +113,33 @@ func TestCustomHandler(t *testing.T) {
 
 	if result != "custom: test" {
 		t.Fatalf("unexpected result: %s", result)
+	}
+}
+
+func TestJSONAdapter(t *testing.T) {
+	type req struct {
+		Name string `json:"name"`
+	}
+	type res struct {
+		Greet string `json:"greet"`
+	}
+
+	var h Handler[req, res] = HandleFunc[req, res](func(ctx context.Context, r req) (res, error) {
+		return res{Greet: "hi, " + r.Name}, nil
+	})
+
+	adapter := JSONAdapter[req, res](h)
+
+	out, err := adapter.Handle(context.Background(), `{"name":"Ada"}`)
+	if err != nil {
+		t.Fatalf("adapter returned error: %v", err)
+	}
+
+	var got res
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("failed to decode adapter output: %v", err)
+	}
+	if got.Greet != "hi, Ada" {
+		t.Fatalf("unexpected greet: %s", got.Greet)
 	}
 }
