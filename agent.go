@@ -194,13 +194,10 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
 			if err != nil {
 				return nil, err
 			}
-			session.Inputs.Store(a.name, prompt)
-			session.Outputs.Store(a.name, res.Message)
-			session.History.Append(prompt.Messages...)
-			session.History.Append(res.Message)
 			if err := a.storeOutputToState(session, res); err != nil {
 				return nil, err
 			}
+			session.Record(a.name, prompt, res.Message)
 			return res.Message, nil
 		},
 		Stream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
@@ -210,13 +207,10 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
 			}
 			return NewMappedStream[*ModelResponse, *Message](stream, func(res *ModelResponse) (*Message, error) {
 				if res.Message.Status == StatusCompleted {
-					session.Inputs.Store(a.name, prompt)
-					session.Outputs.Store(a.name, res.Message)
-					session.History.Append(prompt.Messages...)
-					session.History.Append(res.Message)
 					if err := a.storeOutputToState(session, res); err != nil {
 						return nil, err
 					}
+					session.Record(a.name, prompt, res.Message)
 				}
 				return res.Message, nil
 			}), nil
