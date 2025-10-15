@@ -8,8 +8,8 @@ import (
 
 // Memory represents a piece of information stored in the memory system.
 type Memory struct {
-	Content  *blades.Message
-	Metadata map[string]any
+	Content  *blades.Message `json:"content"`
+	Metadata map[string]any  `json:"metadata,omitempty"`
 }
 
 // MemoryStore defines the interface for storing and retrieving memories.

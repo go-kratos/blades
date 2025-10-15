@@ -17,6 +17,14 @@ func NewPrompt(messages ...*Message) *Prompt {
 	}
 }
 
+// Latest returns the most recent message in the prompt, or nil if there are no messages.
+func (p *Prompt) Latest() *Message {
+	if len(p.Messages) == 0 {
+		return nil
+	}
+	return p.Messages[len(p.Messages)-1]
+}
+
 // String returns the string representation of the prompt by concatenating all message strings.
 func (p *Prompt) String() string {
 	var buf strings.Builder
