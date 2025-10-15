@@ -16,7 +16,7 @@ type Session struct {
 	State   generics.Map[string, any]      `json:"state"`
 }
 
-// Record records the input prompt and output message under the given name,
+// Record records the input prompt and output message under the given name.
 func (s *Session) Record(name string, input *Prompt, output *Message) {
 	s.Inputs.Store(name, input)
 	s.Outputs.Store(name, output)
