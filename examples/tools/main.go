@@ -23,7 +23,7 @@ func main() {
 	weatherTool, err := tools.NewTool[WeatherReq, WeatherRes](
 		"get_weather",
 		"Get the current weather for a given city",
-		tools.ToolFunc[WeatherReq, WeatherRes](func(ctx context.Context, req WeatherReq) (WeatherRes, error) {
+		tools.HandleFunc[WeatherReq, WeatherRes](func(ctx context.Context, req WeatherReq) (WeatherRes, error) {
 			log.Println("Fetching weather for:", req.Location)
 			return WeatherRes{Forecast: "Sunny, 25°C"}, nil
 		}),
