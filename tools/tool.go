@@ -28,6 +28,6 @@ func NewTool[I, O any](name string, description string, handler Handler[I, O]) (
 		Description:  description,
 		InputSchema:  inputSchema,
 		OutputSchema: outputSchema,
-		Handler:      JSONHandleFunc(handler),
+		Handler:      JSONAdapter(handler),
 	}, nil
 }

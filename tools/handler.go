@@ -19,9 +19,9 @@ func (f HandleFunc[I, O]) Handle(ctx context.Context, input I) (O, error) {
 	return f(ctx, input)
 }
 
-// JSONHandleFunc adapts a Handler with concrete input and output types to a Handler that
-// accepts and returns JSON strings.
-func JSONHandleFunc[I, O any](handler Handler[I, O]) HandleFunc[string, string] {
+// JSONAdapter adapts a Handler that consumes and produces JSON-serializable types
+// to a Handler that consumes and produces strings.
+func JSONAdapter[I, O any](handler Handler[I, O]) HandleFunc[string, string] {
 	return func(ctx context.Context, input string) (string, error) {
 		var req I
 		if err := json.Unmarshal([]byte(input), &req); err != nil {
