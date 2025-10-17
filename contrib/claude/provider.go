@@ -24,9 +24,9 @@ var (
 type Option func(*Options)
 
 // WithThinking sets the thinking configuration.
-func WithThinking(thinking anthropic.ThinkingConfigParamUnion) Option {
+func WithThinking(thinking *anthropic.ThinkingConfigParamUnion) Option {
 	return func(o *Options) {
-		o.Thinking = &thinking
+		o.Thinking = thinking
 	}
 }
 

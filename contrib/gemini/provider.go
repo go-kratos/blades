@@ -18,7 +18,15 @@ var (
 	ErrTooManyIterations = errors.New("too many iterations requested")
 )
 
+// Option defines a configuration option for the Provider.
 type Option func(*Options)
+
+// WithThinkingConfig sets the thinking config for the provider.
+func WithThinkingConfig(c *genai.ThinkingConfig) Option {
+	return func(o *Options) {
+		o.ThinkingConfig = c
+	}
+}
 
 // WithMaxToolIterations sets the maximum number of tool iterations.
 func WithMaxToolIterations(n int) Option {
@@ -27,6 +35,7 @@ func WithMaxToolIterations(n int) Option {
 	}
 }
 
+// Options holds configuration options for the Provider.
 type Options struct {
 	MaxToolIterations int
 	ThinkingConfig    *genai.ThinkingConfig
