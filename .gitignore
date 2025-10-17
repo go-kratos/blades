@@ -32,3 +32,4 @@ go.work.sum
 .vscode/
 .gopath/
 .gocache/
+.DS_Store
