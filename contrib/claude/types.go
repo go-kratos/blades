@@ -105,11 +105,11 @@ func buildToolMesssage(ctx context.Context, message *anthropic.Message, tools []
 		switch variant := block.AsAny().(type) {
 		case anthropic.ToolUseBlock:
 			args := variant.JSON.Input.Raw()
-			result, err := handleToolCall(ctx, tools, block.Name, args)
+			result, err := handleToolCall(ctx, tools, variant.Name, args)
 			if err != nil {
 				return nil, err
 			}
-			toolResults = append(toolResults, anthropic.NewToolResultBlock(block.ID, result, false))
+			toolResults = append(toolResults, anthropic.NewToolResultBlock(variant.ID, result, false))
 		}
 	}
 	toolMessages = append(toolMessages, message.ToParam())

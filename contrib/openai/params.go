@@ -12,7 +12,7 @@ func promptFromMessages(messages []*blades.Message) (string, error) {
 	}
 	var sections []string
 	for _, msg := range messages {
-		sections = append(sections, msg.Text(), "\n")
+		sections = append(sections, msg.Text())
 	}
 	if len(sections) == 0 {
 		return "", ErrPromptRequired
