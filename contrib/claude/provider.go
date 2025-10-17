@@ -44,23 +44,23 @@ type Options struct {
 	RequestOpts       []option.RequestOption
 }
 
-// Client provides a unified interface for Claude API access
-type Client struct {
+// Provider provides a unified interface for Claude API access.
+type Provider struct {
 	opts   Options
 	client anthropic.Client
 }
 
-// NewClient creates a new Claude client with the given options
+// NewProvider creates a new Claude client with the given options
 // Accepts official Anthropic SDK RequestOptions for maximum flexibility:
 //   - Direct API: option.WithAPIKey("sk-...")
 //   - AWS Bedrock: bedrock.WithLoadDefaultConfig(ctx)
 //   - Google Vertex: vertex.WithGoogleAuth(ctx, region, projectID)
-func NewClient(opts ...Option) *Client {
+func NewProvider(opts ...Option) *Provider {
 	opt := Options{MaxToolIterations: 5}
 	for _, apply := range opts {
 		apply(&opt)
 	}
-	return &Client{
+	return &Provider{
 		opts:   opt,
 		client: anthropic.NewClient(opt.RequestOpts...),
 	}
@@ -68,7 +68,7 @@ func NewClient(opts ...Option) *Client {
 
 // Generate generates content using the Claude API
 // Returns blades.ModelResponse instead of SDK-specific types
-func (c *Client) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
+func (c *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -81,7 +81,7 @@ func (c *Client) Generate(ctx context.Context, req *blades.ModelRequest, opts ..
 }
 
 // generateWithIterations handles the recursive tool calling logic
-func (c *Client) generate(ctx context.Context, params *anthropic.MessageNewParams, tools []*tools.Tool, maxToolIterations int) (*blades.ModelResponse, error) {
+func (c *Provider) generate(ctx context.Context, params *anthropic.MessageNewParams, tools []*tools.Tool, maxToolIterations int) (*blades.ModelResponse, error) {
 	if maxToolIterations < 1 {
 		return nil, ErrTooManyIterations
 	}
@@ -106,7 +106,7 @@ func (c *Client) generate(ctx context.Context, params *anthropic.MessageNewParam
 }
 
 // NewStream executes the request and returns a stream of assistant responses
-func (c *Client) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
+func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -118,7 +118,7 @@ func (c *Client) NewStream(ctx context.Context, req *blades.ModelRequest, opts .
 	return c.newStreaming(ctx, params, req.Tools, c.opts.MaxToolIterations)
 }
 
-func (c *Client) newStreaming(ctx context.Context, params *anthropic.MessageNewParams, tools []*tools.Tool, maxToolIterations int) (blades.Streamable[*blades.ModelResponse], error) {
+func (c *Provider) newStreaming(ctx context.Context, params *anthropic.MessageNewParams, tools []*tools.Tool, maxToolIterations int) (blades.Streamable[*blades.ModelResponse], error) {
 	// Ensure we have at least one iteration left
 	if maxToolIterations < 1 {
 		return nil, ErrTooManyIterations
@@ -177,7 +177,7 @@ func (c *Client) newStreaming(ctx context.Context, params *anthropic.MessageNewP
 }
 
 // toClaudeParams converts Blades ModelRequest and ModelOptions to Claude MessageNewParams.
-func (c *Client) toClaudeParams(req *blades.ModelRequest, opt blades.ModelOptions) (*anthropic.MessageNewParams, error) {
+func (c *Provider) toClaudeParams(req *blades.ModelRequest, opt blades.ModelOptions) (*anthropic.MessageNewParams, error) {
 	params := &anthropic.MessageNewParams{
 		Model: anthropic.Model(req.Model),
 	}
