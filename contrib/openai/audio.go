@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/go-kratos/blades"
@@ -24,55 +23,62 @@ var (
 	ErrAudioVoiceRequired = errors.New("openai/audio: voice is required")
 )
 
-const defaultAudioVoice = "alloy"
+// AudioOption defines functional options for configuring the AudioProvider.
+type AudioOption func(*AudioOptions)
+
+// WithAudioOptions appends request options to the audio generation request.
+func WithAudioOptions(opts ...option.RequestOption) AudioOption {
+	return func(o *AudioOptions) {
+		o.RequestOpts = append(o.RequestOpts, opts...)
+	}
+}
+
+// AudioOptions holds configuration for the AudioProvider.
+type AudioOptions struct {
+	RequestOpts []option.RequestOption
+}
 
 // AudioProvider calls OpenAI's speech synthesis endpoint.
 type AudioProvider struct {
+	opts   AudioOptions
 	client openai.Client
 }
 
 // NewAudioProvider creates a new instance of AudioProvider.
-func NewAudioProvider(opts ...option.RequestOption) blades.ModelProvider {
-	return &AudioProvider{client: openai.NewClient(opts...)}
+func NewAudioProvider(opts ...AudioOption) blades.ModelProvider {
+	audioOpts := AudioOptions{}
+	for _, opt := range opts {
+		opt(&audioOpts)
+	}
+	return &AudioProvider{
+		opts:   audioOpts,
+		client: openai.NewClient(audioOpts.RequestOpts...),
+	}
 }
 
 // Generate generates audio from text input using the configured OpenAI model.
 func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
-	if req == nil {
-		return nil, ErrAudioRequestNil
-	}
-	if req.Model == "" {
-		return nil, ErrAudioModelRequired
-	}
-
 	modelOpts := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&modelOpts)
 	}
-
 	input, err := promptFromMessages(req.Messages)
 	if err != nil {
 		return nil, err
 	}
-
-	voice := strings.TrimSpace(modelOpts.Audio.Voice)
-	if voice == "" {
-		voice = defaultAudioVoice
-	}
-
 	params := openai.AudioSpeechNewParams{
 		Input: input,
 		Model: openai.SpeechModel(req.Model),
-		Voice: openai.AudioSpeechNewParamsVoice(voice),
+		Voice: openai.AudioSpeechNewParamsVoice(modelOpts.Audio.Voice),
 	}
-	applyAudioOptions(&params, modelOpts.Audio)
-
+	if err := p.applyOptions(&params, modelOpts.Audio); err != nil {
+		return nil, err
+	}
 	resp, err := p.client.Audio.Speech.New(ctx, params)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -80,13 +86,8 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 	if len(data) == 0 {
 		return nil, ErrAudioGenerationEmpty
 	}
-
-	mimeType := audioMimeFromContentType(resp.Header.Get("Content-Type"), params.ResponseFormat)
-	name := "audio"
-	if format := strings.TrimSpace(string(params.ResponseFormat)); format != "" {
-		name = "audio." + strings.ToLower(format)
-	}
-
+	name := "audio." + strings.ToLower(string(params.ResponseFormat))
+	mimeType := audioMimeType(params.ResponseFormat)
 	message := &blades.Message{
 		Role:     blades.RoleAssistant,
 		Status:   blades.StatusCompleted,
@@ -95,27 +96,12 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 			blades.DataPart{
 				Name:     name,
 				Bytes:    data,
-				MimeType: mimeType,
+				MIMEType: mimeType,
 			},
 		},
 	}
-
-	if ct := resp.Header.Get("Content-Type"); ct != "" {
-		message.Metadata["content_type"] = ct
-	}
-	if voice != "" {
-		message.Metadata["voice"] = voice
-	}
-	if format := strings.TrimSpace(string(params.ResponseFormat)); format != "" {
-		message.Metadata["response_format"] = format
-	}
-	if modelOpts.Audio.Speed > 0 {
-		message.Metadata["speed"] = strconv.FormatFloat(modelOpts.Audio.Speed, 'f', 2, 64)
-	}
-	if modelOpts.Audio.Instructions != "" {
-		message.Metadata["instructions"] = modelOpts.Audio.Instructions
-	}
-
+	message.Metadata["content_type"] = resp.Header.Get("Content-Type")
+	message.Metadata["response_format"] = string(params.ResponseFormat)
 	return &blades.ModelResponse{Message: message}, nil
 }
 
@@ -133,54 +119,36 @@ func (p *AudioProvider) NewStream(ctx context.Context, req *blades.ModelRequest,
 	return pipe, nil
 }
 
-func applyAudioOptions(params *openai.AudioSpeechNewParams, cfg blades.AudioOptions) {
-	if cfg.ResponseFormat != "" {
-		params.ResponseFormat = openai.AudioSpeechNewParamsResponseFormat(cfg.ResponseFormat)
+func (p *AudioProvider) applyOptions(params *openai.AudioSpeechNewParams, opt blades.AudioOptions) error {
+	if opt.ResponseFormat != "" {
+		params.ResponseFormat = openai.AudioSpeechNewParamsResponseFormat(opt.ResponseFormat)
 	}
-	if cfg.StreamFormat != "" {
-		params.StreamFormat = openai.AudioSpeechNewParamsStreamFormat(cfg.StreamFormat)
+	if opt.StreamFormat != "" {
+		params.StreamFormat = openai.AudioSpeechNewParamsStreamFormat(opt.StreamFormat)
 	}
-	if cfg.Instructions != "" {
-		params.Instructions = param.NewOpt(cfg.Instructions)
+	if opt.Instructions != "" {
+		params.Instructions = param.NewOpt(opt.Instructions)
 	}
-	if cfg.Speed > 0 {
-		params.Speed = param.NewOpt(cfg.Speed)
+	if opt.Speed > 0 {
+		params.Speed = param.NewOpt(opt.Speed)
 	}
+	return nil
 }
 
-func audioMimeFromContentType(contentType string, format openai.AudioSpeechNewParamsResponseFormat) blades.MimeType {
-	ct := strings.ToLower(strings.TrimSpace(contentType))
-	switch {
-	case strings.Contains(ct, "mpeg"), strings.Contains(ct, "mp3"):
-		return blades.MimeAudioMP3
-	case strings.Contains(ct, "wav"), strings.Contains(ct, "wave"):
-		return blades.MimeAudioWAV
-	case strings.Contains(ct, "ogg"):
-		return blades.MimeAudioOGG
-	case strings.Contains(ct, "opus"):
-		return blades.MimeAudioOpus
-	case strings.Contains(ct, "aac"):
-		return blades.MimeAudioAAC
-	case strings.Contains(ct, "flac"):
-		return blades.MimeAudioFLAC
-	case strings.Contains(ct, "pcm"):
-		return blades.MimeAudioPCM
-	}
-
+func audioMimeType(format openai.AudioSpeechNewParamsResponseFormat) blades.MIMEType {
 	switch strings.ToLower(string(format)) {
 	case "mp3":
-		return blades.MimeAudioMP3
+		return blades.MIMEAudioMP3
 	case "wav":
-		return blades.MimeAudioWAV
+		return blades.MIMEAudioWAV
 	case "opus":
-		return blades.MimeAudioOpus
+		return blades.MIMEAudioOpus
 	case "aac":
-		return blades.MimeAudioAAC
+		return blades.MIMEAudioAAC
 	case "flac":
-		return blades.MimeAudioFLAC
+		return blades.MIMEAudioFLAC
 	case "pcm":
-		return blades.MimeAudioPCM
+		return blades.MIMEAudioPCM
 	}
-
-	return blades.MimeAudioMP3
+	return blades.MIMEAudioMP3
 }

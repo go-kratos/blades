@@ -42,14 +42,14 @@ type TextPart struct {
 type FilePart struct {
 	Name     string   `json:"name"`
 	URI      string   `json:"uri"`
-	MimeType MimeType `json:"mimeType"`
+	MIMEType MIMEType `json:"mimeType"`
 }
 
 // DataPart is a file represented by its byte content.
 type DataPart struct {
 	Name     string   `json:"name"`
 	Bytes    []byte   `json:"bytes"`
-	MimeType MimeType `json:"mimeType"`
+	MIMEType MIMEType `json:"mimeType"`
 }
 
 // Part is a part of a message, which can be text or a file.
@@ -116,9 +116,9 @@ func (m *Message) String() string {
 		case TextPart:
 			buf.WriteString("[Text: " + v.Text + ")]")
 		case FilePart:
-			buf.WriteString("[File: " + v.Name + " (" + string(v.MimeType) + ")]")
+			buf.WriteString("[File: " + v.Name + " (" + string(v.MIMEType) + ")]")
 		case DataPart:
-			buf.WriteString("[Data: " + v.Name + " (" + string(v.MimeType) + "), " + fmt.Sprintf("%d bytes", len(v.Bytes)) + "]")
+			buf.WriteString("[Data: " + v.Name + " (" + string(v.MIMEType) + "), " + fmt.Sprintf("%d bytes", len(v.Bytes)) + "]")
 		}
 	}
 	return buf.String()

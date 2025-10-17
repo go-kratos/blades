@@ -2,32 +2,32 @@ package blades
 
 import "strings"
 
-// MimeType represents the media type of content.
-type MimeType string
+// MIMEType represents the media type of content.
+type MIMEType string
 
 const (
 	// Text and markdown mime types.
-	MimeText     MimeType = "text/plain"
-	MimeMarkdown MimeType = "text/markdown"
+	MIMEText     MIMEType = "text/plain"
+	MIMEMarkdown MIMEType = "text/markdown"
 	// Common image mime types.
-	MimeImagePNG  MimeType = "image/png"
-	MimeImageJPEG MimeType = "image/jpeg"
-	MimeImageWEBP MimeType = "image/webp"
+	MIMEImagePNG  MIMEType = "image/png"
+	MIMEImageJPEG MIMEType = "image/jpeg"
+	MIMEImageWEBP MIMEType = "image/webp"
 	// Common audio mime types (non-exhaustive).
-	MimeAudioWAV  MimeType = "audio/wav"
-	MimeAudioMP3  MimeType = "audio/mpeg"
-	MimeAudioOGG  MimeType = "audio/ogg"
-	MimeAudioAAC  MimeType = "audio/aac"
-	MimeAudioFLAC MimeType = "audio/flac"
-	MimeAudioOpus MimeType = "audio/opus"
-	MimeAudioPCM  MimeType = "audio/pcm"
+	MIMEAudioWAV  MIMEType = "audio/wav"
+	MIMEAudioMP3  MIMEType = "audio/mpeg"
+	MIMEAudioOGG  MIMEType = "audio/ogg"
+	MIMEAudioAAC  MIMEType = "audio/aac"
+	MIMEAudioFLAC MIMEType = "audio/flac"
+	MIMEAudioOpus MIMEType = "audio/opus"
+	MIMEAudioPCM  MIMEType = "audio/pcm"
 	// Common video mime types (non-exhaustive).
-	MimeVideoMP4 MimeType = "video/mp4"
-	MimeVideoOGG MimeType = "video/ogg"
+	MIMEVideoMP4 MIMEType = "video/mp4"
+	MIMEVideoOGG MIMEType = "video/ogg"
 )
 
-// Type returns the general type of the MimeType (e.g., "image", "audio", "video", or "file").
-func (m MimeType) Type() string {
+// Type returns the general type of the MIMEType (e.g., "image", "audio", "video", or "file").
+func (m MIMEType) Type() string {
 	v := string(m)
 	switch {
 	case strings.HasPrefix(v, "image/"):
@@ -41,8 +41,8 @@ func (m MimeType) Type() string {
 	}
 }
 
-// Format returns the file format associated with the MimeType.
-func (m MimeType) Format() string {
+// Format returns the file format associated with the MIMEType.
+func (m MIMEType) Format() string {
 	parts := strings.SplitN(string(m), "/", 2)
 	if len(parts) == 2 {
 		return parts[1]

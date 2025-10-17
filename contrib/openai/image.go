@@ -20,21 +20,41 @@ var (
 	ErrImageGenerationEmpty = errors.New("openai/image: provider returned no images")
 )
 
+// ImageOption defines functional options for configuring the ImageProvider.
+type ImageOption func(*ImageOptions)
+
+// WithImageOptions applies OpenAI image request options.
+func WithImageOptions(opts ...option.RequestOption) ImageOption {
+	return func(o *ImageOptions) {
+		o.RequestOpts = append(o.RequestOpts, opts...)
+	}
+}
+
+// ImageOptions holds configuration for the ImageProvider.
+type ImageOptions struct {
+	RequestOpts []option.RequestOption
+}
+
 // ImageProvider calls OpenAI's image generation endpoints.
 type ImageProvider struct {
+	opts   ImageOptions
 	client openai.Client
 }
 
 // NewImageProvider creates a new instance of ImageProvider.
-func NewImageProvider(opts ...option.RequestOption) blades.ModelProvider {
-	return &ImageProvider{client: openai.NewClient(opts...)}
+func NewImageProvider(opts ...ImageOption) blades.ModelProvider {
+	imageOpts := ImageOptions{}
+	for _, opt := range opts {
+		opt(&imageOpts)
+	}
+	return &ImageProvider{
+		opts:   imageOpts,
+		client: openai.NewClient(imageOpts.RequestOpts...),
+	}
 }
 
 // Generate generates images using the configured OpenAI model.
 func (p *ImageProvider) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
-	if req == nil {
-		return nil, errors.New("openai/image: request is nil")
-	}
 	modelOpts := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&modelOpts)
@@ -43,11 +63,13 @@ func (p *ImageProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 	if err != nil {
 		return nil, err
 	}
-	params := openai.ImageGenerateParams{Prompt: prompt}
-	if req.Model != "" {
-		params.Model = openai.ImageModel(req.Model)
+	params := openai.ImageGenerateParams{
+		Prompt: prompt,
+		Model:  openai.ImageModel(req.Model),
 	}
-	applyImageOptions(&params, req.Model, modelOpts.Image)
+	if err := p.applyOptions(&params, modelOpts.Image); err != nil {
+		return nil, err
+	}
 	res, err := p.client.Images.Generate(ctx, params)
 	if err != nil {
 		return nil, err
@@ -69,40 +91,42 @@ func (p *ImageProvider) NewStream(ctx context.Context, req *blades.ModelRequest,
 	return pipe, nil
 }
 
-func applyImageOptions(params *openai.ImageGenerateParams, model string, cfg blades.ImageOptions) {
-	if cfg.Background != "" {
-		params.Background = openai.ImageGenerateParamsBackground(cfg.Background)
+// applyOptions applies image generation options to the OpenAI parameters.
+func (p *ImageProvider) applyOptions(params *openai.ImageGenerateParams, opts blades.ImageOptions) error {
+	if opts.Background != "" {
+		params.Background = openai.ImageGenerateParamsBackground(opts.Background)
 	}
-	if cfg.Size != "" {
-		params.Size = openai.ImageGenerateParamsSize(cfg.Size)
+	if opts.Size != "" {
+		params.Size = openai.ImageGenerateParamsSize(opts.Size)
 	}
-	if cfg.Quality != "" {
-		params.Quality = openai.ImageGenerateParamsQuality(cfg.Quality)
+	if opts.Quality != "" {
+		params.Quality = openai.ImageGenerateParamsQuality(opts.Quality)
 	}
-	if cfg.ResponseFormat != "" {
-		params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(cfg.ResponseFormat)
+	if opts.ResponseFormat != "" {
+		params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(opts.ResponseFormat)
 	}
-	if cfg.OutputFormat != "" {
-		params.OutputFormat = openai.ImageGenerateParamsOutputFormat(cfg.OutputFormat)
+	if opts.OutputFormat != "" {
+		params.OutputFormat = openai.ImageGenerateParamsOutputFormat(opts.OutputFormat)
 	}
-	if cfg.Moderation != "" {
-		params.Moderation = openai.ImageGenerateParamsModeration(cfg.Moderation)
+	if opts.Moderation != "" {
+		params.Moderation = openai.ImageGenerateParamsModeration(opts.Moderation)
 	}
-	if cfg.Style != "" {
-		params.Style = openai.ImageGenerateParamsStyle(cfg.Style)
+	if opts.Style != "" {
+		params.Style = openai.ImageGenerateParamsStyle(opts.Style)
 	}
-	if cfg.User != "" {
-		params.User = param.NewOpt(cfg.User)
+	if opts.User != "" {
+		params.User = param.NewOpt(opts.User)
 	}
-	if cfg.Count > 0 {
-		params.N = param.NewOpt(int64(cfg.Count))
+	if opts.Count > 0 {
+		params.N = param.NewOpt(int64(opts.Count))
 	}
-	if cfg.PartialImages > 0 {
-		params.PartialImages = param.NewOpt(int64(cfg.PartialImages))
+	if opts.PartialImages > 0 {
+		params.PartialImages = param.NewOpt(int64(opts.PartialImages))
 	}
-	if cfg.OutputCompression > 0 {
-		params.OutputCompression = param.NewOpt(int64(cfg.OutputCompression))
+	if opts.OutputCompression > 0 {
+		params.OutputCompression = param.NewOpt(int64(opts.OutputCompression))
 	}
+	return nil
 }
 
 func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) {
@@ -114,22 +138,12 @@ func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) 
 		Status:   blades.StatusCompleted,
 		Metadata: map[string]string{},
 	}
-	if res.OutputFormat != "" {
-		message.Metadata["output_format"] = string(res.OutputFormat)
-	}
-	if res.Quality != "" {
-		message.Metadata["quality"] = string(res.Quality)
-	}
-	if res.Size != "" {
-		message.Metadata["size"] = string(res.Size)
-	}
-	if res.Background != "" {
-		message.Metadata["background"] = string(res.Background)
-	}
-	if res.Created != 0 {
-		message.Metadata["created"] = strconv.FormatInt(res.Created, 10)
-	}
-	mimeType := mimeFromOutputFormat(res.OutputFormat)
+	message.Metadata["size"] = string(res.Size)
+	message.Metadata["quality"] = string(res.Quality)
+	message.Metadata["background"] = string(res.Background)
+	message.Metadata["output_format"] = string(res.OutputFormat)
+	message.Metadata["created"] = strconv.FormatInt(res.Created, 10)
+	mimeType := imageMimeType(res.OutputFormat)
 	for i, img := range res.Data {
 		name := fmt.Sprintf("image-%d", i+1)
 		if img.B64JSON != "" {
@@ -140,18 +154,18 @@ func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) 
 			message.Parts = append(message.Parts, blades.DataPart{
 				Name:     name,
 				Bytes:    data,
-				MimeType: mimeType,
+				MIMEType: mimeType,
 			})
 		}
 		if img.URL != "" {
 			message.Parts = append(message.Parts, blades.FilePart{
 				Name:     name,
 				URI:      img.URL,
-				MimeType: mimeType,
+				MIMEType: mimeType,
 			})
 		}
 		if img.RevisedPrompt != "" {
-			key := fmt.Sprintf("%s_revised_prompt", name)
+			key := fmt.Sprintf("revised_prompt_%d", i+1)
 			message.Metadata[key] = img.RevisedPrompt
 		}
 	}
@@ -161,13 +175,13 @@ func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) 
 	return &blades.ModelResponse{Message: message}, nil
 }
 
-func mimeFromOutputFormat(format openai.ImagesResponseOutputFormat) blades.MimeType {
+func imageMimeType(format openai.ImagesResponseOutputFormat) blades.MIMEType {
 	switch format {
 	case openai.ImagesResponseOutputFormatJPEG:
-		return blades.MimeImageJPEG
+		return blades.MIMEImageJPEG
 	case openai.ImagesResponseOutputFormatWebP:
-		return blades.MimeImageWEBP
+		return blades.MIMEImageWEBP
 	default:
-		return blades.MimeImagePNG
+		return blades.MIMEImagePNG
 	}
 }

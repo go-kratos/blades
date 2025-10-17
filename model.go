@@ -13,16 +13,15 @@ type ModelOption func(*ModelOptions)
 
 // ModelOptions holds common request-time controls.
 type ModelOptions struct {
-	MaxIterations   int
-	MaxOutputTokens int64
-	Temperature     float64
-	TopP            float64
-	ReasoningEffort string
-	Image           ImageOptions
-	Audio           AudioOptions
-	// Think Model options
-	ThinkingBudget  *int32 // Token budget for reasoning (Anthropic)
-	IncludeThoughts *bool  // Whether to include thinking process in response (Anthropic)
+	Seed             int64
+	MaxOutputTokens  int64
+	FrequencyPenalty float64
+	PresencePenalty  float64
+	Temperature      float64
+	TopP             float64
+	StopSequences    []string
+	Image            ImageOptions
+	Audio            AudioOptions
 }
 
 // ImageOptions holds configuration for image generation requests.

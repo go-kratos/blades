@@ -1,9 +1,9 @@
 package blades
 
-// MaxIterations sets the maximum number of iterations for the model.
-func MaxIterations(n int) ModelOption {
+// Seed sets the random seed for generation.
+func Seed(n int64) ModelOption {
 	return func(o *ModelOptions) {
-		o.MaxIterations = n
+		o.Seed = n
 	}
 }
 
@@ -14,10 +14,17 @@ func MaxOutputTokens(n int64) ModelOption {
 	}
 }
 
-// TopP sets the nucleus sampling parameter.
-func TopP(p float64) ModelOption {
+// FrequencyPenalty sets the frequency penalty parameter.
+func FrequencyPenalty(p float64) ModelOption {
 	return func(o *ModelOptions) {
-		o.TopP = p
+		o.FrequencyPenalty = p
+	}
+}
+
+// PresencePenalty sets the presence penalty parameter.
+func PresencePenalty(p float64) ModelOption {
+	return func(o *ModelOptions) {
+		o.PresencePenalty = p
 	}
 }
 
@@ -28,10 +35,17 @@ func Temperature(t float64) ModelOption {
 	}
 }
 
-// ReasoningEffort sets the level of reasoning effort for the model.
-func ReasoningEffort(effort string) ModelOption {
+// TopP sets the nucleus sampling parameter.
+func TopP(p float64) ModelOption {
 	return func(o *ModelOptions) {
-		o.ReasoningEffort = effort
+		o.TopP = p
+	}
+}
+
+// StopSequences sets the stop sequences for generation.
+func StopSequences(sequences ...string) ModelOption {
+	return func(o *ModelOptions) {
+		o.StopSequences = sequences
 	}
 }
 

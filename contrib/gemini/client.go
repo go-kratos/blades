@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/tools"
 	"google.golang.org/genai"
 )
 
@@ -19,234 +18,136 @@ var (
 	ErrTooManyIterations = errors.New("too many iterations requested")
 )
 
-// Client provides a unified interface for both Vertex AI and GenAI backends
-type Client struct {
-	genaiClient *genai.Client
+type Option func(*Options)
+
+// WithMaxToolIterations sets the maximum number of tool iterations.
+func WithMaxToolIterations(n int) Option {
+	return func(o *Options) {
+		o.MaxToolIterations = n
+	}
 }
 
-// NewClient creates a new Gemini client with the given genai.ClientConfig
-func NewClient(ctx context.Context, clientConfig *genai.ClientConfig) (*Client, error) {
-	if clientConfig == nil {
-		return nil, fmt.Errorf("clientConfig cannot be nil")
-	}
-
-	genaiClient, err := genai.NewClient(ctx, clientConfig)
-	if err != nil {
-		return nil, fmt.Errorf("creating GenAI client: %w", err)
-	}
-
-	return &Client{
-		genaiClient: genaiClient,
-	}, nil
+type Options struct {
+	MaxToolIterations int
+	ThinkingConfig    *genai.ThinkingConfig
 }
 
-// Generate generates content using the configured backend
-// Returns blades.ModelResponse instead of SDK-specific types
-func (c *Client) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
-	if c.genaiClient == nil {
-		return nil, fmt.Errorf("client not initialized")
-	}
+// Provider provides a unified interface for Gemini API access.
+type Provider struct {
+	opts   Options
+	client *genai.Client
+}
 
-	// Apply model options with default MaxIterations like OpenAI
-	opt := blades.ModelOptions{MaxIterations: 3}
+func NewProvider(ctx context.Context, clientConfig *genai.ClientConfig, opts ...Option) (*Provider, error) {
+	opt := Options{MaxToolIterations: 5}
 	for _, apply := range opts {
 		apply(&opt)
 	}
-
-	return c.generateWithIterations(ctx, req, opt)
-}
-
-// generateWithIterations handles the recursive tool calling logic
-func (c *Client) generateWithIterations(ctx context.Context, req *blades.ModelRequest, opt blades.ModelOptions) (*blades.ModelResponse, error) {
-	// Ensure we have at least one iteration left
-	if opt.MaxIterations < 1 {
-		return nil, ErrTooManyIterations
-	}
-
-	// Convert Blades request to GenAI format
-	contents, systemInstruction, err := ConvertBladesToGenAI(req)
-	if err != nil {
-		return nil, fmt.Errorf("converting request: %w", err)
-	}
-
-	// Convert model options and Gemini config to generation config
-	generateConfig := &genai.GenerateContentConfig{}
-	if systemInstruction != nil {
-		generateConfig.SystemInstruction = systemInstruction
-	}
-
-	if opt.Temperature > 0 {
-		temp := float32(opt.Temperature)
-		generateConfig.Temperature = &temp
-	}
-
-	if opt.MaxOutputTokens > 0 {
-		generateConfig.MaxOutputTokens = int32(opt.MaxOutputTokens)
-	}
-
-	if opt.TopP > 0 {
-		topP := float32(opt.TopP)
-		generateConfig.TopP = &topP
-	}
-
-	// Apply Gemini-specific configuration from ModelOptions
-	if opt.ThinkingBudget != nil || opt.IncludeThoughts != nil {
-		// Configure thinking with budget and include thoughts options
-		thinkingConfig := &genai.ThinkingConfig{}
-
-		if opt.ThinkingBudget != nil {
-			thinkingConfig.ThinkingBudget = opt.ThinkingBudget
-		}
-
-		if opt.IncludeThoughts != nil {
-			thinkingConfig.IncludeThoughts = *opt.IncludeThoughts
-		}
-
-		generateConfig.ThinkingConfig = thinkingConfig
-	}
-
-	// Convert tools if provided
-	if len(req.Tools) > 0 {
-		genaiTools, err := ConvertBladesToolsToGenAI(req.Tools)
-		if err != nil {
-			return nil, fmt.Errorf("converting tools: %w", err)
-		}
-		generateConfig.Tools = genaiTools
-	}
-
-	// Use the GenAI client for both backends since they use the same interface
-	resp, err := c.genaiClient.Models.GenerateContent(ctx, req.Model, contents, generateConfig)
-	if err != nil {
-		return nil, fmt.Errorf("generating content: %w", err)
-	}
-
-	// Convert response and handle tool execution inline
-	response, err := ConvertGenAIToBlades(resp)
+	client, err := genai.NewClient(ctx, clientConfig)
 	if err != nil {
 		return nil, err
 	}
+	return &Provider{
+		opts:   opt,
+		client: client,
+	}, nil
+}
 
-	// Handle tool calls if any - following OpenAI pattern
-	msg := response.Message
-	if len(msg.ToolCalls) > 0 {
-		// Add the assistant's message with tool calls to conversation history
-		assistantMsg := &blades.Message{
-			Role:      blades.RoleAssistant,
-			Parts:     msg.Parts,
-			ToolCalls: msg.ToolCalls,
-		}
-		req.Messages = append(req.Messages, assistantMsg)
-
-		// Execute each tool call and add results to conversation
-		for _, tc := range msg.ToolCalls {
-			// Execute the tool call
-			result, err := toolCall(ctx, req.Tools, tc.Name, tc.Arguments)
-			if err != nil {
-				return nil, fmt.Errorf("executing tool %s: %w", tc.Name, err)
-			}
-			// Set the result
-			tc.Result = result
-
-			// Add tool result message to conversation history for the LLM
-			toolResultMsg := &blades.Message{
-				Role:      blades.RoleTool,
-				ToolCalls: []*blades.ToolCall{tc},
-			}
-			req.Messages = append(req.Messages, toolResultMsg)
-		}
-
-		// Set message role to Tool for the response
-		msg.Role = blades.RoleTool
-
-		// Recursively call generateWithIterations to handle tool response continuation
-		opt.MaxIterations--
-		return c.generateWithIterations(ctx, req, opt)
+func (c *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
+	opt := blades.ModelOptions{}
+	for _, apply := range opts {
+		apply(&opt)
 	}
+	return c.generate(ctx, req, opt, c.opts.MaxToolIterations)
+}
 
+func (c *Provider) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOptions) (*genai.GenerateContentConfig, error) {
+	var config genai.GenerateContentConfig
+	if opt.Temperature > 0 {
+		temperature := float32(opt.Temperature)
+		config.Temperature = &temperature
+	}
+	if opt.MaxOutputTokens > 0 {
+		config.MaxOutputTokens = int32(opt.MaxOutputTokens)
+	}
+	if opt.TopP > 0 {
+		topP := float32(opt.TopP)
+		config.TopP = &topP
+	}
+	if c.opts.ThinkingConfig != nil {
+		config.ThinkingConfig = c.opts.ThinkingConfig
+	}
+	if len(req.Tools) > 0 {
+		tools, err := convertBladesToolsToGenAI(req.Tools)
+		if err != nil {
+			return nil, fmt.Errorf("converting tools: %w", err)
+		}
+		config.Tools = tools
+	}
+	return &config, nil
+}
+
+func (c *Provider) generate(ctx context.Context, req *blades.ModelRequest, opt blades.ModelOptions, maxToolIterations int) (*blades.ModelResponse, error) {
+	if maxToolIterations < 1 {
+		return nil, ErrTooManyIterations
+	}
+	system, contents, err := convertMessageToGenAI(req)
+	if err != nil {
+		return nil, err
+	}
+	config, err := c.toGenerateConfig(req, opt)
+	if err != nil {
+		return nil, err
+	}
+	config.SystemInstruction = system
+	// Use the GenAI client for both backends since they use the same interface
+	resp, err := c.client.Models.GenerateContent(ctx, req.Model, contents, config)
+	if err != nil {
+		return nil, fmt.Errorf("generating content: %w", err)
+	}
+	// Convert response and handle tool execution inline
+	response, err := convertGenAIToBlades(resp)
+	if err != nil {
+		return nil, err
+	}
+	// TODO: handle tools
 	return response, nil
 }
 
 // GenerateStream generates streaming content using the configured backend
 // Returns blades.Streamer[*blades.ModelResponse] following openai pattern
-func (c *Client) GenerateStream(ctx context.Context, req *blades.ModelRequest, opt blades.ModelOptions) (blades.Streamable[*blades.ModelResponse], error) {
+func (c *Provider) GenerateStream(ctx context.Context, req *blades.ModelRequest, opt blades.ModelOptions, maxToolIterations int) (blades.Streamable[*blades.ModelResponse], error) {
 	// Ensure we have at least one iteration left
-	if opt.MaxIterations < 1 {
+	if maxToolIterations < 1 {
 		return nil, ErrTooManyIterations
 	}
-
-	// Convert Blades request to GenAI format
-	contents, systemInstruction, err := ConvertBladesToGenAI(req)
+	system, contents, err := convertMessageToGenAI(req)
 	if err != nil {
-		return nil, fmt.Errorf("converting request: %w", err)
+		return nil, err
 	}
-
-	// Convert model options and Gemini config to generation config
-	generateConfig := &genai.GenerateContentConfig{}
-	if systemInstruction != nil {
-		generateConfig.SystemInstruction = systemInstruction
+	config, err := c.toGenerateConfig(req, opt)
+	if err != nil {
+		return nil, err
 	}
-
-	if opt.Temperature > 0 {
-		temp := float32(opt.Temperature)
-		generateConfig.Temperature = &temp
-	}
-
-	if opt.MaxOutputTokens > 0 {
-		generateConfig.MaxOutputTokens = int32(opt.MaxOutputTokens)
-	}
-
-	if opt.TopP > 0 {
-		topP := float32(opt.TopP)
-		generateConfig.TopP = &topP
-	}
-
-	// Apply Gemini-specific configuration from ModelOptions
-	if opt.ThinkingBudget != nil || opt.IncludeThoughts != nil {
-		// Configure thinking with budget and include thoughts options
-		thinkingConfig := &genai.ThinkingConfig{}
-
-		if opt.ThinkingBudget != nil {
-			thinkingConfig.ThinkingBudget = opt.ThinkingBudget
-		}
-
-		if opt.IncludeThoughts != nil {
-			thinkingConfig.IncludeThoughts = *opt.IncludeThoughts
-		}
-
-		generateConfig.ThinkingConfig = thinkingConfig
-	}
-
-	// Convert tools if provided
-	if len(req.Tools) > 0 {
-		genaiTools, err := ConvertBladesToolsToGenAI(req.Tools)
-		if err != nil {
-			return nil, fmt.Errorf("converting tools: %w", err)
-		}
-		generateConfig.Tools = genaiTools
-	}
-
+	config.SystemInstruction = system
 	// Create stream pipe like in openai
 	pipe := blades.NewStreamPipe[*blades.ModelResponse]()
 	pipe.Go(func() error {
 		// Get streaming iterator from GenAI client
-		stream := c.genaiClient.Models.GenerateContentStream(ctx, req.Model, contents, generateConfig)
-
+		stream := c.client.Models.GenerateContentStream(ctx, req.Model, contents, config)
 		// Accumulate chunks to build final response for tool call handling
 		var accumulatedResponse *genai.GenerateContentResponse
-
 		// Process stream chunks using iterator pattern
 		for chunk, err := range stream {
 			if err != nil {
 				return err
 			}
-
 			// Convert chunk to Blades response and send immediately
-			response, err := ConvertStreamChunkToBlades(chunk)
+			response, err := convertGenAIToBlades(chunk)
 			if err != nil {
 				return err
 			}
 			pipe.Send(response)
-
 			// Accumulate chunks for final tool call processing
 			if accumulatedResponse == nil {
 				accumulatedResponse = chunk
@@ -256,7 +157,6 @@ func (c *Client) GenerateStream(ctx context.Context, req *blades.ModelRequest, o
 				if len(chunk.Candidates) > 0 && len(accumulatedResponse.Candidates) > 0 {
 					candidate := accumulatedResponse.Candidates[0]
 					chunkCandidate := chunk.Candidates[0]
-
 					// Append parts from chunk to accumulated candidate
 					if chunkCandidate.Content != nil {
 						if candidate.Content == nil {
@@ -264,7 +164,6 @@ func (c *Client) GenerateStream(ctx context.Context, req *blades.ModelRequest, o
 						}
 						candidate.Content.Parts = append(candidate.Content.Parts, chunkCandidate.Content.Parts...)
 					}
-
 					// Update finish reason if present
 					if chunkCandidate.FinishReason != "" {
 						candidate.FinishReason = chunkCandidate.FinishReason
@@ -272,94 +171,26 @@ func (c *Client) GenerateStream(ctx context.Context, req *blades.ModelRequest, o
 				}
 			}
 		}
-
 		// After streaming is complete, check for tool calls in accumulated response
 		if accumulatedResponse != nil {
-			finalResponse, err := ConvertGenAIToBlades(accumulatedResponse)
+			finalResponse, err := convertGenAIToBlades(accumulatedResponse)
 			if err != nil {
 				return err
 			}
-
-			// Handle tool calls if any - following OpenAI pattern
-			msg := finalResponse.Message
-			if len(msg.ToolCalls) > 0 {
-				// Add the assistant's message with tool calls to conversation history
-				assistantMsg := &blades.Message{
-					Role:      blades.RoleAssistant,
-					Parts:     msg.Parts,
-					ToolCalls: msg.ToolCalls,
-				}
-				req.Messages = append(req.Messages, assistantMsg)
-
-				// Execute each tool call and add results to conversation
-				for _, tc := range msg.ToolCalls {
-					// Execute the tool call
-					result, err := toolCall(ctx, req.Tools, tc.Name, tc.Arguments)
-					if err != nil {
-						return err
-					}
-					// Set the result
-					tc.Result = result
-
-					// Add tool result message to conversation history for the LLM
-					toolResultMsg := &blades.Message{
-						Role: blades.RoleTool,
-						Parts: []blades.Part{
-							blades.TextPart{Text: result},
-						},
-						ToolCalls: []*blades.ToolCall{tc},
-					}
-					req.Messages = append(req.Messages, toolResultMsg)
-				}
-
-				// Recursively call GenerateStream to handle tool response continuation
-				opt.MaxIterations--
-				toolStream, err := c.GenerateStream(ctx, req, opt)
-				if err != nil {
-					return err
-				}
-
-				// Forward all responses from the tool stream
-				for toolStream.Next() {
-					toolResponse, err := toolStream.Current()
-					if err != nil {
-						return err
-					}
-					pipe.Send(toolResponse)
-				}
-			}
+			finalResponse.Message.Status = blades.StatusCompleted
+			// TODO: handle tools
+			pipe.Send(finalResponse)
 		}
-
 		return nil
 	})
-
 	return pipe, nil
 }
 
 // NewStream is an alias for GenerateStream to implement the ModelProvider interface
-func (c *Client) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
-	if c.genaiClient == nil {
-		return nil, fmt.Errorf("client not initialized")
-	}
-
-	opt := blades.ModelOptions{MaxIterations: 3}
+func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
+	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
 	}
-	if opt.MaxIterations > 0 {
-		opt.MaxIterations--
-	} else {
-		return nil, ErrTooManyIterations
-	}
-	return c.GenerateStream(ctx, req, opt)
-}
-
-// toolCall invokes a tool by name with the given arguments.
-func toolCall(ctx context.Context, tools []*tools.Tool, name, arguments string) (string, error) {
-	for _, tool := range tools {
-		if tool.Name == name {
-			return tool.Handler.Handle(ctx, arguments)
-		}
-	}
-	return "", ErrToolNotFound
+	return c.GenerateStream(ctx, req, opt, c.opts.MaxToolIterations)
 }
