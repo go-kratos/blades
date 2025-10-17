@@ -7,9 +7,6 @@ import (
 )
 
 func promptFromMessages(messages []*blades.Message) (string, error) {
-	if len(messages) == 0 {
-		return "", ErrPromptRequired
-	}
 	var sections []string
 	for _, msg := range messages {
 		sections = append(sections, msg.Text())
@@ -17,5 +14,5 @@ func promptFromMessages(messages []*blades.Message) (string, error) {
 	if len(sections) == 0 {
 		return "", ErrPromptRequired
 	}
-	return strings.Join(sections, "\n\n"), nil
+	return strings.Join(sections, "\n"), nil
 }
