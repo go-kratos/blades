@@ -47,7 +47,7 @@ func main() {
 			ext := "bin"
 			if format := res.Metadata["response_format"]; format != "" {
 				ext = format
-			} else if mimeExt := audio.MimeType.Format(); mimeExt != "" {
+			} else if mimeExt := audio.MIMEType.Format(); mimeExt != "" {
 				ext = mimeExt
 			}
 			path := filepath.Join(outputDir, fmt.Sprintf("speech-%d.%s", saved, ext))

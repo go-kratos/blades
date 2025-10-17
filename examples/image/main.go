@@ -44,7 +44,7 @@ func main() {
 		switch img := part.(type) {
 		case blades.DataPart:
 			saved++
-			name := fmt.Sprintf("image-%d.%s", saved, img.MimeType.Format())
+			name := fmt.Sprintf("image-%d.%s", saved, img.MIMEType.Format())
 			path := filepath.Join(outputDir, name)
 			if err := os.WriteFile(path, img.Bytes, 0o644); err != nil {
 				log.Fatalf("write file %s: %v", path, err)
