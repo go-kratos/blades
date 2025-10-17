@@ -21,7 +21,7 @@ require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.8.4 // indirect
-	github.com/go-kratos/generics v0.0.0-20251013170657-671664e4628a // indirect
+	github.com/go-kratos/generics v0.0.0-20251015114009-68dee470a252 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
