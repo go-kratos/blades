@@ -8,22 +8,22 @@ import (
 )
 
 // BranchCondition is a function that selects a branch name based on the context.
-type BranchCondition[I any] func(context.Context, I) (string, error)
+type BranchCondition func(ctx context.Context, input *blades.Prompt) (string, error)
 
 // Branch represents a branching structure of Runnable runners that process input based on a selector function.
-type Branch[I, O, Option any] struct {
+type Branch struct {
 	name      string
-	condition BranchCondition[I]
-	runners   map[string]blades.Runnable[I, O, Option]
+	condition BranchCondition
+	runners   map[string]blades.Runnable
 }
 
 // NewBranch creates a new Branch with the given selector and runners.
-func NewBranch[I, O, Option any](name string, condition BranchCondition[I], runners ...blades.Runnable[I, O, Option]) *Branch[I, O, Option] {
-	m := make(map[string]blades.Runnable[I, O, Option])
+func NewBranch(name string, condition BranchCondition, runners ...blades.Runnable) *Branch {
+	m := make(map[string]blades.Runnable)
 	for _, runner := range runners {
 		m[runner.Name()] = runner
 	}
-	return &Branch[I, O, Option]{
+	return &Branch{
 		name:      name,
 		condition: condition,
 		runners:   m,
@@ -31,15 +31,15 @@ func NewBranch[I, O, Option any](name string, condition BranchCondition[I], runn
 }
 
 // Name returns the name of the Branch.
-func (c *Branch[I, O, Option]) Name() string {
+func (c *Branch) Name() string {
 	return c.name
 }
 
 // Run executes the selected runner based on the selector function.
-func (c *Branch[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (O, error) {
+func (c *Branch) Run(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
 	var (
 		err    error
-		output O
+		output *blades.Message
 	)
 	name, err := c.condition(ctx, input)
 	if err != nil {
@@ -53,8 +53,8 @@ func (c *Branch[I, O, Option]) Run(ctx context.Context, input I, opts ...Option)
 }
 
 // RunStream executes the selected runner based on the selector function and streams its output.
-func (c *Branch[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
-	pipe := blades.NewStreamPipe[O]()
+func (c *Branch) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
+	pipe := blades.NewStreamPipe[*blades.Message]()
 	pipe.Go(func() error {
 		output, err := c.Run(ctx, input, opts...)
 		if err != nil {

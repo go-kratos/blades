@@ -1,6 +1,10 @@
 package flow
 
-import "context"
+import (
+	"context"
+
+	"github.com/go-kratos/blades"
+)
 
 // Transition represents a change between two states.
 type Transition struct {
@@ -10,4 +14,4 @@ type Transition struct {
 
 // TransitionHandler defines a function that handles a state transition in a flow.
 // I represents the input type, O represents the output type.
-type TransitionHandler[I, O any] func(ctx context.Context, trans Transition, output O) (I, error)
+type TransitionHandler func(ctx context.Context, trans Transition, output *blades.Message) (*blades.Prompt, error)

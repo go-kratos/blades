@@ -7,15 +7,15 @@ import (
 )
 
 // Sequential represents a sequence of Runnable runners that process input sequentially.
-type Sequential[I, O, Option any] struct {
+type Sequential struct {
 	name       string
-	runners    []blades.Runnable[I, O, Option]
-	transition TransitionHandler[I, O]
+	runners    []blades.Runnable
+	transition TransitionHandler
 }
 
 // NewSequential creates a new Sequential with the given runners.
-func NewSequential[I, O, Option any](name string, transition TransitionHandler[I, O], runners ...blades.Runnable[I, O, Option]) *Sequential[I, O, Option] {
-	return &Sequential[I, O, Option]{
+func NewSequential(name string, transition TransitionHandler, runners ...blades.Runnable) *Sequential {
+	return &Sequential{
 		name:       name,
 		runners:    runners,
 		transition: transition,
@@ -23,16 +23,16 @@ func NewSequential[I, O, Option any](name string, transition TransitionHandler[I
 }
 
 // Name returns the name of the chain.
-func (c *Sequential[I, O, Option]) Name() string {
+func (c *Sequential) Name() string {
 	return c.name
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.
-func (c *Sequential[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (O, error) {
+func (c *Sequential) Run(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
 	var (
 		err    error
-		output O
-		last   blades.Runnable[I, O, Option]
+		output *blades.Message
+		last   blades.Runnable
 	)
 	for idx, runner := range c.runners {
 		if idx > 0 {
@@ -49,8 +49,8 @@ func (c *Sequential[I, O, Option]) Run(ctx context.Context, input I, opts ...Opt
 }
 
 // RunStream executes the chain of runners sequentially, streaming the output of the last runner.
-func (c *Sequential[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
-	pipe := blades.NewStreamPipe[O]()
+func (c *Sequential) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
+	pipe := blades.NewStreamPipe[*blades.Message]()
 	pipe.Go(func() error {
 		output, err := c.Run(ctx, input, opts...)
 		if err != nil {

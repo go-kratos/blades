@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	_ Runnable[*Prompt, *Message, ModelOption] = (*Agent)(nil)
+	_ Runnable = (*Agent)(nil)
 )
 
 // Option is an option for configuring the Agent.

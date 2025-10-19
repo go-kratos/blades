@@ -23,27 +23,27 @@ type graphEdge struct {
 // transform a node's output into the next node's input.
 //
 // All nodes share the same input/output/option types to keep the API simple and predictable.
-type Graph[I, O, Option any] struct {
+type Graph struct {
 	name       string
-	runners    map[string]blades.Runnable[I, O, Option]
+	runners    map[string]blades.Runnable
 	nodes      map[string]*graphNode
 	starts     map[string]struct{}
-	transition TransitionHandler[I, O]
+	transition TransitionHandler
 }
 
 // NewGraph creates an empty graph.
-func NewGraph[I, O, Option any](name string, transition TransitionHandler[I, O]) *Graph[I, O, Option] {
-	return &Graph[I, O, Option]{
+func NewGraph(name string, transition TransitionHandler) *Graph {
+	return &Graph{
 		name:       name,
 		transition: transition,
-		runners:    make(map[string]blades.Runnable[I, O, Option]),
+		runners:    make(map[string]blades.Runnable),
 		nodes:      make(map[string]*graphNode),
 		starts:     make(map[string]struct{}),
 	}
 }
 
 // AddNode registers a named runner node.
-func (g *Graph[I, O, Option]) AddNode(runner blades.Runnable[I, O, Option]) error {
+func (g *Graph) AddNode(runner blades.Runnable) error {
 	name := runner.Name()
 	if _, ok := g.nodes[name]; ok {
 		return fmt.Errorf("graph: node %s already exists", runner.Name())
@@ -55,14 +55,14 @@ func (g *Graph[I, O, Option]) AddNode(runner blades.Runnable[I, O, Option]) erro
 
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
-func (g *Graph[I, O, Option]) AddEdge(from, to blades.Runnable[I, O, Option]) error {
+func (g *Graph) AddEdge(from, to blades.Runnable) error {
 	node := g.nodes[from.Name()]
 	node.edges = append(node.edges, &graphEdge{name: to.Name()})
 	return nil
 }
 
 // AddStart marks a node as a start entry.
-func (g *Graph[I, O, Option]) AddStart(start blades.Runnable[I, O, Option]) error {
+func (g *Graph) AddStart(start blades.Runnable) error {
 	if _, ok := g.starts[start.Name()]; ok {
 		return fmt.Errorf("graph: start node %s already exists", start.Name())
 	}
@@ -71,7 +71,7 @@ func (g *Graph[I, O, Option]) AddStart(start blades.Runnable[I, O, Option]) erro
 }
 
 // Compile returns a blades.Runner that executes the graph.
-func (g *Graph[I, O, Option]) Compile() (blades.Runnable[I, O, Option], error) {
+func (g *Graph) Compile() (blades.Runnable, error) {
 	// Validate starts and ends exist
 	if len(g.starts) == 0 {
 		return nil, fmt.Errorf("graph: no start nodes defined")
@@ -101,25 +101,25 @@ func (g *Graph[I, O, Option]) Compile() (blades.Runnable[I, O, Option], error) {
 			compiled[start] = append(compiled[start], next)
 		}
 	}
-	return &graphRunner[I, O, Option]{graph: g, compiled: compiled}, nil
+	return &graphRunner{graph: g, compiled: compiled}, nil
 }
 
 // graphRunner executes a compiled Graph.
-type graphRunner[I, O, Option any] struct {
-	graph    *Graph[I, O, Option]
+type graphRunner struct {
+	graph    *Graph
 	compiled map[string][]*graphNode
 }
 
-func (r *graphRunner[I, O, Option]) Name() string {
+func (r *graphRunner) Name() string {
 	return r.graph.name
 }
 
 // Run executes the graph to completion and returns the final node's generation.
-func (r *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (O, error) {
+func (r *graphRunner) Run(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
 	var (
 		err    error
-		output O
-		last   blades.Runnable[I, O, Option]
+		output *blades.Message
+		last   blades.Runnable
 	)
 	for _, queue := range r.compiled {
 		handle := false
@@ -143,8 +143,8 @@ func (r *graphRunner[I, O, Option]) Run(ctx context.Context, input I, opts ...Op
 }
 
 // RunStream executes the graph and streams each node's output sequentially.
-func (r *graphRunner[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
-	pipe := blades.NewStreamPipe[O]()
+func (r *graphRunner) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
+	pipe := blades.NewStreamPipe[*blades.Message]()
 	pipe.Go(func() error {
 		output, err := r.Run(ctx, input, opts...)
 		if err != nil {

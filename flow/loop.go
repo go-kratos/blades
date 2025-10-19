@@ -7,33 +7,33 @@ import (
 )
 
 // LoopOption defines a function type for configuring Loop instances.
-type LoopOption[I, O, Option any] func(*Loop[I, O, Option])
+type LoopOption func(*Loop)
 
 // WithLoopMaxIterations sets the maximum number of iterations for the Loop.
-func WithLoopMaxIterations[I, O, Option any](n int) LoopOption[I, O, Option] {
-	return func(l *Loop[I, O, Option]) {
+func WithLoopMaxIterations(n int) LoopOption {
+	return func(l *Loop) {
 		l.maxIterations = n
 	}
 }
 
 // LoopCondition defines a function type for evaluating the loop condition.
-type LoopCondition[O any] func(ctx context.Context, output O) (bool, error)
+type LoopCondition func(ctx context.Context, output *blades.Message) (bool, error)
 
 // Loop represents a looping construct that repeatedly executes a runner until a condition is met.
-type Loop[I, O, Option any] struct {
+type Loop struct {
 	name          string
 	maxIterations int
-	condition     LoopCondition[O]
-	runner        blades.Runnable[I, O, Option]
+	condition     LoopCondition
+	runner        blades.Runnable
 }
 
 // NewLoop creates a new Loop instance with the specified name, condition, runner, and options.
-func NewLoop[I, O, Option any](name string, condition LoopCondition[O], runner blades.Runnable[I, O, Option], opts ...LoopOption[I, O, Option]) *Loop[I, O, Option] {
-	l := &Loop[I, O, Option]{
+func NewLoop(name string, condition LoopCondition, runner blades.Runnable, opts ...LoopOption) *Loop {
+	l := &Loop{
 		name:          name,
-		maxIterations: 3,
 		condition:     condition,
 		runner:        runner,
+		maxIterations: 3,
 	}
 	for _, opt := range opts {
 		opt(l)
@@ -42,15 +42,15 @@ func NewLoop[I, O, Option any](name string, condition LoopCondition[O], runner b
 }
 
 // Name returns the name of the Loop.
-func (l *Loop[I, O, Option]) Name() string {
+func (l *Loop) Name() string {
 	return l.name
 }
 
 // Run executes the Loop, repeatedly running the runner until the condition is met or an error occurs.
-func (l *Loop[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (O, error) {
+func (l *Loop) Run(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
 	var (
 		err    error
-		output O
+		output *blades.Message
 	)
 	for i := 0; i < l.maxIterations; i++ {
 		if output, err = l.runner.Run(ctx, input, opts...); err != nil {
@@ -68,8 +68,8 @@ func (l *Loop[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (
 }
 
 // RunStream executes the Loop in a streaming manner, returning a Streamable that emits the final output.
-func (l *Loop[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
-	pipe := blades.NewStreamPipe[O]()
+func (l *Loop) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
+	pipe := blades.NewStreamPipe[*blades.Message]()
 	pipe.Go(func() error {
 		output, err := l.Run(ctx, input, opts...)
 		if err != nil {

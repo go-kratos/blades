@@ -7,34 +7,29 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// ParallelMerger is a function that merges the outputs of multiple runners into a single output.
-type ParallelMerger[O any] func(ctx context.Context, outputs []O) (O, error)
-
 // Parallel represents a sequence of Runnable runners that process input sequentially.
-type Parallel[I, O, Option any] struct {
+type Parallel struct {
 	name    string
-	merger  ParallelMerger[O]
-	runners []blades.Runnable[I, O, Option]
+	runners []blades.Runnable
 }
 
 // NewParallel creates a new Parallel with the given runners.
-func NewParallel[I, O, Option any](name string, merger ParallelMerger[O], runners ...blades.Runnable[I, O, Option]) *Parallel[I, O, Option] {
-	return &Parallel[I, O, Option]{
+func NewParallel(name string, runners ...blades.Runnable) *Parallel {
+	return &Parallel{
 		name:    name,
-		merger:  merger,
 		runners: runners,
 	}
 }
 
 // Name returns the name of the Parallel.
-func (c *Parallel[I, O, Option]) Name() string {
+func (c *Parallel) Name() string {
 	return c.name
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.
-func (c *Parallel[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (o O, err error) {
+func (c *Parallel) Run(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (o *blades.Message, err error) {
 	var (
-		outputs = make([]O, len(c.runners))
+		outputs = make([]*blades.Message, len(c.runners))
 	)
 	eg, ctx := errgroup.WithContext(ctx)
 	for idx, runner := range c.runners {
@@ -51,13 +46,20 @@ func (c *Parallel[I, O, Option]) Run(ctx context.Context, input I, opts ...Optio
 	if err = eg.Wait(); err != nil {
 		return
 	}
-	return c.merger(ctx, outputs)
+	result := &blades.Message{
+		ID:   blades.NewMessageID(),
+		Role: blades.RoleAssistant,
+	}
+	for _, output := range outputs {
+		result.Parts = append(result.Parts, output.Parts...)
+	}
+	return result, nil
 }
 
 // RunStream executes the runners sequentially, streaming each output as it is produced.
 // Note: Although this method belongs to the Parallel struct, it runs runners one after another, not in parallel.
-func (c *Parallel[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
-	pipe := blades.NewStreamPipe[O]()
+func (c *Parallel) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
+	pipe := blades.NewStreamPipe[*blades.Message]()
 	pipe.Go(func() error {
 		output, err := c.Run(ctx, input, opts...)
 		if err != nil {
