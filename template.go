@@ -82,11 +82,11 @@ func (p *PromptTemplate) Build() (*Prompt, error) {
 	for _, tmpl := range p.tmpls {
 		t, err := template.New(tmpl.name).Parse(tmpl.template)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parsing template %q: %w", tmpl.name, err)
 		}
 		var buf strings.Builder
 		if err := t.Execute(&buf, tmpl.vars); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("executing template %q: %w", tmpl.name, err)
 		}
 		switch tmpl.role {
 		case RoleUser:
