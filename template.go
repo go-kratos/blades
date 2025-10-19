@@ -1,6 +1,7 @@
 package blades
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"text/template"
@@ -13,7 +14,7 @@ type templateText struct {
 	// template is the raw Go text/template string
 	template string
 	// vars holds the data used to render the template
-	vars any
+	vars map[string]any
 	// name is an identifier for this template instance (useful for debugging)
 	name string
 }
@@ -35,31 +36,43 @@ func NewPromptTemplate() *PromptTemplate {
 
 // User appends a user message rendered from the provided template and params.
 // Params may be a map or struct accessible via Go text/template (e.g., {{.name}}).
-func (p *PromptTemplate) User(tmpl string, vars any) *PromptTemplate {
+func (p *PromptTemplate) User(tmpl string, vars ...map[string]any) *PromptTemplate {
 	if tmpl == "" {
 		return p
 	}
-	p.tmpls = append(p.tmpls, &templateText{
+	t := &templateText{
 		role:     RoleUser,
 		template: tmpl,
-		vars:     vars,
+		vars:     make(map[string]any),
 		name:     fmt.Sprintf("user-%d", len(p.tmpls)),
-	})
+	}
+	for _, m := range vars {
+		for k, v := range m {
+			t.vars[k] = v
+		}
+	}
+	p.tmpls = append(p.tmpls, t)
 	return p
 }
 
 // System appends a system message rendered from the provided template and params.
 // Params may be a map or struct accessible via Go text/template (e.g., {{.name}}).
-func (p *PromptTemplate) System(tmpl string, vars any) *PromptTemplate {
+func (p *PromptTemplate) System(tmpl string, vars ...map[string]any) *PromptTemplate {
 	if tmpl == "" {
 		return p
 	}
-	p.tmpls = append(p.tmpls, &templateText{
+	t := &templateText{
 		role:     RoleSystem,
 		template: tmpl,
-		vars:     vars,
+		vars:     make(map[string]any),
 		name:     fmt.Sprintf("system-%d", len(p.tmpls)),
-	})
+	}
+	for _, m := range vars {
+		for k, v := range m {
+			t.vars[k] = v
+		}
+	}
+	p.tmpls = append(p.tmpls, t)
 	return p
 }
 
@@ -67,33 +80,57 @@ func (p *PromptTemplate) System(tmpl string, vars any) *PromptTemplate {
 func (p *PromptTemplate) Build() (*Prompt, error) {
 	messages := make([]*Message, 0, len(p.tmpls))
 	for _, tmpl := range p.tmpls {
-		msg, err := NewTemplateMessage(tmpl.role, tmpl.template, tmpl.vars)
+		t, err := template.New("message").Parse(tmpl.template)
 		if err != nil {
-			return nil, fmt.Errorf("rendering template %q: %w", tmpl.name, err)
+			return nil, err
 		}
-		messages = append(messages, msg)
+		var buf strings.Builder
+		if err := t.Execute(&buf, tmpl.vars); err != nil {
+			return nil, err
+		}
+		switch tmpl.role {
+		case RoleUser:
+			messages = append(messages, UserMessage(buf.String()))
+		case RoleSystem:
+			messages = append(messages, SystemMessage(buf.String()))
+		case RoleAssistant:
+			messages = append(messages, AssistantMessage(buf.String()))
+		default:
+			return nil, fmt.Errorf("unknown role: %s", tmpl.role)
+		}
 	}
 	return NewPrompt(messages...), nil
 }
 
-// NewTemplateMessage creates a single Message from a template string and variables.
-func NewTemplateMessage(role Role, tmpl string, vars any) (*Message, error) {
-	var buf strings.Builder
-	t, err := template.New("message").Parse(tmpl)
-	if err != nil {
-		return nil, err
+func (p *PromptTemplate) BuildContext(ctx context.Context) (*Prompt, error) {
+	session, ok := FromSessionContext(ctx)
+	if !ok {
+		return nil, fmt.Errorf("no session found in context")
 	}
-	if err := t.Execute(&buf, vars); err != nil {
-		return nil, err
+	messages := make([]*Message, 0, len(p.tmpls))
+	for _, tmpl := range p.tmpls {
+		t, err := template.New("message").Parse(tmpl.template)
+		if err != nil {
+			return nil, err
+		}
+		var buf strings.Builder
+		if err := t.Execute(&buf, tmpl.vars); err != nil {
+			return nil, err
+		}
+		state := session.State.ToMap()
+		for k, v := range tmpl.vars {
+			state[k] = v
+		}
+		switch tmpl.role {
+		case RoleUser:
+			messages = append(messages, UserMessage(buf.String()))
+		case RoleSystem:
+			messages = append(messages, SystemMessage(buf.String()))
+		case RoleAssistant:
+			messages = append(messages, AssistantMessage(buf.String()))
+		default:
+			return nil, fmt.Errorf("unknown role: %s", tmpl.role)
+		}
 	}
-	switch role {
-	case RoleUser:
-		return UserMessage(buf.String()), nil
-	case RoleSystem:
-		return SystemMessage(buf.String()), nil
-	case RoleAssistant:
-		return AssistantMessage(buf.String()), nil
-	default:
-		return nil, fmt.Errorf("unknown role: %s", role)
-	}
+	return NewPrompt(messages...), nil
 }

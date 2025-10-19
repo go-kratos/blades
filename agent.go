@@ -134,12 +134,11 @@ func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prom
 	}
 	// system messages
 	if a.instructions != "" {
-		state := session.State.ToMap()
-		message, err := NewTemplateMessage(RoleSystem, a.instructions, state)
+		system, err := NewPromptTemplate().System(a.instructions).BuildContext(ctx)
 		if err != nil {
 			return nil, err
 		}
-		req.Messages = append(req.Messages, message)
+		req.Messages = append(req.Messages, system.Messages...)
 	}
 	// user messages
 	if len(prompt.Messages) > 0 {
