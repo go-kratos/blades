@@ -34,8 +34,8 @@ func NewPromptTemplate() *PromptTemplate {
 	return &PromptTemplate{}
 }
 
-// User appends a user message rendered from the provided template and params.
-// Params may be a map or struct accessible via Go text/template (e.g., {{.name}}).
+// User appends a user message rendered from the provided template and one or more parameter maps.
+// Each map is merged in order; later maps override keys from earlier maps. The merged map is accessible in the template (e.g., {{.name}}).
 func (p *PromptTemplate) User(tmpl string, vars ...map[string]any) *PromptTemplate {
 	if tmpl == "" {
 		return p
