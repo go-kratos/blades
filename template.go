@@ -80,7 +80,7 @@ func (p *PromptTemplate) System(tmpl string, vars ...map[string]any) *PromptTemp
 func (p *PromptTemplate) Build() (*Prompt, error) {
 	messages := make([]*Message, 0, len(p.tmpls))
 	for _, tmpl := range p.tmpls {
-		t, err := template.New("message").Parse(tmpl.template)
+		t, err := template.New(tmpl.name).Parse(tmpl.template)
 		if err != nil {
 			return nil, err
 		}
