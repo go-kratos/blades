@@ -7,21 +7,22 @@ import (
 	"github.com/google/uuid"
 )
 
+// Task represents a single input-output pair within a session.
+type Task struct {
+	Input  *Prompt  `json:"input"`
+	Output *Message `json:"output"`
+}
+
 // Session holds the state of a flow along with a unique session ID.
 type Session struct {
-	ID      string                         `json:"id"` // Unique identifier for the session
-	Inputs  generics.Map[string, *Prompt]  `json:"inputs"`
-	Outputs generics.Map[string, *Message] `json:"outputs"`
-	History generics.Slice[*Message]       `json:"history"`
-	State   State                          `json:"state"`
+	ID    string                     `json:"id"`   // Unique identifier for the session
+	Task  generics.Map[string, Task] `json:"task"` // Agent tasks within the session
+	State State                      `json:"state"`
 }
 
 // Record records the input prompt and output message under the given name.
 func (s *Session) Record(name string, input *Prompt, output *Message) {
-	s.Inputs.Store(name, input)
-	s.Outputs.Store(name, output)
-	s.History.Append(input.Messages...)
-	s.History.Append(output)
+	s.Task.Store(name, Task{Input: input, Output: output})
 }
 
 // NewSession creates a new Session instance with a unique ID.
