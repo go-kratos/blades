@@ -125,7 +125,7 @@ func (a *Agent) buildContext(ctx context.Context) (context.Context, *Session) {
 }
 
 // buildRequest builds the request for the Agent by combining system instructions and user messages.
-func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prompt) (*ModelRequest, error) {
+func (a *Agent) buildRequest(ctx context.Context, prompt *Prompt) (*ModelRequest, error) {
 	req := ModelRequest{
 		Model:        a.model,
 		Tools:        a.tools,
@@ -134,12 +134,11 @@ func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prom
 	}
 	// system messages
 	if a.instructions != "" {
-		state := session.State.ToMap()
-		message, err := NewTemplateMessage(RoleSystem, a.instructions, state)
+		system, err := NewPromptTemplate().System(a.instructions).BuildContext(ctx)
 		if err != nil {
 			return nil, err
 		}
-		req.Messages = append(req.Messages, message)
+		req.Messages = append(req.Messages, system.Messages...)
 	}
 	// user messages
 	if len(prompt.Messages) > 0 {
@@ -167,7 +166,7 @@ func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
 // Run runs the agent with the given prompt and options, returning the response message.
 func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
 	ctx, session := a.buildContext(ctx)
-	req, err := a.buildRequest(ctx, session, prompt)
+	req, err := a.buildRequest(ctx, prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +177,7 @@ func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*
 // RunStream runs the agent with the given prompt and options, returning a streamable response.
 func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
 	ctx, session := a.buildContext(ctx)
-	req, err := a.buildRequest(ctx, session, prompt)
+	req, err := a.buildRequest(ctx, prompt)
 	if err != nil {
 		return nil, err
 	}

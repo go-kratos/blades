@@ -4,17 +4,17 @@ import "testing"
 
 func TestTemplateMessage(t *testing.T) {
 	tmpl := "Hello, {{.Name}}! Welcome to {{.Place}}."
-	data := map[string]string{
+	data := map[string]any{
 		"Name":  "Alice",
 		"Place": "Wonderland",
 	}
 
 	expected := "Hello, Alice! Welcome to Wonderland."
-	result, err := NewTemplateMessage(RoleUser, tmpl, data)
+	result, err := NewPromptTemplate().System(tmpl, data).Build()
 	if err != nil {
 		t.Fatalf("TemplateMessage returned an error: %v", err)
 	}
-	if result.Text() != expected {
+	if result.Latest().Text() != expected {
 		t.Errorf("TemplateMessage = %q; want %q", result, expected)
 	}
 }
@@ -22,11 +22,11 @@ func TestTemplateMessage(t *testing.T) {
 func TestTemplateMessageEmpty(t *testing.T) {
 	tmpl := "Hello Alice"
 	expected := "Hello Alice"
-	result, err := NewTemplateMessage(RoleUser, tmpl, nil)
+	result, err := NewPromptTemplate().System(tmpl).Build()
 	if err != nil {
 		t.Fatalf("TemplateMessage returned an error: %v", err)
 	}
-	if result.Text() != expected {
+	if result.Latest().Text() != expected {
 		t.Errorf("TemplateMessage = %q; want %q", result, expected)
 	}
 }
