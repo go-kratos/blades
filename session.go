@@ -13,7 +13,7 @@ type Session struct {
 	Inputs  generics.Map[string, *Prompt]  `json:"inputs"`
 	Outputs generics.Map[string, *Message] `json:"outputs"`
 	History generics.Slice[*Message]       `json:"history"`
-	State   generics.Map[string, any]      `json:"state"`
+	State   State                          `json:"state"`
 }
 
 // Record records the input prompt and output message under the given name.

@@ -53,12 +53,8 @@ func main() {
 		return "general", nil // choose generalWriter
 	}
 	branchWriter := flow.NewBranch("branch", branchChoose, scifiWriter, generalWriter)
-	// Define state handler to convert output to input
-	transitionHandler := func(ctx context.Context, transition flow.Transition, output *blades.Message) (*blades.Prompt, error) {
-		return blades.NewPrompt(output), nil
-	}
 	// Build graph: outline -> checker -> branch (scifi/general) -> refine -> end
-	g := flow.NewGraph[*blades.Prompt, *blades.Message, blades.ModelOption]("story", transitionHandler)
+	g := flow.NewGraph("story")
 	g.AddNode(storyOutline)
 	g.AddNode(storyChecker)
 	g.AddNode(branchWriter)

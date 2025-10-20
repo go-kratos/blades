@@ -24,21 +24,19 @@ type graphEdge struct {
 //
 // All nodes share the same input/output/option types to keep the API simple and predictable.
 type Graph struct {
-	name       string
-	runners    map[string]blades.Runnable
-	nodes      map[string]*graphNode
-	starts     map[string]struct{}
-	transition TransitionHandler
+	name    string
+	runners map[string]blades.Runnable
+	nodes   map[string]*graphNode
+	starts  map[string]struct{}
 }
 
 // NewGraph creates an empty graph.
-func NewGraph(name string, transition TransitionHandler) *Graph {
+func NewGraph(name string) *Graph {
 	return &Graph{
-		name:       name,
-		transition: transition,
-		runners:    make(map[string]blades.Runnable),
-		nodes:      make(map[string]*graphNode),
-		starts:     make(map[string]struct{}),
+		name:    name,
+		runners: make(map[string]blades.Runnable),
+		nodes:   make(map[string]*graphNode),
+		starts:  make(map[string]struct{}),
 	}
 }
 
@@ -119,24 +117,15 @@ func (r *graphRunner) Run(ctx context.Context, input *blades.Prompt, opts ...bla
 	var (
 		err    error
 		output *blades.Message
-		last   blades.Runnable
 	)
 	for _, queue := range r.compiled {
-		handle := false
 		for len(queue) > 0 {
 			next := queue[0]
 			queue = queue[1:]
-			if handle {
-				if input, err = r.graph.transition(ctx, Transition{From: last.Name(), To: next.name}, output); err != nil {
-					return output, err
-				}
-			}
-			handle = true
 			runner := r.graph.runners[next.name]
-			if output, err = runner.Run(ctx, input, opts...); err != nil {
+			if output, err = runner.Run(ctx, blades.NewPrompt(), opts...); err != nil {
 				return output, err
 			}
-			last = runner
 		}
 	}
 	return output, nil

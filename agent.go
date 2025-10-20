@@ -77,18 +77,34 @@ func WithMiddleware(m Middleware) Option {
 	}
 }
 
+// WithStateInputHandler sets the state input handler for the Agent.
+func WithStateInputHandler(h StateInputHandler) Option {
+	return func(a *Agent) {
+		a.inputHandler = h
+	}
+}
+
+// WithStateOutputHandler sets the state output handler for the Agent.
+func WithStateOutputHandler(h StateOutputHandler) Option {
+	return func(a *Agent) {
+		a.outputHandler = h
+	}
+}
+
 // Agent is a struct that represents an AI agent.
 type Agent struct {
-	name         string
-	model        string
-	description  string
-	instructions string
-	outputKey    string
-	inputSchema  *jsonschema.Schema
-	outputSchema *jsonschema.Schema
-	middleware   Middleware
-	provider     ModelProvider
-	tools        []*tools.Tool
+	name          string
+	model         string
+	description   string
+	instructions  string
+	outputKey     string
+	inputSchema   *jsonschema.Schema
+	outputSchema  *jsonschema.Schema
+	inputHandler  StateInputHandler
+	outputHandler StateOutputHandler
+	middleware    Middleware
+	provider      ModelProvider
+	tools         []*tools.Tool
 }
 
 // NewAgent creates a new Agent with the given name and options.
@@ -96,6 +112,12 @@ func NewAgent(name string, opts ...Option) *Agent {
 	a := &Agent{
 		name:       name,
 		middleware: func(h Handler) Handler { return h },
+		inputHandler: func(ctx context.Context, prompt *Prompt, state *State) (*Prompt, error) {
+			return prompt, nil
+		},
+		outputHandler: func(ctx context.Context, output *Message, state *State) (*Message, error) {
+			return output, nil
+		},
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -125,12 +147,16 @@ func (a *Agent) buildContext(ctx context.Context) (context.Context, *Session) {
 }
 
 // buildRequest builds the request for the Agent by combining system instructions and user messages.
-func (a *Agent) buildRequest(ctx context.Context, prompt *Prompt) (*ModelRequest, error) {
+func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prompt) (*ModelRequest, error) {
 	req := ModelRequest{
 		Model:        a.model,
 		Tools:        a.tools,
 		InputSchema:  a.inputSchema,
 		OutputSchema: a.outputSchema,
+	}
+	// history messages
+	if session.History.Len() > 0 {
+		req.Messages = append(req.Messages, session.History.ToSlice()...)
 	}
 	// system messages
 	if a.instructions != "" {
@@ -147,6 +173,37 @@ func (a *Agent) buildRequest(ctx context.Context, prompt *Prompt) (*ModelRequest
 	return &req, nil
 }
 
+// Run runs the agent with the given prompt and options, returning the response message.
+func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
+	ctx, session := a.buildContext(ctx)
+	input, err := a.inputHandler(ctx, prompt, &session.State)
+	if err != nil {
+		return nil, err
+	}
+	req, err := a.buildRequest(ctx, session, input)
+	if err != nil {
+		return nil, err
+	}
+	handler := a.middleware(a.handler(session, req))
+	return handler.Run(ctx, prompt, opts...)
+}
+
+// RunStream runs the agent with the given prompt and options, returning a streamable response.
+func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
+	ctx, session := a.buildContext(ctx)
+	input, err := a.inputHandler(ctx, prompt, &session.State)
+	if err != nil {
+		return nil, err
+	}
+	req, err := a.buildRequest(ctx, session, input)
+	if err != nil {
+		return nil, err
+	}
+	handler := a.middleware(a.handler(session, req))
+	return handler.Stream(ctx, prompt, opts...)
+}
+
+// storeOutputToState stores the output of the Agent to the session state if an output key is defined.
 func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
 	if a.outputKey == "" {
 		return nil
@@ -163,28 +220,6 @@ func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
 	return nil
 }
 
-// Run runs the agent with the given prompt and options, returning the response message.
-func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
-	ctx, session := a.buildContext(ctx)
-	req, err := a.buildRequest(ctx, prompt)
-	if err != nil {
-		return nil, err
-	}
-	handler := a.middleware(a.handler(session, req))
-	return handler.Run(ctx, prompt, opts...)
-}
-
-// RunStream runs the agent with the given prompt and options, returning a streamable response.
-func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
-	ctx, session := a.buildContext(ctx)
-	req, err := a.buildRequest(ctx, prompt)
-	if err != nil {
-		return nil, err
-	}
-	handler := a.middleware(a.handler(session, req))
-	return handler.Stream(ctx, prompt, opts...)
-}
-
 // handler constructs the default handlers for Run and Stream using the provider.
 func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
 	return Handler{
@@ -197,7 +232,7 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
 				return nil, err
 			}
 			session.Record(a.name, prompt, res.Message)
-			return res.Message, nil
+			return a.outputHandler(ctx, res.Message, &session.State)
 		},
 		Stream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
 			stream, err := a.provider.NewStream(ctx, req, opts...)
@@ -211,7 +246,7 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
 					}
 					session.Record(a.name, prompt, res.Message)
 				}
-				return res.Message, nil
+				return a.outputHandler(ctx, res.Message, &session.State)
 			}), nil
 		},
 	}

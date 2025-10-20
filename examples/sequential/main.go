@@ -29,10 +29,7 @@ func main() {
 		blades.WithProvider(provider),
 		blades.WithInstructions("Write a short story based on the given outline."),
 	)
-	transitionHandler := func(ctx context.Context, transition flow.Transition, output *blades.Message) (*blades.Prompt, error) {
-		return blades.NewPrompt(output), nil
-	}
-	seq := flow.NewSequential("story", transitionHandler, storyOutline, storyChecker, storyAgent)
+	seq := flow.NewSequential("story", storyOutline, storyChecker, storyAgent)
 	// Input prompt
 	prompt := blades.NewPrompt(
 		blades.UserMessage("A brave knight embarks on a quest to find a hidden treasure."),

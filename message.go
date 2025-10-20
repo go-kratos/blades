@@ -163,6 +163,11 @@ func Parts[T contentPart](inputs ...T) []Part {
 	return parts
 }
 
+// NewMessage creates a new empty message with a unique ID.
+func NewMessage(role Role) *Message {
+	return &Message{ID: NewMessageID(), Role: role}
+}
+
 // NewMessageID generates a new random message identifier.
 func NewMessageID() string {
 	return uuid.NewString()

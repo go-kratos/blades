@@ -69,10 +69,7 @@ Output *only* the final, refactored Python code block, enclosed in triple backti
 Do not add any other text before or after the code block.`),
 		blades.WithDescription("Refactors code based on review comments."),
 	)
-	transitionHandler := func(ctx context.Context, transition flow.Transition, output *blades.Message) (*blades.Prompt, error) {
-		return blades.NewPrompt(), nil
-	}
-	seq := flow.NewSequential("coding", transitionHandler, codeWriterAgent, codeReviewerAgent, codeRefactorerAgent)
+	seq := flow.NewSequential("coding", codeWriterAgent, codeReviewerAgent, codeRefactorerAgent)
 	// Run the sequence with an initial user prompt
 	prompt := blades.NewPrompt(
 		blades.UserMessage("Write a Python function that takes a list of integers and returns a new list containing only the even integers from the original list."),
