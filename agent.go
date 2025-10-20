@@ -205,7 +205,7 @@ func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
 		return nil
 	}
 	if a.outputSchema != nil {
-		value, err := parseMessageState(a.outputSchema, res.Message)
+		value, err := ParseMessageState(res.Message, a.outputSchema)
 		if err != nil {
 			return err
 		}
