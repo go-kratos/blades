@@ -8,69 +8,66 @@ import (
 )
 
 // runnerStub is a minimal blades.Runner used for tests.
-type runnerStub[I, O, Option any] struct {
-	name string
-	run  func(context.Context, I, ...Option) (O, error)
-}
+type runnerStub struct{ name string }
 
-func (r *runnerStub[I, O, Option]) Name() string {
-	return r.name
+func (r *runnerStub) Name() string { return r.name }
+func (r *runnerStub) Run(ctx context.Context, in *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
+	return &blades.Message{}, nil
 }
-
-func (r *runnerStub[I, O, Option]) Run(ctx context.Context, in I, opts ...Option) (O, error) {
-	return r.run(ctx, in, opts...)
-}
-
-func (r *runnerStub[I, O, Option]) RunStream(ctx context.Context, in I, opts ...Option) (blades.Streamable[O], error) {
-	pipe := blades.NewStreamPipe[O]()
+func (r *runnerStub) RunStream(ctx context.Context, in *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
+	pipe := blades.NewStreamPipe[*blades.Message]()
 	pipe.Go(func() error {
-		out, err := r.run(ctx, in, opts...)
-		if err != nil {
-			return err
-		}
-		pipe.Send(out)
+		pipe.Send(&blades.Message{})
 		return nil
 	})
 	return pipe, nil
 }
 
 func TestGraph_LinearChain(t *testing.T) {
-	// Each node adds a fixed number to the input
-	add := func(name string, n int) *runnerStub[int, int, struct{}] {
-		return &runnerStub[int, int, struct{}]{
-			name: name,
-			run: func(ctx context.Context, in int, _ ...struct{}) (int, error) {
-				return in + n, nil
-			},
-		}
+	a := &runnerStub{name: "A"}
+	b := &runnerStub{name: "B"}
+	c := &runnerStub{name: "C"}
+
+	g := NewGraph("test")
+	if err := g.AddNode(a); err != nil {
+		t.Fatalf("AddNode A error: %v", err)
 	}
-
-	transition := func(ctx context.Context, transition Transition, output int) (int, error) {
-		return output, nil
+	if err := g.AddNode(b); err != nil {
+		t.Fatalf("AddNode B error: %v", err)
 	}
-
-	a := add("A", 1)
-	b := add("B", 2)
-	c := add("C", 3)
-
-	g := NewGraph[int, int, struct{}]("test", transition)
-	g.AddNode(a)
-	g.AddNode(b)
-	g.AddNode(c)
-	g.AddStart(a)
-	g.AddEdge(a, b)
-	g.AddEdge(b, c)
+	if err := g.AddNode(c); err != nil {
+		t.Fatalf("AddNode C error: %v", err)
+	}
+	if err := g.AddStart(a); err != nil {
+		t.Fatalf("AddStart error: %v", err)
+	}
+	if err := g.AddEdge(a, b); err != nil {
+		t.Fatalf("AddEdge A->B error: %v", err)
+	}
+	if err := g.AddEdge(b, c); err != nil {
+		t.Fatalf("AddEdge B->C error: %v", err)
+	}
 
 	runner, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
-	got, err := runner.Run(context.Background(), 10)
-	if err != nil {
-		t.Fatalf("run error: %v", err)
+
+	gr, ok := runner.(*graphRunner)
+	if !ok {
+		t.Fatalf("expected *graphRunner, got %T", runner)
 	}
-	want := 10 + 1 + 2 + 3
-	if got != want {
-		t.Fatalf("want %d, got %d", want, got)
+	queue, ok := gr.compiled["A"]
+	if !ok {
+		t.Fatalf("compiled missing start A")
+	}
+	if len(queue) != 3 {
+		t.Fatalf("expected 3 nodes in compiled queue, got %d", len(queue))
+	}
+	want := []string{"A", "B", "C"}
+	for i, n := range queue {
+		if n.name != want[i] {
+			t.Fatalf("at position %d want %s, got %s", i, want[i], n.name)
+		}
 	}
 }
