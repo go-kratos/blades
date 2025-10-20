@@ -2,72 +2,41 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
 )
 
-func newLogging() blades.Middleware {
-	return blades.ChainMiddlewares(
-		blades.Unary(func(next blades.RunHandler) blades.RunHandler {
-			return func(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
-				agent, ok := blades.FromContext(ctx)
-				if !ok {
-					return nil, errors.New("agent not found in context")
-				}
-				res, err := next(ctx, prompt, opts...)
-				if err != nil {
-					log.Printf("generate model: %s prompt: %s error: %v\n", agent.Model, prompt.String(), err)
-				} else {
-					log.Printf("generate model: %s prompt: %s response: %s\n", agent.Model, prompt.String(), res.Text())
-				}
-				return res, err
-			}
-		}),
-		blades.Streaming(func(next blades.StreamHandler) blades.StreamHandler {
-			return func(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
-				agent, ok := blades.FromContext(ctx)
-				if !ok {
-					return nil, errors.New("agent not found in context")
-				}
-				stream, err := next(ctx, prompt, opts...)
-				if err != nil {
-					return nil, err
-				}
-				return blades.NewMappedStream[*blades.Message, *blades.Message](stream, func(m *blades.Message) (*blades.Message, error) {
-					log.Printf("stream model: %s prompt: %s generation: %s\n", agent.Model, prompt.String(), m.Text())
-					return m, nil
-				}), nil
-			}
-		}),
-	)
+// Guardrails is a middleware that adds guardrails to the prompt.
+type Guardrails struct {
+	next blades.Runnable
 }
 
-func newGuardrails() blades.Middleware {
-	return blades.ChainMiddlewares(
-		blades.Unary(func(next blades.RunHandler) blades.RunHandler {
-			return func(ctx context.Context, p *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
-				// Pre-processing: Add guardrails to the prompt
-				log.Println("Applying guardrails to the prompt")
-				return next(ctx, p, opts...)
-			}
-		}),
-		blades.Streaming(func(next blades.StreamHandler) blades.StreamHandler {
-			return func(ctx context.Context, p *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
-				// Pre-processing: Add guardrails to the prompt
-				log.Println("Applying guardrails to the prompt (streaming)")
-				return next(ctx, p, opts...)
-			}
-		}),
-	)
+// Name returns the name of the middleware.
+func (m *Guardrails) Name() string { return "guardrails" }
+
+// Run processes the prompt and adds guardrails before passing it to the next runnable.
+func (m *Guardrails) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
+	// Pre-processing: Add guardrails to the prompt
+	log.Println("Applying guardrails to the prompt")
+	return m.next.Run(ctx, prompt, opts...)
+}
+
+// RunStream processes the prompt in a streaming manner and adds guardrails before passing it to the next runnable.
+func (m *Guardrails) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
+	// Pre-processing: Add guardrails to the prompt
+	log.Println("Applying guardrails to the prompt (streaming)")
+	return m.next.RunStream(ctx, prompt, opts...)
+}
+
+func newGuardrails(next blades.Runnable) blades.Runnable {
+	return &Guardrails{next}
 }
 
 func defaultMiddleware() blades.Middleware {
 	return blades.ChainMiddlewares(
-		newLogging(),
-		newGuardrails(),
+		newGuardrails,
 	)
 }
 

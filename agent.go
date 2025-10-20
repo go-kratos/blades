@@ -111,7 +111,7 @@ type Agent struct {
 func NewAgent(name string, opts ...Option) *Agent {
 	a := &Agent{
 		name:       name,
-		middleware: func(h Handler) Handler { return h },
+		middleware: func(h Runnable) Runnable { return h },
 		inputHandler: func(ctx context.Context, prompt *Prompt, state *State) (*Prompt, error) {
 			return prompt, nil
 		},
@@ -196,7 +196,7 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 		return nil, err
 	}
 	handler := a.middleware(a.handler(session, req))
-	return handler.Stream(ctx, prompt, opts...)
+	return handler.RunStream(ctx, prompt, opts...)
 }
 
 // storeOutputToState stores the output of the Agent to the session state if an output key is defined.
@@ -217,9 +217,9 @@ func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
 }
 
 // handler constructs the default handlers for Run and Stream using the provider.
-func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
-	return Handler{
-		Run: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
+func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
+	return &HandleFunc{
+		Handle: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
 			res, err := a.provider.Generate(ctx, req, opts...)
 			if err != nil {
 				return nil, err
@@ -230,7 +230,7 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Handler {
 			session.Record(a.name, prompt, res.Message)
 			return a.outputHandler(ctx, res.Message, &session.State)
 		},
-		Stream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
+		HandleStream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
 			stream, err := a.provider.NewStream(ctx, req, opts...)
 			if err != nil {
 				return nil, err
