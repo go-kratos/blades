@@ -230,7 +230,6 @@ func (p *ChatProvider) toChatCompletionParams(req *blades.ModelRequest, opt blad
 		}
 	}
 	for _, msg := range req.Messages {
-		log.Println("Processing message:", msg.Role, msg.Parts)
 		switch msg.Role {
 		case blades.RoleUser:
 			params.Messages = append(params.Messages, openai.UserMessage(toContentParts(msg)))
