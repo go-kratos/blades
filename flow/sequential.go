@@ -8,15 +8,17 @@ import (
 
 // Sequential represents a sequence of Runnable runners that process input sequentially.
 type Sequential struct {
-	name    string
-	runners []blades.Runnable
+	name        string
+	runners     []blades.Runnable
+	passthrough bool
 }
 
 // NewSequential creates a new Sequential with the given runners.
-func NewSequential(name string, runners ...blades.Runnable) *Sequential {
+func NewSequential(name string, passthrough bool, runners ...blades.Runnable) *Sequential {
 	return &Sequential{
-		name:    name,
-		runners: runners,
+		name:        name,
+		runners:     runners,
+		passthrough: passthrough,
 	}
 }
 
@@ -35,7 +37,11 @@ func (c *Sequential) Run(ctx context.Context, input *blades.Prompt, opts ...blad
 		if output, err = runner.Run(ctx, input, opts...); err != nil {
 			return output, err
 		}
-		input = blades.NewPrompt()
+		if c.passthrough {
+			input = blades.NewPrompt(output)
+		} else {
+			input = blades.NewPrompt()
+		}
 	}
 	return output, nil
 }
