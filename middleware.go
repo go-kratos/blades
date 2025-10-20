@@ -35,8 +35,7 @@ func (f *HandleFunc) Run(ctx context.Context, p *Prompt, opts ...ModelOption) (*
 	return f.Handle(ctx, p, opts...)
 }
 
-// RunStream executes the runner in streaming mode.
-// If no stream function was provided, it returns an error.
+// RunStream executes the runner in streaming mode with the given context, prompt, and options.
 func (f *HandleFunc) RunStream(ctx context.Context, p *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
 	return f.HandleStream(ctx, p, opts...)
 }
