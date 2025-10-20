@@ -80,28 +80,16 @@ func (p *PromptTemplate) System(tmpl string, vars ...map[string]any) *PromptTemp
 func (p *PromptTemplate) Build() (*Prompt, error) {
 	messages := make([]*Message, 0, len(p.tmpls))
 	for _, tmpl := range p.tmpls {
-		t, err := template.New(tmpl.name).Parse(tmpl.template)
+		message, err := NewTemplateMessage(tmpl.role, tmpl.template, tmpl.vars)
 		if err != nil {
-			return nil, fmt.Errorf("parsing template %q: %w", tmpl.name, err)
+			return nil, err
 		}
-		var buf strings.Builder
-		if err := t.Execute(&buf, tmpl.vars); err != nil {
-			return nil, fmt.Errorf("executing template %q: %w", tmpl.name, err)
-		}
-		switch tmpl.role {
-		case RoleUser:
-			messages = append(messages, UserMessage(buf.String()))
-		case RoleSystem:
-			messages = append(messages, SystemMessage(buf.String()))
-		case RoleAssistant:
-			messages = append(messages, AssistantMessage(buf.String()))
-		default:
-			return nil, fmt.Errorf("unknown role: %s", tmpl.role)
-		}
+		messages = append(messages, message)
 	}
 	return NewPrompt(messages...), nil
 }
 
+// BuildContext finalizes and returns the constructed Prompt using the provided context to fill in session state variables.
 func (p *PromptTemplate) BuildContext(ctx context.Context) (*Prompt, error) {
 	session, ok := FromSessionContext(ctx)
 	if !ok {
@@ -109,28 +97,39 @@ func (p *PromptTemplate) BuildContext(ctx context.Context) (*Prompt, error) {
 	}
 	messages := make([]*Message, 0, len(p.tmpls))
 	for _, tmpl := range p.tmpls {
-		t, err := template.New("message").Parse(tmpl.template)
-		if err != nil {
-			return nil, err
-		}
-		var buf strings.Builder
-		if err := t.Execute(&buf, tmpl.vars); err != nil {
-			return nil, err
-		}
-		state := session.State.ToMap()
+		var (
+			state = session.State.ToMap()
+		)
 		for k, v := range tmpl.vars {
 			state[k] = v
 		}
-		switch tmpl.role {
-		case RoleUser:
-			messages = append(messages, UserMessage(buf.String()))
-		case RoleSystem:
-			messages = append(messages, SystemMessage(buf.String()))
-		case RoleAssistant:
-			messages = append(messages, AssistantMessage(buf.String()))
-		default:
-			return nil, fmt.Errorf("unknown role: %s", tmpl.role)
+		message, err := NewTemplateMessage(tmpl.role, tmpl.template, state)
+		if err != nil {
+			return nil, err
 		}
+		messages = append(messages, message)
 	}
 	return NewPrompt(messages...), nil
+}
+
+// NewTemplateMessage creates a single Message by rendering the provided template string with the given variables.
+func NewTemplateMessage(role Role, tmpl string, vars any) (*Message, error) {
+	var buf strings.Builder
+	t, err := template.New("message").Parse(tmpl)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.Execute(&buf, vars); err != nil {
+		return nil, err
+	}
+	switch role {
+	case RoleUser:
+		return UserMessage(buf.String()), nil
+	case RoleSystem:
+		return SystemMessage(buf.String()), nil
+	case RoleAssistant:
+		return AssistantMessage(buf.String()), nil
+	default:
+		return nil, fmt.Errorf("unknown role: %s", role)
+	}
 }
