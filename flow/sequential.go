@@ -32,9 +32,10 @@ func (c *Sequential) Run(ctx context.Context, input *blades.Prompt, opts ...blad
 		output *blades.Message
 	)
 	for _, runner := range c.runners {
-		if output, err = runner.Run(ctx, blades.NewPrompt(), opts...); err != nil {
+		if output, err = runner.Run(ctx, input, opts...); err != nil {
 			return output, err
 		}
+		input = blades.NewPrompt()
 	}
 	return output, nil
 }
