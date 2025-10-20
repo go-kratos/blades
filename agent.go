@@ -93,18 +93,19 @@ func WithStateOutputHandler(h StateOutputHandler) Option {
 
 // Agent is a struct that represents an AI agent.
 type Agent struct {
-	name          string
-	model         string
-	description   string
-	instructions  string
-	outputKey     string
-	inputSchema   *jsonschema.Schema
-	outputSchema  *jsonschema.Schema
-	inputHandler  StateInputHandler
-	outputHandler StateOutputHandler
-	middleware    Middleware
-	provider      ModelProvider
-	tools         []*tools.Tool
+	name           string
+	model          string
+	description    string
+	instructions   string
+	outputKey      string
+	inputSchema    *jsonschema.Schema
+	outputSchema   *jsonschema.Schema
+	inputHandler   StateInputHandler
+	outputHandler  StateOutputHandler
+	historyHandler StateHistoryHandler
+	middleware     Middleware
+	provider       ModelProvider
+	tools          []*tools.Tool
 }
 
 // NewAgent creates a new Agent with the given name and options.
@@ -117,6 +118,9 @@ func NewAgent(name string, opts ...Option) *Agent {
 		},
 		outputHandler: func(ctx context.Context, output *Message, state *State) (*Message, error) {
 			return output, nil
+		},
+		historyHandler: func(ctx context.Context, history []*Message, state *State) ([]*Message, error) {
+			return history, nil
 		},
 	}
 	for _, opt := range opts {
@@ -155,8 +159,12 @@ func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prom
 		OutputSchema: a.outputSchema,
 	}
 	// history messages
-	if session.History.Len() > 0 {
-		req.Messages = append(req.Messages, session.History.ToSlice()...)
+	history, err := a.historyHandler(ctx, session.History.ToSlice(), &session.State)
+	if err != nil {
+		return nil, err
+	}
+	if len(history) > 0 {
+		req.Messages = append(req.Messages, history...)
 	}
 	// system messages
 	if a.instructions != "" {

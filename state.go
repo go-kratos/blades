@@ -28,6 +28,9 @@ type StateInputHandler func(ctx context.Context, input *Prompt, state *State) (*
 // StateOutputHandler is a function type that processes output messages with access to the current state.
 type StateOutputHandler func(ctx context.Context, output *Message, state *State) (*Message, error)
 
+// StateHistoryHandler is a function type that processes the message history with access to the current state.
+type StateHistoryHandler func(ctx context.Context, history []*Message, state *State) ([]*Message, error)
+
 // parseMessageState parses the content of a Message according to the provided JSON schema.
 func parseMessageState(schema *jsonschema.Schema, output *Message) (any, error) {
 	schemaType := schema.Type
