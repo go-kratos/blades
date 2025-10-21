@@ -227,7 +227,7 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
 			if err := a.storeOutputToState(session, res); err != nil {
 				return nil, err
 			}
-			session.Record(a.name, prompt, res.Message)
+			session.Record(a.name, req.Messages, res.Message)
 			return a.outputHandler(ctx, res.Message, &session.State)
 		},
 		HandleStream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
@@ -240,7 +240,7 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
 					if err := a.storeOutputToState(session, res); err != nil {
 						return nil, err
 					}
-					session.Record(a.name, prompt, res.Message)
+					session.Record(a.name, req.Messages, res.Message)
 				}
 				return a.outputHandler(ctx, res.Message, &session.State)
 			}), nil
