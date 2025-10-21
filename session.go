@@ -10,7 +10,7 @@ import (
 // Session holds the state of a flow along with a unique session ID.
 type Session struct {
 	ID      string                   `json:"id"`
-	Histroy generics.Slice[*Message] `json:"history"`
+	History generics.Slice[*Message] `json:"history"`
 	State   State                    `json:"state"`
 }
 
@@ -21,8 +21,8 @@ func (s *Session) PutState(key string, value any) {
 
 // Record records the input prompt and output message under the given name.
 func (s *Session) Record(name string, input []*Message, output *Message) {
-	s.Histroy.Append(input...)
-	s.Histroy.Append(output)
+	s.History.Append(input...)
+	s.History.Append(output)
 }
 
 // NewSession creates a new Session instance with a unique ID.
