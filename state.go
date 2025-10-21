@@ -28,7 +28,7 @@ type StateInputHandler func(ctx context.Context, input *Prompt, state *State) (*
 // StateOutputHandler is a function type that processes output messages with access to the current state.
 type StateOutputHandler func(ctx context.Context, output *Message, state *State) (*Message, error)
 
-// StateInputEmpty returns a StateInputHandler that produces an empty Prompt.
+// StateInputEmpty returns a StateInputHandler that returns an empty Prompt.
 func StateInputEmpty() StateInputHandler {
 	return func(ctx context.Context, input *Prompt, state *State) (*Prompt, error) {
 		return NewPrompt(), nil
