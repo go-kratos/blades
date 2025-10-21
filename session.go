@@ -14,6 +14,11 @@ type Session struct {
 	State   State                    `json:"state"`
 }
 
+// PutState sets a key-value pair in the session state.
+func (s *Session) PutState(key string, value any) {
+	s.State.Store(key, value)
+}
+
 // Record records the input prompt and output message under the given name.
 func (s *Session) Record(name string, input []*Message, output *Message) {
 	s.Histroy.Append(input...)

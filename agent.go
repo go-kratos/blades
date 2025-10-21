@@ -209,9 +209,9 @@ func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
 		if err != nil {
 			return err
 		}
-		session.State.Store(a.outputKey, value)
+		session.PutState(a.outputKey, value)
 	} else {
-		session.State.Store(a.outputKey, res.Message.Text())
+		session.PutState(a.outputKey, res.Message.Text())
 	}
 	return nil
 }
