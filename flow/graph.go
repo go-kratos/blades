@@ -58,7 +58,7 @@ func (g *Graph[S]) SetEntryPoint(start string) error {
 // SetFinishPoint marks a node as the finish point.
 func (g *Graph[S]) SetFinishPoint(end string) error {
 	if g.finishPoint != "" {
-		return fmt.Errorf("graph: end node %s already exists", end)
+		return fmt.Errorf("graph: finish point already set to %s", g.finishPoint)
 	}
 	g.finishPoint = end
 	return nil
