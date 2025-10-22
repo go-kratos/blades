@@ -8,11 +8,7 @@ import (
 // GraphHandler is a function that processes the graph state.
 type GraphHandler[S any] func(ctx context.Context, state S) (S, error)
 
-// Graph is a lightweight directed acyclic execution graph that runs nodes in BFS order
-// starting from declared start nodes and stopping at terminal nodes. Edges optionally
-// transform a node's output into the next node's input.
-//
-// All nodes share the same input/output/option types to keep the API simple and predictable.
+// Graph represents a directed acyclic graph of processing nodes.
 type Graph[S any] struct {
 	handlers    map[string]GraphHandler[S]
 	edges       map[string][]string
@@ -20,7 +16,7 @@ type Graph[S any] struct {
 	finishPoint string
 }
 
-// NewGraph creates an empty graph.
+// NewGraph creates a new empty Graph.
 func NewGraph[S any]() *Graph[S] {
 	return &Graph[S]{
 		handlers: make(map[string]GraphHandler[S]),
@@ -28,7 +24,7 @@ func NewGraph[S any]() *Graph[S] {
 	}
 }
 
-// AddNode registers a named runner node.
+// AddNode adds a named node with its handler to the graph.
 func (g *Graph[S]) AddNode(name string, handler GraphHandler[S]) error {
 	if _, ok := g.handlers[name]; ok {
 		return fmt.Errorf("graph: node %s already exists", name)
@@ -37,8 +33,7 @@ func (g *Graph[S]) AddNode(name string, handler GraphHandler[S]) error {
 	return nil
 }
 
-// AddEdge connects two named nodes. Optionally supply a transformer that maps
-// the upstream node's output (O) into the downstream node's input (I).
+// AddEdge adds a directed edge from one node to another.
 func (g *Graph[S]) AddEdge(from, to string) error {
 	for _, name := range g.edges[from] {
 		if name == to {
@@ -189,6 +184,7 @@ func (g *Graph[S]) buildExecutionPlan() ([]string, error) {
 	return order, fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
 }
 
+// Compile validates and compiles the graph into a GraphHandler.
 func (g *Graph[S]) Compile() (GraphHandler[S], error) {
 	if err := g.validate(); err != nil {
 		return nil, err
