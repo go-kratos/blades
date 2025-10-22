@@ -33,13 +33,8 @@ func (s *Session) Record(input []*Message, output *Message) {
 }
 
 // NewSession creates a new Session instance with a unique ID.
-func NewSession(id string) *Session {
-	return &Session{ID: id}
-}
-
-// NewSessionID generates a new unique session ID.
-func NewSessionID() string {
-	return uuid.NewString()
+func NewSession() *Session {
+	return &Session{ID: uuid.NewString()}
 }
 
 // ctxSessionKey is an unexported type for keys defined in this package.
@@ -60,7 +55,7 @@ func FromSessionContext(ctx context.Context) (*Session, bool) {
 func EnsureSession(ctx context.Context) (*Session, context.Context) {
 	session, ok := FromSessionContext(ctx)
 	if !ok {
-		session = NewSession(uuid.NewString())
+		session = NewSession()
 		ctx = NewSessionContext(ctx, session)
 	}
 	return session, ctx
