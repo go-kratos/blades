@@ -25,7 +25,6 @@ type graphEdge struct {
 //
 // All nodes share the same input/output/option types to keep the API simple and predictable.
 type Graph[S any] struct {
-	name        string
 	handlers    map[string]GraphHandler[S]
 	edges       map[string][]string
 	entryPoint  string
@@ -33,9 +32,8 @@ type Graph[S any] struct {
 }
 
 // NewGraph creates an empty graph.
-func NewGraph[S any](name string) *Graph[S] {
+func NewGraph[S any]() *Graph[S] {
 	return &Graph[S]{
-		name:     name,
 		handlers: make(map[string]GraphHandler[S]),
 		edges:    make(map[string][]string),
 	}
