@@ -5,11 +5,8 @@ import (
 	"fmt"
 )
 
-// GraphState represents the shared state passed between graph nodes.
-type GraphState map[string]any
-
 // GraphHandler is a function that processes the graph state.
-type GraphHandler func(ctx context.Context, state GraphState) (GraphState, error)
+type GraphHandler[S any] func(ctx context.Context, state S) (S, error)
 
 // graphNode represents a node in the graph.
 type graphNode struct {
@@ -27,105 +24,202 @@ type graphEdge struct {
 // transform a node's output into the next node's input.
 //
 // All nodes share the same input/output/option types to keep the API simple and predictable.
-type Graph struct {
-	name     string
-	handlers map[string]GraphHandler
-	nodes    map[string]*graphNode
-	starts   map[string]struct{}
-	ends     map[string]struct{}
+type Graph[S any] struct {
+	name        string
+	handlers    map[string]GraphHandler[S]
+	edges       map[string][]string
+	entryPoint  string
+	finishPoint string
 }
 
 // NewGraph creates an empty graph.
-func NewGraph(name string) *Graph {
-	return &Graph{
+func NewGraph[S any](name string) *Graph[S] {
+	return &Graph[S]{
 		name:     name,
-		handlers: make(map[string]GraphHandler),
-		nodes:    make(map[string]*graphNode),
-		starts:   make(map[string]struct{}),
-		ends:     make(map[string]struct{}),
+		handlers: make(map[string]GraphHandler[S]),
+		edges:    make(map[string][]string),
 	}
 }
 
 // AddNode registers a named runner node.
-func (g *Graph) AddNode(name string, handler GraphHandler) error {
+func (g *Graph[S]) AddNode(name string, handler GraphHandler[S]) error {
 	if _, ok := g.handlers[name]; ok {
 		return fmt.Errorf("graph: node %s already exists", name)
 	}
 	g.handlers[name] = handler
-	g.nodes[name] = &graphNode{name: name}
 	return nil
 }
 
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
-func (g *Graph) AddEdge(from, to string) error {
-	node, ok := g.nodes[from]
-	if !ok {
-		return fmt.Errorf("graph: edge references unknown node %s", from)
+func (g *Graph[S]) AddEdge(from, to string) error {
+	for _, name := range g.edges[from] {
+		if name == to {
+			return fmt.Errorf("graph: edge from %s to %s already exists", from, to)
+		}
 	}
-	node.edges = append(node.edges, &graphEdge{name: to})
+	g.edges[from] = append(g.edges[from], to)
 	return nil
 }
 
-// AddStart marks a node as a start entry.
-func (g *Graph) AddStart(start string) error {
-	if _, ok := g.starts[start]; ok {
+// SetEntryPoint marks a node as the entry point.
+func (g *Graph[S]) SetEntryPoint(start string) error {
+	if g.entryPoint != "" {
 		return fmt.Errorf("graph: start node %s already exists", start)
 	}
-	g.starts[start] = struct{}{}
+	g.entryPoint = start
 	return nil
 }
 
-// AddEnd marks a node as an end terminal.
-func (g *Graph) AddEnd(end string) error {
-	if _, ok := g.ends[end]; ok {
+// SetFinishPoint marks a node as the finish point.
+func (g *Graph[S]) SetFinishPoint(end string) error {
+	if g.finishPoint != "" {
 		return fmt.Errorf("graph: end node %s already exists", end)
 	}
-	g.ends[end] = struct{}{}
+	g.finishPoint = end
 	return nil
 }
 
-// Compile returns a blades.Runner that executes the graph.
-func (g *Graph) Compile() (GraphHandler, error) {
-	// Validate starts and ends exist
-	if len(g.starts) == 0 {
-		return nil, fmt.Errorf("graph: no start nodes defined")
-	}
-	for start := range g.starts {
-		if _, ok := g.nodes[start]; !ok {
-			return nil, fmt.Errorf("graph: edge references unknown node %s", start)
-		}
-	}
-	// BFS discover reachable nodes from starts
-	compiled := make(map[string][]*graphNode, len(g.nodes))
-	for start := range g.starts {
-		node := g.nodes[start]
-		visited := make(map[string]int, len(g.nodes))
-		queue := make([]*graphNode, 0, len(g.nodes))
-		queue = append(queue, node)
+// checkAcyclic verifies the reachable portion of the graph has no cycles using Kahn's algorithm.
+func (g *Graph[S]) checkAcyclic() error {
+	// discover reachable nodes from entry
+	reachable := make(map[string]bool, len(g.handlers))
+	if g.entryPoint != "" {
+		queue := []string{g.entryPoint}
 		for len(queue) > 0 {
-			next := queue[0]
+			node := queue[0]
 			queue = queue[1:]
-			visited[next.name]++
-			for _, to := range next.edges {
-				queue = append(queue, g.nodes[to.name])
+			if reachable[node] {
+				continue
 			}
-			if visited[next.name] > 1 {
-				return nil, fmt.Errorf("graph: cycle detected at node %s", next.name)
+			reachable[node] = true
+			for _, to := range g.edges[node] {
+				if !reachable[to] {
+					queue = append(queue, to)
+				}
 			}
-			compiled[start] = append(compiled[start], next)
 		}
 	}
-	return func(ctx context.Context, state GraphState) (GraphState, error) {
-		var err error
-		for _, queue := range compiled {
-			for len(queue) > 0 {
-				next := queue[0]
-				queue = queue[1:]
-				handler := g.handlers[next.name]
-				if state, err = handler(ctx, state); err != nil {
-					return nil, err
-				}
+	if len(reachable) == 0 {
+		return nil
+	}
+	// compute indegree within reachable subgraph
+	indegree := make(map[string]int, len(reachable))
+	for n := range reachable {
+		indegree[n] = 0
+	}
+	for from, tos := range g.edges {
+		if !reachable[from] {
+			continue
+		}
+		for _, to := range tos {
+			if reachable[to] {
+				indegree[to]++
+			}
+		}
+	}
+	// Kahn's topological sort
+	queue := make([]string, 0, len(reachable))
+	for n := range reachable {
+		if indegree[n] == 0 {
+			queue = append(queue, n)
+		}
+	}
+	processed := 0
+	for len(queue) > 0 {
+		node := queue[0]
+		queue = queue[1:]
+		processed++
+		for _, to := range g.edges[node] {
+			if !reachable[to] {
+				continue
+			}
+			indegree[to]--
+			if indegree[to] == 0 {
+				queue = append(queue, to)
+			}
+		}
+	}
+	if processed != len(indegree) {
+		return fmt.Errorf("graph: cycle detected")
+	}
+	return nil
+}
+
+// validate ensures the graph configuration is correct before compiling.
+func (g *Graph[S]) validate() error {
+	if g.entryPoint == "" {
+		return fmt.Errorf("graph: entry point not set")
+	}
+	if g.finishPoint == "" {
+		return fmt.Errorf("graph: finish point not set")
+	}
+	if _, ok := g.handlers[g.entryPoint]; !ok {
+		return fmt.Errorf("graph: start node not found: %s", g.entryPoint)
+	}
+	if _, ok := g.handlers[g.finishPoint]; !ok {
+		return fmt.Errorf("graph: end node not found: %s", g.finishPoint)
+	}
+	for from, tos := range g.edges {
+		if _, ok := g.handlers[from]; !ok {
+			return fmt.Errorf("graph: edge from unknown node: %s", from)
+		}
+		for _, to := range tos {
+			if _, ok := g.handlers[to]; !ok {
+				return fmt.Errorf("graph: edge to unknown node: %s", to)
+			}
+		}
+	}
+	if err := g.checkAcyclic(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// buildExecutionPlan computes the BFS order from entry to finish.
+func (g *Graph[S]) buildExecutionPlan() ([]string, error) {
+	queue := []string{g.entryPoint}
+	visited := make(map[string]bool, len(g.handlers))
+	order := make([]string, 0, len(g.handlers))
+
+	for len(queue) > 0 {
+		node := queue[0]
+		queue = queue[1:]
+		if visited[node] {
+			continue
+		}
+		visited[node] = true
+		order = append(order, node)
+		if node == g.finishPoint {
+			return order, nil
+		}
+		for _, next := range g.edges[node] {
+			if !visited[next] {
+				queue = append(queue, next)
+			}
+		}
+	}
+	return order, fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
+}
+
+func (g *Graph[S]) Compile() (GraphHandler[S], error) {
+	if err := g.validate(); err != nil {
+		return nil, err
+	}
+	plan, err := g.buildExecutionPlan()
+	if err != nil {
+		return nil, fmt.Errorf("graph: compile: %w", err)
+	}
+	return func(ctx context.Context, state S) (S, error) {
+		for _, node := range plan {
+			var err error
+			handler := g.handlers[node]
+			state, err = handler(ctx, state)
+			if err != nil {
+				return state, fmt.Errorf("graph: node %s: %w", node, err)
+			}
+			if node == g.finishPoint {
+				break
 			}
 		}
 		return state, nil
