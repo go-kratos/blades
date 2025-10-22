@@ -13,9 +13,6 @@ type Guardrails struct {
 	next blades.Runnable
 }
 
-// Name returns the name of the middleware.
-func (m *Guardrails) Name() string { return "guardrails" }
-
 // Run processes the prompt and adds guardrails before passing it to the next runnable.
 func (m *Guardrails) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
 	// Pre-processing: Add guardrails to the prompt

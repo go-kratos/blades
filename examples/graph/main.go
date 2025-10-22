@@ -10,9 +10,19 @@ import (
 	"github.com/go-kratos/blades/flow"
 )
 
+func wrapHandle(runner blades.Runnable) flow.GraphHandler {
+	return func(ctx context.Context, state flow.GraphState) (flow.GraphState, error) {
+		input := state["input"].(string)
+		output, err := runner.Run(ctx, blades.NewPrompt(blades.UserMessage(input)))
+		if err != nil {
+			return nil, err
+		}
+		return flow.GraphState{"input": output.Text()}, nil
+	}
+}
+
 func main() {
 	provider := openai.NewChatProvider()
-
 	// Define agents for the graph nodes.
 	storyOutline := blades.NewAgent(
 		"story_outline_agent",
@@ -52,30 +62,33 @@ func main() {
 		}
 		return "general", nil // choose generalWriter
 	}
-	branchWriter := flow.NewBranch("branch", branchChoose, scifiWriter, generalWriter)
+	branchWriter := flow.NewBranch(branchChoose, map[string]blades.Runnable{
+		"scifi":   scifiWriter,
+		"general": generalWriter,
+	})
 	// Build graph: outline -> checker -> branch (scifi/general) -> refine -> end
 	g := flow.NewGraph("story")
-	g.AddNode(storyOutline)
-	g.AddNode(storyChecker)
-	g.AddNode(branchWriter)
-	g.AddNode(refineAgent)
+	g.AddNode("outline", wrapHandle(storyOutline))
+	g.AddNode("checker", wrapHandle(storyChecker))
+	g.AddNode("branch", wrapHandle(branchWriter))
+	g.AddNode("refine", wrapHandle(refineAgent))
 	// Add edges and branches
-	g.AddStart(storyOutline)
-	g.AddEdge(storyOutline, storyChecker)
-	g.AddEdge(storyChecker, branchWriter)
-	g.AddEdge(branchWriter, refineAgent)
+	g.AddStart("outline")
+	g.AddEdge("outline", "checker")
+	g.AddEdge("checker", "branch")
+	g.AddEdge("branch", "refine")
+	g.AddEnd("refine")
 	// Compile the graph into a single runner
-	runner, err := g.Compile()
+	handler, err := g.Compile()
 	if err != nil {
 		log.Fatal(err)
 	}
-	// Run the graph with an initial prompt
-	prompt := blades.NewPrompt(
-		blades.UserMessage("A brave knight embarks on a quest to find a hidden treasure."),
-	)
-	result, err := runner.Run(context.Background(), prompt)
+	// Run the graph with an initial input
+	result, err := handler(context.Background(), flow.GraphState{
+		"input": "A brave knight embarks on a quest to find a hidden treasure.",
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(result.Text())
+	log.Println(result)
 }

@@ -43,7 +43,6 @@ type Streamable[T any] interface {
 
 // Runnable represents an entity that can process prompts and generate responses.
 type Runnable interface {
-	Name() string
 	Run(context.Context, *Prompt, ...ModelOption) (*Message, error)
 	RunStream(context.Context, *Prompt, ...ModelOption) (Streamable[*Message], error)
 }

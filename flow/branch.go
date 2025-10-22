@@ -12,27 +12,16 @@ type BranchCondition func(ctx context.Context, input *blades.Prompt) (string, er
 
 // Branch represents a branching structure of Runnable runners that process input based on a selector function.
 type Branch struct {
-	name      string
 	condition BranchCondition
 	runners   map[string]blades.Runnable
 }
 
 // NewBranch creates a new Branch with the given selector and runners.
-func NewBranch(name string, condition BranchCondition, runners ...blades.Runnable) *Branch {
-	m := make(map[string]blades.Runnable)
-	for _, runner := range runners {
-		m[runner.Name()] = runner
-	}
+func NewBranch(condition BranchCondition, runners map[string]blades.Runnable) *Branch {
 	return &Branch{
-		name:      name,
 		condition: condition,
-		runners:   m,
+		runners:   runners,
 	}
-}
-
-// Name returns the name of the Branch.
-func (c *Branch) Name() string {
-	return c.name
 }
 
 // Run executes the selected runner based on the selector function.

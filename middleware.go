@@ -25,11 +25,6 @@ type HandleFunc struct {
 	HandleStream func(context.Context, *Prompt, ...ModelOption) (Streamable[*Message], error)
 }
 
-// Name returns the name of the runner.
-func (f *HandleFunc) Name() string {
-	return "middleware"
-}
-
 // Run executes the runner with the given context, prompt, and options.
 func (f *HandleFunc) Run(ctx context.Context, p *Prompt, opts ...ModelOption) (*Message, error) {
 	return f.Handle(ctx, p, opts...)

@@ -3,9 +3,13 @@ package flow
 import (
 	"context"
 	"fmt"
-
-	"github.com/go-kratos/blades"
 )
+
+// GraphState represents the shared state passed between graph nodes.
+type GraphState map[string]any
+
+// GraphHandler is a function that processes the graph state.
+type GraphHandler func(ctx context.Context, state GraphState) (GraphState, error)
 
 // graphNode represents a node in the graph.
 type graphNode struct {
@@ -24,52 +28,65 @@ type graphEdge struct {
 //
 // All nodes share the same input/output/option types to keep the API simple and predictable.
 type Graph struct {
-	name    string
-	runners map[string]blades.Runnable
-	nodes   map[string]*graphNode
-	starts  map[string]struct{}
+	name     string
+	handlers map[string]GraphHandler
+	nodes    map[string]*graphNode
+	starts   map[string]struct{}
+	ends     map[string]struct{}
 }
 
 // NewGraph creates an empty graph.
 func NewGraph(name string) *Graph {
 	return &Graph{
-		name:    name,
-		runners: make(map[string]blades.Runnable),
-		nodes:   make(map[string]*graphNode),
-		starts:  make(map[string]struct{}),
+		name:     name,
+		handlers: make(map[string]GraphHandler),
+		nodes:    make(map[string]*graphNode),
+		starts:   make(map[string]struct{}),
+		ends:     make(map[string]struct{}),
 	}
 }
 
 // AddNode registers a named runner node.
-func (g *Graph) AddNode(runner blades.Runnable) error {
-	name := runner.Name()
-	if _, ok := g.nodes[name]; ok {
-		return fmt.Errorf("graph: node %s already exists", runner.Name())
+func (g *Graph) AddNode(name string, handler GraphHandler) error {
+	if _, ok := g.handlers[name]; ok {
+		return fmt.Errorf("graph: node %s already exists", name)
 	}
-	g.runners[name] = runner
+	g.handlers[name] = handler
 	g.nodes[name] = &graphNode{name: name}
 	return nil
 }
 
 // AddEdge connects two named nodes. Optionally supply a transformer that maps
 // the upstream node's output (O) into the downstream node's input (I).
-func (g *Graph) AddEdge(from, to blades.Runnable) error {
-	node := g.nodes[from.Name()]
-	node.edges = append(node.edges, &graphEdge{name: to.Name()})
+func (g *Graph) AddEdge(from, to string) error {
+	node, ok := g.nodes[from]
+	if !ok {
+		return fmt.Errorf("graph: edge references unknown node %s", from)
+	}
+	node.edges = append(node.edges, &graphEdge{name: to})
 	return nil
 }
 
 // AddStart marks a node as a start entry.
-func (g *Graph) AddStart(start blades.Runnable) error {
-	if _, ok := g.starts[start.Name()]; ok {
-		return fmt.Errorf("graph: start node %s already exists", start.Name())
+func (g *Graph) AddStart(start string) error {
+	if _, ok := g.starts[start]; ok {
+		return fmt.Errorf("graph: start node %s already exists", start)
 	}
-	g.starts[start.Name()] = struct{}{}
+	g.starts[start] = struct{}{}
+	return nil
+}
+
+// AddEnd marks a node as an end terminal.
+func (g *Graph) AddEnd(end string) error {
+	if _, ok := g.ends[end]; ok {
+		return fmt.Errorf("graph: end node %s already exists", end)
+	}
+	g.ends[end] = struct{}{}
 	return nil
 }
 
 // Compile returns a blades.Runner that executes the graph.
-func (g *Graph) Compile() (blades.Runnable, error) {
+func (g *Graph) Compile() (GraphHandler, error) {
 	// Validate starts and ends exist
 	if len(g.starts) == 0 {
 		return nil, fmt.Errorf("graph: no start nodes defined")
@@ -99,48 +116,21 @@ func (g *Graph) Compile() (blades.Runnable, error) {
 			compiled[start] = append(compiled[start], next)
 		}
 	}
-	return &graphRunner{graph: g, compiled: compiled}, nil
-}
-
-// graphRunner executes a compiled Graph.
-type graphRunner struct {
-	graph    *Graph
-	compiled map[string][]*graphNode
-}
-
-func (r *graphRunner) Name() string {
-	return r.graph.name
-}
-
-// Run executes the graph to completion and returns the final node's generation.
-func (r *graphRunner) Run(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
-	var (
-		err    error
-		output *blades.Message
-	)
-	for _, queue := range r.compiled {
-		for len(queue) > 0 {
-			next := queue[0]
-			queue = queue[1:]
-			runner := r.graph.runners[next.name]
-			if output, err = runner.Run(ctx, blades.NewPrompt(), opts...); err != nil {
-				return output, err
+	return func(ctx context.Context, state GraphState) (GraphState, error) {
+		var (
+			err       error
+			nextState GraphState
+		)
+		for _, queue := range compiled {
+			for len(queue) > 0 {
+				next := queue[0]
+				queue = queue[1:]
+				handler := g.handlers[next.name]
+				if nextState, err = handler(ctx, state); err != nil {
+					return nil, err
+				}
 			}
 		}
-	}
-	return output, nil
-}
-
-// RunStream executes the graph and streams each node's output sequentially.
-func (r *graphRunner) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
-	pipe := blades.NewStreamPipe[*blades.Message]()
-	pipe.Go(func() error {
-		output, err := r.Run(ctx, input, opts...)
-		if err != nil {
-			return err
-		}
-		pipe.Send(output)
-		return nil
-	})
-	return pipe, nil
+		return nextState, nil
+	}, nil
 }
