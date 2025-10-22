@@ -10,7 +10,7 @@ type GraphHandler[S any] func(ctx context.Context, state S) (S, error)
 
 // Graph represents a directed acyclic graph of processing nodes.
 type Graph[S any] struct {
-	handlers    map[string]GraphHandler[S]
+	nodes       map[string]GraphHandler[S]
 	edges       map[string][]string
 	entryPoint  string
 	finishPoint string
@@ -19,17 +19,17 @@ type Graph[S any] struct {
 // NewGraph creates a new empty Graph.
 func NewGraph[S any]() *Graph[S] {
 	return &Graph[S]{
-		handlers: make(map[string]GraphHandler[S]),
-		edges:    make(map[string][]string),
+		nodes: make(map[string]GraphHandler[S]),
+		edges: make(map[string][]string),
 	}
 }
 
 // AddNode adds a named node with its handler to the graph.
 func (g *Graph[S]) AddNode(name string, handler GraphHandler[S]) error {
-	if _, ok := g.handlers[name]; ok {
+	if _, ok := g.nodes[name]; ok {
 		return fmt.Errorf("graph: node %s already exists", name)
 	}
-	g.handlers[name] = handler
+	g.nodes[name] = handler
 	return nil
 }
 
@@ -65,7 +65,7 @@ func (g *Graph[S]) SetFinishPoint(end string) error {
 // checkAcyclic verifies the reachable portion of the graph has no cycles using Kahn's algorithm.
 func (g *Graph[S]) checkAcyclic() error {
 	// discover reachable nodes from entry
-	reachable := make(map[string]bool, len(g.handlers))
+	reachable := make(map[string]bool, len(g.nodes))
 	if g.entryPoint != "" {
 		queue := []string{g.entryPoint}
 		for len(queue) > 0 {
@@ -136,18 +136,18 @@ func (g *Graph[S]) validate() error {
 	if g.finishPoint == "" {
 		return fmt.Errorf("graph: finish point not set")
 	}
-	if _, ok := g.handlers[g.entryPoint]; !ok {
+	if _, ok := g.nodes[g.entryPoint]; !ok {
 		return fmt.Errorf("graph: start node not found: %s", g.entryPoint)
 	}
-	if _, ok := g.handlers[g.finishPoint]; !ok {
+	if _, ok := g.nodes[g.finishPoint]; !ok {
 		return fmt.Errorf("graph: end node not found: %s", g.finishPoint)
 	}
 	for from, tos := range g.edges {
-		if _, ok := g.handlers[from]; !ok {
+		if _, ok := g.nodes[from]; !ok {
 			return fmt.Errorf("graph: edge from unknown node: %s", from)
 		}
 		for _, to := range tos {
-			if _, ok := g.handlers[to]; !ok {
+			if _, ok := g.nodes[to]; !ok {
 				return fmt.Errorf("graph: edge to unknown node: %s", to)
 			}
 		}
@@ -161,9 +161,8 @@ func (g *Graph[S]) validate() error {
 // buildExecutionPlan computes the BFS order from entry to finish.
 func (g *Graph[S]) buildExecutionPlan() ([]string, error) {
 	queue := []string{g.entryPoint}
-	visited := make(map[string]bool, len(g.handlers))
-	order := make([]string, 0, len(g.handlers))
-
+	visited := make(map[string]bool, len(g.nodes))
+	order := make([]string, 0, len(g.nodes))
 	for len(queue) > 0 {
 		node := queue[0]
 		queue = queue[1:]
@@ -196,7 +195,7 @@ func (g *Graph[S]) Compile() (GraphHandler[S], error) {
 	return func(ctx context.Context, state S) (S, error) {
 		for _, node := range plan {
 			var err error
-			handler := g.handlers[node]
+			handler := g.nodes[node]
 			state, err = handler(ctx, state)
 			if err != nil {
 				return state, fmt.Errorf("graph: node %s: %w", node, err)
