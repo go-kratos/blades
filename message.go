@@ -52,6 +52,13 @@ type DataPart struct {
 	MIMEType MIMEType `json:"mimeType"`
 }
 
+type ToolPart struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Request  string `json:"arguments"`
+	Response string `json:"result,omitempty"`
+}
+
 // Part is a part of a message, which can be text or a file.
 type Part interface {
 	isPart()
@@ -60,23 +67,15 @@ type Part interface {
 func (TextPart) isPart() {}
 func (FilePart) isPart() {}
 func (DataPart) isPart() {}
-
-// ToolCall represents a call to an external tool.
-type ToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-	Result    string `json:"result,omitempty"`
-}
+func (ToolPart) isPart() {}
 
 // Message represents a single message in a conversation.
 type Message struct {
-	ID        string            `json:"id"`
-	Role      Role              `json:"role"`
-	Parts     []Part            `json:"parts"`
-	Status    Status            `json:"status"`
-	ToolCalls []*ToolCall       `json:"toolCalls,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	ID       string            `json:"id"`
+	Role     Role              `json:"role"`
+	Parts    []Part            `json:"parts"`
+	Status   Status            `json:"status"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // Text returns the first text part of the message, or an empty string if none exists.
@@ -126,7 +125,7 @@ func (m *Message) String() string {
 
 // contentPart is a type constraint for valid content inputs.
 type contentPart interface {
-	string | TextPart | FilePart | DataPart
+	string | TextPart | FilePart | DataPart | ToolPart
 }
 
 // UserMessage creates a user-authored message from parts.
@@ -157,6 +156,8 @@ func Parts[T contentPart](inputs ...T) []Part {
 		case FilePart:
 			parts = append(parts, v)
 		case DataPart:
+			parts = append(parts, v)
+		case ToolPart:
 			parts = append(parts, v)
 		}
 	}

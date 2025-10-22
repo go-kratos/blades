@@ -27,9 +27,8 @@ func (s *Session) PutState(key string, value any) {
 }
 
 // Record records the input prompt and output message under the given name.
-func (s *Session) Record(input []*Message, output *Message) {
-	s.History.Append(input...)
-	s.History.Append(output)
+func (s *Session) Record(messages ...*Message) {
+	s.History.Append(messages...)
 }
 
 // NewSession creates a new Session instance with a unique ID.
