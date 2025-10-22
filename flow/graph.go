@@ -6,6 +6,8 @@ import (
 )
 
 // GraphHandler is a function that processes the graph state.
+// Handlers must not mutate the incoming state; instead, they should return a new state instance.
+// This is especially important for reference types (e.g., pointers, slices, maps) to avoid unintended side effects.
 type GraphHandler[S any] func(ctx context.Context, state S) (S, error)
 
 // Graph represents a directed acyclic graph of processing nodes.
