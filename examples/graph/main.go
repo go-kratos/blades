@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 
@@ -12,7 +13,10 @@ import (
 
 func wrapHandle(runner blades.Runnable) flow.GraphHandler {
 	return func(ctx context.Context, state flow.GraphState) (flow.GraphState, error) {
-		input := state["input"].(string)
+		input, ok := state["input"].(string)
+		if !ok {
+			return nil, fmt.Errorf("not found input in state: %+v", state)
+		}
 		output, err := runner.Run(ctx, blades.NewPrompt(blades.UserMessage(input)))
 		if err != nil {
 			return nil, err
