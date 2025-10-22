@@ -117,20 +117,17 @@ func (g *Graph) Compile() (GraphHandler, error) {
 		}
 	}
 	return func(ctx context.Context, state GraphState) (GraphState, error) {
-		var (
-			err       error
-			nextState GraphState
-		)
+		var err error
 		for _, queue := range compiled {
 			for len(queue) > 0 {
 				next := queue[0]
 				queue = queue[1:]
 				handler := g.handlers[next.name]
-				if nextState, err = handler(ctx, state); err != nil {
+				if state, err = handler(ctx, state); err != nil {
 					return nil, err
 				}
 			}
 		}
-		return nextState, nil
+		return state, nil
 	}, nil
 }
