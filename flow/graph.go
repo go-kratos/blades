@@ -49,7 +49,7 @@ func (g *Graph[S]) AddEdge(from, to string) error {
 // SetEntryPoint marks a node as the entry point.
 func (g *Graph[S]) SetEntryPoint(start string) error {
 	if g.entryPoint != "" {
-		return fmt.Errorf("graph: start node %s already exists", start)
+		return fmt.Errorf("graph: entry point already set to %s", g.entryPoint)
 	}
 	g.entryPoint = start
 	return nil
