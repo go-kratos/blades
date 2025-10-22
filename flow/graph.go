@@ -8,17 +8,6 @@ import (
 // GraphHandler is a function that processes the graph state.
 type GraphHandler[S any] func(ctx context.Context, state S) (S, error)
 
-// graphNode represents a node in the graph.
-type graphNode struct {
-	name  string
-	edges []*graphEdge
-}
-
-// graphEdge represents a directed edge between two nodes in the graph.
-type graphEdge struct {
-	name string
-}
-
 // Graph is a lightweight directed acyclic execution graph that runs nodes in BFS order
 // starting from declared start nodes and stopping at terminal nodes. Edges optionally
 // transform a node's output into the next node's input.
