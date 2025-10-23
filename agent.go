@@ -283,8 +283,7 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
 				if err := a.storeOutputToState(session, res); err != nil {
 					return nil, err
 				}
-				session.Record(req.Messages...)
-				session.Record(res.Message)
+				session.Record(req.Messages, res.Message)
 				return a.outputHandler(ctx, res.Message, &session.State)
 			}
 			return nil, ErrMaxIterationsExceeded
@@ -320,12 +319,12 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
 					if err := a.storeOutputToState(session, finalResponse); err != nil {
 						return err
 					}
+					session.Record(req.Messages, finalResponse.Message)
+					// handle the final response before sending
 					finalResponse.Message, err = a.outputHandler(ctx, finalResponse.Message, &session.State)
 					if err != nil {
 						return err
 					}
-					session.Record(req.Messages...)
-					session.Record(finalResponse.Message)
 					pipe.Send(finalResponse.Message)
 					return nil
 				}
