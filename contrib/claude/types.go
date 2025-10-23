@@ -55,10 +55,14 @@ func convertClaudeToBlades(message *anthropic.Message) (*blades.ModelResponse, e
 		case anthropic.TextBlock:
 			msg.Parts = append(msg.Parts, blades.TextPart{Text: b.Text})
 		case anthropic.ToolUseBlock:
+			input, err := json.Marshal(b.Input)
+			if err != nil {
+				return nil, err
+			}
 			msg.Parts = append(msg.Parts, blades.ToolPart{
 				ID:      b.ID,
 				Name:    b.Name,
-				Request: string(b.Input),
+				Request: string(input),
 			})
 		}
 	}
