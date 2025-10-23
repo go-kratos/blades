@@ -328,7 +328,7 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
 					pipe.Send(finalResponse.Message)
 					return nil
 				}
-				return nil
+				return ErrMaxIterationsExceeded
 			})
 			return pipe, nil
 		},
