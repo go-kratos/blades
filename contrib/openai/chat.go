@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 
 	"github.com/go-kratos/blades"
@@ -353,10 +352,6 @@ func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams
 		}
 		if choice.FinishReason != "" {
 			msg.Metadata["finish_reason"] = choice.FinishReason
-		}
-		if len(choice.Message.ToolCalls) > 0 {
-			b, _ := json.Marshal(choice.Message.ToParam())
-			fmt.Println(string(b))
 		}
 		for _, call := range choice.Message.ToolCalls {
 			msg.Role = blades.RoleTool

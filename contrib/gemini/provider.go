@@ -28,17 +28,9 @@ func WithThinkingConfig(c *genai.ThinkingConfig) Option {
 	}
 }
 
-// WithMaxToolIterations sets the maximum number of tool iterations.
-func WithMaxToolIterations(n int) Option {
-	return func(o *Options) {
-		o.MaxToolIterations = n
-	}
-}
-
 // Options holds configuration options for the Provider.
 type Options struct {
-	MaxToolIterations int
-	ThinkingConfig    *genai.ThinkingConfig
+	ThinkingConfig *genai.ThinkingConfig
 }
 
 // Provider provides a unified interface for Gemini API access.
@@ -48,7 +40,7 @@ type Provider struct {
 }
 
 func NewProvider(ctx context.Context, clientConfig *genai.ClientConfig, opts ...Option) (*Provider, error) {
-	opt := Options{MaxToolIterations: 5}
+	opt := Options{}
 	for _, apply := range opts {
 		apply(&opt)
 	}
@@ -67,7 +59,20 @@ func (c *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts 
 	for _, apply := range opts {
 		apply(&opt)
 	}
-	return c.generate(ctx, req, opt, c.opts.MaxToolIterations)
+	system, contents, err := convertMessageToGenAI(req)
+	if err != nil {
+		return nil, err
+	}
+	config, err := c.toGenerateConfig(req, opt)
+	if err != nil {
+		return nil, err
+	}
+	config.SystemInstruction = system
+	resp, err := c.client.Models.GenerateContent(ctx, req.Model, contents, config)
+	if err != nil {
+		return nil, fmt.Errorf("generating content: %w", err)
+	}
+	return convertGenAIToBlades(resp)
 }
 
 func (c *Provider) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOptions) (*genai.GenerateContentConfig, error) {
@@ -96,39 +101,11 @@ func (c *Provider) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOp
 	return &config, nil
 }
 
-func (c *Provider) generate(ctx context.Context, req *blades.ModelRequest, opt blades.ModelOptions, maxToolIterations int) (*blades.ModelResponse, error) {
-	if maxToolIterations < 1 {
-		return nil, ErrTooManyIterations
-	}
-	system, contents, err := convertMessageToGenAI(req)
-	if err != nil {
-		return nil, err
-	}
-	config, err := c.toGenerateConfig(req, opt)
-	if err != nil {
-		return nil, err
-	}
-	config.SystemInstruction = system
-	// Use the GenAI client for both backends since they use the same interface
-	resp, err := c.client.Models.GenerateContent(ctx, req.Model, contents, config)
-	if err != nil {
-		return nil, fmt.Errorf("generating content: %w", err)
-	}
-	// Convert response and handle tool execution inline
-	response, err := convertGenAIToBlades(resp)
-	if err != nil {
-		return nil, err
-	}
-	// TODO: handle tools
-	return response, nil
-}
-
-// GenerateStream generates streaming content using the configured backend
-// Returns blades.Streamer[*blades.ModelResponse] following openai pattern
-func (c *Provider) GenerateStream(ctx context.Context, req *blades.ModelRequest, opt blades.ModelOptions, maxToolIterations int) (blades.Streamable[*blades.ModelResponse], error) {
-	// Ensure we have at least one iteration left
-	if maxToolIterations < 1 {
-		return nil, ErrTooManyIterations
+// NewStream is an alias for GenerateStream to implement the ModelProvider interface
+func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
+	opt := blades.ModelOptions{}
+	for _, apply := range opts {
+		apply(&opt)
 	}
 	system, contents, err := convertMessageToGenAI(req)
 	if err != nil {
@@ -142,27 +119,20 @@ func (c *Provider) GenerateStream(ctx context.Context, req *blades.ModelRequest,
 	// Create stream pipe like in openai
 	pipe := blades.NewStreamPipe[*blades.ModelResponse]()
 	pipe.Go(func() error {
-		// Get streaming iterator from GenAI client
 		stream := c.client.Models.GenerateContentStream(ctx, req.Model, contents, config)
-		// Accumulate chunks to build final response for tool call handling
 		var accumulatedResponse *genai.GenerateContentResponse
-		// Process stream chunks using iterator pattern
 		for chunk, err := range stream {
 			if err != nil {
 				return err
 			}
-			// Convert chunk to Blades response and send immediately
 			response, err := convertGenAIToBlades(chunk)
 			if err != nil {
 				return err
 			}
 			pipe.Send(response)
-			// Accumulate chunks for final tool call processing
 			if accumulatedResponse == nil {
 				accumulatedResponse = chunk
 			} else {
-				// Merge chunk into accumulated response (simple approach)
-				// In practice, you might need more sophisticated merging
 				if len(chunk.Candidates) > 0 && len(accumulatedResponse.Candidates) > 0 {
 					candidate := accumulatedResponse.Candidates[0]
 					chunkCandidate := chunk.Candidates[0]
@@ -187,19 +157,9 @@ func (c *Provider) GenerateStream(ctx context.Context, req *blades.ModelRequest,
 				return err
 			}
 			finalResponse.Message.Status = blades.StatusCompleted
-			// TODO: handle tools
 			pipe.Send(finalResponse)
 		}
 		return nil
 	})
 	return pipe, nil
-}
-
-// NewStream is an alias for GenerateStream to implement the ModelProvider interface
-func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
-	opt := blades.ModelOptions{}
-	for _, apply := range opts {
-		apply(&opt)
-	}
-	return c.GenerateStream(ctx, req, opt, c.opts.MaxToolIterations)
 }
