@@ -85,8 +85,8 @@ func (m *Message) Text() string {
 		switch v := any(part).(type) {
 		case TextPart:
 			buf.WriteString(v.Text)
+			buf.WriteByte('\n')
 		}
-		buf.WriteByte('\n')
 	}
 	return strings.TrimSuffix(buf.String(), "\n")
 }
