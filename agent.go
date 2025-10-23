@@ -2,6 +2,7 @@ package blades
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -227,32 +228,39 @@ func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
 	return nil
 }
 
-// executeTools executes the tools specified in the tool parts.
-func (a *Agent) executeTools(ctx context.Context, message *Message) (bool, error) {
-	var toolParts []*ToolPart
-	for _, part := range message.Parts {
-		switch v := any(part).(type) {
-		case ToolPart:
-			toolParts = append(toolParts, &v)
+func (a *Agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error) {
+	for _, tool := range a.tools {
+		if tool.Name == part.Name {
+			response, err := tool.Handler.Handle(ctx, part.Request)
+			if err != nil {
+				return part, err
+			}
+			part.Response = response
+			return part, nil
 		}
 	}
-	if len(toolParts) == 0 {
-		return false, nil
-	}
+	return part, fmt.Errorf("tool %s not found", part.Name)
+}
+
+// executeTools executes the tools specified in the tool parts.
+func (a *Agent) executeTools(ctx context.Context, message *Message) (*Message, error) {
+	toolMessage := &Message{ID: message.ID, Role: message.Role, Parts: message.Parts}
 	eg, ctx := errgroup.WithContext(ctx)
-	for _, part := range toolParts {
-		eg.Go(func() error {
-			for _, tool := range a.tools {
-				response, err := tool.Handler.Handle(ctx, part.Request)
+	for i, part := range message.Parts {
+		i := i
+		switch v := any(part).(type) {
+		case ToolPart:
+			eg.Go(func() error {
+				part, err := a.handleTools(ctx, v)
 				if err != nil {
 					return err
 				}
-				part.Response = response
-			}
-			return nil
-		})
+				toolMessage.Parts[i] = part
+				return nil
+			})
+		}
 	}
-	return true, eg.Wait()
+	return toolMessage, eg.Wait()
 }
 
 // handler constructs the default handlers for Run and Stream using the provider.
@@ -264,12 +272,12 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
 				if err != nil {
 					return nil, err
 				}
-				hasTools, err := a.executeTools(ctx, res.Message)
-				if err != nil {
-					return nil, err
-				}
-				if hasTools {
-					req.Messages = append(req.Messages, res.Message)
+				if res.Message.Role == RoleTool {
+					toolMessage, err := a.executeTools(ctx, res.Message)
+					if err != nil {
+						return nil, err
+					}
+					req.Messages = append(req.Messages, toolMessage)
 					continue // continue to the next iteration
 				}
 				if err := a.storeOutputToState(session, res); err != nil {
@@ -301,12 +309,12 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
 							pipe.Send(chunk.Message)
 						}
 					}
-					hasTools, err := a.executeTools(ctx, finalResponse.Message)
-					if err != nil {
-						return err
-					}
-					if hasTools {
-						req.Messages = append(req.Messages, finalResponse.Message)
+					if finalResponse.Message.Role == RoleTool {
+						toolMessage, err := a.executeTools(ctx, finalResponse.Message)
+						if err != nil {
+							return err
+						}
+						req.Messages = append(req.Messages, toolMessage)
 						continue // continue to the next iteration
 					}
 					if err := a.storeOutputToState(session, finalResponse); err != nil {

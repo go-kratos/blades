@@ -1,5 +1,3 @@
-github.com/go-kratos/generics v0.0.0-20251013170657-671664e4628a h1:pN+A5MzR0sqjxJTBbvOT+sfUWUKidpBk06yQBSaOdps=
-github.com/go-kratos/generics v0.0.0-20251013170657-671664e4628a/go.mod h1:/HT0axGJLpTvqeNSMqe6KuYtlxzT7Pfs/s1W9lggxMs=
 github.com/go-kratos/generics v0.0.0-20251015114009-68dee470a252 h1:f4ucngVcWpzEpRrRLY4ZGZpciMVfLcfVzwhoiZbjzqc=
 github.com/go-kratos/generics v0.0.0-20251015114009-68dee470a252/go.mod h1:/HT0axGJLpTvqeNSMqe6KuYtlxzT7Pfs/s1W9lggxMs=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=

@@ -80,12 +80,15 @@ type Message struct {
 
 // Text returns the first text part of the message, or an empty string if none exists.
 func (m *Message) Text() string {
+	var buf strings.Builder
 	for _, part := range m.Parts {
-		if text, ok := part.(TextPart); ok {
-			return text.Text
+		switch v := any(part).(type) {
+		case TextPart:
+			buf.WriteString(v.Text)
 		}
+		buf.WriteByte('\n')
 	}
-	return ""
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 // File returns the first file part of the message, or nil if none exists.
@@ -118,6 +121,8 @@ func (m *Message) String() string {
 			buf.WriteString("[File: " + v.Name + " (" + string(v.MIMEType) + ")]")
 		case DataPart:
 			buf.WriteString("[Data: " + v.Name + " (" + string(v.MIMEType) + "), " + fmt.Sprintf("%d bytes", len(v.Bytes)) + "]")
+		case ToolPart:
+			buf.WriteString("[Tool: " + v.Name + " (Request: " + v.Request + ", Response: " + v.Response + ")]")
 		}
 	}
 	return buf.String()
