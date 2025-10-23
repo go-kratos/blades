@@ -308,6 +308,9 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
 							pipe.Send(chunk.Message)
 						}
 					}
+					if finalResponse == nil {
+						return ErrMissingFinalResponse
+					}
 					if finalResponse.Message.Role == RoleTool {
 						toolMessage, err := a.executeTools(ctx, finalResponse.Message)
 						if err != nil {
