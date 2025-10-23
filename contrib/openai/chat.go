@@ -385,7 +385,7 @@ func chunkChoiceToResponse(ctx context.Context, choices []openai.ChatCompletionC
 		}
 		for _, call := range choice.Delta.ToolCalls {
 			msg.Role = blades.RoleTool
-			msg.Parts = append(msg.Parts, &blades.ToolPart{
+			msg.Parts = append(msg.Parts, blades.ToolPart{
 				ID:      call.ID,
 				Name:    call.Function.Name,
 				Request: call.Function.Arguments,
