@@ -278,7 +278,7 @@ func TestGraph_ConditionalEdges_Loop(t *testing.T) {
 	_ = g.AddEdge("start", "loop")
 	_ = g.AddEdge("loop", "loop", WithEdgeCondition(func(_ context.Context, state int) bool {
 		return state < 3
-	}))
+	}), WithActivationGroup[int]("feedback", ActivationAll))
 	_ = g.AddEdge("loop", "done")
 
 	_ = g.SetEntryPoint("start")
@@ -295,5 +295,55 @@ func TestGraph_ConditionalEdges_Loop(t *testing.T) {
 	}
 	if got != 3 {
 		t.Fatalf("unexpected final state: got %v, want %v", got, 3)
+	}
+}
+
+func TestGraph_ActivationGroupConflict(t *testing.T) {
+	g := NewGraph[[]string]()
+	_ = g.AddNode("A", appendHandler("A"))
+	_ = g.AddNode("B", appendHandler("B"))
+	_ = g.AddNode("C", appendHandler("C"))
+
+	if err := g.AddEdge("A", "C", WithActivationGroup[[]string]("decision", ActivationAll)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	err := g.AddEdge("B", "C", WithActivationGroup[[]string]("decision", ActivationAny))
+	if err == nil || !strings.Contains(err.Error(), "activation condition conflict") {
+		t.Fatalf("expected activation conflict, got %v", err)
+	}
+}
+
+func TestGraph_ActivationGroupAnyTriggersEarly(t *testing.T) {
+	g := NewGraph[[]string]()
+	g.AddNode("source", appendHandler("source"))
+	g.AddNode("fast", appendHandler("fast"))
+	g.AddNode("slow", appendHandler("slow"))
+	g.AddNode("sink", appendHandler("sink"))
+
+	g.AddEdge("source", "fast")
+	g.AddEdge("source", "slow")
+
+	g.AddEdge("fast", "sink",
+		WithEdgeCondition(func(_ context.Context, state []string) bool { return true }),
+		WithActivationGroup[[]string]("decision", ActivationAny),
+	)
+	g.AddEdge("slow", "sink",
+		WithActivationGroup[[]string]("decision", ActivationAny),
+	)
+
+	g.SetEntryPoint("source")
+	g.SetFinishPoint("sink")
+
+	handler, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	got, err := handler(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	want := []string{"source", "fast", "sink"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected steps: got %v, want %v", got, want)
 	}
 }
