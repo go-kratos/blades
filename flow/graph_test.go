@@ -83,20 +83,6 @@ func TestGraphCompile_Validation(t *testing.T) {
 		}
 	})
 
-	t.Run("cycle detection", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.AddNode("B", appendHandler("B"))
-		_ = g.AddNode("C", appendHandler("C"))
-		_ = g.AddEdge("A", "B")
-		_ = g.AddEdge("B", "C")
-		_ = g.AddEdge("C", "A")
-		_ = g.SetEntryPoint("A")
-		_ = g.SetFinishPoint("C")
-		if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "cycle detected") {
-			t.Fatalf("expected cycle detected error, got %v", err)
-		}
-	})
 }
 
 func TestGraph_Run_BFSOrder(t *testing.T) {
@@ -156,5 +142,158 @@ func TestGraph_FinishUnreachable(t *testing.T) {
 	_ = g.SetFinishPoint("D")
 	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "finish node not reachable") {
 		t.Fatalf("expected finish not reachable error, got %v", err)
+	}
+}
+
+func TestGraph_ConditionalEdges(t *testing.T) {
+	t.Run("condition_true_path", func(t *testing.T) {
+		g := NewGraph[[]string]()
+		_ = g.AddNode("A", appendHandler("A"))
+		_ = g.AddNode("B", appendHandler("B"))
+		_ = g.AddNode("C", appendHandler("C"))
+		_ = g.AddNode("D", appendHandler("D"))
+
+		_ = g.AddEdge("A", "B")
+		// Conditional edges: if state contains "B", go to C; otherwise go to D
+		_ = g.AddEdge("B", "C", WithEdgeCondition(func(state []string) bool {
+			for _, s := range state {
+				if s == "B" {
+					return true
+				}
+			}
+			return false
+		}))
+		_ = g.AddEdge("B", "D", WithEdgeCondition(func(state []string) bool {
+			for _, s := range state {
+				if s == "B" {
+					return false
+				}
+			}
+			return true
+		}))
+
+		_ = g.SetEntryPoint("A")
+		_ = g.SetFinishPoint("C")
+
+		handler, err := g.Compile()
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+
+		got, err := handler(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("run error: %v", err)
+		}
+
+		want := []string{"A", "B", "C"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("unexpected path: got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("condition_false_path", func(t *testing.T) {
+		g := NewGraph[[]string]()
+		_ = g.AddNode("A", appendHandler("A"))
+		_ = g.AddNode("B", appendHandler("B"))
+		_ = g.AddNode("C", appendHandler("C"))
+		_ = g.AddNode("D", appendHandler("D"))
+
+		_ = g.AddEdge("A", "B")
+		// Conditional edges: if state contains "X", go to C; otherwise go to D
+		_ = g.AddEdge("B", "C", WithEdgeCondition(func(state []string) bool {
+			for _, s := range state {
+				if s == "X" {
+					return true
+				}
+			}
+			return false
+		}))
+		_ = g.AddEdge("B", "D", WithEdgeCondition(func(state []string) bool {
+			for _, s := range state {
+				if s == "X" {
+					return false
+				}
+			}
+			return true
+		}))
+
+		_ = g.SetEntryPoint("A")
+		_ = g.SetFinishPoint("D")
+
+		handler, err := g.Compile()
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+
+		got, err := handler(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("run error: %v", err)
+		}
+
+		want := []string{"A", "B", "D"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("unexpected path: got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("no_condition_matches", func(t *testing.T) {
+		g := NewGraph[[]string]()
+		_ = g.AddNode("A", appendHandler("A"))
+		_ = g.AddNode("B", appendHandler("B"))
+		_ = g.AddNode("C", appendHandler("C"))
+
+		_ = g.AddEdge("A", "B")
+		// Only conditional edge that always returns false
+		_ = g.AddEdge("B", "C", WithEdgeCondition(func(state []string) bool {
+			return false
+		}))
+
+		_ = g.SetEntryPoint("A")
+		_ = g.SetFinishPoint("C")
+
+		handler, err := g.Compile()
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+
+		_, err = handler(context.Background(), nil)
+		if err == nil || !strings.Contains(err.Error(), "no condition matched") {
+			t.Fatalf("expected no condition matched error, got %v", err)
+		}
+	})
+}
+
+func TestGraph_ConditionalEdges_Loop(t *testing.T) {
+	g := NewGraph[int]()
+	_ = g.AddNode("start", func(ctx context.Context, state int) (int, error) {
+		return state + 1, nil
+	})
+	_ = g.AddNode("loop", func(ctx context.Context, state int) (int, error) {
+		return state + 1, nil
+	})
+	_ = g.AddNode("done", func(ctx context.Context, state int) (int, error) {
+		return state, nil
+	})
+
+	_ = g.AddEdge("start", "loop")
+	_ = g.AddEdge("loop", "loop", WithEdgeCondition(func(state int) bool {
+		return state < 3
+	}))
+	_ = g.AddEdge("loop", "done")
+
+	_ = g.SetEntryPoint("start")
+	_ = g.SetFinishPoint("done")
+
+	handler, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	got, err := handler(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if got != 3 {
+		t.Fatalf("unexpected final state: got %v, want %v", got, 3)
 	}
 }

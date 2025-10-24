@@ -10,10 +10,29 @@ import (
 // This is especially important for reference types (e.g., pointers, slices, maps) to avoid unintended side effects.
 type GraphHandler[S any] func(ctx context.Context, state S) (S, error)
 
-// Graph represents a directed acyclic graph of processing nodes.
+// EdgeCondition is a function that determines if an edge should be followed based on the current state.
+type EdgeCondition[S any] func(state S) bool
+
+// EdgeOption configures an edge before it is added to the graph.
+type EdgeOption[S any] func(*conditionalEdge[S])
+
+// WithEdgeCondition sets a condition that must return true for the edge to be taken.
+func WithEdgeCondition[S any](condition EdgeCondition[S]) EdgeOption[S] {
+	return func(edge *conditionalEdge[S]) {
+		edge.condition = condition
+	}
+}
+
+// conditionalEdge represents an edge with an optional condition.
+type conditionalEdge[S any] struct {
+	to        string
+	condition EdgeCondition[S] // nil means always follow this edge
+}
+
+// Graph represents a directed graph of processing nodes. Cycles are allowed.
 type Graph[S any] struct {
 	nodes       map[string]GraphHandler[S]
-	edges       map[string][]string
+	edges       map[string][]conditionalEdge[S]
 	entryPoint  string
 	finishPoint string
 }
@@ -22,7 +41,7 @@ type Graph[S any] struct {
 func NewGraph[S any]() *Graph[S] {
 	return &Graph[S]{
 		nodes: make(map[string]GraphHandler[S]),
-		edges: make(map[string][]string),
+		edges: make(map[string][]conditionalEdge[S]),
 	}
 }
 
@@ -35,14 +54,21 @@ func (g *Graph[S]) AddNode(name string, handler GraphHandler[S]) error {
 	return nil
 }
 
-// AddEdge adds a directed edge from one node to another.
-func (g *Graph[S]) AddEdge(from, to string) error {
-	for _, name := range g.edges[from] {
-		if name == to {
+// AddEdge adds a directed edge from one node to another. Options can configure the edge.
+func (g *Graph[S]) AddEdge(from, to string, opts ...EdgeOption[S]) error {
+	for _, edge := range g.edges[from] {
+		if edge.to == to {
 			return fmt.Errorf("graph: edge from %s to %s already exists", from, to)
 		}
 	}
-	g.edges[from] = append(g.edges[from], to)
+	newEdge := conditionalEdge[S]{to: to}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		opt(&newEdge)
+	}
+	g.edges[from] = append(g.edges[from], newEdge)
 	return nil
 }
 
@@ -64,72 +90,6 @@ func (g *Graph[S]) SetFinishPoint(end string) error {
 	return nil
 }
 
-// checkAcyclic verifies the reachable portion of the graph has no cycles using Kahn's algorithm.
-func (g *Graph[S]) checkAcyclic() error {
-	// discover reachable nodes from entry
-	reachable := make(map[string]bool, len(g.nodes))
-	if g.entryPoint != "" {
-		queue := []string{g.entryPoint}
-		for len(queue) > 0 {
-			node := queue[0]
-			queue = queue[1:]
-			if reachable[node] {
-				continue
-			}
-			reachable[node] = true
-			for _, to := range g.edges[node] {
-				if !reachable[to] {
-					queue = append(queue, to)
-				}
-			}
-		}
-	}
-	if len(reachable) == 0 {
-		return nil
-	}
-	// compute indegree within reachable subgraph
-	indegree := make(map[string]int, len(reachable))
-	for n := range reachable {
-		indegree[n] = 0
-	}
-	for from, tos := range g.edges {
-		if !reachable[from] {
-			continue
-		}
-		for _, to := range tos {
-			if reachable[to] {
-				indegree[to]++
-			}
-		}
-	}
-	// Kahn's topological sort
-	queue := make([]string, 0, len(reachable))
-	for n := range reachable {
-		if indegree[n] == 0 {
-			queue = append(queue, n)
-		}
-	}
-	processed := 0
-	for len(queue) > 0 {
-		node := queue[0]
-		queue = queue[1:]
-		processed++
-		for _, to := range g.edges[node] {
-			if !reachable[to] {
-				continue
-			}
-			indegree[to]--
-			if indegree[to] == 0 {
-				queue = append(queue, to)
-			}
-		}
-	}
-	if processed != len(indegree) {
-		return fmt.Errorf("graph: cycle detected")
-	}
-	return nil
-}
-
 // validate ensures the graph configuration is correct before compiling.
 func (g *Graph[S]) validate() error {
 	if g.entryPoint == "" {
@@ -144,27 +104,26 @@ func (g *Graph[S]) validate() error {
 	if _, ok := g.nodes[g.finishPoint]; !ok {
 		return fmt.Errorf("graph: end node not found: %s", g.finishPoint)
 	}
-	for from, tos := range g.edges {
+	for from, edges := range g.edges {
 		if _, ok := g.nodes[from]; !ok {
 			return fmt.Errorf("graph: edge from unknown node: %s", from)
 		}
-		for _, to := range tos {
-			if _, ok := g.nodes[to]; !ok {
-				return fmt.Errorf("graph: edge to unknown node: %s", to)
+		for _, edge := range edges {
+			if _, ok := g.nodes[edge.to]; !ok {
+				return fmt.Errorf("graph: edge to unknown node: %s", edge.to)
 			}
 		}
-	}
-	if err := g.checkAcyclic(); err != nil {
-		return err
 	}
 	return nil
 }
 
-// buildExecutionPlan computes the BFS order from entry to finish.
-func (g *Graph[S]) buildExecutionPlan() ([]string, error) {
+// ensureReachable verifies that the finish node can be reached from the entry node.
+func (g *Graph[S]) ensureReachable() error {
+	if g.entryPoint == g.finishPoint {
+		return nil
+	}
 	queue := []string{g.entryPoint}
 	visited := make(map[string]bool, len(g.nodes))
-	order := make([]string, 0, len(g.nodes))
 	for len(queue) > 0 {
 		node := queue[0]
 		queue = queue[1:]
@@ -172,40 +131,94 @@ func (g *Graph[S]) buildExecutionPlan() ([]string, error) {
 			continue
 		}
 		visited[node] = true
-		order = append(order, node)
 		if node == g.finishPoint {
-			return order, nil
+			return nil
 		}
-		for _, next := range g.edges[node] {
-			if !visited[next] {
-				queue = append(queue, next)
-			}
+		for _, edge := range g.edges[node] {
+			queue = append(queue, edge.to)
 		}
 	}
-	return order, fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
+	return fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
 }
 
 // Compile validates and compiles the graph into a GraphHandler.
+// Execution processes unconditional edges in breadth-first order while allowing
+// conditional edges to drive dynamic control flow, including loops.
 func (g *Graph[S]) Compile() (GraphHandler[S], error) {
 	if err := g.validate(); err != nil {
 		return nil, err
 	}
-	plan, err := g.buildExecutionPlan()
-	if err != nil {
-		return nil, fmt.Errorf("graph: compile: %w", err)
+	if err := g.ensureReachable(); err != nil {
+		return nil, err
 	}
+
 	return func(ctx context.Context, state S) (S, error) {
-		for _, node := range plan {
+		type frame struct {
+			node         string
+			allowRevisit bool
+		}
+
+		queue := []frame{{node: g.entryPoint}}
+		visited := make(map[string]bool, len(g.nodes))
+
+		for len(queue) > 0 {
+			currentFrame := queue[0]
+			queue = queue[1:]
+			current := currentFrame.node
+
+			if visited[current] && !currentFrame.allowRevisit {
+				continue
+			}
+			visited[current] = true
+
+			handler := g.nodes[current]
 			var err error
-			handler := g.nodes[node]
 			state, err = handler(ctx, state)
 			if err != nil {
-				return state, fmt.Errorf("graph: node %s: %w", node, err)
+				return state, fmt.Errorf("graph: node %s: %w", current, err)
 			}
-			if node == g.finishPoint {
-				break
+
+			if current == g.finishPoint {
+				return state, nil
+			}
+
+			edges := g.edges[current]
+			if len(edges) == 0 {
+				return state, fmt.Errorf("graph: no outgoing edges from node %s", current)
+			}
+
+			hasConditional := false
+			for _, edge := range edges {
+				if edge.condition != nil {
+					hasConditional = true
+					break
+				}
+			}
+
+			if hasConditional {
+				nextFrame := frame{allowRevisit: true}
+				matched := false
+				for _, edge := range edges {
+					if edge.condition == nil || edge.condition(state) {
+						nextFrame.node = edge.to
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					return state, fmt.Errorf("graph: no condition matched for edges from node %s", current)
+				}
+				queue = append([]frame{nextFrame}, queue...)
+			} else {
+				for _, edge := range edges {
+					queue = append(queue, frame{
+						node:         edge.to,
+						allowRevisit: currentFrame.allowRevisit,
+					})
+				}
 			}
 		}
-		return state, nil
+
+		return state, fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
 	}, nil
 }
