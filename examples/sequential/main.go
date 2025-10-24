@@ -29,7 +29,7 @@ func main() {
 		blades.WithProvider(provider),
 		blades.WithInstructions("Write a short story based on the given outline."),
 	)
-	seq := flow.NewSequential("story", storyOutline, storyChecker, storyAgent)
+	seq := flow.NewSequential(storyOutline, storyChecker, storyAgent)
 	// Input prompt
 	prompt := blades.NewPrompt(
 		blades.UserMessage("A brave knight embarks on a quest to find a hidden treasure."),

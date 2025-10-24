@@ -11,7 +11,7 @@ import (
 type GraphHandler[S any] func(ctx context.Context, state S) (S, error)
 
 // EdgeCondition is a function that determines if an edge should be followed based on the current state.
-type EdgeCondition[S any] func(state S) bool
+type EdgeCondition[S any] func(ctx context.Context, state S) bool
 
 // EdgeOption configures an edge before it is added to the graph.
 type EdgeOption[S any] func(*conditionalEdge[S])
@@ -199,7 +199,7 @@ func (g *Graph[S]) Compile() (GraphHandler[S], error) {
 				nextFrame := frame{allowRevisit: true}
 				matched := false
 				for _, edge := range edges {
-					if edge.condition == nil || edge.condition(state) {
+					if edge.condition == nil || edge.condition(ctx, state) {
 						nextFrame.node = edge.to
 						matched = true
 						break

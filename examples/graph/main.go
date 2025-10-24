@@ -60,14 +60,16 @@ func main() {
 	g.AddNode("revise", revise)
 	g.AddNode("final", finalize)
 
-	// loop
 	g.AddEdge("outline", "review")
-	g.AddEdge("review", "revise", flow.WithEdgeCondition(func(state storyState) bool {
+
+	// branch
+	g.AddEdge("review", "revise", flow.WithEdgeCondition(func(_ context.Context, state storyState) bool {
 		return needsRevision(state) && state.Revision < maxRevisions
 	}))
-	g.AddEdge("review", "final", flow.WithEdgeCondition(func(state storyState) bool {
+	g.AddEdge("review", "final", flow.WithEdgeCondition(func(_ context.Context, state storyState) bool {
 		return !needsRevision(state) || state.Revision >= maxRevisions
 	}))
+	// loop back
 	g.AddEdge("revise", "review")
 
 	g.SetEntryPoint("outline")

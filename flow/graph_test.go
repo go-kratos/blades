@@ -155,7 +155,7 @@ func TestGraph_ConditionalEdges(t *testing.T) {
 
 		_ = g.AddEdge("A", "B")
 		// Conditional edges: if state contains "B", go to C; otherwise go to D
-		_ = g.AddEdge("B", "C", WithEdgeCondition(func(state []string) bool {
+		_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
 			for _, s := range state {
 				if s == "B" {
 					return true
@@ -163,7 +163,7 @@ func TestGraph_ConditionalEdges(t *testing.T) {
 			}
 			return false
 		}))
-		_ = g.AddEdge("B", "D", WithEdgeCondition(func(state []string) bool {
+		_ = g.AddEdge("B", "D", WithEdgeCondition(func(_ context.Context, state []string) bool {
 			for _, s := range state {
 				if s == "B" {
 					return false
@@ -200,7 +200,7 @@ func TestGraph_ConditionalEdges(t *testing.T) {
 
 		_ = g.AddEdge("A", "B")
 		// Conditional edges: if state contains "X", go to C; otherwise go to D
-		_ = g.AddEdge("B", "C", WithEdgeCondition(func(state []string) bool {
+		_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
 			for _, s := range state {
 				if s == "X" {
 					return true
@@ -208,7 +208,7 @@ func TestGraph_ConditionalEdges(t *testing.T) {
 			}
 			return false
 		}))
-		_ = g.AddEdge("B", "D", WithEdgeCondition(func(state []string) bool {
+		_ = g.AddEdge("B", "D", WithEdgeCondition(func(_ context.Context, state []string) bool {
 			for _, s := range state {
 				if s == "X" {
 					return false
@@ -244,7 +244,7 @@ func TestGraph_ConditionalEdges(t *testing.T) {
 
 		_ = g.AddEdge("A", "B")
 		// Only conditional edge that always returns false
-		_ = g.AddEdge("B", "C", WithEdgeCondition(func(state []string) bool {
+		_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
 			return false
 		}))
 
@@ -276,7 +276,7 @@ func TestGraph_ConditionalEdges_Loop(t *testing.T) {
 	})
 
 	_ = g.AddEdge("start", "loop")
-	_ = g.AddEdge("loop", "loop", WithEdgeCondition(func(state int) bool {
+	_ = g.AddEdge("loop", "loop", WithEdgeCondition(func(_ context.Context, state int) bool {
 		return state < 3
 	}))
 	_ = g.AddEdge("loop", "done")
