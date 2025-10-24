@@ -22,7 +22,10 @@ func confirmPrompt(ctx context.Context, p *blades.Prompt) (bool, error) {
 	fmt.Print("Proceed? [y/N]: ")
 	// Read user input from stdin
 	reader := bufio.NewReader(os.Stdin)
-	line, _ := reader.ReadString('\n')
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return false, fmt.Errorf("failed to read input: %w", err)
+	}
 	line = strings.TrimSpace(strings.ToLower(line))
 	return line == "y" || line == "yes", nil
 }
