@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/go-kratos/blades/flow"
 )
@@ -13,8 +15,8 @@ func main() {
 	fmt.Println("== Loop example ==")
 	runLoopExample()
 
-	fmt.Println("\n== Activation group example ==")
-	runActivationGroupExample()
+	fmt.Println("\n== Parallel example ==")
+	runParallelExample()
 }
 
 // --- Loop example ---------------------------------------------------------
@@ -27,7 +29,7 @@ type loopState struct {
 func runLoopExample() {
 	const maxRevisions = 3
 
-	g := flow.NewGraph[loopState]()
+	g := flow.NewGraph[loopState](flow.WithParallel[loopState](false))
 	g.AddNode("outline", func(ctx context.Context, state loopState) (loopState, error) {
 		if state.Draft == "" {
 			state.Draft = "Outline TODO: add twist."
@@ -40,9 +42,10 @@ func runLoopExample() {
 	g.AddNode("revise", func(ctx context.Context, state loopState) (loopState, error) {
 		state.Revision++
 		state.Draft = strings.Replace(state.Draft, "TODO: add twist.", "A surprise reveal changes everything.", 1)
-		if state.Revision == 1 {
+		switch state.Revision {
+		case 1:
 			state.Draft += " TODO: refine ending."
-		} else if state.Revision == 2 {
+		case 2:
 			state.Draft = strings.Replace(state.Draft, " TODO: refine ending.", " An epilogue wraps the journey.", 1)
 		}
 		return state, nil
@@ -59,7 +62,7 @@ func runLoopExample() {
 	g.AddEdge("review", "publish", flow.WithEdgeCondition(func(_ context.Context, state loopState) bool {
 		return !strings.Contains(state.Draft, "TODO") || state.Revision >= maxRevisions
 	}))
-	g.AddEdge("revise", "review", flow.WithActivationGroup[loopState]("feedback", flow.ActivationAll))
+	g.AddEdge("revise", "review")
 
 	g.SetEntryPoint("outline")
 	g.SetFinishPoint("publish")
@@ -75,68 +78,63 @@ func runLoopExample() {
 	}
 }
 
-// --- Activation group example --------------------------------------------
+// --- Parallel example -----------------------------------------------------
 
-type groupState struct {
-	AllowFast bool
-	Steps     []string
+type parallelState struct {
+	NodeASteps    []string
+	NodeBSteps    []string
+	NodeJoinSteps []string
 }
 
-func step(name string, mutate func(*groupState)) flow.GraphHandler[groupState] {
-	return func(ctx context.Context, state groupState) (groupState, error) {
-		if mutate != nil {
-			mutate(&state)
+func runParallelExample() {
+	g := flow.NewGraph[*parallelState]()
+
+	// simple helper to log execution order
+	logNode := func(name string) flow.GraphHandler[*parallelState] {
+
+		return func(ctx context.Context, state *parallelState) (*parallelState, error) {
+			fmt.Printf("node %s start executing\n	", name)
+			if strings.HasPrefix(name, "branch_") {
+				t := time.Millisecond * time.Duration(rand.Int63n(250))
+				time.Sleep(t)
+				fmt.Printf("node %s executed, sleep %d ms\n	", name, t.Milliseconds())
+
+			}
+			switch name {
+			case "branch_a":
+				state.NodeASteps = append(state.NodeASteps, name)
+			case "branch_b":
+				state.NodeBSteps = append(state.NodeBSteps, name)
+			case "join":
+				state.NodeJoinSteps = append(state.NodeJoinSteps, state.NodeASteps...)
+				state.NodeJoinSteps = append(state.NodeJoinSteps, state.NodeBSteps...)
+			}
+
+			return state, nil
 		}
-		state.Steps = append(state.Steps, name)
-		fmt.Printf(" -> %s (steps: %v)\n", name, state.Steps)
-		return state, nil
 	}
-}
 
-func runActivationGroupExample() {
-	g := flow.NewGraph[groupState]()
+	g.AddNode("start", logNode("start"))
+	g.AddNode("branch_a", logNode("branch_a"))
+	g.AddNode("branch_b", logNode("branch_b"))
+	g.AddNode("join", logNode("join"))
 
-	g.AddNode("source", step("source", nil))
-	g.AddNode("analysis_a", step("analysis_a", nil))
-	g.AddNode("analysis_b", step("analysis_b", nil))
-	g.AddNode("fast_check", step("fast_check", func(state *groupState) {
-		state.AllowFast = true
-	}))
-	g.AddNode("merge", step("merge", nil))
-	g.AddNode("sink", step("sink", nil))
+	g.AddEdge("start", "branch_a")
+	g.AddEdge("start", "branch_b")
+	g.AddEdge("branch_a", "join")
+	g.AddEdge("branch_b", "join")
 
-	// Source fans out.
-	g.AddEdge("source", "analysis_a")
-	g.AddEdge("source", "analysis_b")
-	g.AddEdge("source", "fast_check")
-
-	// Critical path: default activation waits for ALL incoming edges.
-	g.AddEdge("analysis_a", "merge")
-	g.AddEdge("analysis_b", "merge")
-
-	// Decision group: any member can trigger sink. Merge represents the fully-gathered result.
-	g.AddEdge("merge", "sink",
-		flow.WithActivationGroup[groupState]("decision", flow.ActivationAny),
-	)
-
-	// Fast path: ANY result in the fast group may trigger the sink early.
-	g.AddEdge("fast_check", "sink",
-		flow.WithEdgeCondition(func(_ context.Context, state groupState) bool {
-			return state.AllowFast
-		}),
-		flow.WithActivationGroup[groupState]("decision", flow.ActivationAny),
-	)
-
-	g.SetEntryPoint("source")
-	g.SetFinishPoint("sink")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
 
 	handler, err := g.Compile()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	_, err = handler(context.Background(), groupState{})
+	final, err := handler(context.Background(), &parallelState{})
 	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Printf("parallel example result: %v\n", final.NodeJoinSteps)
 }

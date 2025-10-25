@@ -3,6 +3,7 @@ package flow
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 // GraphHandler is a function that processes the graph state.
@@ -12,23 +13,6 @@ type GraphHandler[S any] func(ctx context.Context, state S) (S, error)
 
 // EdgeCondition is a function that determines if an edge should be followed based on the current state.
 type EdgeCondition[S any] func(ctx context.Context, state S) bool
-
-// ActivationCondition declares how incoming edges grouped together trigger a node.
-type ActivationCondition string
-
-const (
-	ActivationAll ActivationCondition = "all"
-	ActivationAny ActivationCondition = "any"
-
-	defaultActivationGroup = ""
-)
-
-func normalizeActivationCondition(cond ActivationCondition) ActivationCondition {
-	if cond == "" {
-		return ActivationAll
-	}
-	return cond
-}
 
 // EdgeOption configures an edge before it is added to the graph.
 type EdgeOption[S any] func(*conditionalEdge[S])
@@ -40,23 +24,10 @@ func WithEdgeCondition[S any](condition EdgeCondition[S]) EdgeOption[S] {
 	}
 }
 
-// WithActivationGroup assigns the edge to an activation group and condition.
-// The group name allows multiple incoming edges to the same target to be evaluated
-// together. The activation condition determines whether all or any edges in the
-// group must fire before the target node executes.
-func WithActivationGroup[S any](group string, condition ActivationCondition) EdgeOption[S] {
-	return func(edge *conditionalEdge[S]) {
-		edge.activationGroup = group
-		edge.activationCondition = condition
-	}
-}
-
 // conditionalEdge represents an edge with an optional condition.
 type conditionalEdge[S any] struct {
-	to                  string
-	condition           EdgeCondition[S] // nil means always follow this edge
-	activationGroup     string
-	activationCondition ActivationCondition
+	to        string
+	condition EdgeCondition[S] // nil means always follow this edge
 }
 
 // Graph represents a directed graph of processing nodes. Cycles are allowed.
@@ -65,21 +36,25 @@ type Graph[S any] struct {
 	edges       map[string][]conditionalEdge[S]
 	entryPoint  string
 	finishPoint string
-	incoming    map[string]map[string]*activationGroupMeta
+	parallel    bool
 }
 
-type activationGroupMeta struct {
-	condition ActivationCondition
-	sources   map[string]struct{}
-}
+// Option configures the Graph behavior.
+type Option[S any] func(*Graph[S])
 
 // NewGraph creates a new empty Graph.
-func NewGraph[S any]() *Graph[S] {
-	return &Graph[S]{
+func NewGraph[S any](opts ...Option[S]) *Graph[S] {
+	g := &Graph[S]{
 		nodes:    make(map[string]GraphHandler[S]),
 		edges:    make(map[string][]conditionalEdge[S]),
-		incoming: make(map[string]map[string]*activationGroupMeta),
+		parallel: true,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(g)
+		}
+	}
+	return g
 }
 
 // AddNode adds a named node with its handler to the graph.
@@ -105,32 +80,6 @@ func (g *Graph[S]) AddEdge(from, to string, opts ...EdgeOption[S]) error {
 		}
 		opt(&newEdge)
 	}
-	groupName := newEdge.activationGroup
-	if groupName == "" {
-		groupName = defaultActivationGroup
-	}
-	cond := normalizeActivationCondition(newEdge.activationCondition)
-	metaGroups, ok := g.incoming[to]
-	if !ok {
-		metaGroups = make(map[string]*activationGroupMeta)
-		g.incoming[to] = metaGroups
-	}
-	meta, exists := metaGroups[groupName]
-	if !exists {
-		meta = &activationGroupMeta{
-			condition: cond,
-			sources:   make(map[string]struct{}),
-		}
-		metaGroups[groupName] = meta
-	} else {
-		if normalizeActivationCondition(meta.condition) != cond {
-			return fmt.Errorf("graph: activation condition conflict for node %s group %q", to, groupName)
-		}
-	}
-	meta.condition = normalizeActivationCondition(meta.condition)
-	meta.sources[from] = struct{}{}
-	newEdge.activationGroup = groupName
-	newEdge.activationCondition = cond
 	g.edges[from] = append(g.edges[from], newEdge)
 	return nil
 }
@@ -204,143 +153,6 @@ func (g *Graph[S]) ensureReachable() error {
 	return fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
 }
 
-type groupRuntimeState struct {
-	condition ActivationCondition
-	sources   []string
-	satisfied map[string]bool
-	pending   bool
-}
-
-func (gs *groupRuntimeState) ensureSource(source string) {
-	if gs.satisfied == nil {
-		gs.satisfied = make(map[string]bool)
-	}
-	if _, ok := gs.satisfied[source]; ok {
-		return
-	}
-	gs.satisfied[source] = false
-	gs.sources = append(gs.sources, source)
-}
-
-func (gs *groupRuntimeState) mark(source string) {
-	gs.ensureSource(source)
-	gs.satisfied[source] = true
-}
-
-func (gs *groupRuntimeState) ready() bool {
-	if gs.pending {
-		return false
-	}
-	switch normalizeActivationCondition(gs.condition) {
-	case ActivationAny:
-		for _, src := range gs.sources {
-			if gs.satisfied[src] {
-				return true
-			}
-		}
-		return false
-	default:
-		if len(gs.sources) == 0 {
-			return true
-		}
-		for _, src := range gs.sources {
-			if !gs.satisfied[src] {
-				return false
-			}
-		}
-		return true
-	}
-}
-
-func (gs *groupRuntimeState) reset() {
-	gs.pending = false
-	for src := range gs.satisfied {
-		gs.satisfied[src] = false
-	}
-}
-
-type nodeActivationState struct {
-	groups map[string]*groupRuntimeState
-}
-
-type activationRuntime struct {
-	meta  map[string]map[string]*activationGroupMeta
-	nodes map[string]*nodeActivationState
-}
-
-type executionFrame struct {
-	node         string
-	group        string
-	allowRevisit bool
-}
-
-func newActivationRuntime(meta map[string]map[string]*activationGroupMeta) *activationRuntime {
-	return &activationRuntime{
-		meta:  meta,
-		nodes: make(map[string]*nodeActivationState),
-	}
-}
-
-func (rt *activationRuntime) ensureTracker(node, group string) *groupRuntimeState {
-	ns, ok := rt.nodes[node]
-	if !ok {
-		ns = &nodeActivationState{groups: make(map[string]*groupRuntimeState)}
-		rt.nodes[node] = ns
-	}
-	if group == "" {
-		group = defaultActivationGroup
-	}
-	tracker, ok := ns.groups[group]
-	if ok {
-		return tracker
-	}
-	var meta *activationGroupMeta
-	if groups, exists := rt.meta[node]; exists {
-		meta = groups[group]
-	}
-	if meta == nil {
-		meta = &activationGroupMeta{
-			condition: ActivationAll,
-			sources:   make(map[string]struct{}),
-		}
-		if _, exists := rt.meta[node]; !exists {
-			rt.meta[node] = make(map[string]*activationGroupMeta)
-		}
-		rt.meta[node][group] = meta
-	}
-	tracker = &groupRuntimeState{
-		condition: normalizeActivationCondition(meta.condition),
-		satisfied: make(map[string]bool, len(meta.sources)),
-	}
-	for src := range meta.sources {
-		tracker.sources = append(tracker.sources, src)
-		tracker.satisfied[src] = false
-	}
-	ns.groups[group] = tracker
-	return tracker
-}
-
-func (rt *activationRuntime) mark(node, group, source string) *groupRuntimeState {
-	tracker := rt.ensureTracker(node, group)
-	tracker.mark(source)
-	return tracker
-}
-
-func (rt *activationRuntime) reset(node, group string) {
-	if group == "" {
-		group = defaultActivationGroup
-	}
-	ns, ok := rt.nodes[node]
-	if !ok {
-		return
-	}
-	tracker, ok := ns.groups[group]
-	if !ok {
-		return
-	}
-	tracker.reset()
-}
-
 // Compile validates and compiles the graph into a GraphHandler.
 // Execution processes unconditional edges in breadth-first order while allowing
 // conditional edges to drive dynamic control flow, including loops.
@@ -352,35 +164,43 @@ func (g *Graph[S]) Compile() (GraphHandler[S], error) {
 		return nil, err
 	}
 
-	runtime := newActivationRuntime(g.incoming)
-
 	return func(ctx context.Context, state S) (S, error) {
-		queue := []executionFrame{{node: g.entryPoint, group: defaultActivationGroup}}
+		type frame struct {
+			node         string
+			state        S
+			hasState     bool
+			skipHandler  bool
+			allowRevisit bool
+		}
+
+		queue := []frame{{node: g.entryPoint, state: state, hasState: true}}
 		visited := make(map[string]bool, len(g.nodes))
 
 		for len(queue) > 0 {
 			currentFrame := queue[0]
 			queue = queue[1:]
 			current := currentFrame.node
-			group := currentFrame.group
+			localState := currentFrame.state
+			if !currentFrame.hasState {
+				localState = state
+			}
 
-			if visited[current] && !currentFrame.allowRevisit {
-				runtime.reset(current, group)
+			if visited[current] && !currentFrame.allowRevisit && !currentFrame.skipHandler {
 				continue
 			}
-			visited[current] = true
-
-			handler := g.nodes[current]
-			if handler == nil {
-				return state, fmt.Errorf("graph: node %s handler missing", current)
+			if !currentFrame.skipHandler {
+				visited[current] = true
+				handler := g.nodes[current]
+				if handler == nil {
+					return state, fmt.Errorf("graph: node %s handler missing", current)
+				}
+				var err error
+				localState, err = handler(ctx, localState)
+				if err != nil {
+					return state, fmt.Errorf("graph: node %s: %w", current, err)
+				}
 			}
-			var err error
-			state, err = handler(ctx, state)
-			if err != nil {
-				return state, fmt.Errorf("graph: node %s: %w", current, err)
-			}
-
-			runtime.reset(current, group)
+			state = localState
 
 			if current == g.finishPoint {
 				return state, nil
@@ -400,10 +220,15 @@ func (g *Graph[S]) Compile() (GraphHandler[S], error) {
 			}
 
 			if hasConditional {
+				// For conditional edges, only the first matching edge is taken.
+				nextFrame := frame{allowRevisit: true}
 				matched := false
 				for _, edge := range edges {
-					if edge.condition == nil || edge.condition(ctx, state) {
-						g.enqueueEdge(runtime, current, edge, &queue, true)
+					if edge.condition == nil || edge.condition(ctx, localState) {
+						nextFrame.node = edge.to
+						nextFrame.state = localState
+						nextFrame.hasState = true
+						nextFrame.skipHandler = false
 						matched = true
 						break
 					}
@@ -411,46 +236,85 @@ func (g *Graph[S]) Compile() (GraphHandler[S], error) {
 				if !matched {
 					return state, fmt.Errorf("graph: no condition matched for edges from node %s", current)
 				}
+				queue = append([]frame{nextFrame}, queue...)
 				continue
 			}
 
-			for _, edge := range edges {
-				g.enqueueEdge(runtime, current, edge, &queue, false)
+			if !g.parallel {
+				for _, edge := range edges {
+					queue = append(queue, frame{
+						node:         edge.to,
+						state:        localState,
+						hasState:     false,
+						skipHandler:  false,
+						allowRevisit: currentFrame.allowRevisit,
+					})
+				}
+				continue
 			}
+
+			if len(edges) == 1 {
+				queue = append(queue, frame{
+					node:         edges[0].to,
+					state:        localState,
+					hasState:     true,
+					skipHandler:  false,
+					allowRevisit: currentFrame.allowRevisit,
+				})
+				continue
+			}
+
+			type branchResult struct {
+				idx   int
+				state S
+				err   error
+			}
+			results := make([]branchResult, len(edges))
+
+			var wg sync.WaitGroup
+			wg.Add(len(edges))
+			for i, edge := range edges {
+				i := i
+				edge := edge
+				go func() {
+					defer wg.Done()
+					childHandler := g.nodes[edge.to]
+					if childHandler == nil {
+						results[i] = branchResult{idx: i, err: fmt.Errorf("graph: node %s handler missing", edge.to)}
+						return
+					}
+					nextState, err := childHandler(ctx, localState)
+					if err != nil {
+						results[i] = branchResult{idx: i, err: fmt.Errorf("graph: node %s: %w", edge.to, err)}
+						return
+					}
+					results[i] = branchResult{idx: i, state: nextState}
+				}()
+			}
+			wg.Wait()
+
+			for _, res := range results {
+				if res.err != nil {
+					return state, res.err
+				}
+			}
+			winner := results[len(results)-1]
+			state = winner.state
+			queue = append(queue, frame{
+				node:         edges[winner.idx].to,
+				state:        winner.state,
+				skipHandler:  true,
+				allowRevisit: currentFrame.allowRevisit,
+			})
 		}
 
 		return state, fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
 	}, nil
 }
 
-func (g *Graph[S]) enqueueEdge(runtime *activationRuntime, from string, edge conditionalEdge[S], queue *[]executionFrame, forceImmediate bool) {
-	group := edge.activationGroup
-	if group == "" {
-		group = defaultActivationGroup
-	}
-	tracker := runtime.mark(edge.to, group, from)
-	if tracker.pending {
-		return
-	}
-	if !tracker.ready() {
-		return
-	}
-	tracker.pending = true
-
-	allowRevisit := forceImmediate
-	if !allowRevisit && group != defaultActivationGroup {
-		allowRevisit = true
-	}
-
-	frame := executionFrame{
-		node:         edge.to,
-		group:        group,
-		allowRevisit: allowRevisit,
-	}
-
-	if forceImmediate {
-		*queue = append([]executionFrame{frame}, *queue...)
-	} else {
-		*queue = append(*queue, frame)
+// WithParallel toggles parallel fan-out execution. Defaults to true.
+func WithParallel[S any](enabled bool) Option[S] {
+	return func(g *Graph[S]) {
+		g.parallel = enabled
 	}
 }
