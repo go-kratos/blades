@@ -3,7 +3,8 @@ package flow
 import (
 	"context"
 	"fmt"
-	"sync"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // GraphHandler is a function that processes the graph state.
@@ -245,7 +246,7 @@ func (g *Graph[S]) Compile() (GraphHandler[S], error) {
 					queue = append(queue, frame{
 						node:         edge.to,
 						state:        localState,
-						hasState:     false,
+						hasState:     true,
 						skipHandler:  false,
 						allowRevisit: currentFrame.allowRevisit,
 					})
@@ -267,37 +268,31 @@ func (g *Graph[S]) Compile() (GraphHandler[S], error) {
 			type branchResult struct {
 				idx   int
 				state S
-				err   error
 			}
 			results := make([]branchResult, len(edges))
 
-			var wg sync.WaitGroup
-			wg.Add(len(edges))
+			eg, egCtx := errgroup.WithContext(ctx)
 			for i, edge := range edges {
 				i := i
 				edge := edge
-				go func() {
-					defer wg.Done()
+				eg.Go(func() error {
 					childHandler := g.nodes[edge.to]
 					if childHandler == nil {
-						results[i] = branchResult{idx: i, err: fmt.Errorf("graph: node %s handler missing", edge.to)}
-						return
+						return fmt.Errorf("graph: node %s handler missing", edge.to)
 					}
-					nextState, err := childHandler(ctx, localState)
+					nextState, err := childHandler(egCtx, localState)
 					if err != nil {
-						results[i] = branchResult{idx: i, err: fmt.Errorf("graph: node %s: %w", edge.to, err)}
-						return
+						return fmt.Errorf("graph: node %s: %w", edge.to, err)
 					}
 					results[i] = branchResult{idx: i, state: nextState}
-				}()
+					return nil
+				})
 			}
-			wg.Wait()
 
-			for _, res := range results {
-				if res.err != nil {
-					return state, res.err
-				}
+			if err := eg.Wait(); err != nil {
+				return state, err
 			}
+
 			winner := results[len(results)-1]
 			state = winner.state
 			queue = append(queue, frame{

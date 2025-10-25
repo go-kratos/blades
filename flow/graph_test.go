@@ -716,3 +716,152 @@ func TestGraph_ComplexCycles(t *testing.T) {
 		}
 	})
 }
+
+func TestGraph_SerialVsParallelStateSemantics(t *testing.T) {
+	// This test reveals a semantic difference between serial and parallel modes
+	type counter struct {
+		value int
+	}
+
+	incrementHandler := func(name string, amount int) GraphHandler[counter] {
+		return func(ctx context.Context, state counter) (counter, error) {
+			t.Logf("%s: received state.value=%d, adding %d", name, state.value, amount)
+			return counter{value: state.value + amount}, nil
+		}
+	}
+
+	t.Run("parallel_mode_independent_branches", func(t *testing.T) {
+		g := NewGraph[counter](WithParallel[counter](true))
+		_ = g.AddNode("A", incrementHandler("A", 1))
+		_ = g.AddNode("B", incrementHandler("B", 10))
+		_ = g.AddNode("C", incrementHandler("C", 100))
+		_ = g.AddNode("D", incrementHandler("D", 0))
+
+		_ = g.AddEdge("A", "B")
+		_ = g.AddEdge("A", "C")
+		_ = g.AddEdge("B", "D")
+		_ = g.AddEdge("C", "D")
+
+		_ = g.SetEntryPoint("A")
+		_ = g.SetFinishPoint("D")
+
+		handler, _ := g.Compile()
+		result, err := handler(context.Background(), counter{value: 0})
+		if err != nil {
+			t.Fatalf("error: %v", err)
+		}
+
+		// In parallel mode: A=0+1=1, then B and C both see 1
+		// B: 1+10=11, C: 1+100=101
+		// Winner is C (last branch), so D sees 101
+		// D: 101+0=101
+		t.Logf("Parallel mode result: %d", result.value)
+		if result.value != 101 {
+			t.Errorf("expected 101, got %d", result.value)
+		}
+	})
+
+	t.Run("serial_mode_independent_branches", func(t *testing.T) {
+		g := NewGraph[counter](WithParallel[counter](false))
+		_ = g.AddNode("A", incrementHandler("A", 1))
+		_ = g.AddNode("B", incrementHandler("B", 10))
+		_ = g.AddNode("C", incrementHandler("C", 100))
+		_ = g.AddNode("D", incrementHandler("D", 0))
+
+		_ = g.AddEdge("A", "B")
+		_ = g.AddEdge("A", "C")
+		_ = g.AddEdge("B", "D")
+		_ = g.AddEdge("C", "D")
+
+		_ = g.SetEntryPoint("A")
+		_ = g.SetFinishPoint("D")
+
+		handler, _ := g.Compile()
+		result, err := handler(context.Background(), counter{value: 0})
+		if err != nil {
+			t.Fatalf("error: %v", err)
+		}
+
+		// After fix: Serial mode now has same semantics as parallel mode
+		// A: 0+1=1, state=1
+		// B: 1+10=11, state=11, enqueues D(11)
+		// C: 1+100=101, state=101, enqueues D(101)
+		// D processes first enqueued instance: 11+0=11
+		// Second D is skipped (visited)
+		t.Logf("Serial mode result: %d", result.value)
+
+		// B reaches D first in BFS order, so D receives B's output
+		if result.value != 11 {
+			t.Errorf("expected 11 (B reaches D first), got %d", result.value)
+		}
+	})
+}
+
+func TestGraph_ParallelEarlyTermination(t *testing.T) {
+	var executed sync.Map
+
+	slowHandler := func(name string, delay int) GraphHandler[[]string] {
+		return func(ctx context.Context, state []string) ([]string, error) {
+			executed.Store(name, "started")
+
+			// Simulate work and check for cancellation
+			for i := 0; i < delay; i++ {
+				select {
+				case <-ctx.Done():
+					executed.Store(name, "cancelled")
+					t.Logf("%s: cancelled after %d/%d iterations", name, i, delay)
+					return state, ctx.Err()
+				default:
+					// Simulate a small unit of work
+				}
+			}
+
+			executed.Store(name, "completed")
+			t.Logf("%s: completed", name)
+			return append(state, name), nil
+		}
+	}
+
+	errorHandler := func(name string) GraphHandler[[]string] {
+		return func(ctx context.Context, state []string) ([]string, error) {
+			executed.Store(name, "error")
+			t.Logf("%s: returning error", name)
+			return state, fmt.Errorf("error from %s", name)
+		}
+	}
+
+	t.Run("error_cancels_slow_branches", func(t *testing.T) {
+		executed = sync.Map{}
+
+		g := NewGraph[[]string](WithParallel[[]string](true))
+		_ = g.AddNode("start", appendHandler("start"))
+		_ = g.AddNode("fast_fail", errorHandler("fast_fail"))
+		_ = g.AddNode("slow_ok", slowHandler("slow_ok", 1000000)) // Would be slow without cancellation
+		_ = g.AddNode("join", appendHandler("join"))
+
+		_ = g.AddEdge("start", "fast_fail")
+		_ = g.AddEdge("start", "slow_ok")
+		_ = g.AddEdge("fast_fail", "join")
+		_ = g.AddEdge("slow_ok", "join")
+
+		_ = g.SetEntryPoint("start")
+		_ = g.SetFinishPoint("join")
+
+		handler, _ := g.Compile()
+		_, err := handler(context.Background(), nil)
+
+		// Should get error from fast_fail
+		if err == nil || !strings.Contains(err.Error(), "fast_fail") {
+			t.Fatalf("expected error from fast_fail, got %v", err)
+		}
+
+		// Check that slow_ok was cancelled (not completed)
+		if val, ok := executed.Load("slow_ok"); ok {
+			status := val.(string)
+			if status == "completed" {
+				t.Errorf("slow_ok should have been cancelled, but it completed")
+			}
+			t.Logf("slow_ok status: %s", status)
+		}
+	})
+}
