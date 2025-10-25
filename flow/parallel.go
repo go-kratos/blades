@@ -20,17 +20,15 @@ func WithParallelMerger(merger ParallelMerger) ParallelOption {
 // ParallelMerger is a function that merges the outputs of multiple runners into a single output.
 type ParallelMerger func(ctx context.Context, outputs []*blades.Message) (*blades.Message, error)
 
-// Parallel represents a sequence of Runnable runners that process input sequentially.
+// Parallel represents a collection of Runnable runners that process input concurrently.
 type Parallel struct {
-	name    string
 	merger  ParallelMerger
 	runners []blades.Runnable
 }
 
 // NewParallel creates a new Parallel with the given runners.
-func NewParallel(name string, runners []blades.Runnable, opts ...ParallelOption) *Parallel {
+func NewParallel(runners []blades.Runnable, opts ...ParallelOption) *Parallel {
 	p := &Parallel{
-		name:    name,
 		runners: runners,
 		merger: func(ctx context.Context, outputs []*blades.Message) (*blades.Message, error) {
 			result := blades.NewMessage(blades.RoleAssistant)
@@ -44,11 +42,6 @@ func NewParallel(name string, runners []blades.Runnable, opts ...ParallelOption)
 		apply(p)
 	}
 	return p
-}
-
-// Name returns the name of the Parallel.
-func (p *Parallel) Name() string {
-	return p.name
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.

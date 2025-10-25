@@ -21,16 +21,14 @@ type LoopCondition func(ctx context.Context, output *blades.Message) (bool, erro
 
 // Loop represents a looping construct that repeatedly executes a runner until a condition is met.
 type Loop struct {
-	name          string
 	maxIterations int
 	condition     LoopCondition
 	runner        blades.Runnable
 }
 
-// NewLoop creates a new Loop instance with the specified name, condition, runner, and options.
-func NewLoop(name string, condition LoopCondition, runner blades.Runnable, opts ...LoopOption) *Loop {
+// NewLoop creates a new Loop instance with the specified condition, runner, and options.
+func NewLoop(condition LoopCondition, runner blades.Runnable, opts ...LoopOption) *Loop {
 	l := &Loop{
-		name:          name,
 		condition:     condition,
 		runner:        runner,
 		maxIterations: 3,
@@ -39,11 +37,6 @@ func NewLoop(name string, condition LoopCondition, runner blades.Runnable, opts 
 		opt(l)
 	}
 	return l
-}
-
-// Name returns the name of the Loop.
-func (l *Loop) Name() string {
-	return l.name
 }
 
 // Run executes the Loop, repeatedly running the runner until the condition is met or an error occurs.

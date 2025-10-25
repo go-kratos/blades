@@ -21,7 +21,7 @@ func main() {
 		blades.UserMessage("Can you tell me about the causes of World War II?"),
 	)
 	// Create a new session
-	session := blades.NewSession("conversation_123")
+	session := blades.NewSession()
 	ctx := blades.NewSessionContext(context.Background(), session)
 	// Run the agent
 	result, err := agent.Run(ctx, prompt)

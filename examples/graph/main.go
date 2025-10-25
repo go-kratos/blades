@@ -2,90 +2,145 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"math/rand"
 	"strings"
+	"time"
 
-	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/contrib/openai"
 	"github.com/go-kratos/blades/flow"
 )
 
-func wrapHandle(runner blades.Runnable) flow.GraphHandler[string] {
-	return func(ctx context.Context, state string) (string, error) {
-		output, err := runner.Run(ctx, blades.NewPrompt(blades.UserMessage(state)))
-		if err != nil {
-			return "", err
-		}
-		return output.Text(), nil
-	}
+func main() {
+	fmt.Println("== Loop example ==")
+	runLoopExample()
+
+	fmt.Println("\n== Parallel example ==")
+	runParallelExample()
 }
 
-func main() {
-	provider := openai.NewChatProvider()
-	// Define agents for the graph nodes.
-	storyOutline := blades.NewAgent(
-		"story_outline_agent",
-		blades.WithModel("gpt-5"),
-		blades.WithProvider(provider),
-		blades.WithInstructions("Generate a very short story outline based on the user's input."),
-	)
-	storyChecker := blades.NewAgent(
-		"outline_checker_agent",
-		blades.WithModel("gpt-5"),
-		blades.WithProvider(provider),
-		blades.WithInstructions("Read the given outline, judge the quality, and state if it is a scifi story using the word 'scifi' if applicable."),
-	)
-	scifiWriter := blades.NewAgent(
-		"scifi_writer_agent",
-		blades.WithModel("gpt-5"),
-		blades.WithProvider(provider),
-		blades.WithInstructions("Write a short scifi story based on the given outline."),
-	)
-	generalWriter := blades.NewAgent(
-		"general_writer_agent",
-		blades.WithModel("gpt-5"),
-		blades.WithProvider(provider),
-		blades.WithInstructions("Write a short non-scifi story based on the given outline."),
-	)
-	refineAgent := blades.NewAgent(
-		"refine_agent",
-		blades.WithModel("gpt-5"),
-		blades.WithProvider(provider),
-		blades.WithInstructions("Refine the story to improve clarity and flow."),
-	)
-	// Define branching logic based on the outline checker output
-	branchChoose := func(ctx context.Context, prompt *blades.Prompt) (string, error) {
-		text := strings.ToLower(prompt.String())
-		if strings.Contains(text, "scifi") || strings.Contains(text, "sci-fi") {
-			return "scifi", nil // choose scifiWriter
+// --- Loop example ---------------------------------------------------------
+
+type loopState struct {
+	Revision int
+	Draft    string
+}
+
+func runLoopExample() {
+	const maxRevisions = 3
+
+	g := flow.NewGraph[loopState](flow.WithParallel[loopState](false))
+	g.AddNode("outline", func(ctx context.Context, state loopState) (loopState, error) {
+		if state.Draft == "" {
+			state.Draft = "Outline TODO: add twist."
 		}
-		return "general", nil // choose generalWriter
-	}
-	branchWriter := flow.NewBranch(branchChoose, map[string]blades.Runnable{
-		"scifi":   scifiWriter,
-		"general": generalWriter,
+		return state, nil
 	})
-	// Build graph: outline -> checker -> branch (scifi/general) -> refine -> end
-	g := flow.NewGraph[string]()
-	g.AddNode("outline", wrapHandle(storyOutline))
-	g.AddNode("checker", wrapHandle(storyChecker))
-	g.AddNode("branch", wrapHandle(branchWriter))
-	g.AddNode("refine", wrapHandle(refineAgent))
-	// Add edges and branches
-	g.AddEdge("outline", "checker")
-	g.AddEdge("checker", "branch")
-	g.AddEdge("branch", "refine")
+	g.AddNode("review", func(ctx context.Context, state loopState) (loopState, error) {
+		return state, nil
+	})
+	g.AddNode("revise", func(ctx context.Context, state loopState) (loopState, error) {
+		state.Revision++
+		state.Draft = strings.Replace(state.Draft, "TODO: add twist.", "A surprise reveal changes everything.", 1)
+		switch state.Revision {
+		case 1:
+			state.Draft += " TODO: refine ending."
+		case 2:
+			state.Draft = strings.Replace(state.Draft, " TODO: refine ending.", " An epilogue wraps the journey.", 1)
+		}
+		return state, nil
+	})
+	g.AddNode("publish", func(ctx context.Context, state loopState) (loopState, error) {
+		fmt.Printf("Final draft after %d revision(s): %s\n", state.Revision, state.Draft)
+		return state, nil
+	})
+
+	g.AddEdge("outline", "review")
+	g.AddEdge("review", "revise", flow.WithEdgeCondition(func(_ context.Context, state loopState) bool {
+		return strings.Contains(state.Draft, "TODO") && state.Revision < maxRevisions
+	}))
+	g.AddEdge("review", "publish", flow.WithEdgeCondition(func(_ context.Context, state loopState) bool {
+		return !strings.Contains(state.Draft, "TODO") || state.Revision >= maxRevisions
+	}))
+	g.AddEdge("revise", "review")
+
 	g.SetEntryPoint("outline")
-	g.SetFinishPoint("refine")
-	// Compile the graph into a single runner
+	g.SetFinishPoint("publish")
+
 	handler, err := g.Compile()
 	if err != nil {
 		log.Fatal(err)
 	}
-	// Run the graph with an initial input
-	result, err := handler(context.Background(), "A brave knight embarks on a quest to find a hidden treasure.")
+
+	_, err = handler(context.Background(), loopState{})
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(result)
+}
+
+// --- Parallel example -----------------------------------------------------
+
+type parallelState struct {
+	NodeASteps    []string
+	NodeBSteps    []string
+	NodeJoinSteps []string
+}
+
+func runParallelExample() {
+	g := flow.NewGraph[*parallelState](flow.WithParallel[*parallelState](false))
+
+	// simple helper to log execution order
+	logNode := func(name string) flow.GraphHandler[*parallelState] {
+
+		return func(ctx context.Context, state *parallelState) (*parallelState, error) {
+			fmt.Printf("node %s start executing\n	", name)
+			if strings.HasPrefix(name, "branch_") {
+				t := time.Millisecond * time.Duration(rand.Int63n(250))
+				time.Sleep(t)
+				fmt.Printf("node %s executed, sleep %d ms\n	", name, t.Milliseconds())
+
+			}
+			switch name {
+			case "branch_a":
+				state.NodeASteps = append(state.NodeASteps, name)
+			case "branch_b":
+				state.NodeBSteps = append(state.NodeBSteps, name)
+			case "join":
+				state.NodeJoinSteps = append(state.NodeJoinSteps, state.NodeASteps...)
+				state.NodeJoinSteps = append(state.NodeJoinSteps, state.NodeBSteps...)
+			}
+
+			return state, nil
+		}
+	}
+
+	g.AddNode("start", logNode("start"))
+	g.AddNode("branch_a", logNode("branch_a"))
+	g.AddNode("branch_b", logNode("branch_b"))
+	g.AddNode("branch_c", logNode("branch_c"))
+	g.AddNode("branch_d", logNode("branch_d"))
+
+	g.AddNode("join", logNode("join"))
+
+	g.AddEdge("start", "branch_a")
+	g.AddEdge("start", "branch_b")
+	g.AddEdge("branch_b", "branch_c")
+	g.AddEdge("branch_b", "branch_d")
+	g.AddEdge("branch_c", "join")
+	g.AddEdge("branch_d", "join")
+	g.AddEdge("branch_a", "join")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	handler, err := g.Compile()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	final, err := handler(context.Background(), &parallelState{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("parallel example result: %v\n", final.NodeJoinSteps)
 }
