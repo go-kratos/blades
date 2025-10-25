@@ -154,6 +154,34 @@ func (g *Graph[S]) ensureReachable() error {
 	return fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
 }
 
+type graphFrame[S any] struct {
+	node         string
+	state        S
+	hasState     bool
+	allowRevisit bool
+}
+
+type edgeResolution[S any] struct {
+	immediate []graphFrame[S]
+	fanOut    []conditionalEdge[S]
+	prepend   bool
+}
+
+type branchResult[S any] struct {
+	idx   int
+	state S
+}
+
+type graphExecutor[S any] struct {
+	graph       *Graph[S]
+	queue       []graphFrame[S]
+	waiting     map[string]int
+	visited     map[string]bool
+	finished    bool
+	finishState S
+	globalState S
+}
+
 // Compile validates and compiles the graph into a GraphHandler.
 // Nodes wait for all activated incoming edges to complete before executing (join semantics).
 // An edge is "activated" when its source node executes and chooses that edge.
@@ -166,254 +194,256 @@ func (g *Graph[S]) Compile() (GraphHandler[S], error) {
 	}
 
 	return func(ctx context.Context, state S) (S, error) {
-		type frame struct {
-			node         string
-			state        S
-			hasState     bool
-			skipHandler  bool
-			allowRevisit bool
+		executor := newGraphExecutor(g, state)
+		return executor.run(ctx)
+	}, nil
+}
+
+func newGraphExecutor[S any](g *Graph[S], state S) *graphExecutor[S] {
+	return &graphExecutor[S]{
+		graph:       g,
+		queue:       []graphFrame[S]{{node: g.entryPoint, state: state, hasState: true}},
+		waiting:     make(map[string]int),
+		visited:     make(map[string]bool, len(g.nodes)),
+		globalState: state,
+	}
+}
+
+func (e *graphExecutor[S]) run(ctx context.Context) (S, error) {
+	for len(e.queue) > 0 {
+		frame := e.queue[0]
+		e.queue = e.queue[1:]
+
+		if e.shouldDefer(frame) {
+			continue
 		}
 
-		// Track completed edges to implement join semantics
-		type edgeKey struct {
-			from, to string
-		}
-		completedEdges := make(map[edgeKey]bool)
-
-		// Track how many incoming edges each node is waiting for
-		waitingEdges := make(map[string]int)
-
-		queue := []frame{{node: g.entryPoint, state: state, hasState: true}}
-		visited := make(map[string]bool, len(g.nodes))
-		var finalState S
-		finishReached := false
-
-		for len(queue) > 0 {
-			currentFrame := queue[0]
-			queue = queue[1:]
-			current := currentFrame.node
-			localState := currentFrame.state
-			if !currentFrame.hasState {
-				localState = state
-			}
-
-			// Check if we need to wait for more incoming edges
-			if waitingEdges[current] > 0 && !currentFrame.allowRevisit {
-				// This node is waiting for more predecessors, re-queue it
-				queue = append(queue, currentFrame)
-				continue
-			}
-
-			if visited[current] && !currentFrame.allowRevisit && !currentFrame.skipHandler {
-				continue
-			}
-			if !currentFrame.skipHandler {
-				visited[current] = true
-				handler := g.nodes[current]
-				if handler == nil {
-					return state, fmt.Errorf("graph: node %s handler missing", current)
-				}
-				var err error
-				localState, err = handler(ctx, localState)
-				if err != nil {
-					return state, fmt.Errorf("graph: node %s: %w", current, err)
-				}
-			}
-			state = localState
-
-			if current == g.finishPoint {
-				finishReached = true
-				finalState = localState
-				continue
-			}
-
-			edges := g.edges[current]
-			if len(edges) == 0 {
-				return state, fmt.Errorf("graph: no outgoing edges from node %s", current)
-			}
-
-		hasConditional := false
-		allConditional := true
-		for _, edge := range edges {
-			if edge.condition != nil {
-				hasConditional = true
-			} else {
-				allConditional = false
-			}
+		localState := e.stateFor(frame)
+		handler := e.graph.nodes[frame.node]
+		if handler == nil {
+			return e.globalState, fmt.Errorf("graph: node %s handler missing", frame.node)
 		}
 
-		if hasConditional {
-			if allConditional {
-				// All edges are conditional: execute all that return true
-				var matchedEdges []conditionalEdge[S]
-				for _, edge := range edges {
-					if edge.condition(ctx, localState) {
-						matchedEdges = append(matchedEdges, edge)
-					}
-				}
-				if len(matchedEdges) == 0 {
-					return state, fmt.Errorf("graph: no condition matched for edges from node %s", current)
-				}
-				// For conditional edges, allow revisiting nodes (needed for loops)
-				if len(matchedEdges) == 1 {
-					queue = append(queue, frame{
-						node:         matchedEdges[0].to,
-						state:        localState,
-						hasState:     true,
-						skipHandler:  false,
-						allowRevisit: true,
-					})
-					completedEdges[edgeKey{from: current, to: matchedEdges[0].to}] = true
-					continue
-				}
-				// Process all matched edges
-				edges = matchedEdges
-				// Fall through to normal edge processing
-			} else {
-				// Mixed conditional and unconditional: take only the first match
-				nextFrame := frame{allowRevisit: true}
-				matched := false
-				for _, edge := range edges {
-					if edge.condition == nil || edge.condition(ctx, localState) {
-						nextFrame.node = edge.to
-						nextFrame.state = localState
-						nextFrame.hasState = true
-						nextFrame.skipHandler = false
-						matched = true
-						// Mark edge as completed
-						completedEdges[edgeKey{from: current, to: edge.to}] = true
-						break
-					}
-				}
-				if !matched {
-					return state, fmt.Errorf("graph: no condition matched for edges from node %s", current)
-				}
-				queue = append([]frame{nextFrame}, queue...)
-				continue
-			}
+		nextState, err := handler(ctx, localState)
+		if err != nil {
+			return e.globalState, fmt.Errorf("graph: node %s: %w", frame.node, err)
 		}
 
-			if !g.parallel {
-				// Serial mode: first activate all edges, then process sequentially
-				for _, edge := range edges {
-					waitingEdges[edge.to]++
-				}
-				for _, edge := range edges {
-					completedEdges[edgeKey{from: current, to: edge.to}] = true
-					waitingEdges[edge.to]--
+		e.visited[frame.node] = true
+		e.globalState = nextState
 
-					if waitingEdges[edge.to] == 0 {
-						queue = append(queue, frame{
-							node:         edge.to,
-							state:        state, // Use global state in serial mode
-							hasState:     false, // Mark to use global state during execution
-							skipHandler:  false,
-							allowRevisit: currentFrame.allowRevisit,
-						})
-					}
-				}
-				continue
-			}
-
-			if len(edges) == 1 {
-				queue = append(queue, frame{
-					node:         edges[0].to,
-					state:        localState,
-					hasState:     true,
-					skipHandler:  false,
-					allowRevisit: currentFrame.allowRevisit,
-				})
-				continue
-			}
-
-			// Parallel mode: activate all edges first
-			for _, edge := range edges {
-				waitingEdges[edge.to]++
-			}
-
-			type branchResult struct {
-				idx   int
-				state S
-			}
-			results := make([]branchResult, len(edges))
-
-			eg, egCtx := errgroup.WithContext(ctx)
-			for i, edge := range edges {
-				i := i
-				edge := edge
-				eg.Go(func() error {
-					childHandler := g.nodes[edge.to]
-					if childHandler == nil {
-						return fmt.Errorf("graph: node %s handler missing", edge.to)
-					}
-					
-				nextState, err := childHandler(egCtx, localState)
-					if err != nil {
-						return fmt.Errorf("graph: node %s: %w", edge.to, err)
-					}
-					results[i] = branchResult{idx: i, state: nextState}
-					return nil
-				})
-			}
-
-			if err := eg.Wait(); err != nil {
-				return state, err
-			}
-
-
-		// Process results and their successors (winner takes all in parallel mode)
-		winner := results[len(results)-1]
-		state = winner.state
-
-		// Collect all unique successors from all branches
-		successorMap := make(map[string]S)
-		for i, result := range results {
-			edge := edges[result.idx]
-			// Mark edge as completed
-			completedEdges[edgeKey{from: current, to: edge.to}] = true
-			waitingEdges[edge.to]--
-
-			// Process this branch node's successors
-			branchEdges := g.edges[edge.to]
-			for _, nextEdge := range branchEdges {
-				waitingEdges[nextEdge.to]++
-			}
-
-			for _, nextEdge := range branchEdges {
-				completedEdges[edgeKey{from: edge.to, to: nextEdge.to}] = true
-				waitingEdges[nextEdge.to]--
-
-				if waitingEdges[nextEdge.to] == 0 {
-					successorMap[nextEdge.to] = result.state
-				}
-			}
-
-			// Mark branch node as visited
-			visited[edge.to] = true
-
-			// Update global state from winner
-			if i == len(results)-1 {
-				state = result.state
-			}
+		if frame.node == e.graph.finishPoint {
+			e.finished = true
+			e.finishState = nextState
+			continue
 		}
 
-		// Add all ready successors to queue (deduplicated)
-		for successor, successorState := range successorMap {
-			queue = append(queue, frame{
-				node:         successor,
-				state:        successorState,
+		resolution, err := e.resolveEdges(ctx, frame, nextState)
+		if err != nil {
+			return e.globalState, err
+		}
+
+		if len(resolution.immediate) > 0 {
+			e.enqueueFrames(resolution.immediate, resolution.prepend)
+			continue
+		}
+
+		edges := resolution.fanOut
+		if !e.graph.parallel {
+			e.fanOutSerial(frame, edges)
+			continue
+		}
+
+		if len(edges) == 1 {
+			e.enqueue(graphFrame[S]{
+				node:         edges[0].to,
+				state:        nextState,
 				hasState:     true,
-				skipHandler:  false,
-				allowRevisit: currentFrame.allowRevisit,
+				allowRevisit: frame.allowRevisit,
+			})
+			continue
+		}
+
+		branchState, err := e.fanOutParallel(ctx, frame, nextState, edges)
+		if err != nil {
+			return e.globalState, err
+		}
+		e.globalState = branchState
+	}
+
+	if e.finished {
+		return e.finishState, nil
+	}
+	return e.globalState, fmt.Errorf("graph: finish node not reachable: %s", e.graph.finishPoint)
+}
+
+func (e *graphExecutor[S]) shouldDefer(frame graphFrame[S]) bool {
+	if e.waiting[frame.node] > 0 && !frame.allowRevisit {
+		e.queue = append(e.queue, frame)
+		return true
+	}
+	if e.visited[frame.node] && !frame.allowRevisit {
+		return true
+	}
+	return false
+}
+
+func (e *graphExecutor[S]) stateFor(frame graphFrame[S]) S {
+	if frame.hasState {
+		return frame.state
+	}
+	return e.globalState
+}
+
+func (e *graphExecutor[S]) enqueue(frame graphFrame[S]) {
+	e.queue = append(e.queue, frame)
+}
+
+func (e *graphExecutor[S]) enqueueFrames(frames []graphFrame[S], prepend bool) {
+	if len(frames) == 0 {
+		return
+	}
+	if prepend {
+		e.queue = append(frames, e.queue...)
+		return
+	}
+	e.queue = append(e.queue, frames...)
+}
+
+func (e *graphExecutor[S]) resolveEdges(ctx context.Context, frame graphFrame[S], state S) (edgeResolution[S], error) {
+	edges := e.graph.edges[frame.node]
+	if len(edges) == 0 {
+		return edgeResolution[S]{}, fmt.Errorf("graph: no outgoing edges from node %s", frame.node)
+	}
+
+	hasConditional := false
+	allConditional := true
+	for _, edge := range edges {
+		if edge.condition != nil {
+			hasConditional = true
+		} else {
+			allConditional = false
+		}
+	}
+
+	if !hasConditional {
+		return edgeResolution[S]{fanOut: edges}, nil
+	}
+
+	if allConditional {
+		matched := make([]conditionalEdge[S], 0, len(edges))
+		for _, edge := range edges {
+			if edge.condition(ctx, state) {
+				matched = append(matched, edge)
+			}
+		}
+		if len(matched) == 0 {
+			return edgeResolution[S]{}, fmt.Errorf("graph: no condition matched for edges from node %s", frame.node)
+		}
+		if len(matched) == 1 {
+			return edgeResolution[S]{
+				immediate: []graphFrame[S]{{
+					node:         matched[0].to,
+					state:        state,
+					hasState:     true,
+					allowRevisit: true,
+				}},
+			}, nil
+		}
+		return edgeResolution[S]{fanOut: matched}, nil
+	}
+
+	for _, edge := range edges {
+		if edge.condition == nil || edge.condition(ctx, state) {
+			return edgeResolution[S]{
+				immediate: []graphFrame[S]{{
+					node:         edge.to,
+					state:        state,
+					hasState:     true,
+					allowRevisit: true,
+				}},
+				prepend: true,
+			}, nil
+		}
+	}
+
+	return edgeResolution[S]{}, fmt.Errorf("graph: no condition matched for edges from node %s", frame.node)
+}
+
+func (e *graphExecutor[S]) fanOutSerial(frame graphFrame[S], edges []conditionalEdge[S]) {
+	for _, edge := range edges {
+		e.waiting[edge.to]++
+	}
+	for _, edge := range edges {
+		e.waiting[edge.to]--
+		if e.waiting[edge.to] == 0 {
+			e.enqueue(graphFrame[S]{
+				node:         edge.to,
+				hasState:     false,
+				allowRevisit: frame.allowRevisit,
 			})
 		}
 	}
+}
 
-	if finishReached {
-		return finalState, nil
+func (e *graphExecutor[S]) fanOutParallel(ctx context.Context, frame graphFrame[S], state S, edges []conditionalEdge[S]) (S, error) {
+	for _, edge := range edges {
+		e.waiting[edge.to]++
 	}
-	return state, fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
-}, nil
+
+	results := make([]branchResult[S], len(edges))
+	eg, egCtx := errgroup.WithContext(ctx)
+	for i, edge := range edges {
+		i := i
+		edge := edge
+		eg.Go(func() error {
+			handler := e.graph.nodes[edge.to]
+			if handler == nil {
+				return fmt.Errorf("graph: node %s handler missing", edge.to)
+			}
+
+			nextState, err := handler(egCtx, state)
+			if err != nil {
+				return fmt.Errorf("graph: node %s: %w", edge.to, err)
+			}
+			results[i] = branchResult[S]{idx: i, state: nextState}
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return e.globalState, err
+	}
+
+	successorStates := make(map[string]S)
+	for _, result := range results {
+		edge := edges[result.idx]
+		e.waiting[edge.to]--
+
+		branchEdges := e.graph.edges[edge.to]
+		for _, nextEdge := range branchEdges {
+			e.waiting[nextEdge.to]++
+		}
+		for _, nextEdge := range branchEdges {
+			e.waiting[nextEdge.to]--
+			if e.waiting[nextEdge.to] == 0 {
+				successorStates[nextEdge.to] = result.state
+			}
+		}
+
+		e.visited[edge.to] = true
+	}
+
+	for successor, successorState := range successorStates {
+		e.enqueue(graphFrame[S]{
+			node:         successor,
+			state:        successorState,
+			hasState:     true,
+			allowRevisit: frame.allowRevisit,
+		})
+	}
+
+	return results[len(results)-1].state, nil
 }
 
 // WithParallel toggles parallel fan-out execution. Defaults to true.

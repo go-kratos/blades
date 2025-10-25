@@ -762,7 +762,6 @@ func TestGraph_ParallelMultipleConditionsMatch(t *testing.T) {
 	// Should have A and G for sure (start and end)
 	hasA := false
 	hasG := false
-	fmt.Printf("%+v\n", got.Steps)
 	for _, step := range got.Steps {
 
 		if step == "A" {
@@ -1215,4 +1214,3 @@ func TestGraph_ParallelNoOpHandler(t *testing.T) {
 		t.Errorf("expected A and D in result, got %v", result.Steps)
 	}
 }
-
