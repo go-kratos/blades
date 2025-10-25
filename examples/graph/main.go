@@ -87,7 +87,7 @@ type parallelState struct {
 }
 
 func runParallelExample() {
-	g := flow.NewGraph[*parallelState]()
+	g := flow.NewGraph[*parallelState](flow.WithParallel[*parallelState](false))
 
 	// simple helper to log execution order
 	logNode := func(name string) flow.GraphHandler[*parallelState] {
@@ -117,12 +117,18 @@ func runParallelExample() {
 	g.AddNode("start", logNode("start"))
 	g.AddNode("branch_a", logNode("branch_a"))
 	g.AddNode("branch_b", logNode("branch_b"))
+	g.AddNode("branch_c", logNode("branch_c"))
+	g.AddNode("branch_d", logNode("branch_d"))
+
 	g.AddNode("join", logNode("join"))
 
 	g.AddEdge("start", "branch_a")
 	g.AddEdge("start", "branch_b")
+	g.AddEdge("branch_b", "branch_c")
+	g.AddEdge("branch_b", "branch_d")
+	g.AddEdge("branch_c", "join")
+	g.AddEdge("branch_d", "join")
 	g.AddEdge("branch_a", "join")
-	g.AddEdge("branch_b", "join")
 
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("join")

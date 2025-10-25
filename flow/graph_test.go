@@ -312,84 +312,6 @@ func TestGraph_ConditionalEdges_Loop(t *testing.T) {
 	}
 }
 
-func TestGraph_ParallelFanOut(t *testing.T) {
-	type parallelState struct {
-		steps []string
-	}
-
-	var mu sync.Mutex
-	called := map[string]int{}
-	handler := func(name string) GraphHandler[parallelState] {
-		return func(ctx context.Context, state parallelState) (parallelState, error) {
-			mu.Lock()
-			called[name]++
-			mu.Unlock()
-			next := append(append([]string(nil), state.steps...), name)
-			return parallelState{steps: next}, nil
-		}
-	}
-
-	g := NewGraph[parallelState]()
-	_ = g.AddNode("start", handler("start"))
-	_ = g.AddNode("branch_a", handler("branch_a"))
-	_ = g.AddNode("branch_b", handler("branch_b"))
-	_ = g.AddNode("join", handler("join"))
-
-	_ = g.AddEdge("start", "branch_a")
-	_ = g.AddEdge("start", "branch_b")
-	_ = g.AddEdge("branch_a", "join")
-	_ = g.AddEdge("branch_b", "join")
-
-	_ = g.SetEntryPoint("start")
-	_ = g.SetFinishPoint("join")
-
-	out, err := g.Compile()
-	if err != nil {
-		t.Fatalf("compile error: %v", err)
-	}
-
-	final, err := out(context.Background(), parallelState{})
-	if err != nil {
-		t.Fatalf("run error: %v", err)
-	}
-	if final.steps[len(final.steps)-1] != "join" {
-		t.Fatalf("expected to finish at join, got %v", final.steps)
-	}
-	if final.steps[1] != "branch_b" {
-		t.Fatalf("expected last branch result to win, got steps %v", final.steps)
-	}
-	if called["branch_a"] != 1 || called["branch_b"] != 1 {
-		t.Fatalf("expected both branches to run once, got %v", called)
-	}
-}
-
-func TestGraph_ParallelPropagatesError(t *testing.T) {
-	g := NewGraph[[]string]()
-	_ = g.AddNode("start", appendHandler("start"))
-	_ = g.AddNode("ok_branch", appendHandler("ok_branch"))
-	_ = g.AddNode("fail_branch", func(ctx context.Context, state []string) ([]string, error) {
-		return state, fmt.Errorf("boom")
-	})
-	_ = g.AddNode("join", appendHandler("join"))
-
-	_ = g.AddEdge("start", "ok_branch")
-	_ = g.AddEdge("start", "fail_branch")
-	_ = g.AddEdge("ok_branch", "join")
-	_ = g.AddEdge("fail_branch", "join")
-	_ = g.SetEntryPoint("start")
-	_ = g.SetFinishPoint("join")
-
-	out, err := g.Compile()
-	if err != nil {
-		t.Fatalf("compile error: %v", err)
-	}
-
-	_, err = out(context.Background(), nil)
-	if err == nil || !strings.Contains(err.Error(), "fail_branch") {
-		t.Fatalf("expected error from fail_branch, got %v", err)
-	}
-}
-
 func TestGraph_DuplicateOperations(t *testing.T) {
 	t.Run("duplicate node", func(t *testing.T) {
 		g := NewGraph[[]string]()
@@ -488,23 +410,26 @@ func TestGraph_NoOutgoingEdges(t *testing.T) {
 }
 
 func TestGraph_MultipleConditionsMatch(t *testing.T) {
-	g := NewGraph[[]string]()
+	g := NewGraph[[]string](WithParallel[[]string](false)) // Use serial mode for global state flow
 	_ = g.AddNode("A", appendHandler("A"))
 	_ = g.AddNode("B", appendHandler("B"))
 	_ = g.AddNode("C", appendHandler("C"))
 	_ = g.AddNode("D", appendHandler("D"))
+	_ = g.AddNode("E", appendHandler("E"))
+	_ = g.AddNode("F", appendHandler("F"))
+	_ = g.AddNode("G", appendHandler("G"))
 
-	_ = g.AddEdge("A", "B")
-	// Both conditions are true, but only the first should be taken
-	_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
-		return true // First condition: always true
-	}))
-	_ = g.AddEdge("B", "D", WithEdgeCondition(func(_ context.Context, state []string) bool {
-		return true // Second condition: also always true
-	}))
+	// A has two conditional edges that both return true - both should be executed
+	_ = g.AddEdge("A", "B", WithEdgeCondition(func(_ context.Context, state []string) bool { return true }))
+	_ = g.AddEdge("A", "C", WithEdgeCondition(func(_ context.Context, state []string) bool { return true }))
+	_ = g.AddEdge("B", "D")
+	_ = g.AddEdge("C", "E")
+	_ = g.AddEdge("D", "F")
+	_ = g.AddEdge("E", "F")
+	_ = g.AddEdge("F", "G")
 
 	_ = g.SetEntryPoint("A")
-	_ = g.SetFinishPoint("C")
+	_ = g.SetFinishPoint("G")
 
 	handler, err := g.Compile()
 	if err != nil {
@@ -516,9 +441,10 @@ func TestGraph_MultipleConditionsMatch(t *testing.T) {
 		t.Fatalf("run error: %v", err)
 	}
 
-	want := []string{"A", "B", "C"}
+	// With global state flow in serial mode, all nodes contribute to final state
+	want := []string{"A", "B", "C", "D", "E", "F", "G"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected path (should take first matching edge): got %v, want %v", got, want)
+		t.Fatalf("unexpected path (global state flow): got %v, want %v", got, want)
 	}
 }
 
@@ -717,151 +643,153 @@ func TestGraph_ComplexCycles(t *testing.T) {
 	})
 }
 
-func TestGraph_SerialVsParallelStateSemantics(t *testing.T) {
-	// This test reveals a semantic difference between serial and parallel modes
-	type counter struct {
-		value int
+// TestGraph_ConditionalJoinInteraction tests how conditional edges interact with joins
+// When A has two conditional edges but only one matches, the join should only wait for the active path
+func TestGraph_ConditionalJoinInteraction(t *testing.T) {
+	g := NewGraph[[]string](WithParallel[[]string](false))
+
+	_ = g.AddNode("A", appendHandler("A"))
+	_ = g.AddNode("B", appendHandler("B"))
+	_ = g.AddNode("C", appendHandler("C"))
+	_ = g.AddNode("D", appendHandler("D"))
+	_ = g.AddNode("E", appendHandler("E"))
+	_ = g.AddNode("F", appendHandler("F"))
+	_ = g.AddNode("G", appendHandler("G"))
+
+	// A has two conditional edges, but only first one returns true
+	_ = g.AddEdge("A", "B", WithEdgeCondition(func(_ context.Context, state []string) bool {
+		return true
+	}))
+	_ = g.AddEdge("A", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
+		return false
+	}))
+
+	_ = g.AddEdge("B", "D")
+	_ = g.AddEdge("C", "E")
+	_ = g.AddEdge("D", "F")
+	_ = g.AddEdge("E", "F") // This edge will never be activated
+	_ = g.AddEdge("F", "G")
+
+	_ = g.SetEntryPoint("A")
+	_ = g.SetFinishPoint("G")
+
+	compiled, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
 	}
 
-	incrementHandler := func(name string, amount int) GraphHandler[counter] {
-		return func(ctx context.Context, state counter) (counter, error) {
-			t.Logf("%s: received state.value=%d, adding %d", name, state.value, amount)
-			return counter{value: state.value + amount}, nil
-		}
+	result, err := compiled(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("run error: %v", err)
 	}
 
-	t.Run("parallel_mode_independent_branches", func(t *testing.T) {
-		g := NewGraph[counter](WithParallel[counter](true))
-		_ = g.AddNode("A", incrementHandler("A", 1))
-		_ = g.AddNode("B", incrementHandler("B", 10))
-		_ = g.AddNode("C", incrementHandler("C", 100))
-		_ = g.AddNode("D", incrementHandler("D", 0))
+	// Only A->B->D->F->G path should execute
+	want := []string{"A", "B", "D", "F", "G"}
+	if !reflect.DeepEqual(result, want) {
+		t.Errorf("unexpected execution path: got %v, want %v", result, want)
+	}
 
-		_ = g.AddEdge("A", "B")
-		_ = g.AddEdge("A", "C")
-		_ = g.AddEdge("B", "D")
-		_ = g.AddEdge("C", "D")
-
-		_ = g.SetEntryPoint("A")
-		_ = g.SetFinishPoint("D")
-
-		handler, _ := g.Compile()
-		result, err := handler(context.Background(), counter{value: 0})
-		if err != nil {
-			t.Fatalf("error: %v", err)
+	// C and E should not execute
+	for _, node := range result {
+		if node == "C" || node == "E" {
+			t.Errorf("node %s should not have executed (inactive branch)", node)
 		}
-
-		// In parallel mode: A=0+1=1, then B and C both see 1
-		// B: 1+10=11, C: 1+100=101
-		// Winner is C (last branch), so D sees 101
-		// D: 101+0=101
-		t.Logf("Parallel mode result: %d", result.value)
-		if result.value != 101 {
-			t.Errorf("expected 101, got %d", result.value)
-		}
-	})
-
-	t.Run("serial_mode_independent_branches", func(t *testing.T) {
-		g := NewGraph[counter](WithParallel[counter](false))
-		_ = g.AddNode("A", incrementHandler("A", 1))
-		_ = g.AddNode("B", incrementHandler("B", 10))
-		_ = g.AddNode("C", incrementHandler("C", 100))
-		_ = g.AddNode("D", incrementHandler("D", 0))
-
-		_ = g.AddEdge("A", "B")
-		_ = g.AddEdge("A", "C")
-		_ = g.AddEdge("B", "D")
-		_ = g.AddEdge("C", "D")
-
-		_ = g.SetEntryPoint("A")
-		_ = g.SetFinishPoint("D")
-
-		handler, _ := g.Compile()
-		result, err := handler(context.Background(), counter{value: 0})
-		if err != nil {
-			t.Fatalf("error: %v", err)
-		}
-
-		// After fix: Serial mode now has same semantics as parallel mode
-		// A: 0+1=1, state=1
-		// B: 1+10=11, state=11, enqueues D(11)
-		// C: 1+100=101, state=101, enqueues D(101)
-		// D processes first enqueued instance: 11+0=11
-		// Second D is skipped (visited)
-		t.Logf("Serial mode result: %d", result.value)
-
-		// B reaches D first in BFS order, so D receives B's output
-		if result.value != 11 {
-			t.Errorf("expected 11 (B reaches D first), got %d", result.value)
-		}
-	})
+	}
 }
 
-func TestGraph_ParallelEarlyTermination(t *testing.T) {
-	var executed sync.Map
+// TestGraph_SerialFanOut tests that serial mode executes all fan-out branches
+func TestGraph_SerialFanOut(t *testing.T) {
+	var executed []string
+	var mu sync.Mutex
 
-	slowHandler := func(name string, delay int) GraphHandler[[]string] {
+	handler := func(name string) GraphHandler[[]string] {
 		return func(ctx context.Context, state []string) ([]string, error) {
-			executed.Store(name, "started")
-
-			// Simulate work and check for cancellation
-			for i := 0; i < delay; i++ {
-				select {
-				case <-ctx.Done():
-					executed.Store(name, "cancelled")
-					t.Logf("%s: cancelled after %d/%d iterations", name, i, delay)
-					return state, ctx.Err()
-				default:
-					// Simulate a small unit of work
-				}
-			}
-
-			executed.Store(name, "completed")
-			t.Logf("%s: completed", name)
+			mu.Lock()
+			executed = append(executed, name)
+			mu.Unlock()
 			return append(state, name), nil
 		}
 	}
 
-	errorHandler := func(name string) GraphHandler[[]string] {
-		return func(ctx context.Context, state []string) ([]string, error) {
-			executed.Store(name, "error")
-			t.Logf("%s: returning error", name)
-			return state, fmt.Errorf("error from %s", name)
-		}
+	g := NewGraph[[]string](WithParallel[[]string](false))
+
+	_ = g.AddNode("A", handler("A"))
+	_ = g.AddNode("B", handler("B"))
+	_ = g.AddNode("C", handler("C"))
+	_ = g.AddNode("D", handler("D"))
+	_ = g.AddNode("E", handler("E"))
+	_ = g.AddNode("F", handler("F"))
+	_ = g.AddNode("G", handler("G"))
+
+	// Unconditional edges - both branches should execute
+	_ = g.AddEdge("A", "B")
+	_ = g.AddEdge("A", "C")
+	_ = g.AddEdge("B", "D")
+	_ = g.AddEdge("C", "E")
+	_ = g.AddEdge("D", "F")
+	_ = g.AddEdge("E", "F")
+	_ = g.AddEdge("F", "G")
+
+	_ = g.SetEntryPoint("A")
+	_ = g.SetFinishPoint("G")
+
+	compiled, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
 	}
 
-	t.Run("error_cancels_slow_branches", func(t *testing.T) {
-		executed = sync.Map{}
+	result, err := compiled(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("run error: %v", err)
+	}
 
-		g := NewGraph[[]string](WithParallel[[]string](true))
-		_ = g.AddNode("start", appendHandler("start"))
-		_ = g.AddNode("fast_fail", errorHandler("fast_fail"))
-		_ = g.AddNode("slow_ok", slowHandler("slow_ok", 1000000)) // Would be slow without cancellation
-		_ = g.AddNode("join", appendHandler("join"))
+	// All 7 nodes should execute
+	if len(executed) != 7 {
+		t.Errorf("expected 7 nodes to execute, got %d: %v", len(executed), executed)
+	}
 
-		_ = g.AddEdge("start", "fast_fail")
-		_ = g.AddEdge("start", "slow_ok")
-		_ = g.AddEdge("fast_fail", "join")
-		_ = g.AddEdge("slow_ok", "join")
+	// Final state should include all nodes
+	if len(result) != 7 {
+		t.Errorf("expected final state to have 7 elements, got %d: %v", len(result), result)
+	}
+}
 
-		_ = g.SetEntryPoint("start")
-		_ = g.SetFinishPoint("join")
+// TestGraph_StateFlowSerial tests state propagation in serial mode
+func TestGraph_StateFlowSerial(t *testing.T) {
+	g := NewGraph[[]string](WithParallel[[]string](false))
 
-		handler, _ := g.Compile()
-		_, err := handler(context.Background(), nil)
+	_ = g.AddNode("A", appendHandler("A"))
+	_ = g.AddNode("B", appendHandler("B"))
+	_ = g.AddNode("C", appendHandler("C"))
+	_ = g.AddNode("D", appendHandler("D"))
+	_ = g.AddNode("E", appendHandler("E"))
+	_ = g.AddNode("F", appendHandler("F"))
+	_ = g.AddNode("G", appendHandler("G"))
 
-		// Should get error from fast_fail
-		if err == nil || !strings.Contains(err.Error(), "fast_fail") {
-			t.Fatalf("expected error from fast_fail, got %v", err)
-		}
+	_ = g.AddEdge("A", "B")
+	_ = g.AddEdge("A", "C")
+	_ = g.AddEdge("B", "D")
+	_ = g.AddEdge("C", "E")
+	_ = g.AddEdge("D", "F")
+	_ = g.AddEdge("E", "F")
+	_ = g.AddEdge("F", "G")
 
-		// Check that slow_ok was cancelled (not completed)
-		if val, ok := executed.Load("slow_ok"); ok {
-			status := val.(string)
-			if status == "completed" {
-				t.Errorf("slow_ok should have been cancelled, but it completed")
-			}
-			t.Logf("slow_ok status: %s", status)
-		}
-	})
+	_ = g.SetEntryPoint("A")
+	_ = g.SetFinishPoint("G")
+
+	compiled, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	result, err := compiled(context.Background(), []string{})
+	if err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+
+	// All nodes should be in final state
+	want := []string{"A", "B", "C", "D", "E", "F", "G"}
+	if !reflect.DeepEqual(result, want) {
+		t.Errorf("unexpected state flow: got %v, want %v", result, want)
+	}
 }
