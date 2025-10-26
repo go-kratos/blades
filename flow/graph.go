@@ -38,6 +38,7 @@ type Graph[S any] struct {
 	entryPoint  string
 	finishPoint string
 	parallel    bool
+	err         error // accumulated error for builder pattern
 }
 
 // Option configures the Graph behavior.
@@ -59,19 +60,29 @@ func NewGraph[S any](opts ...Option[S]) *Graph[S] {
 }
 
 // AddNode adds a named node with its handler to the graph.
-func (g *Graph[S]) AddNode(name string, handler GraphHandler[S]) error {
+// Returns the graph for chaining. Check error with Compile().
+func (g *Graph[S]) AddNode(name string, handler GraphHandler[S]) *Graph[S] {
+	if g.err != nil {
+		return g
+	}
 	if _, ok := g.nodes[name]; ok {
-		return fmt.Errorf("graph: node %s already exists", name)
+		g.err = fmt.Errorf("graph: node %s already exists", name)
+		return g
 	}
 	g.nodes[name] = handler
-	return nil
+	return g
 }
 
 // AddEdge adds a directed edge from one node to another. Options can configure the edge.
-func (g *Graph[S]) AddEdge(from, to string, opts ...EdgeOption[S]) error {
+// Returns the graph for chaining. Check error with Compile().
+func (g *Graph[S]) AddEdge(from, to string, opts ...EdgeOption[S]) *Graph[S] {
+	if g.err != nil {
+		return g
+	}
 	for _, edge := range g.edges[from] {
 		if edge.to == to {
-			return fmt.Errorf("graph: edge from %s to %s already exists", from, to)
+			g.err = fmt.Errorf("graph: edge from %s to %s already exists", from, to)
+			return g
 		}
 	}
 	newEdge := conditionalEdge[S]{to: to}
@@ -82,29 +93,42 @@ func (g *Graph[S]) AddEdge(from, to string, opts ...EdgeOption[S]) error {
 		opt(&newEdge)
 	}
 	g.edges[from] = append(g.edges[from], newEdge)
-	return nil
+	return g
 }
 
 // SetEntryPoint marks a node as the entry point.
-func (g *Graph[S]) SetEntryPoint(start string) error {
+// Returns the graph for chaining. Check error with Compile().
+func (g *Graph[S]) SetEntryPoint(start string) *Graph[S] {
+	if g.err != nil {
+		return g
+	}
 	if g.entryPoint != "" {
-		return fmt.Errorf("graph: entry point already set to %s", g.entryPoint)
+		g.err = fmt.Errorf("graph: entry point already set to %s", g.entryPoint)
+		return g
 	}
 	g.entryPoint = start
-	return nil
+	return g
 }
 
 // SetFinishPoint marks a node as the finish point.
-func (g *Graph[S]) SetFinishPoint(end string) error {
+// Returns the graph for chaining. Check error with Compile().
+func (g *Graph[S]) SetFinishPoint(end string) *Graph[S] {
+	if g.err != nil {
+		return g
+	}
 	if g.finishPoint != "" {
-		return fmt.Errorf("graph: finish point already set to %s", g.finishPoint)
+		g.err = fmt.Errorf("graph: finish point already set to %s", g.finishPoint)
+		return g
 	}
 	g.finishPoint = end
-	return nil
+	return g
 }
 
 // validate ensures the graph configuration is correct before compiling.
 func (g *Graph[S]) validate() error {
+	if g.err != nil {
+		return g.err
+	}
 	if g.entryPoint == "" {
 		return fmt.Errorf("graph: entry point not set")
 	}
@@ -211,64 +235,24 @@ func newGraphExecutor[S any](g *Graph[S], state S) *graphExecutor[S] {
 
 func (e *graphExecutor[S]) run(ctx context.Context) (S, error) {
 	for len(e.queue) > 0 {
-		frame := e.queue[0]
-		e.queue = e.queue[1:]
+		frame := e.dequeue()
 
-		if e.shouldDefer(frame) {
+		if e.shouldSkip(frame) {
 			continue
 		}
 
-		localState := e.stateFor(frame)
-		handler := e.graph.nodes[frame.node]
-		if handler == nil {
-			return e.globalState, fmt.Errorf("graph: node %s handler missing", frame.node)
-		}
-
-		nextState, err := handler(ctx, localState)
-		if err != nil {
-			return e.globalState, fmt.Errorf("graph: node %s: %w", frame.node, err)
-		}
-
-		e.visited[frame.node] = true
-		e.globalState = nextState
-
-		if frame.node == e.graph.finishPoint {
-			e.finished = true
-			e.finishState = nextState
-			continue
-		}
-
-		resolution, err := e.resolveEdges(ctx, frame, nextState)
+		nextState, err := e.executeNode(ctx, frame)
 		if err != nil {
 			return e.globalState, err
 		}
 
-		if len(resolution.immediate) > 0 {
-			e.enqueueFrames(resolution.immediate, resolution.prepend)
+		if e.handleFinish(frame.node, nextState) {
 			continue
 		}
 
-		edges := resolution.fanOut
-		if !e.graph.parallel {
-			e.fanOutSerial(frame, edges)
-			continue
-		}
-
-		if len(edges) == 1 {
-			e.enqueue(graphFrame[S]{
-				node:         edges[0].to,
-				state:        nextState,
-				hasState:     true,
-				allowRevisit: frame.allowRevisit,
-			})
-			continue
-		}
-
-		branchState, err := e.fanOutParallel(ctx, frame, nextState, edges)
-		if err != nil {
+		if err := e.processOutgoingEdges(ctx, frame, nextState); err != nil {
 			return e.globalState, err
 		}
-		e.globalState = branchState
 	}
 
 	if e.finished {
@@ -277,15 +261,89 @@ func (e *graphExecutor[S]) run(ctx context.Context) (S, error) {
 	return e.globalState, fmt.Errorf("graph: finish node not reachable: %s", e.graph.finishPoint)
 }
 
-func (e *graphExecutor[S]) shouldDefer(frame graphFrame[S]) bool {
+func (e *graphExecutor[S]) dequeue() graphFrame[S] {
+	frame := e.queue[0]
+	e.queue = e.queue[1:]
+	return frame
+}
+
+func (e *graphExecutor[S]) shouldSkip(frame graphFrame[S]) bool {
+	// Defer if waiting for other edges
 	if e.waiting[frame.node] > 0 && !frame.allowRevisit {
 		e.queue = append(e.queue, frame)
 		return true
 	}
+	// Skip if already visited
 	if e.visited[frame.node] && !frame.allowRevisit {
 		return true
 	}
 	return false
+}
+
+func (e *graphExecutor[S]) executeNode(ctx context.Context, frame graphFrame[S]) (S, error) {
+	localState := e.stateFor(frame)
+	handler := e.graph.nodes[frame.node]
+	if handler == nil {
+		return e.globalState, fmt.Errorf("graph: node %s handler missing", frame.node)
+	}
+
+	nextState, err := handler(ctx, localState)
+	if err != nil {
+		return e.globalState, fmt.Errorf("graph: node %s: %w", frame.node, err)
+	}
+
+	e.visited[frame.node] = true
+	e.globalState = nextState
+	return nextState, nil
+}
+
+func (e *graphExecutor[S]) handleFinish(node string, state S) bool {
+	if node == e.graph.finishPoint {
+		e.finished = true
+		e.finishState = state
+		return true
+	}
+	return false
+}
+
+func (e *graphExecutor[S]) processOutgoingEdges(ctx context.Context, frame graphFrame[S], state S) error {
+	resolution, err := e.resolveEdges(ctx, frame, state)
+	if err != nil {
+		return err
+	}
+
+	// Handle immediate transitions (single matched conditional edge)
+	if len(resolution.immediate) > 0 {
+		e.enqueueFrames(resolution.immediate, resolution.prepend)
+		return nil
+	}
+
+	edges := resolution.fanOut
+
+	// Serial mode: enqueue edges sequentially
+	if !e.graph.parallel {
+		e.fanOutSerial(frame, edges)
+		return nil
+	}
+
+	// Single edge: no need for parallel execution
+	if len(edges) == 1 {
+		e.enqueue(graphFrame[S]{
+			node:         edges[0].to,
+			state:        state,
+			hasState:     true,
+			allowRevisit: frame.allowRevisit,
+		})
+		return nil
+	}
+
+	// Multiple edges: execute in parallel
+	branchState, err := e.fanOutParallel(ctx, frame, state, edges)
+	if err != nil {
+		return err
+	}
+	e.globalState = branchState
+	return nil
 }
 
 func (e *graphExecutor[S]) stateFor(frame graphFrame[S]) S {
@@ -316,43 +374,64 @@ func (e *graphExecutor[S]) resolveEdges(ctx context.Context, frame graphFrame[S]
 		return edgeResolution[S]{}, fmt.Errorf("graph: no outgoing edges from node %s", frame.node)
 	}
 
-	hasConditional := false
-	allConditional := true
-	for _, edge := range edges {
-		if edge.condition != nil {
-			hasConditional = true
-		} else {
-			allConditional = false
-		}
-	}
+	// Classify edges: all conditional, all unconditional, or mixed
+	conditionalEdges, unconditionalEdges := e.classifyEdges(edges)
 
-	if !hasConditional {
+	// Case 1: All edges are unconditional - fan out to all
+	if len(conditionalEdges) == 0 {
 		return edgeResolution[S]{fanOut: edges}, nil
 	}
 
-	if allConditional {
-		matched := make([]conditionalEdge[S], 0, len(edges))
-		for _, edge := range edges {
-			if edge.condition(ctx, state) {
-				matched = append(matched, edge)
-			}
-		}
-		if len(matched) == 0 {
-			return edgeResolution[S]{}, fmt.Errorf("graph: no condition matched for edges from node %s", frame.node)
-		}
-		if len(matched) == 1 {
-			return edgeResolution[S]{
-				immediate: []graphFrame[S]{{
-					node:         matched[0].to,
-					state:        state,
-					hasState:     true,
-					allowRevisit: true,
-				}},
-			}, nil
-		}
-		return edgeResolution[S]{fanOut: matched}, nil
+	// Case 2: All edges are conditional - evaluate and fan out to matches
+	if len(unconditionalEdges) == 0 {
+		return e.resolveAllConditional(ctx, state, conditionalEdges, frame.node)
 	}
 
+	// Case 3: Mixed edges - evaluate in order, first match wins (conditional or unconditional)
+	return e.resolveMixed(ctx, state, edges)
+}
+
+// classifyEdges separates edges into conditional and unconditional
+func (e *graphExecutor[S]) classifyEdges(edges []conditionalEdge[S]) (conditional, unconditional []conditionalEdge[S]) {
+	for _, edge := range edges {
+		if edge.condition != nil {
+			conditional = append(conditional, edge)
+		} else {
+			unconditional = append(unconditional, edge)
+		}
+	}
+	return
+}
+
+// resolveAllConditional handles the case where all edges are conditional
+func (e *graphExecutor[S]) resolveAllConditional(ctx context.Context, state S, edges []conditionalEdge[S], nodeName string) (edgeResolution[S], error) {
+	matched := make([]conditionalEdge[S], 0, len(edges))
+	for _, edge := range edges {
+		if edge.condition(ctx, state) {
+			matched = append(matched, edge)
+		}
+	}
+	if len(matched) == 0 {
+		return edgeResolution[S]{}, fmt.Errorf("graph: no condition matched for edges from node %s", nodeName)
+	}
+	// Single match - take it immediately
+	if len(matched) == 1 {
+		return edgeResolution[S]{
+			immediate: []graphFrame[S]{{
+				node:         matched[0].to,
+				state:        state,
+				hasState:     true,
+				allowRevisit: true,
+			}},
+		}, nil
+	}
+	// Multiple matches - fan out
+	return edgeResolution[S]{fanOut: matched}, nil
+}
+
+// resolveMixed handles the case where edges are a mix of conditional and unconditional
+// First match wins (conditional edges are checked first, then unconditional)
+func (e *graphExecutor[S]) resolveMixed(ctx context.Context, state S, edges []conditionalEdge[S]) (edgeResolution[S], error) {
 	for _, edge := range edges {
 		if edge.condition == nil || edge.condition(ctx, state) {
 			return edgeResolution[S]{
@@ -366,8 +445,7 @@ func (e *graphExecutor[S]) resolveEdges(ctx context.Context, frame graphFrame[S]
 			}, nil
 		}
 	}
-
-	return edgeResolution[S]{}, fmt.Errorf("graph: no condition matched for edges from node %s", frame.node)
+	return edgeResolution[S]{}, fmt.Errorf("graph: no condition matched for edges from node %s", edges[0].to)
 }
 
 func (e *graphExecutor[S]) fanOutSerial(frame graphFrame[S], edges []conditionalEdge[S]) {

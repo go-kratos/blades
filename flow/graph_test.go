@@ -315,46 +315,55 @@ func TestGraph_ConditionalEdges_Loop(t *testing.T) {
 func TestGraph_DuplicateOperations(t *testing.T) {
 	t.Run("duplicate node", func(t *testing.T) {
 		g := NewGraph[[]string]()
-		if err := g.AddNode("A", appendHandler("A")); err != nil {
-			t.Fatalf("unexpected error adding node: %v", err)
-		}
-		if err := g.AddNode("A", appendHandler("A")); err == nil || !strings.Contains(err.Error(), "already exists") {
+		g.AddNode("A", appendHandler("A"))
+		g.AddNode("A", appendHandler("A"))
+		g.SetEntryPoint("A").SetFinishPoint("A")
+
+		_, err := g.Compile()
+		if err == nil || !strings.Contains(err.Error(), "already exists") {
 			t.Fatalf("expected duplicate node error, got %v", err)
 		}
 	})
 
 	t.Run("duplicate edge", func(t *testing.T) {
 		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.AddNode("B", appendHandler("B"))
-		if err := g.AddEdge("A", "B"); err != nil {
-			t.Fatalf("unexpected error adding edge: %v", err)
-		}
-		if err := g.AddEdge("A", "B"); err == nil || !strings.Contains(err.Error(), "already exists") {
+		g.AddNode("A", appendHandler("A")).
+			AddNode("B", appendHandler("B")).
+			AddEdge("A", "B").
+			AddEdge("A", "B"). // duplicate
+			SetEntryPoint("A").
+			SetFinishPoint("B")
+
+		_, err := g.Compile()
+		if err == nil || !strings.Contains(err.Error(), "already exists") {
 			t.Fatalf("expected duplicate edge error, got %v", err)
 		}
 	})
 
 	t.Run("duplicate entry point", func(t *testing.T) {
 		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.AddNode("B", appendHandler("B"))
-		if err := g.SetEntryPoint("A"); err != nil {
-			t.Fatalf("unexpected error setting entry point: %v", err)
-		}
-		if err := g.SetEntryPoint("B"); err == nil || !strings.Contains(err.Error(), "already set") {
+		g.AddNode("A", appendHandler("A")).
+			AddNode("B", appendHandler("B")).
+			SetEntryPoint("A").
+			SetEntryPoint("B"). // duplicate
+			SetFinishPoint("A")
+
+		_, err := g.Compile()
+		if err == nil || !strings.Contains(err.Error(), "already set") {
 			t.Fatalf("expected duplicate entry point error, got %v", err)
 		}
 	})
 
 	t.Run("duplicate finish point", func(t *testing.T) {
 		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.AddNode("B", appendHandler("B"))
-		if err := g.SetFinishPoint("A"); err != nil {
-			t.Fatalf("unexpected error setting finish point: %v", err)
-		}
-		if err := g.SetFinishPoint("B"); err == nil || !strings.Contains(err.Error(), "already set") {
+		g.AddNode("A", appendHandler("A")).
+			AddNode("B", appendHandler("B")).
+			SetEntryPoint("A").
+			SetFinishPoint("A").
+			SetFinishPoint("B") // duplicate
+
+		_, err := g.Compile()
+		if err == nil || !strings.Contains(err.Error(), "already set") {
 			t.Fatalf("expected duplicate finish point error, got %v", err)
 		}
 	})
