@@ -9,4 +9,6 @@ var (
     ErrMissingFinalResponse = errors.New("stream ended without a final response")
     // ErrConfirmationDenied is returned when confirmation middleware denies execution.
     ErrConfirmationDenied = errors.New("confirmation denied")
+    // ErrEvaluationFailed is returned when evaluation middleware fails the output.
+    ErrEvaluationFailed = errors.New("evaluation failed")
 )
