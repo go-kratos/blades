@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-kratos/blades/flow"
+	"github.com/go-kratos/blades/graph"
 )
 
 func main() {
@@ -29,18 +29,18 @@ const (
 func runLoopExample() {
 	const maxRevisions = 3
 
-	g := flow.NewGraph(flow.WithParallel(false))
-	g.AddNode("outline", func(ctx context.Context, state flow.State) (flow.State, error) {
+	g := graph.NewGraph(graph.WithParallel(false))
+	g.AddNode("outline", func(ctx context.Context, state graph.State) (graph.State, error) {
 		next := state.Clone()
 		if _, ok := next[stateKeyDraft]; !ok {
 			next[stateKeyDraft] = "Outline TODO: add twist."
 		}
 		return next, nil
 	})
-	g.AddNode("review", func(ctx context.Context, state flow.State) (flow.State, error) {
+	g.AddNode("review", func(ctx context.Context, state graph.State) (graph.State, error) {
 		return state.Clone(), nil
 	})
-	g.AddNode("revise", func(ctx context.Context, state flow.State) (flow.State, error) {
+	g.AddNode("revise", func(ctx context.Context, state graph.State) (graph.State, error) {
 		next := state.Clone()
 		revision, _ := next[stateKeyRevision].(int)
 		draft, _ := next[stateKeyDraft].(string)
@@ -58,7 +58,7 @@ func runLoopExample() {
 		next[stateKeyDraft] = draft
 		return next, nil
 	})
-	g.AddNode("publish", func(ctx context.Context, state flow.State) (flow.State, error) {
+	g.AddNode("publish", func(ctx context.Context, state graph.State) (graph.State, error) {
 		revision, _ := state[stateKeyRevision].(int)
 		draft, _ := state[stateKeyDraft].(string)
 		fmt.Printf("Final draft after %d revision(s): %s\n", revision, draft)
@@ -66,12 +66,12 @@ func runLoopExample() {
 	})
 
 	g.AddEdge("outline", "review")
-	g.AddEdge("review", "revise", flow.WithEdgeCondition(func(_ context.Context, state flow.State) bool {
+	g.AddEdge("review", "revise", graph.WithEdgeCondition(func(_ context.Context, state graph.State) bool {
 		draft, _ := state[stateKeyDraft].(string)
 		revision, _ := state[stateKeyRevision].(int)
 		return strings.Contains(draft, "TODO") && revision < maxRevisions
 	}))
-	g.AddEdge("review", "publish", flow.WithEdgeCondition(func(_ context.Context, state flow.State) bool {
+	g.AddEdge("review", "publish", graph.WithEdgeCondition(func(_ context.Context, state graph.State) bool {
 		draft, _ := state[stateKeyDraft].(string)
 		revision, _ := state[stateKeyRevision].(int)
 		return !strings.Contains(draft, "TODO") || revision >= maxRevisions
@@ -86,7 +86,7 @@ func runLoopExample() {
 		log.Fatal(err)
 	}
 
-	_, err = handler(context.Background(), flow.State{})
+	_, err = handler(context.Background(), graph.State{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -101,11 +101,11 @@ const (
 )
 
 func runParallelExample() {
-	g := flow.NewGraph()
+	g := graph.NewGraph()
 
 	// simple helper to log execution order
-	logNode := func(name string) flow.GraphHandler {
-		return func(ctx context.Context, state flow.State) (flow.State, error) {
+	logNode := func(name string) graph.GraphHandler {
+		return func(ctx context.Context, state graph.State) (graph.State, error) {
 			next := state.Clone()
 			fmt.Printf("node %s start executing\n	", name)
 			if strings.HasPrefix(name, "branch_") {
@@ -153,7 +153,7 @@ func runParallelExample() {
 		log.Fatal(err)
 	}
 
-	final, err := handler(context.Background(), flow.State{})
+	final, err := handler(context.Background(), graph.State{})
 	if err != nil {
 		log.Fatal(err)
 	}

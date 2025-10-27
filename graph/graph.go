@@ -1,4 +1,4 @@
-package flow
+package graph
 
 import (
 	"context"
@@ -538,4 +538,61 @@ func WithParallel(enabled bool) Option {
 	return func(g *Graph) {
 		g.parallel = enabled
 	}
+}
+
+// mergeStates clones the base state (if provided) and merges the updates in order.
+func mergeStates(base State, updates ...State) State {
+	merged := State{}
+	if base != nil {
+		merged = base.Clone()
+	}
+	for _, update := range updates {
+		if update == nil {
+			continue
+		}
+		for k, v := range update {
+			if existing, ok := merged[k]; ok {
+				merged[k] = mergeValues(existing, v)
+				continue
+			}
+			merged[k] = v
+		}
+	}
+	return merged
+}
+
+func mergeValues(existing, update any) any {
+	if existing == nil {
+		return update
+	}
+	switch ex := existing.(type) {
+	case map[string]any:
+		up, ok := update.(map[string]any)
+		if !ok {
+			return update
+		}
+		for k, v := range up {
+			ex[k] = v
+		}
+		return ex
+	case []any:
+		switch up := update.(type) {
+		case []any:
+			return append(ex, up...)
+		default:
+			return update
+		}
+	case []string:
+		if up, ok := update.([]string); ok {
+			return append(ex, up...)
+		}
+		return update
+	case []int:
+		if up, ok := update.([]int); ok {
+			return append(ex, up...)
+		}
+		return update
+	default:
+	}
+	return update
 }
