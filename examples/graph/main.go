@@ -21,46 +21,60 @@ func main() {
 
 // --- Loop example ---------------------------------------------------------
 
-type loopState struct {
-	Revision int
-	Draft    string
-}
+const (
+	stateKeyRevision = "revision"
+	stateKeyDraft    = "draft"
+)
 
 func runLoopExample() {
 	const maxRevisions = 3
 
-	g := flow.NewGraph[loopState](flow.WithParallel[loopState](false))
-	g.AddNode("outline", func(ctx context.Context, state loopState) (loopState, error) {
-		if state.Draft == "" {
-			state.Draft = "Outline TODO: add twist."
+	g := flow.NewGraph(flow.WithParallel(false))
+	g.AddNode("outline", func(ctx context.Context, state flow.State) (flow.State, error) {
+		next := state.Clone()
+		if _, ok := next[stateKeyDraft]; !ok {
+			next[stateKeyDraft] = "Outline TODO: add twist."
 		}
-		return state, nil
+		return next, nil
 	})
-	g.AddNode("review", func(ctx context.Context, state loopState) (loopState, error) {
-		return state, nil
+	g.AddNode("review", func(ctx context.Context, state flow.State) (flow.State, error) {
+		return state.Clone(), nil
 	})
-	g.AddNode("revise", func(ctx context.Context, state loopState) (loopState, error) {
-		state.Revision++
-		state.Draft = strings.Replace(state.Draft, "TODO: add twist.", "A surprise reveal changes everything.", 1)
-		switch state.Revision {
+	g.AddNode("revise", func(ctx context.Context, state flow.State) (flow.State, error) {
+		next := state.Clone()
+		revision, _ := next[stateKeyRevision].(int)
+		draft, _ := next[stateKeyDraft].(string)
+
+		revision++
+		draft = strings.Replace(draft, "TODO: add twist.", "A surprise reveal changes everything.", 1)
+		switch revision {
 		case 1:
-			state.Draft += " TODO: refine ending."
+			draft += " TODO: refine ending."
 		case 2:
-			state.Draft = strings.Replace(state.Draft, " TODO: refine ending.", " An epilogue wraps the journey.", 1)
+			draft = strings.Replace(draft, " TODO: refine ending.", " An epilogue wraps the journey.", 1)
 		}
-		return state, nil
+
+		next[stateKeyRevision] = revision
+		next[stateKeyDraft] = draft
+		return next, nil
 	})
-	g.AddNode("publish", func(ctx context.Context, state loopState) (loopState, error) {
-		fmt.Printf("Final draft after %d revision(s): %s\n", state.Revision, state.Draft)
-		return state, nil
+	g.AddNode("publish", func(ctx context.Context, state flow.State) (flow.State, error) {
+		revision, _ := state[stateKeyRevision].(int)
+		draft, _ := state[stateKeyDraft].(string)
+		fmt.Printf("Final draft after %d revision(s): %s\n", revision, draft)
+		return state.Clone(), nil
 	})
 
 	g.AddEdge("outline", "review")
-	g.AddEdge("review", "revise", flow.WithEdgeCondition(func(_ context.Context, state loopState) bool {
-		return strings.Contains(state.Draft, "TODO") && state.Revision < maxRevisions
+	g.AddEdge("review", "revise", flow.WithEdgeCondition(func(_ context.Context, state flow.State) bool {
+		draft, _ := state[stateKeyDraft].(string)
+		revision, _ := state[stateKeyRevision].(int)
+		return strings.Contains(draft, "TODO") && revision < maxRevisions
 	}))
-	g.AddEdge("review", "publish", flow.WithEdgeCondition(func(_ context.Context, state loopState) bool {
-		return !strings.Contains(state.Draft, "TODO") || state.Revision >= maxRevisions
+	g.AddEdge("review", "publish", flow.WithEdgeCondition(func(_ context.Context, state flow.State) bool {
+		draft, _ := state[stateKeyDraft].(string)
+		revision, _ := state[stateKeyRevision].(int)
+		return !strings.Contains(draft, "TODO") || revision >= maxRevisions
 	}))
 	g.AddEdge("revise", "review")
 
@@ -72,7 +86,7 @@ func runLoopExample() {
 		log.Fatal(err)
 	}
 
-	_, err = handler(context.Background(), loopState{})
+	_, err = handler(context.Background(), flow.State{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -80,37 +94,38 @@ func runLoopExample() {
 
 // --- Parallel example -----------------------------------------------------
 
-type parallelState struct {
-	NodeASteps    []string
-	NodeBSteps    []string
-	NodeJoinSteps []string
-}
+const (
+	stateKeyNodeA    = "node_a_steps"
+	stateKeyNodeB    = "node_b_steps"
+	stateKeyNodeJoin = "node_join_steps"
+)
 
 func runParallelExample() {
-	g := flow.NewGraph[*parallelState](flow.WithParallel[*parallelState](false))
+	g := flow.NewGraph()
 
 	// simple helper to log execution order
-	logNode := func(name string) flow.GraphHandler[*parallelState] {
-
-		return func(ctx context.Context, state *parallelState) (*parallelState, error) {
+	logNode := func(name string) flow.GraphHandler {
+		return func(ctx context.Context, state flow.State) (flow.State, error) {
+			next := state.Clone()
 			fmt.Printf("node %s start executing\n	", name)
 			if strings.HasPrefix(name, "branch_") {
 				t := time.Millisecond * time.Duration(rand.Int63n(250))
 				time.Sleep(t)
 				fmt.Printf("node %s executed, sleep %d ms\n	", name, t.Milliseconds())
-
 			}
 			switch name {
 			case "branch_a":
-				state.NodeASteps = append(state.NodeASteps, name)
+				next[stateKeyNodeA] = appendString(next[stateKeyNodeA], name)
 			case "branch_b":
-				state.NodeBSteps = append(state.NodeBSteps, name)
+				next[stateKeyNodeB] = appendString(next[stateKeyNodeB], name)
 			case "join":
-				state.NodeJoinSteps = append(state.NodeJoinSteps, state.NodeASteps...)
-				state.NodeJoinSteps = append(state.NodeJoinSteps, state.NodeBSteps...)
+				var joined []string
+				joined = append(joined, getStringSlice(next[stateKeyNodeA])...)
+				joined = append(joined, getStringSlice(next[stateKeyNodeB])...)
+				next[stateKeyNodeJoin] = joined
 			}
 
-			return state, nil
+			return next, nil
 		}
 	}
 
@@ -138,9 +153,21 @@ func runParallelExample() {
 		log.Fatal(err)
 	}
 
-	final, err := handler(context.Background(), &parallelState{})
+	final, err := handler(context.Background(), flow.State{})
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("parallel example result: %v\n", final.NodeJoinSteps)
+	fmt.Printf("parallel example result: %v\n", getStringSlice(final[stateKeyNodeJoin]))
+}
+
+func appendString(value any, item string) []string {
+	slice := getStringSlice(value)
+	return append(slice, item)
+}
+
+func getStringSlice(value any) []string {
+	if slice, ok := value.([]string); ok {
+		return slice
+	}
+	return []string{}
 }

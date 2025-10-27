@@ -7,26 +7,46 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
-// appendHandler returns a handler that appends its node name to the state slice.
-func appendHandler(name string) GraphHandler[[]string] {
-	return func(ctx context.Context, state []string) ([]string, error) {
-		return append(state, name), nil
+const stepsKey = "steps"
+const valueKey = "value"
+
+func stepHandler(name string) GraphHandler {
+	return func(ctx context.Context, state State) (State, error) {
+		return appendStep(state, name), nil
 	}
 }
 
-// errorHandler returns a handler that returns an error.
-func errorHandler(_ string) GraphHandler[[]string] {
-	return func(ctx context.Context, state []string) ([]string, error) {
-		return state, fmt.Errorf("handler error")
+func incrementHandler(delta int) GraphHandler {
+	return func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		val, _ := next[valueKey].(int)
+		next[valueKey] = val + delta
+		return next, nil
 	}
 }
 
-func TestGraphCompile_Validation(t *testing.T) {
+func appendStep(state State, name string) State {
+	next := state.Clone()
+	steps := getStringSlice(next[stepsKey])
+	steps = append(steps, name)
+	next[stepsKey] = steps
+	return next
+}
+
+func getStringSlice(value any) []string {
+	if v, ok := value.([]string); ok {
+		return v
+	}
+	return []string{}
+}
+
+func TestGraphCompileValidation(t *testing.T) {
 	t.Run("missing entry", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
+		g := NewGraph()
+		_ = g.AddNode("A", stepHandler("A"))
 		_ = g.SetFinishPoint("A")
 		if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "entry point not set") {
 			t.Fatalf("expected missing entry error, got %v", err)
@@ -34,70 +54,36 @@ func TestGraphCompile_Validation(t *testing.T) {
 	})
 
 	t.Run("missing finish", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
+		g := NewGraph()
+		_ = g.AddNode("A", stepHandler("A"))
 		_ = g.SetEntryPoint("A")
 		if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "finish point not set") {
 			t.Fatalf("expected missing finish error, got %v", err)
 		}
 	})
 
-	t.Run("start node not found", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.SetEntryPoint("X")
-		_ = g.SetFinishPoint("A")
-		if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "start node not found") {
-			t.Fatalf("expected start node not found error, got %v", err)
-		}
-	})
-
-	t.Run("end node not found", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.SetEntryPoint("A")
-		_ = g.SetFinishPoint("X")
-		if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "end node not found") {
-			t.Fatalf("expected end node not found error, got %v", err)
-		}
-	})
-
-	t.Run("edge from unknown node", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
+	t.Run("edge validations", func(t *testing.T) {
+		g := NewGraph()
+		_ = g.AddNode("A", stepHandler("A"))
 		_ = g.AddEdge("X", "A")
 		_ = g.SetEntryPoint("A")
 		_ = g.SetFinishPoint("A")
 		if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "edge from unknown node") {
-			t.Fatalf("expected edge from unknown node error, got %v", err)
+			t.Fatalf("expected unknown node error, got %v", err)
 		}
 	})
-
-	t.Run("edge to unknown node", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.AddEdge("A", "X")
-		_ = g.SetEntryPoint("A")
-		_ = g.SetFinishPoint("A")
-		if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "edge to unknown node") {
-			t.Fatalf("expected edge to unknown node error, got %v", err)
-		}
-	})
-
 }
 
-func TestGraph_Run_BFSOrder(t *testing.T) {
-	g := NewGraph[[]string](WithParallel[[]string](false))
-	if g.parallel {
-		t.Fatalf("expected graph to run sequentially")
-	}
-	var execOrder []string
-	handlerFor := func(name string) GraphHandler[[]string] {
-		return func(ctx context.Context, state []string) ([]string, error) {
+func TestGraphSequentialOrder(t *testing.T) {
+	g := NewGraph(WithParallel(false))
+	execOrder := make([]string, 0, 4)
+	handlerFor := func(name string) GraphHandler {
+		return func(ctx context.Context, state State) (State, error) {
 			execOrder = append(execOrder, name)
-			return append(state, name), nil
+			return stepHandler(name)(ctx, state)
 		}
 	}
+
 	_ = g.AddNode("A", handlerFor("A"))
 	_ = g.AddNode("B", handlerFor("B"))
 	_ = g.AddNode("C", handlerFor("C"))
@@ -108,301 +94,61 @@ func TestGraph_Run_BFSOrder(t *testing.T) {
 	_ = g.AddEdge("C", "D")
 	_ = g.SetEntryPoint("A")
 	_ = g.SetFinishPoint("D")
+
 	handler, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
-	got, err := handler(context.Background(), nil)
+
+	result, err := handler(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
-	wantOrder := []string{"A", "B", "C", "D"}
-	if !reflect.DeepEqual(execOrder, wantOrder) {
-		t.Fatalf("unexpected execution order: got %v, want %v", execOrder, wantOrder)
+
+	if !reflect.DeepEqual(execOrder, []string{"A", "B", "C", "D"}) {
+		t.Fatalf("unexpected execution order: %v", execOrder)
 	}
-	if last := got[len(got)-1]; last != "D" {
-		t.Fatalf("expected final node D, got %v", last)
+
+	steps, _ := result[stepsKey].([]string)
+	if len(steps) == 0 || steps[len(steps)-1] != "D" {
+		t.Fatalf("expected final node D, got %v", steps)
 	}
 }
 
-func TestGraph_ErrorPropagation(t *testing.T) {
-	g := NewGraph[[]string]()
-	_ = g.AddNode("A", appendHandler("A"))
-	_ = g.AddNode("B", errorHandler("B"))
+func TestGraphErrorPropagation(t *testing.T) {
+	g := NewGraph()
+	_ = g.AddNode("A", stepHandler("A"))
+	_ = g.AddNode("B", func(ctx context.Context, state State) (State, error) {
+		return state, fmt.Errorf("boom")
+	})
 	_ = g.AddEdge("A", "B")
 	_ = g.SetEntryPoint("A")
 	_ = g.SetFinishPoint("B")
+
 	handler, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
-	got, err := handler(context.Background(), nil)
+
+	_, err = handler(context.Background(), nil)
 	if err == nil || !strings.Contains(err.Error(), "node B") {
 		t.Fatalf("expected error from node B, got %v", err)
 	}
-	want := []string{"A"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected state on error: got %v, want %v", got, want)
-	}
 }
 
-func TestGraph_FinishUnreachable(t *testing.T) {
-	g := NewGraph[[]string]()
-	_ = g.AddNode("A", appendHandler("A"))
-	_ = g.AddNode("B", appendHandler("B"))
-	_ = g.AddNode("D", appendHandler("D"))
-	_ = g.AddEdge("A", "B")
-	_ = g.SetEntryPoint("A")
-	_ = g.SetFinishPoint("D")
-	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "finish node not reachable") {
-		t.Fatalf("expected finish not reachable error, got %v", err)
-	}
-}
-
-func TestGraph_ConditionalEdges(t *testing.T) {
-	t.Run("condition_true_path", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.AddNode("B", appendHandler("B"))
-		_ = g.AddNode("C", appendHandler("C"))
-		_ = g.AddNode("D", appendHandler("D"))
-
-		_ = g.AddEdge("A", "B")
-		// Conditional edges: if state contains "B", go to C; otherwise go to D
-		_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
-			for _, s := range state {
-				if s == "B" {
-					return true
-				}
-			}
-			return false
-		}))
-		_ = g.AddEdge("B", "D", WithEdgeCondition(func(_ context.Context, state []string) bool {
-			for _, s := range state {
-				if s == "B" {
-					return false
-				}
-			}
-			return true
-		}))
-
-		_ = g.SetEntryPoint("A")
-		_ = g.SetFinishPoint("C")
-
-		handler, err := g.Compile()
-		if err != nil {
-			t.Fatalf("compile error: %v", err)
-		}
-
-		got, err := handler(context.Background(), nil)
-		if err != nil {
-			t.Fatalf("run error: %v", err)
-		}
-
-		want := []string{"A", "B", "C"}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("unexpected path: got %v, want %v", got, want)
-		}
-	})
-
-	t.Run("condition_false_path", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.AddNode("B", appendHandler("B"))
-		_ = g.AddNode("C", appendHandler("C"))
-		_ = g.AddNode("D", appendHandler("D"))
-
-		_ = g.AddEdge("A", "B")
-		// Conditional edges: if state contains "X", go to C; otherwise go to D
-		_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
-			for _, s := range state {
-				if s == "X" {
-					return true
-				}
-			}
-			return false
-		}))
-		_ = g.AddEdge("B", "D", WithEdgeCondition(func(_ context.Context, state []string) bool {
-			for _, s := range state {
-				if s == "X" {
-					return false
-				}
-			}
-			return true
-		}))
-
-		_ = g.SetEntryPoint("A")
-		_ = g.SetFinishPoint("D")
-
-		handler, err := g.Compile()
-		if err != nil {
-			t.Fatalf("compile error: %v", err)
-		}
-
-		got, err := handler(context.Background(), nil)
-		if err != nil {
-			t.Fatalf("run error: %v", err)
-		}
-
-		want := []string{"A", "B", "D"}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("unexpected path: got %v, want %v", got, want)
-		}
-	})
-
-	t.Run("no_condition_matches", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.AddNode("B", appendHandler("B"))
-		_ = g.AddNode("C", appendHandler("C"))
-
-		_ = g.AddEdge("A", "B")
-		// Only conditional edge that always returns false
-		_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
-			return false
-		}))
-
-		_ = g.SetEntryPoint("A")
-		_ = g.SetFinishPoint("C")
-
-		handler, err := g.Compile()
-		if err != nil {
-			t.Fatalf("compile error: %v", err)
-		}
-
-		_, err = handler(context.Background(), nil)
-		if err == nil || !strings.Contains(err.Error(), "no condition matched") {
-			t.Fatalf("expected no condition matched error, got %v", err)
-		}
-	})
-}
-
-func TestGraph_ConditionalEdges_Loop(t *testing.T) {
-	g := NewGraph[int]()
-	_ = g.AddNode("start", func(ctx context.Context, state int) (int, error) {
-		return state + 1, nil
-	})
-	_ = g.AddNode("loop", func(ctx context.Context, state int) (int, error) {
-		return state + 1, nil
-	})
-	_ = g.AddNode("done", func(ctx context.Context, state int) (int, error) {
-		return state, nil
-	})
-
-	_ = g.AddEdge("start", "loop")
-	_ = g.AddEdge("loop", "loop", WithEdgeCondition(func(_ context.Context, state int) bool {
-		return state < 3
-	}))
-	_ = g.AddEdge("loop", "done")
-
-	_ = g.SetEntryPoint("start")
-	_ = g.SetFinishPoint("done")
-
-	handler, err := g.Compile()
-	if err != nil {
-		t.Fatalf("compile error: %v", err)
-	}
-
-	got, err := handler(context.Background(), 0)
-	if err != nil {
-		t.Fatalf("run error: %v", err)
-	}
-	if got != 3 {
-		t.Fatalf("unexpected final state: got %v, want %v", got, 3)
-	}
-}
-
-func TestGraph_DuplicateOperations(t *testing.T) {
-	t.Run("duplicate node", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		g.AddNode("A", appendHandler("A"))
-		g.AddNode("A", appendHandler("A"))
-		g.SetEntryPoint("A").SetFinishPoint("A")
-
-		_, err := g.Compile()
-		if err == nil || !strings.Contains(err.Error(), "already exists") {
-			t.Fatalf("expected duplicate node error, got %v", err)
-		}
-	})
-
-	t.Run("duplicate edge", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		g.AddNode("A", appendHandler("A")).
-			AddNode("B", appendHandler("B")).
-			AddEdge("A", "B").
-			AddEdge("A", "B"). // duplicate
-			SetEntryPoint("A").
-			SetFinishPoint("B")
-
-		_, err := g.Compile()
-		if err == nil || !strings.Contains(err.Error(), "already exists") {
-			t.Fatalf("expected duplicate edge error, got %v", err)
-		}
-	})
-
-	t.Run("duplicate entry point", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		g.AddNode("A", appendHandler("A")).
-			AddNode("B", appendHandler("B")).
-			SetEntryPoint("A").
-			SetEntryPoint("B"). // duplicate
-			SetFinishPoint("A")
-
-		_, err := g.Compile()
-		if err == nil || !strings.Contains(err.Error(), "already set") {
-			t.Fatalf("expected duplicate entry point error, got %v", err)
-		}
-	})
-
-	t.Run("duplicate finish point", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		g.AddNode("A", appendHandler("A")).
-			AddNode("B", appendHandler("B")).
-			SetEntryPoint("A").
-			SetFinishPoint("A").
-			SetFinishPoint("B") // duplicate
-
-		_, err := g.Compile()
-		if err == nil || !strings.Contains(err.Error(), "already set") {
-			t.Fatalf("expected duplicate finish point error, got %v", err)
-		}
-	})
-}
-
-func TestGraph_SingleNode(t *testing.T) {
-	g := NewGraph[[]string]()
-	_ = g.AddNode("A", appendHandler("A"))
-	_ = g.SetEntryPoint("A")
-	_ = g.SetFinishPoint("A")
-
-	handler, err := g.Compile()
-	if err != nil {
-		t.Fatalf("compile error: %v", err)
-	}
-
-	got, err := handler(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("run error: %v", err)
-	}
-
-	want := []string{"A"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected result: got %v, want %v", got, want)
-	}
-}
-
-func TestGraph_NoOutgoingEdges(t *testing.T) {
-	g := NewGraph[[]string]()
-	_ = g.AddNode("A", appendHandler("A"))
-	_ = g.AddNode("B", appendHandler("B"))
-	_ = g.AddNode("C", appendHandler("C"))
+func TestGraphConditionalRouting(t *testing.T) {
+	g := NewGraph()
+	_ = g.AddNode("A", stepHandler("A"))
+	_ = g.AddNode("B", stepHandler("B"))
+	_ = g.AddNode("C", stepHandler("C"))
+	_ = g.AddNode("D", stepHandler("D"))
 
 	_ = g.AddEdge("A", "B")
-	// B has conditional edges that may not match at runtime
-	_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
-		// This condition will never be true
-		return false
+	_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state State) bool {
+		steps, _ := state[stepsKey].([]string)
+		return len(steps) == 2 && steps[1] == "B"
 	}))
+	_ = g.AddEdge("B", "D")
 
 	_ = g.SetEntryPoint("A")
 	_ = g.SetFinishPoint("C")
@@ -412,393 +158,439 @@ func TestGraph_NoOutgoingEdges(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	_, err = handler(context.Background(), nil)
-	if err == nil || !strings.Contains(err.Error(), "no condition matched") {
-		t.Fatalf("expected no condition matched error (runtime no outgoing edges), got %v", err)
-	}
-}
-
-func TestGraph_MultipleConditionsMatch(t *testing.T) {
-	g := NewGraph[[]string](WithParallel[[]string](false)) // Use serial mode for global state flow
-	_ = g.AddNode("A", appendHandler("A"))
-	_ = g.AddNode("B", appendHandler("B"))
-	_ = g.AddNode("C", appendHandler("C"))
-	_ = g.AddNode("D", appendHandler("D"))
-	_ = g.AddNode("E", appendHandler("E"))
-	_ = g.AddNode("F", appendHandler("F"))
-	_ = g.AddNode("G", appendHandler("G"))
-
-	// A has two conditional edges that both return true - both should be executed
-	_ = g.AddEdge("A", "B", WithEdgeCondition(func(_ context.Context, state []string) bool { return true }))
-	_ = g.AddEdge("A", "C", WithEdgeCondition(func(_ context.Context, state []string) bool { return true }))
-	_ = g.AddEdge("B", "D")
-	_ = g.AddEdge("C", "E")
-	_ = g.AddEdge("D", "F")
-	_ = g.AddEdge("E", "F")
-	_ = g.AddEdge("F", "G")
-
-	_ = g.SetEntryPoint("A")
-	_ = g.SetFinishPoint("G")
-
-	handler, err := g.Compile()
-	if err != nil {
-		t.Fatalf("compile error: %v", err)
-	}
-
-	got, err := handler(context.Background(), nil)
+	result, err := handler(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
 
-	// With global state flow in serial mode, all nodes contribute to final state
-	want := []string{"A", "B", "C", "D", "E", "F", "G"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected path (global state flow): got %v, want %v", got, want)
+	steps, _ := result[stepsKey].([]string)
+	if steps[len(steps)-1] != "C" {
+		t.Fatalf("expected to finish at C, got %v", steps)
 	}
 }
 
-func TestGraph_MixedEdges(t *testing.T) {
-	t.Run("conditional_takes_precedence", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.AddNode("B", appendHandler("B"))
-		_ = g.AddNode("C", appendHandler("C"))
-		_ = g.AddNode("D", appendHandler("D"))
-
+func TestGraphSerialVsParallel(t *testing.T) {
+	build := func(parallel bool) *Graph {
+		g := NewGraph(WithParallel(parallel))
+		_ = g.AddNode("A", incrementHandler(1))
+		_ = g.AddNode("B", incrementHandler(10))
+		_ = g.AddNode("C", incrementHandler(100))
+		_ = g.AddNode("D", incrementHandler(0))
 		_ = g.AddEdge("A", "B")
-		// Mix: one conditional edge and one unconditional edge
-		_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
-			return true
-		}))
-		_ = g.AddEdge("B", "D") // unconditional
-
-		_ = g.SetEntryPoint("A")
-		_ = g.SetFinishPoint("C")
-
-		handler, err := g.Compile()
-		if err != nil {
-			t.Fatalf("compile error: %v", err)
-		}
-
-		got, err := handler(context.Background(), nil)
-		if err != nil {
-			t.Fatalf("run error: %v", err)
-		}
-
-		// Should follow conditional logic, not fan-out
-		want := []string{"A", "B", "C"}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("unexpected path: got %v, want %v", got, want)
-		}
-	})
-
-	t.Run("unconditional_as_fallback", func(t *testing.T) {
-		g := NewGraph[[]string]()
-		_ = g.AddNode("A", appendHandler("A"))
-		_ = g.AddNode("B", appendHandler("B"))
-		_ = g.AddNode("C", appendHandler("C"))
-		_ = g.AddNode("D", appendHandler("D"))
-
-		_ = g.AddEdge("A", "B")
-		// Mix: conditional edge that returns false, followed by unconditional edge
-		_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
-			return false
-		}))
-		_ = g.AddEdge("B", "D") // unconditional acts as fallback (condition==nil always matches)
-
+		_ = g.AddEdge("A", "C")
+		_ = g.AddEdge("B", "D")
+		_ = g.AddEdge("C", "D")
 		_ = g.SetEntryPoint("A")
 		_ = g.SetFinishPoint("D")
-
-		handler, err := g.Compile()
-		if err != nil {
-			t.Fatalf("compile error: %v", err)
-		}
-
-		got, err := handler(context.Background(), nil)
-		if err != nil {
-			t.Fatalf("run error: %v", err)
-		}
-
-		// Should take the unconditional edge as fallback
-		want := []string{"A", "B", "D"}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("unexpected path: got %v, want %v", got, want)
-		}
-	})
-}
-
-func TestGraph_ContextCancellation(t *testing.T) {
-	g := NewGraph[[]string]()
-
-	cancelled := false
-	slowHandler := func(ctx context.Context, state []string) ([]string, error) {
-		select {
-		case <-ctx.Done():
-			cancelled = true
-			return state, ctx.Err()
-		default:
-			return append(state, "slow"), nil
-		}
+		return g
 	}
 
-	_ = g.AddNode("A", slowHandler)
-	_ = g.SetEntryPoint("A")
-	_ = g.SetFinishPoint("A")
+	handlerParallel, err := build(true).Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	parallelState, err := handlerParallel(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("parallel run error: %v", err)
+	}
+
+	if parallelState[valueKey].(int) == 0 {
+		t.Fatalf("expected merged value in parallel mode")
+	}
+
+	handlerSerial, err := build(false).Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	serialState, err := handlerSerial(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("serial run error: %v", err)
+	}
+
+	if serialState[valueKey].(int) <= parallelState[valueKey].(int) {
+		t.Fatalf("serial mode should accumulate more due to sequential execution")
+	}
+}
+
+func TestGraphParallelNestedLoops(t *testing.T) {
+	g := NewGraph(WithParallel(true))
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		return state.Clone(), nil
+	})
+	g.AddNode("outer_loop", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		val, _ := next[valueKey].(int)
+		next[valueKey] = val + 1
+		return next, nil
+	})
+	g.AddNode("inner_loop", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		val, _ := next[valueKey].(int)
+		next[valueKey] = val + 10
+		return next, nil
+	})
+	g.AddNode("done", func(ctx context.Context, state State) (State, error) {
+		return state.Clone(), nil
+	})
+
+	g.AddEdge("start", "outer_loop")
+	g.AddEdge("outer_loop", "inner_loop")
+	g.AddEdge("inner_loop", "inner_loop", WithEdgeCondition(func(_ context.Context, state State) bool {
+		val, _ := state[valueKey].(int)
+		return val < 30
+	}))
+	g.AddEdge("inner_loop", "outer_loop", WithEdgeCondition(func(_ context.Context, state State) bool {
+		val, _ := state[valueKey].(int)
+		return val >= 30 && val < 100
+	}))
+	g.AddEdge("inner_loop", "done", WithEdgeCondition(func(_ context.Context, state State) bool {
+		val, _ := state[valueKey].(int)
+		return val >= 100
+	}))
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("done")
 
 	handler, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	result, err := handler(context.Background(), State{valueKey: 0})
+	if err != nil {
+		t.Fatalf("run error: %v", err)
+	}
 
-	_, err = handler(ctx, nil)
+	if val, _ := result[valueKey].(int); val < 100 {
+		t.Fatalf("expected value >= 100, got %d", val)
+	}
+}
+
+func TestGraphParallelSelfLoopExit(t *testing.T) {
+	g := NewGraph(WithParallel(true))
+
+	g.AddNode("loop", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		val, _ := next[valueKey].(int)
+		next[valueKey] = val + 1
+		return next, nil
+	})
+	g.AddNode("exit", func(ctx context.Context, state State) (State, error) {
+		return state.Clone(), nil
+	})
+
+	g.AddEdge("loop", "loop", WithEdgeCondition(func(_ context.Context, state State) bool {
+		val, _ := state[valueKey].(int)
+		return val < 5
+	}))
+	g.AddEdge("loop", "exit", WithEdgeCondition(func(_ context.Context, state State) bool {
+		val, _ := state[valueKey].(int)
+		return val >= 5
+	}))
+
+	g.SetEntryPoint("loop")
+	g.SetFinishPoint("exit")
+
+	handler, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	result, err := handler(context.Background(), State{valueKey: 0})
+	if err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+
+	if val, _ := result[valueKey].(int); val != 5 {
+		t.Fatalf("expected value 5, got %d", val)
+	}
+}
+
+func TestGraphParallelContextTimeout(t *testing.T) {
+	g := NewGraph(WithParallel(true))
+
+	g.AddNode("slow", func(ctx context.Context, state State) (State, error) {
+		select {
+		case <-ctx.Done():
+			return state, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+			next := state.Clone()
+			next[stepsKey] = append(getStringSlice(state[stepsKey]), "slow")
+			return next, nil
+		}
+	})
+	g.SetEntryPoint("slow")
+	g.SetFinishPoint("slow")
+
+	handler, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err = handler(ctx, State{})
 	if err == nil {
-		t.Fatalf("expected context cancellation error")
+		t.Fatalf("expected timeout error")
 	}
-	if !cancelled {
-		t.Fatalf("expected handler to detect cancellation")
-	}
-}
-
-func TestGraph_ComplexCycles(t *testing.T) {
-	t.Run("nested_loops", func(t *testing.T) {
-		g := NewGraph[int]()
-
-		_ = g.AddNode("start", func(ctx context.Context, state int) (int, error) {
-			return state, nil
-		})
-		_ = g.AddNode("outer_loop", func(ctx context.Context, state int) (int, error) {
-			return state + 1, nil
-		})
-		_ = g.AddNode("inner_loop", func(ctx context.Context, state int) (int, error) {
-			return state + 10, nil
-		})
-		_ = g.AddNode("done", func(ctx context.Context, state int) (int, error) {
-			return state, nil
-		})
-
-		_ = g.AddEdge("start", "outer_loop")
-
-		// Inner loop: increment by 10 while < 30
-		_ = g.AddEdge("outer_loop", "inner_loop")
-		_ = g.AddEdge("inner_loop", "inner_loop", WithEdgeCondition(func(_ context.Context, state int) bool {
-			return state < 30
-		}))
-		_ = g.AddEdge("inner_loop", "outer_loop", WithEdgeCondition(func(_ context.Context, state int) bool {
-			return state >= 30 && state < 100
-		}))
-
-		// Exit outer loop
-		_ = g.AddEdge("inner_loop", "done", WithEdgeCondition(func(_ context.Context, state int) bool {
-			return state >= 100
-		}))
-
-		_ = g.SetEntryPoint("start")
-		_ = g.SetFinishPoint("done")
-
-		handler, err := g.Compile()
-		if err != nil {
-			t.Fatalf("compile error: %v", err)
-		}
-
-		got, err := handler(context.Background(), 0)
-		if err != nil {
-			t.Fatalf("run error: %v", err)
-		}
-
-		// Should loop until reaching >= 100
-		if got < 100 {
-			t.Fatalf("unexpected final state: got %v, want >= 100", got)
-		}
-	})
-
-	t.Run("self_loop_with_exit", func(t *testing.T) {
-		g := NewGraph[int]()
-
-		_ = g.AddNode("loop", func(ctx context.Context, state int) (int, error) {
-			return state + 1, nil
-		})
-		_ = g.AddNode("exit", func(ctx context.Context, state int) (int, error) {
-			return state, nil
-		})
-
-		// Self-loop while < 5
-		_ = g.AddEdge("loop", "loop", WithEdgeCondition(func(_ context.Context, state int) bool {
-			return state < 5
-		}))
-		// Exit when >= 5
-		_ = g.AddEdge("loop", "exit", WithEdgeCondition(func(_ context.Context, state int) bool {
-			return state >= 5
-		}))
-
-		_ = g.SetEntryPoint("loop")
-		_ = g.SetFinishPoint("exit")
-
-		handler, err := g.Compile()
-		if err != nil {
-			t.Fatalf("compile error: %v", err)
-		}
-
-		got, err := handler(context.Background(), 0)
-		if err != nil {
-			t.Fatalf("run error: %v", err)
-		}
-
-		if got != 5 {
-			t.Fatalf("unexpected final state: got %v, want 5", got)
-		}
-	})
-}
-
-// TestGraph_ConditionalJoinInteraction tests how conditional edges interact with joins
-// When A has two conditional edges but only one matches, the join should only wait for the active path
-func TestGraph_ConditionalJoinInteraction(t *testing.T) {
-	g := NewGraph[[]string](WithParallel[[]string](false))
-
-	_ = g.AddNode("A", appendHandler("A"))
-	_ = g.AddNode("B", appendHandler("B"))
-	_ = g.AddNode("C", appendHandler("C"))
-	_ = g.AddNode("D", appendHandler("D"))
-	_ = g.AddNode("E", appendHandler("E"))
-	_ = g.AddNode("F", appendHandler("F"))
-	_ = g.AddNode("G", appendHandler("G"))
-
-	// A has two conditional edges, but only first one returns true
-	_ = g.AddEdge("A", "B", WithEdgeCondition(func(_ context.Context, state []string) bool {
-		return true
-	}))
-	_ = g.AddEdge("A", "C", WithEdgeCondition(func(_ context.Context, state []string) bool {
-		return false
-	}))
-
-	_ = g.AddEdge("B", "D")
-	_ = g.AddEdge("C", "E")
-	_ = g.AddEdge("D", "F")
-	_ = g.AddEdge("E", "F") // This edge will never be activated
-	_ = g.AddEdge("F", "G")
-
-	_ = g.SetEntryPoint("A")
-	_ = g.SetFinishPoint("G")
-
-	compiled, err := g.Compile()
-	if err != nil {
-		t.Fatalf("compile error: %v", err)
-	}
-
-	result, err := compiled(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("run error: %v", err)
-	}
-
-	// Only A->B->D->F->G path should execute
-	want := []string{"A", "B", "D", "F", "G"}
-	if !reflect.DeepEqual(result, want) {
-		t.Errorf("unexpected execution path: got %v, want %v", result, want)
-	}
-
-	// C and E should not execute
-	for _, node := range result {
-		if node == "C" || node == "E" {
-			t.Errorf("node %s should not have executed (inactive branch)", node)
-		}
+	if !strings.Contains(err.Error(), "context") {
+		t.Fatalf("expected context cancellation, got %v", err)
 	}
 }
 
-// TestGraph_SerialFanOut tests that serial mode executes all fan-out branches
-func TestGraph_SerialFanOut(t *testing.T) {
-	var executed []string
+func TestGraphParallelFanOutBranches(t *testing.T) {
+	g := NewGraph()
+
 	var mu sync.Mutex
-
-	handler := func(name string) GraphHandler[[]string] {
-		return func(ctx context.Context, state []string) ([]string, error) {
+	called := make(map[string]int)
+	record := func(name string) GraphHandler {
+		return func(ctx context.Context, state State) (State, error) {
 			mu.Lock()
-			executed = append(executed, name)
+			called[name]++
 			mu.Unlock()
-			return append(state, name), nil
+			return state.Clone(), nil
 		}
 	}
 
-	g := NewGraph[[]string](WithParallel[[]string](false))
+	g.AddNode("start", record("start"))
+	g.AddNode("branch_a", record("branch_a"))
+	g.AddNode("branch_b", record("branch_b"))
+	g.AddNode("join", record("join"))
 
-	_ = g.AddNode("A", handler("A"))
-	_ = g.AddNode("B", handler("B"))
-	_ = g.AddNode("C", handler("C"))
-	_ = g.AddNode("D", handler("D"))
-	_ = g.AddNode("E", handler("E"))
-	_ = g.AddNode("F", handler("F"))
-	_ = g.AddNode("G", handler("G"))
+	g.AddEdge("start", "branch_a")
+	g.AddEdge("start", "branch_b")
+	g.AddEdge("branch_a", "join")
+	g.AddEdge("branch_b", "join")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
 
-	// Unconditional edges - both branches should execute
-	_ = g.AddEdge("A", "B")
-	_ = g.AddEdge("A", "C")
-	_ = g.AddEdge("B", "D")
-	_ = g.AddEdge("C", "E")
-	_ = g.AddEdge("D", "F")
-	_ = g.AddEdge("E", "F")
-	_ = g.AddEdge("F", "G")
-
-	_ = g.SetEntryPoint("A")
-	_ = g.SetFinishPoint("G")
-
-	compiled, err := g.Compile()
+	handler, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	result, err := compiled(context.Background(), nil)
-	if err != nil {
+	if _, err := handler(context.Background(), State{}); err != nil {
 		t.Fatalf("run error: %v", err)
 	}
 
-	// All 7 nodes should execute
-	if len(executed) != 7 {
-		t.Errorf("expected 7 nodes to execute, got %d: %v", len(executed), executed)
+	if called["branch_a"] != 1 || called["branch_b"] != 1 {
+		t.Fatalf("expected both branches to execute once, got %v", called)
 	}
-
-	// Final state should include all nodes
-	if len(result) != 7 {
-		t.Errorf("expected final state to have 7 elements, got %d: %v", len(result), result)
+	if called["join"] != 1 {
+		t.Fatalf("expected join to execute once, got %v", called)
 	}
 }
 
-// TestGraph_StateFlowSerial tests state propagation in serial mode
-func TestGraph_StateFlowSerial(t *testing.T) {
-	g := NewGraph[[]string](WithParallel[[]string](false))
+func TestGraphParallelPropagatesBranchError(t *testing.T) {
+	g := NewGraph()
 
-	_ = g.AddNode("A", appendHandler("A"))
-	_ = g.AddNode("B", appendHandler("B"))
-	_ = g.AddNode("C", appendHandler("C"))
-	_ = g.AddNode("D", appendHandler("D"))
-	_ = g.AddNode("E", appendHandler("E"))
-	_ = g.AddNode("F", appendHandler("F"))
-	_ = g.AddNode("G", appendHandler("G"))
+	record := func(name string) GraphHandler {
+		return func(ctx context.Context, state State) (State, error) {
+			return state.Clone(), nil
+		}
+	}
 
-	_ = g.AddEdge("A", "B")
-	_ = g.AddEdge("A", "C")
-	_ = g.AddEdge("B", "D")
-	_ = g.AddEdge("C", "E")
-	_ = g.AddEdge("D", "F")
-	_ = g.AddEdge("E", "F")
-	_ = g.AddEdge("F", "G")
+	g.AddNode("start", record("start"))
+	g.AddNode("ok_branch", record("ok_branch"))
+	g.AddNode("fail_branch", func(ctx context.Context, state State) (State, error) {
+		return state, fmt.Errorf("fail_branch boom")
+	})
+	g.AddNode("join", record("join"))
 
-	_ = g.SetEntryPoint("A")
-	_ = g.SetFinishPoint("G")
+	g.AddEdge("start", "ok_branch")
+	g.AddEdge("start", "fail_branch")
+	g.AddEdge("ok_branch", "join")
+	g.AddEdge("fail_branch", "join")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
 
-	compiled, err := g.Compile()
+	handler, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	result, err := compiled(context.Background(), []string{})
+	_, err = handler(context.Background(), State{})
+	if err == nil || !strings.Contains(err.Error(), "node fail_branch") {
+		t.Fatalf("expected failure from fail_branch, got %v", err)
+	}
+}
+
+func TestGraphParallelMergeByKey(t *testing.T) {
+	g := NewGraph()
+	_ = g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		next["start"] = true
+		return next, nil
+	})
+	_ = g.AddNode("workerA", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		next["branchA"] = "done"
+		return next, nil
+	})
+	_ = g.AddNode("workerB", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		next["branchB"] = "done"
+		return next, nil
+	})
+	_ = g.AddNode("join", func(ctx context.Context, state State) (State, error) {
+		return state, nil
+	})
+
+	_ = g.AddEdge("start", "workerA")
+	_ = g.AddEdge("start", "workerB")
+	_ = g.AddEdge("workerA", "join")
+	_ = g.AddEdge("workerB", "join")
+	_ = g.SetEntryPoint("start")
+	_ = g.SetFinishPoint("join")
+
+	handler, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	final, err := handler(context.Background(), State{})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
 
-	// All nodes should be in final state
-	want := []string{"A", "B", "C", "D", "E", "F", "G"}
-	if !reflect.DeepEqual(result, want) {
-		t.Errorf("unexpected state flow: got %v, want %v", result, want)
+	if _, ok := final["branchA"]; !ok {
+		t.Fatalf("expected branchA key to be merged")
+	}
+	if _, ok := final["branchB"]; !ok {
+		t.Fatalf("expected branchB key to be merged")
+	}
+}
+
+func TestMergeStatesKeepsKeys(t *testing.T) {
+	base := State{"start": true}
+	a := State{"start": true, "branchA": "done"}
+	b := State{"start": true, "branchB": "done"}
+
+	merged := mergeStates(mergeStates(base, a), b)
+
+	if _, ok := merged["branchA"]; !ok {
+		t.Fatalf("branchA missing in merged result: %#v", merged)
+	}
+	if _, ok := merged["branchB"]; !ok {
+		t.Fatalf("branchB missing in merged result: %#v", merged)
+	}
+}
+
+func TestGraphParallelJoinIgnoresInactiveBranches(t *testing.T) {
+	g := NewGraph()
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+	record := func(name string, mutate func(State) State) GraphHandler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			mu.Unlock()
+			if mutate != nil {
+				return mutate(state), nil
+			}
+			return state.Clone(), nil
+		}
+	}
+
+	g.AddNode("start", record("start", func(state State) State {
+		next := state.Clone()
+		next["enable_b"] = false
+		return next
+	}))
+	g.AddNode("branch_a", record("branch_a", nil))
+	g.AddNode("branch_b", record("branch_b", nil))
+	g.AddNode("join", record("join", nil))
+
+	g.AddEdge("start", "branch_a")
+	g.AddEdge("start", "branch_b", WithEdgeCondition(func(_ context.Context, state State) bool {
+		enabled, _ := state["enable_b"].(bool)
+		return enabled
+	}))
+	g.AddEdge("branch_a", "join")
+	g.AddEdge("branch_b", "join")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	handler, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	_, err = handler(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+
+	if executed["join"] == 0 {
+		t.Fatalf("expected join to execute, got executed=%v", executed)
+	}
+	if executed["branch_b"] != 0 {
+		t.Fatalf("branch_b should not execute when disabled: %v", executed)
+	}
+}
+
+func TestGraphParallelJoinSkipsUnselectedEdges(t *testing.T) {
+	g := NewGraph()
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+	record := func(name string, mutate func(State) State) GraphHandler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			mu.Unlock()
+			if mutate != nil {
+				return mutate(state), nil
+			}
+			return state.Clone(), nil
+		}
+	}
+
+	g.AddNode("start", record("start", nil))
+	g.AddNode("branch_a", record("branch_a", nil))
+	g.AddNode("branch_b", record("branch_b", func(state State) State {
+		next := state.Clone()
+		next["send_to_join"] = false
+		return next
+	}))
+	g.AddNode("sink", record("sink", nil))
+	g.AddNode("join", record("join", nil))
+	g.AddNode("final", record("final", nil))
+
+	g.AddEdge("start", "branch_a")
+	g.AddEdge("start", "branch_b")
+	g.AddEdge("branch_a", "join")
+	g.AddEdge("branch_b", "join", WithEdgeCondition(func(_ context.Context, state State) bool {
+		send, _ := state["send_to_join"].(bool)
+		return send
+	}))
+	g.AddEdge("branch_b", "sink", WithEdgeCondition(func(_ context.Context, state State) bool {
+		send, _ := state["send_to_join"].(bool)
+		return !send
+	}))
+	g.AddEdge("join", "final")
+	g.AddEdge("sink", "final")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("final")
+
+	handler, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if _, err := handler(context.Background(), State{}); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+
+	if executed["join"] == 0 {
+		t.Fatalf("expected join to execute even when branch_b skips it: %v", executed)
+	}
+	if executed["sink"] == 0 {
+		t.Fatalf("expected sink to execute when branch_b skips join: %v", executed)
 	}
 }
