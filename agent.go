@@ -247,7 +247,6 @@ func (a *Agent) executeTools(ctx context.Context, message *Message) (*Message, e
 	toolMessage := &Message{ID: message.ID, Role: message.Role, Parts: message.Parts}
 	eg, ctx := errgroup.WithContext(ctx)
 	for i, part := range message.Parts {
-		i := i
 		switch v := any(part).(type) {
 		case ToolPart:
 			eg.Go(func() error {
