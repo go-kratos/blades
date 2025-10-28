@@ -15,6 +15,7 @@ type Executor struct {
 	visited     map[string]bool
 	finished    bool
 	finishState State
+	stepCount   int // tracks total number of steps executed
 }
 
 // Step represents a single execution step in the graph.
@@ -48,10 +49,18 @@ func NewExecutor(g *Graph) *Executor {
 // Execute runs the graph execution starting from the given state.
 func (e *Executor) Execute(ctx context.Context, state State) (State, error) {
 	for len(e.queue) > 0 {
+		// Check if we've exceeded the maximum number of steps
+		if e.stepCount >= e.graph.maxSteps {
+			return nil, fmt.Errorf("graph: exceeded maximum steps limit (%d)", e.graph.maxSteps)
+		}
+
 		step := e.dequeue()
 		if e.shouldSkip(step) {
 			continue
 		}
+
+		e.stepCount++
+
 		nextState, err := e.executeNode(ctx, step)
 		if err != nil {
 			return nil, err

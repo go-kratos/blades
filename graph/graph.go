@@ -22,6 +22,14 @@ func WithMiddleware(ms ...Middleware) Option {
 	}
 }
 
+// WithMaxSteps sets the maximum number of node execution steps allowed.
+// This prevents infinite loops in cyclic graphs. Defaults to 1000.
+func WithMaxSteps(maxSteps int) Option {
+	return func(g *Graph) {
+		g.maxSteps = maxSteps
+	}
+}
+
 // EdgeCondition is a function that determines if an edge should be followed based on the current state.
 type EdgeCondition func(ctx context.Context, state State) bool
 
@@ -48,6 +56,7 @@ type Graph struct {
 	entryPoint  string
 	finishPoint string
 	parallel    bool
+	maxSteps    int   // maximum number of node execution steps (default 1000)
 	middlewares []Middleware
 	err         error // accumulated error for builder pattern
 }
@@ -58,6 +67,7 @@ func NewGraph(opts ...Option) *Graph {
 		nodes:    make(map[string]Handler),
 		edges:    make(map[string][]conditionalEdge),
 		parallel: true,
+		maxSteps: 1000,
 	}
 	for _, opt := range opts {
 		if opt != nil {
