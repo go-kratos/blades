@@ -81,12 +81,12 @@ func runLoopExample() {
 	g.SetEntryPoint("outline")
 	g.SetFinishPoint("publish")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	_, err = handler(context.Background(), graph.State{})
+	_, err = executor.Execute(context.Background(), graph.State{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -148,12 +148,12 @@ func runParallelExample() {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("join")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	final, err := handler(context.Background(), graph.State{})
+	final, err := executor.Execute(context.Background(), graph.State{})
 	if err != nil {
 		log.Fatal(err)
 	}
