@@ -64,7 +64,7 @@ func main() {
 		blades.WithProvider(openai.NewChatProvider()),
 	)
 	promptTemplate, err := blades.NewPromptTemplate().
-		User("Please write a fairy tale about {{.topic}} for children，within {{.length}} words", tmp).Build()
+		User("Please write a fairy tale about {{.topic}} for children, within {{.length}} words", tmp).Build()
 	if err != nil {
 		panic(err)
 	}
