@@ -242,17 +242,11 @@ func (e *Executor) resolveMixed(ctx context.Context, state State, edges []condit
 
 func (e *Executor) fanOutSerial(step Step, edges []conditionalEdge) {
 	for _, edge := range edges {
-		e.waiting[edge.to]++
-	}
-	for _, edge := range edges {
-		e.waiting[edge.to]--
-		if e.waiting[edge.to] == 0 {
-			e.enqueue(Step{
-				node:         edge.to,
-				state:        nil, // Use latestState for serial execution
-				allowRevisit: step.allowRevisit,
-			})
-		}
+		e.enqueue(Step{
+			node:         edge.to,
+			state:        nil, // Use finishState for serial execution
+			allowRevisit: step.allowRevisit,
+		})
 	}
 }
 

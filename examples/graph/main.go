@@ -104,7 +104,7 @@ func runParallelExample() {
 	g := graph.NewGraph()
 
 	// simple helper to log execution order
-	logNode := func(name string) graph.GraphHandler {
+	logNode := func(name string) graph.Handler {
 		return func(ctx context.Context, state graph.State) (graph.State, error) {
 			next := state.Clone()
 			fmt.Printf("node %s start executing\n", name)
