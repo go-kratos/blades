@@ -8,21 +8,14 @@ import (
 
 // Sequential represents a sequence of Runnable runners that process input sequentially.
 type Sequential struct {
-	name    string
 	runners []blades.Runnable
 }
 
 // NewSequential creates a new Sequential with the given runners.
-func NewSequential(name string, runners ...blades.Runnable) *Sequential {
+func NewSequential(runners ...blades.Runnable) *Sequential {
 	return &Sequential{
-		name:    name,
 		runners: runners,
 	}
-}
-
-// Name returns the name of the chain.
-func (c *Sequential) Name() string {
-	return c.name
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.

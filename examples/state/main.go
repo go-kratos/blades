@@ -69,12 +69,12 @@ Output *only* the final, refactored Python code block, enclosed in triple backti
 Do not add any other text before or after the code block.`),
 		blades.WithDescription("Refactors code based on review comments."),
 	)
-	seq := flow.NewSequential("coding", codeWriterAgent, codeReviewerAgent, codeRefactorerAgent)
+	seq := flow.NewSequential(codeWriterAgent, codeReviewerAgent, codeRefactorerAgent)
 	// Run the sequence with an initial user prompt
 	prompt := blades.NewPrompt(
 		blades.UserMessage("Write a Python function that takes a list of integers and returns a new list containing only the even integers from the original list."),
 	)
-	session := blades.NewSession("conversation_123")
+	session := blades.NewSession()
 	ctx := blades.NewSessionContext(context.Background(), session)
 	result, err := seq.Run(ctx, prompt)
 	if err != nil {
