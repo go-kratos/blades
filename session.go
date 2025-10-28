@@ -9,9 +9,9 @@ import (
 
 // SessionStore defines the interface for session storage backends.
 type SessionStore interface {
-	GetSession(ctx context.Context, id string) (*Session, error)
-	SaveSession(ctx context.Context, session *Session) error
-	DeleteSession(ctx context.Context, id string) error
+	Get(ctx context.Context, id string) (*Session, error)
+	Save(ctx context.Context, session *Session) error
+	Delete(ctx context.Context, id string) error
 }
 
 // Session holds the state of a flow along with a unique session ID.

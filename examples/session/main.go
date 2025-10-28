@@ -33,7 +33,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := sessionStore.SaveSession(ctx, session); err != nil {
+	if err := sessionStore.Save(ctx, session); err != nil {
 		log.Fatal(err)
 	}
 	log.Println(result.Text())

@@ -15,5 +15,6 @@ type Memory struct {
 // MemoryStore defines the interface for storing and retrieving memories.
 type MemoryStore interface {
 	AddMemory(context.Context, *Memory) error
+	SaveSession(context.Context, *blades.Session) error
 	SearchMemory(context.Context, string) ([]*Memory, error)
 }

@@ -21,6 +21,7 @@ require (
 	github.com/go-kratos/generics v0.0.0-20251015114009-68dee470a252 // indirect
 	github.com/google/jsonschema-go v0.2.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	golang.org/x/sync v0.16.0 // indirect
 )
 
 replace github.com/go-kratos/blades => ../../

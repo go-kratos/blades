@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/go-kratos/blades"
 	"github.com/go-kratos/generics"
 )
 
@@ -20,6 +21,16 @@ func NewInMemoryStore() *InMemoryStore {
 // AddMemory adds a new memory to the in-memory store.
 func (s *InMemoryStore) AddMemory(ctx context.Context, m *Memory) error {
 	s.memories.Append(m)
+	return nil
+}
+
+func (s *InMemoryStore) SaveSession(ctx context.Context, session *blades.Session) error {
+	session.History.Range(func(_ int, m *blades.Message) bool {
+		s.memories.Append(&Memory{
+			Content: m,
+		})
+		return true
+	})
 	return nil
 }
 
