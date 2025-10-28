@@ -29,8 +29,8 @@ func NewSessionStore(bucket string, cfg aws.Config, opts ...func(*s3.Options)) (
 	}, nil
 }
 
-// GetSession retrieves a session by its ID from the S3 bucket.
-func (s *SessionStore) GetSession(ctx context.Context, id string) (*blades.Session, error) {
+// Get retrieves a session by its ID from the S3 bucket.
+func (s *SessionStore) Get(ctx context.Context, id string) (*blades.Session, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(id),
@@ -50,8 +50,8 @@ func (s *SessionStore) GetSession(ctx context.Context, id string) (*blades.Sessi
 	return &session, nil
 }
 
-// SaveSession saves a session to the S3 bucket.
-func (s *SessionStore) SaveSession(ctx context.Context, session *blades.Session) error {
+// Save saves a session to the S3 bucket.
+func (s *SessionStore) Save(ctx context.Context, session *blades.Session) error {
 	body, err := json.Marshal(session)
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
@@ -67,8 +67,8 @@ func (s *SessionStore) SaveSession(ctx context.Context, session *blades.Session)
 	return nil
 }
 
-// DeleteSession deletes a session by its ID from the S3 bucket.
-func (s *SessionStore) DeleteSession(ctx context.Context, id string) error {
+// Delete deletes a session by its ID from the S3 bucket.
+func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(id),

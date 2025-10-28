@@ -11,6 +11,7 @@ replace (
 )
 
 require (
+	github.com/aws/aws-sdk-go-v2 v1.39.3
 	github.com/go-kratos/blades v0.0.0-20250928061855-93360cba17ff
 	github.com/go-kratos/blades/contrib/gemini v0.0.0-00010101000000-000000000000
 	github.com/go-kratos/blades/contrib/openai v0.0.0-00010101000000-000000000000
@@ -23,7 +24,6 @@ require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.8.4 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.39.3 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.2 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.10 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.10 // indirect
