@@ -35,8 +35,14 @@ func (s *Session) Record(input []*Message, output *Message) {
 }
 
 // NewSession creates a new Session instance with a unique ID.
-func NewSession() *Session {
-	return &Session{ID: uuid.NewString()}
+func NewSession(states ...map[string]any) *Session {
+	session := &Session{ID: uuid.NewString()}
+	for _, state := range states {
+		for k, v := range state {
+			session.PutState(k, v)
+		}
+	}
+	return session
 }
 
 // ctxSessionKey is an unexported type for keys defined in this package.
