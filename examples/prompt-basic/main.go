@@ -10,7 +10,7 @@ import (
 
 func main() {
 	agent := blades.NewAgent(
-		"Chat Agent",
+		"Basic Agent",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
