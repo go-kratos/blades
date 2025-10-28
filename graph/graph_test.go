@@ -95,12 +95,12 @@ func TestGraphSequentialOrder(t *testing.T) {
 	_ = g.SetEntryPoint("A")
 	_ = g.SetFinishPoint("D")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	result, err := handler(context.Background(), nil)
+	result, err := executor.Execute(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -125,12 +125,12 @@ func TestGraphErrorPropagation(t *testing.T) {
 	_ = g.SetEntryPoint("A")
 	_ = g.SetFinishPoint("B")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	_, err = handler(context.Background(), nil)
+	_, err = executor.Execute(context.Background(), nil)
 	if err == nil || !strings.Contains(err.Error(), "node B") {
 		t.Fatalf("expected error from node B, got %v", err)
 	}
@@ -153,12 +153,12 @@ func TestGraphConditionalRouting(t *testing.T) {
 	_ = g.SetEntryPoint("A")
 	_ = g.SetFinishPoint("C")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	result, err := handler(context.Background(), nil)
+	result, err := executor.Execute(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestGraphSerialVsParallel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
-	parallelState, err := handlerParallel(context.Background(), State{})
+	parallelState, err := handlerParallel.Execute(context.Background(), State{})
 	if err != nil {
 		t.Fatalf("parallel run error: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestGraphSerialVsParallel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
-	serialState, err := handlerSerial(context.Background(), State{})
+	serialState, err := handlerSerial.Execute(context.Background(), State{})
 	if err != nil {
 		t.Fatalf("serial run error: %v", err)
 	}
@@ -252,12 +252,12 @@ func TestGraphParallelNestedLoops(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("done")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	result, err := handler(context.Background(), State{valueKey: 0})
+	result, err := executor.Execute(context.Background(), State{valueKey: 0})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -292,12 +292,12 @@ func TestGraphParallelSelfLoopExit(t *testing.T) {
 	g.SetEntryPoint("loop")
 	g.SetFinishPoint("exit")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	result, err := handler(context.Background(), State{valueKey: 0})
+	result, err := executor.Execute(context.Background(), State{valueKey: 0})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestGraphParallelContextTimeout(t *testing.T) {
 	g.SetEntryPoint("slow")
 	g.SetFinishPoint("slow")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestGraphParallelContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err = handler(ctx, State{})
+	_, err = executor.Execute(ctx, State{})
 	if err == nil {
 		t.Fatalf("expected timeout error")
 	}
@@ -366,12 +366,12 @@ func TestGraphParallelFanOutBranches(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("join")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	if _, err := handler(context.Background(), State{}); err != nil {
+	if _, err := executor.Execute(context.Background(), State{}); err != nil {
 		t.Fatalf("run error: %v", err)
 	}
 
@@ -406,12 +406,12 @@ func TestGraphParallelPropagatesBranchError(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("join")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	_, err = handler(context.Background(), State{})
+	_, err = executor.Execute(context.Background(), State{})
 	if err == nil || !strings.Contains(err.Error(), "node fail_branch") {
 		t.Fatalf("expected failure from fail_branch, got %v", err)
 	}
@@ -445,12 +445,12 @@ func TestGraphParallelMergeByKey(t *testing.T) {
 	_ = g.SetEntryPoint("start")
 	_ = g.SetFinishPoint("join")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	final, err := handler(context.Background(), State{})
+	final, err := executor.Execute(context.Background(), State{})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -515,12 +515,12 @@ func TestGraphParallelJoinIgnoresInactiveBranches(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("join")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	_, err = handler(context.Background(), State{})
+	_, err = executor.Execute(context.Background(), State{})
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -578,12 +578,12 @@ func TestGraphParallelJoinSkipsUnselectedEdges(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("final")
 
-	handler, err := g.Compile()
+	executor, err := g.Compile()
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	if _, err := handler(context.Background(), State{}); err != nil {
+	if _, err := executor.Execute(context.Background(), State{}); err != nil {
 		t.Fatalf("run error: %v", err)
 	}
 
