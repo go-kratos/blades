@@ -5,10 +5,22 @@ import (
 	"fmt"
 )
 
-// Handler is a function that processes the graph state.
-// Handlers must not mutate the incoming state; instead, they should return a new state instance.
-// This is especially important for reference types (e.g., pointers, slices, maps) to avoid unintended side effects.
-type Handler func(ctx context.Context, state State) (State, error)
+// Option configures the Graph behavior.
+type Option func(*Graph)
+
+// WithParallel toggles parallel fan-out execution. Defaults to true.
+func WithParallel(enabled bool) Option {
+	return func(g *Graph) {
+		g.parallel = enabled
+	}
+}
+
+// WithMiddleware sets a global middleware applied to all node handlers.
+func WithMiddleware(ms ...Middleware) Option {
+	return func(g *Graph) {
+		g.middlewares = ms
+	}
+}
 
 // EdgeCondition is a function that determines if an edge should be followed based on the current state.
 type EdgeCondition func(ctx context.Context, state State) bool
@@ -29,16 +41,6 @@ type conditionalEdge struct {
 	condition EdgeCondition // nil means always follow this edge
 }
 
-// Option configures the Graph behavior.
-type Option func(*Graph)
-
-// WithParallel toggles parallel fan-out execution. Defaults to true.
-func WithParallel(enabled bool) Option {
-	return func(g *Graph) {
-		g.parallel = enabled
-	}
-}
-
 // Graph represents a directed graph of processing nodes. Cycles are allowed.
 type Graph struct {
 	nodes       map[string]Handler
@@ -46,6 +48,7 @@ type Graph struct {
 	entryPoint  string
 	finishPoint string
 	parallel    bool
+	middlewares []Middleware
 	err         error // accumulated error for builder pattern
 }
 

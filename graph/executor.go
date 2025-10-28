@@ -94,6 +94,9 @@ func (e *Executor) executeNode(ctx context.Context, step Step) (State, error) {
 	if handler == nil {
 		return nil, fmt.Errorf("graph: node %s handler missing", step.node)
 	}
+	if len(e.graph.middlewares) > 0 {
+		handler = ChainMiddlewares(e.graph.middlewares...)(handler)
+	}
 	nextState, err := handler(ctx, state)
 	if err != nil {
 		return nil, fmt.Errorf("graph: node %s: %w", step.node, err)
