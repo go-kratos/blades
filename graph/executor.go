@@ -15,13 +15,14 @@ type Executor struct {
 	visited     map[string]bool
 	finished    bool
 	finishState State
-	globalState State
+	// latestState tracks the most recent execution state, used only in serial mode
+	// for state accumulation across sequentially executed branches
+	latestState State
 }
 
 type graphFrame struct {
 	node         string
 	state        State
-	hasState     bool
 	allowRevisit bool
 }
 
@@ -40,30 +41,16 @@ func newExecutor(g *Graph, state State) *Executor {
 	normalized := state.Clone()
 	return &Executor{
 		graph:       g,
-		queue:       []graphFrame{{node: g.entryPoint, state: normalized, hasState: true}},
+		queue:       []graphFrame{{node: g.entryPoint, state: normalized}},
 		waiting:     make(map[string]int),
 		visited:     make(map[string]bool, len(g.nodes)),
-		globalState: normalized,
+		latestState: normalized,
 	}
 }
 
 // Execute runs the graph execution starting from the given state.
 func (e *Executor) Execute(ctx context.Context, state State) (State, error) {
 	e.reset(state)
-	return e.run(ctx)
-}
-
-func (e *Executor) reset(state State) {
-	normalized := state.Clone()
-	e.queue = []graphFrame{{node: e.graph.entryPoint, state: normalized, hasState: true}}
-	e.waiting = make(map[string]int)
-	e.visited = make(map[string]bool, len(e.graph.nodes))
-	e.finished = false
-	e.finishState = nil
-	e.globalState = normalized
-}
-
-func (e *Executor) run(ctx context.Context) (State, error) {
 	for len(e.queue) > 0 {
 		frame := e.dequeue()
 
@@ -73,7 +60,7 @@ func (e *Executor) run(ctx context.Context) (State, error) {
 
 		nextState, err := e.executeNode(ctx, frame)
 		if err != nil {
-			return e.globalState, err
+			return frame.state, err
 		}
 
 		if e.handleFinish(frame.node, nextState) {
@@ -81,14 +68,24 @@ func (e *Executor) run(ctx context.Context) (State, error) {
 		}
 
 		if err := e.processOutgoingEdges(ctx, frame, nextState); err != nil {
-			return e.globalState, err
+			return nextState, err
 		}
 	}
 
 	if e.finished {
 		return e.finishState, nil
 	}
-	return e.globalState, fmt.Errorf("graph: finish node not reachable: %s", e.graph.finishPoint)
+	return nil, fmt.Errorf("graph: finish node not reachable: %s", e.graph.finishPoint)
+}
+
+func (e *Executor) reset(state State) {
+	normalized := state.Clone()
+	e.queue = []graphFrame{{node: e.graph.entryPoint, state: normalized}}
+	e.waiting = make(map[string]int)
+	e.visited = make(map[string]bool, len(e.graph.nodes))
+	e.finished = false
+	e.finishState = nil
+	e.latestState = normalized
 }
 
 func (e *Executor) dequeue() graphFrame {
@@ -114,16 +111,17 @@ func (e *Executor) executeNode(ctx context.Context, frame graphFrame) (State, er
 	localState := e.stateFor(frame).Clone()
 	handler := e.graph.nodes[frame.node]
 	if handler == nil {
-		return e.globalState, fmt.Errorf("graph: node %s handler missing", frame.node)
+		return nil, fmt.Errorf("graph: node %s handler missing", frame.node)
 	}
 
 	nextState, err := handler(ctx, localState)
 	if err != nil {
-		return e.globalState, fmt.Errorf("graph: node %s: %w", frame.node, err)
+		return nil, fmt.Errorf("graph: node %s: %w", frame.node, err)
 	}
 
 	e.visited[frame.node] = true
-	e.globalState = nextState.Clone()
+	// Update latestState for serial mode state accumulation
+	e.latestState = nextState.Clone()
 	return nextState.Clone(), nil
 }
 
@@ -161,26 +159,24 @@ func (e *Executor) processOutgoingEdges(ctx context.Context, frame graphFrame, s
 		e.enqueue(graphFrame{
 			node:         edges[0].to,
 			state:        state.Clone(),
-			hasState:     true,
 			allowRevisit: frame.allowRevisit,
 		})
 		return nil
 	}
 
 	// Multiple edges: execute in parallel
-	branchState, err := e.fanOutParallel(ctx, frame, state, edges)
+	_, err = e.fanOutParallel(ctx, frame, state, edges)
 	if err != nil {
 		return err
 	}
-	e.globalState = branchState.Clone()
 	return nil
 }
 
 func (e *Executor) stateFor(frame graphFrame) State {
-	if frame.hasState {
+	if frame.state != nil {
 		return frame.state
 	}
-	return e.globalState
+	return e.latestState
 }
 
 func (e *Executor) enqueue(frame graphFrame) {
@@ -250,7 +246,6 @@ func (e *Executor) resolveAllConditional(ctx context.Context, state State, edges
 			immediate: []graphFrame{{
 				node:         matched[0].to,
 				state:        state.Clone(),
-				hasState:     true,
 				allowRevisit: true,
 			}},
 		}, nil
@@ -268,7 +263,6 @@ func (e *Executor) resolveMixed(ctx context.Context, state State, edges []condit
 				immediate: []graphFrame{{
 					node:         edge.to,
 					state:        state.Clone(),
-					hasState:     true,
 					allowRevisit: true,
 				}},
 				prepend: true,
@@ -287,7 +281,7 @@ func (e *Executor) fanOutSerial(frame graphFrame, edges []conditionalEdge) {
 		if e.waiting[edge.to] == 0 {
 			e.enqueue(graphFrame{
 				node:         edge.to,
-				hasState:     false,
+				state:        nil, // Use latestState for serial execution
 				allowRevisit: frame.allowRevisit,
 			})
 		}
@@ -326,7 +320,7 @@ func (e *Executor) fanOutParallel(ctx context.Context, frame graphFrame, state S
 	}
 
 	if err := eg.Wait(); err != nil {
-		return e.globalState, err
+		return nil, err
 	}
 
 	successorStates := make(map[string]State)
@@ -354,7 +348,6 @@ func (e *Executor) fanOutParallel(ctx context.Context, frame graphFrame, state S
 		e.enqueue(graphFrame{
 			node:         successor,
 			state:        successorState.Clone(),
-			hasState:     true,
 			allowRevisit: frame.allowRevisit,
 		})
 	}

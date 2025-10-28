@@ -187,9 +187,7 @@ func (g *Graph) Compile() (*Executor, error) {
 		return nil, err
 	}
 
-	return &Executor{
-		graph: g,
-	}, nil
+	return newExecutor(g, nil), nil
 }
 
 // WithParallel toggles parallel fan-out execution. Defaults to true.
