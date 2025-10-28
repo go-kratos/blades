@@ -73,9 +73,9 @@ func WithTools(tools ...*tools.Tool) Option {
 }
 
 // WithMiddleware sets the middleware for the Agent.
-func WithMiddleware(m Middleware) Option {
+func WithMiddleware(ms ...Middleware) Option {
 	return func(a *Agent) {
-		a.middleware = m
+		a.middlewares = ms
 	}
 }
 
@@ -113,7 +113,7 @@ type Agent struct {
 	outputSchema  *jsonschema.Schema
 	inputHandler  StateInputHandler
 	outputHandler StateOutputHandler
-	middleware    Middleware
+	middlewares   []Middleware
 	provider      ModelProvider
 	tools         []*tools.Tool
 }
@@ -123,7 +123,6 @@ func NewAgent(name string, opts ...Option) *Agent {
 	a := &Agent{
 		name:          name,
 		maxIterations: 10,
-		middleware:    func(h Runnable) Runnable { return h },
 		inputHandler: func(ctx context.Context, prompt *Prompt, state *State) (*Prompt, error) {
 			return prompt, nil
 		},
@@ -192,7 +191,7 @@ func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*
 	if err != nil {
 		return nil, err
 	}
-	handler := a.middleware(a.handler(session, req))
+	handler := a.handler(session, req)
 	return handler.Run(ctx, prompt, opts...)
 }
 
@@ -207,7 +206,7 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 	if err != nil {
 		return nil, err
 	}
-	handler := a.middleware(a.handler(session, req))
+	handler := a.handler(session, req)
 	return handler.RunStream(ctx, prompt, opts...)
 }
 
@@ -264,7 +263,7 @@ func (a *Agent) executeTools(ctx context.Context, message *Message) (*Message, e
 
 // handler constructs the default handlers for Run and Stream using the provider.
 func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
-	return &HandleFunc{
+	handler := Runnable(&HandleFunc{
 		Handle: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
 			for i := 0; i < a.maxIterations; i++ {
 				res, err := a.provider.Generate(ctx, req, opts...)
@@ -334,5 +333,9 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
 			})
 			return pipe, nil
 		},
+	})
+	if len(a.middlewares) > 0 {
+		handler = ChainMiddlewares(a.middlewares...)(handler)
 	}
+	return handler
 }
