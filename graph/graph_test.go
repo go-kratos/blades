@@ -13,13 +13,13 @@ import (
 const stepsKey = "steps"
 const valueKey = "value"
 
-func stepHandler(name string) GraphHandler {
+func stepHandler(name string) Handler {
 	return func(ctx context.Context, state State) (State, error) {
 		return appendStep(state, name), nil
 	}
 }
 
-func incrementHandler(delta int) GraphHandler {
+func incrementHandler(delta int) Handler {
 	return func(ctx context.Context, state State) (State, error) {
 		next := state.Clone()
 		val, _ := next[valueKey].(int)
@@ -77,7 +77,7 @@ func TestGraphCompileValidation(t *testing.T) {
 func TestGraphSequentialOrder(t *testing.T) {
 	g := NewGraph(WithParallel(false))
 	execOrder := make([]string, 0, 4)
-	handlerFor := func(name string) GraphHandler {
+	handlerFor := func(name string) Handler {
 		return func(ctx context.Context, state State) (State, error) {
 			execOrder = append(execOrder, name)
 			return stepHandler(name)(ctx, state)
@@ -345,7 +345,7 @@ func TestGraphParallelFanOutBranches(t *testing.T) {
 
 	var mu sync.Mutex
 	called := make(map[string]int)
-	record := func(name string) GraphHandler {
+	record := func(name string) Handler {
 		return func(ctx context.Context, state State) (State, error) {
 			mu.Lock()
 			called[name]++
@@ -386,7 +386,7 @@ func TestGraphParallelFanOutBranches(t *testing.T) {
 func TestGraphParallelPropagatesBranchError(t *testing.T) {
 	g := NewGraph()
 
-	record := func(name string) GraphHandler {
+	record := func(name string) Handler {
 		return func(ctx context.Context, state State) (State, error) {
 			return state.Clone(), nil
 		}
@@ -483,7 +483,7 @@ func TestGraphParallelJoinIgnoresInactiveBranches(t *testing.T) {
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
-	record := func(name string, mutate func(State) State) GraphHandler {
+	record := func(name string, mutate func(State) State) Handler {
 		return func(ctx context.Context, state State) (State, error) {
 			mu.Lock()
 			executed[name]++
@@ -538,7 +538,7 @@ func TestGraphParallelJoinSkipsUnselectedEdges(t *testing.T) {
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
-	record := func(name string, mutate func(State) State) GraphHandler {
+	record := func(name string, mutate func(State) State) Handler {
 		return func(ctx context.Context, state State) (State, error) {
 			mu.Lock()
 			executed[name]++
@@ -605,7 +605,7 @@ func TestGraphComplexTopology(t *testing.T) {
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
-	record := func(name string, transform func(State) State) GraphHandler {
+	record := func(name string, transform func(State) State) Handler {
 		return func(ctx context.Context, state State) (State, error) {
 			mu.Lock()
 			executed[name]++
@@ -831,7 +831,7 @@ func TestGraphComplexTopologySerial(t *testing.T) {
 	var mu sync.Mutex
 	executed := make(map[string]int)
 	executionOrder := []string{}
-	record := func(name string, transform func(State) State) GraphHandler {
+	record := func(name string, transform func(State) State) Handler {
 		return func(ctx context.Context, state State) (State, error) {
 			mu.Lock()
 			executed[name]++

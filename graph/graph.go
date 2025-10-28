@@ -5,10 +5,10 @@ import (
 	"fmt"
 )
 
-// GraphHandler is a function that processes the graph state.
+// Handler is a function that processes the graph state.
 // Handlers must not mutate the incoming state; instead, they should return a new state instance.
 // This is especially important for reference types (e.g., pointers, slices, maps) to avoid unintended side effects.
-type GraphHandler func(ctx context.Context, state State) (State, error)
+type Handler func(ctx context.Context, state State) (State, error)
 
 // EdgeCondition is a function that determines if an edge should be followed based on the current state.
 type EdgeCondition func(ctx context.Context, state State) bool
@@ -29,9 +29,19 @@ type conditionalEdge struct {
 	condition EdgeCondition // nil means always follow this edge
 }
 
+// Option configures the Graph behavior.
+type Option func(*Graph)
+
+// WithParallel toggles parallel fan-out execution. Defaults to true.
+func WithParallel(enabled bool) Option {
+	return func(g *Graph) {
+		g.parallel = enabled
+	}
+}
+
 // Graph represents a directed graph of processing nodes. Cycles are allowed.
 type Graph struct {
-	nodes       map[string]GraphHandler
+	nodes       map[string]Handler
 	edges       map[string][]conditionalEdge
 	entryPoint  string
 	finishPoint string
@@ -39,13 +49,10 @@ type Graph struct {
 	err         error // accumulated error for builder pattern
 }
 
-// Option configures the Graph behavior.
-type Option func(*Graph)
-
 // NewGraph creates a new empty Graph.
 func NewGraph(opts ...Option) *Graph {
 	g := &Graph{
-		nodes:    make(map[string]GraphHandler),
+		nodes:    make(map[string]Handler),
 		edges:    make(map[string][]conditionalEdge),
 		parallel: true,
 	}
@@ -59,7 +66,7 @@ func NewGraph(opts ...Option) *Graph {
 
 // AddNode adds a named node with its handler to the graph.
 // Returns the graph for chaining. Check error with Compile().
-func (g *Graph) AddNode(name string, handler GraphHandler) *Graph {
+func (g *Graph) AddNode(name string, handler Handler) *Graph {
 	if g.err != nil {
 		return g
 	}
@@ -186,13 +193,5 @@ func (g *Graph) Compile() (*Executor, error) {
 	if err := g.ensureReachable(); err != nil {
 		return nil, err
 	}
-
-	return newExecutor(g, nil), nil
-}
-
-// WithParallel toggles parallel fan-out execution. Defaults to true.
-func WithParallel(enabled bool) Option {
-	return func(g *Graph) {
-		g.parallel = enabled
-	}
+	return NewExecutor(g), nil
 }
