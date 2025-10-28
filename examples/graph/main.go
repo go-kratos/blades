@@ -107,7 +107,7 @@ func runParallelExample() {
 	logNode := func(name string) graph.GraphHandler {
 		return func(ctx context.Context, state graph.State) (graph.State, error) {
 			next := state.Clone()
-			fmt.Printf("node %s start executing\n	", name)
+			fmt.Printf("node %s start executing\n", name)
 			if strings.HasPrefix(name, "branch_") {
 				t := time.Millisecond * time.Duration(rand.Int63n(250))
 				time.Sleep(t)
