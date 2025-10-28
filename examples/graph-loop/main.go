@@ -95,7 +95,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	state, err := executor.Execute(context.Background(), graph.State{})
+	state, err := executor.Execute(context.Background(), graph.State{stateKeyRevision: 0})
 	if err != nil {
 		log.Fatal(err)
 	}
