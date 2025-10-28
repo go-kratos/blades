@@ -15,9 +15,6 @@ type Executor struct {
 	visited     map[string]bool
 	finished    bool
 	finishState State
-	// latestState tracks the most recent execution state, used only in serial mode
-	// for state accumulation across sequentially executed branches
-	latestState State
 }
 
 // Step represents a single execution step in the graph.
@@ -57,13 +54,13 @@ func (e *Executor) Execute(ctx context.Context, state State) (State, error) {
 		}
 		nextState, err := e.executeNode(ctx, step)
 		if err != nil {
-			return step.state, err
+			return nil, err
 		}
 		if e.handleFinish(step.node, nextState) {
 			continue
 		}
 		if err := e.processOutgoingEdges(ctx, step, nextState); err != nil {
-			return nextState, err
+			return nil, err
 		}
 	}
 	if e.finished {
@@ -92,27 +89,30 @@ func (e *Executor) shouldSkip(step Step) bool {
 }
 
 func (e *Executor) executeNode(ctx context.Context, step Step) (State, error) {
-	localState := e.stateFor(step).Clone()
+	state := e.stateFor(step)
 	handler := e.graph.nodes[step.node]
 	if handler == nil {
 		return nil, fmt.Errorf("graph: node %s handler missing", step.node)
 	}
-
-	nextState, err := handler(ctx, localState)
+	nextState, err := handler(ctx, state)
 	if err != nil {
 		return nil, fmt.Errorf("graph: node %s: %w", step.node, err)
 	}
-
 	e.visited[step.node] = true
-	// Update latestState for serial mode state accumulation
-	e.latestState = nextState.Clone()
 	return nextState.Clone(), nil
 }
 
+func (e *Executor) stateFor(step Step) State {
+	if step.state != nil {
+		return step.state
+	}
+	return e.finishState
+}
+
 func (e *Executor) handleFinish(node string, state State) bool {
+	e.finishState = state.Clone()
 	if node == e.graph.finishPoint {
 		e.finished = true
-		e.finishState = state.Clone()
 		return true
 	}
 	return false
@@ -123,21 +123,17 @@ func (e *Executor) processOutgoingEdges(ctx context.Context, step Step, state St
 	if err != nil {
 		return err
 	}
-
 	// Handle immediate transitions (single matched conditional edge)
 	if len(resolution.immediate) > 0 {
 		e.enqueueSteps(resolution.immediate, resolution.prepend)
 		return nil
 	}
-
 	edges := resolution.fanOut
-
 	// Serial mode: enqueue edges sequentially
 	if !e.graph.parallel {
 		e.fanOutSerial(step, edges)
 		return nil
 	}
-
 	// Single edge: no need for parallel execution
 	if len(edges) == 1 {
 		e.enqueue(Step{
@@ -147,20 +143,12 @@ func (e *Executor) processOutgoingEdges(ctx context.Context, step Step, state St
 		})
 		return nil
 	}
-
 	// Multiple edges: execute in parallel
 	_, err = e.fanOutParallel(ctx, step, state, edges)
 	if err != nil {
 		return err
 	}
 	return nil
-}
-
-func (e *Executor) stateFor(step Step) State {
-	if step.state != nil {
-		return step.state
-	}
-	return e.latestState
 }
 
 func (e *Executor) enqueue(step Step) {
@@ -183,22 +171,18 @@ func (e *Executor) resolveEdges(ctx context.Context, step Step, state State) (ed
 	if len(edges) == 0 {
 		return edgeResolution{}, fmt.Errorf("graph: no outgoing edges from node %s", step.node)
 	}
-
 	// Classify edges: all conditional, all unconditional, or mixed
 	conditionalEdges, unconditionalEdges := e.classifyEdges(edges)
-
 	// Case 1: All edges are unconditional - fan out to all
 	if len(conditionalEdges) == 0 {
 		return edgeResolution{fanOut: edges}, nil
 	}
-
 	// Case 2: All edges are conditional - evaluate and fan out to matches
 	if len(unconditionalEdges) == 0 {
 		return e.resolveAllConditional(ctx, state, conditionalEdges, step.node)
 	}
-
 	// Case 3: Mixed edges - evaluate in order, first match wins (conditional or unconditional)
-	return e.resolveMixed(ctx, state, edges)
+	return e.resolveMixed(ctx, state, edges, step.node)
 }
 
 // classifyEdges separates edges into conditional and unconditional
@@ -240,7 +224,7 @@ func (e *Executor) resolveAllConditional(ctx context.Context, state State, edges
 
 // resolveMixed handles the case where edges are a mix of conditional and unconditional
 // First match wins (conditional edges are checked first, then unconditional)
-func (e *Executor) resolveMixed(ctx context.Context, state State, edges []conditionalEdge) (edgeResolution, error) {
+func (e *Executor) resolveMixed(ctx context.Context, state State, edges []conditionalEdge, nodeName string) (edgeResolution, error) {
 	for _, edge := range edges {
 		if edge.condition == nil || edge.condition(ctx, state) {
 			return edgeResolution{
@@ -253,7 +237,7 @@ func (e *Executor) resolveMixed(ctx context.Context, state State, edges []condit
 			}, nil
 		}
 	}
-	return edgeResolution{}, fmt.Errorf("graph: no condition matched for edges from node %s", edges[0].to)
+	return edgeResolution{}, fmt.Errorf("graph: no condition matched for edges from node %s", nodeName)
 }
 
 func (e *Executor) fanOutSerial(step Step, edges []conditionalEdge) {
@@ -276,13 +260,11 @@ func (e *Executor) fanOutParallel(ctx context.Context, step Step, state State, e
 	for _, edge := range edges {
 		e.waiting[edge.to]++
 	}
-
 	for _, edge := range edges {
 		for _, nextEdge := range e.graph.edges[edge.to] {
 			e.waiting[nextEdge.to]++
 		}
 	}
-
 	results := make([]branchResult, len(edges))
 	eg, egCtx := errgroup.WithContext(ctx)
 	for i, edge := range edges {
@@ -293,7 +275,6 @@ func (e *Executor) fanOutParallel(ctx context.Context, step Step, state State, e
 			if handler == nil {
 				return fmt.Errorf("graph: node %s handler missing", edge.to)
 			}
-
 			nextState, err := handler(egCtx, state.Clone())
 			if err != nil {
 				return fmt.Errorf("graph: node %s: %w", edge.to, err)
@@ -302,18 +283,15 @@ func (e *Executor) fanOutParallel(ctx context.Context, step Step, state State, e
 			return nil
 		})
 	}
-
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
-
 	successorStates := make(map[string]State)
 	pending := make(map[string]State)
 	mergedBranches := state.Clone()
 	for _, result := range results {
 		edge := edges[result.idx]
 		e.waiting[edge.to]--
-
 		branchEdges := e.graph.edges[edge.to]
 		for _, nextEdge := range branchEdges {
 			e.waiting[nextEdge.to]--
@@ -323,11 +301,9 @@ func (e *Executor) fanOutParallel(ctx context.Context, step Step, state State, e
 				delete(pending, nextEdge.to)
 			}
 		}
-
 		mergedBranches = mergeStates(mergedBranches, result.state)
 		e.visited[edge.to] = true
 	}
-
 	for successor, successorState := range successorStates {
 		e.enqueue(Step{
 			node:         successor,
@@ -335,7 +311,6 @@ func (e *Executor) fanOutParallel(ctx context.Context, step Step, state State, e
 			allowRevisit: step.allowRevisit,
 		})
 	}
-
 	return mergedBranches, nil
 }
 
