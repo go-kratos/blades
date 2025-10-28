@@ -111,7 +111,7 @@ func runParallelExample() {
 			if strings.HasPrefix(name, "branch_") {
 				t := time.Millisecond * time.Duration(rand.Int63n(250))
 				time.Sleep(t)
-				fmt.Printf("node %s executed, sleep %d ms\n	", name, t.Milliseconds())
+				fmt.Printf("node %s executed, sleep %d ms\n\t", name, t.Milliseconds())
 			}
 			switch name {
 			case "branch_a":
