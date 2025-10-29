@@ -1567,6 +1567,76 @@ func TestGraphSingleEdgeWaitPropagation(t *testing.T) {
 	}
 }
 
+func TestExecutorConcurrentRuns(t *testing.T) {
+	g := NewGraph()
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		if _, ok := next["value"].(int); !ok {
+			next["value"] = 0
+		}
+		return next, nil
+	})
+	g.AddNode("worker", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		val, _ := next["value"].(int)
+		next["value"] = val + 1
+		return next, nil
+	})
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		return state.Clone(), nil
+	})
+
+	g.AddEdge("start", "worker")
+	g.AddEdge("worker", "finish")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	const runs = 8
+	type result struct {
+		input  int
+		output int
+		err    error
+	}
+
+	results := make([]result, runs)
+	var wg sync.WaitGroup
+	wg.Add(runs)
+
+	for i := 0; i < runs; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			initial := State{"value": i}
+			out, err := executor.Execute(context.Background(), initial)
+			results[i] = result{input: i, err: err}
+			if err == nil {
+				val, _ := out["value"].(int)
+				results[i].output = val
+			}
+			if initial["value"] != i {
+				t.Errorf("initial state mutated for run %d: %#v", i, initial)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	for _, r := range results {
+		if r.err != nil {
+			t.Fatalf("execution error for run %d: %v", r.input, r.err)
+		}
+		if r.output != r.input+1 {
+			t.Fatalf("unexpected output for run %d: got %d want %d", r.input, r.output, r.input+1)
+		}
+	}
+}
+
 // TestGraphAsymmetricConvergence tests a more complex asymmetric DAG
 // similar to the ASR pipeline structure that was failing.
 func TestGraphAsymmetricConvergence(t *testing.T) {
