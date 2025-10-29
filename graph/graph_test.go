@@ -1193,6 +1193,37 @@ func TestGraphSerialFanOutStateIsolation(t *testing.T) {
 		t.Fatalf("join did not observe contributions from both branches")
 	}
 }
+
+func TestResolveEdgesUnconditionalFanOut(t *testing.T) {
+	g := NewGraph()
+	g.AddNode("branch_b", stepHandler("branch_b"))
+	g.AddNode("branch_c", stepHandler("branch_c"))
+	g.AddNode("branch_d", stepHandler("branch_d"))
+	g.AddNode("join", stepHandler("join"))
+	g.AddEdge("branch_b", "branch_c")
+	g.AddEdge("branch_b", "branch_d")
+	g.AddEdge("branch_c", "join")
+	g.AddEdge("branch_d", "join")
+	g.SetEntryPoint("branch_b")
+	g.SetFinishPoint("join")
+
+	exec, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	task := exec.newTask(State{})
+	resolution, err := task.resolveEdges(context.Background(), Step{node: "branch_b"}, State{})
+	if err != nil {
+		t.Fatalf("resolveEdges error: %v", err)
+	}
+	if len(resolution.immediate) != 0 {
+		t.Fatalf("expected no immediate edges, got %d", len(resolution.immediate))
+	}
+	if len(resolution.fanOut) != 2 {
+		t.Fatalf("expected fan-out size 2, got %d", len(resolution.fanOut))
+	}
+}
 func TestGraphSingleEdgeWaitPropagation(t *testing.T) {
 	g := NewGraph()
 
