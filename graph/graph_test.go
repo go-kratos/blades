@@ -463,6 +463,112 @@ func TestGraphParallelMergeByKey(t *testing.T) {
 	}
 }
 
+func TestExecutorInitialStatePropagates(t *testing.T) {
+	g := NewGraph()
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		if got, ok := state["seed"].(string); !ok || got != "value" {
+			return nil, fmt.Errorf("start received unexpected seed: %#v", state["seed"])
+		}
+		next := state.Clone()
+		next["start_seen"] = true
+		return next, nil
+	})
+
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		if got, ok := state["seed"].(string); !ok || got != "value" {
+			return nil, fmt.Errorf("finish received unexpected seed: %#v", state["seed"])
+		}
+		next := state.Clone()
+		next["finish_seen"] = true
+		return next, nil
+	})
+
+	g.AddEdge("start", "finish")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	initial := State{"seed": "value"}
+	result, err := executor.Execute(context.Background(), initial)
+	if err != nil {
+		t.Fatalf("execute error: %v", err)
+	}
+
+	if val, ok := result["seed"].(string); !ok || val != "value" {
+		t.Fatalf("expected seed to survive execution, got %#v", result["seed"])
+	}
+	if len(initial) != 1 {
+		t.Fatalf("initial state mutated: %#v", initial)
+	}
+	if _, ok := result["finish_seen"]; !ok {
+		t.Fatalf("expected finish to mark state, got %#v", result)
+	}
+}
+
+func TestExecutorResetBetweenRuns(t *testing.T) {
+	g := NewGraph()
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		runID, ok := state["run"].(int)
+		if !ok {
+			return nil, fmt.Errorf("missing run id in start: %#v", state["run"])
+		}
+		next := state.Clone()
+		next["marker"] = fmt.Sprintf("run-%d", runID)
+		return next, nil
+	})
+
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		if _, ok := next["marker"].(string); !ok {
+			return nil, fmt.Errorf("missing marker in finish: %#v", state)
+		}
+		next["completed"] = true
+		return next, nil
+	})
+
+	g.AddEdge("start", "finish")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	firstInitial := State{"run": 1}
+	firstResult, err := executor.Execute(context.Background(), firstInitial)
+	if err != nil {
+		t.Fatalf("first execution error: %v", err)
+	}
+	if marker := firstResult["marker"]; marker != "run-1" {
+		t.Fatalf("expected marker run-1, got %#v", marker)
+	}
+	if len(firstInitial) != 1 {
+		t.Fatalf("first initial state mutated: %#v", firstInitial)
+	}
+
+	secondInitial := State{"run": 2}
+	secondResult, err := executor.Execute(context.Background(), secondInitial)
+	if err != nil {
+		t.Fatalf("second execution error: %v", err)
+	}
+	if marker := secondResult["marker"]; marker != "run-2" {
+		t.Fatalf("expected marker run-2, got %#v", marker)
+	}
+	if len(secondInitial) != 1 {
+		t.Fatalf("second initial state mutated: %#v", secondInitial)
+	}
+	if _, ok := secondResult["completed"].(bool); !ok {
+		t.Fatalf("expected finish flag in second result, got %#v", secondResult)
+	}
+}
+
 func TestMergeStatesKeepsKeys(t *testing.T) {
 	base := State{"start": true}
 	a := State{"start": true, "branchA": "done"}
@@ -1054,5 +1160,196 @@ func TestGraphComplexTopologySerial(t *testing.T) {
 	}
 	if startIdx >= finalIdx {
 		t.Errorf("start should execute before final, got start at %d, final at %d", startIdx, finalIdx)
+	}
+}
+
+// TestGraphDifferentPathLengths tests that convergence nodes correctly wait for all predecessors
+// even when the paths to reach them have different lengths.
+// This is the bug that was fixed: previously, fanOutParallel only handled same-length paths.
+func TestGraphDifferentPathLengths(t *testing.T) {
+	// Graph topology:
+	// A → B ↘
+	//       → D
+	//   → C → C2 ↗
+	//
+	// Path 1: A → B → D (length 2)
+	// Path 2: A → C → C2 → D (length 3)
+	// D should wait for both B and C2 to complete
+
+	g := NewGraph()
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+	executionOrder := make([]string, 0)
+	record := func(name string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			executionOrder = append(executionOrder, name)
+			mu.Unlock()
+
+			next := state.Clone()
+			// Each node sets its own key to avoid mergeStates overwriting
+			next[name+"_executed"] = true
+			return next, nil
+		}
+	}
+
+	g.AddNode("A", record("A"))
+	g.AddNode("B", record("B"))
+	g.AddNode("C", record("C"))
+	g.AddNode("C2", record("C2"))
+	g.AddNode("D", record("D"))
+
+	// Create asymmetric paths
+	g.AddEdge("A", "B")  // Short path
+	g.AddEdge("A", "C")  // Long path start
+	g.AddEdge("C", "C2") // Long path middle
+	g.AddEdge("B", "D")  // Short path converges
+	g.AddEdge("C2", "D") // Long path converges
+
+	g.SetEntryPoint("A")
+	g.SetFinishPoint("D")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	_, err = executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	t.Logf("Execution order: %v", executionOrder)
+
+	// Verify all nodes executed exactly once
+	expectedNodes := []string{"A", "B", "C", "C2", "D"}
+	for _, node := range expectedNodes {
+		if executed[node] != 1 {
+			t.Errorf("expected %s to execute once, got %d", node, executed[node])
+		}
+	}
+
+	// Verify execution order: both B and C2 must complete before D
+	bIndex := -1
+	c2Index := -1
+	dIndex := -1
+	for i, node := range executionOrder {
+		switch node {
+		case "B":
+			bIndex = i
+		case "C2":
+			c2Index = i
+		case "D":
+			dIndex = i
+		}
+	}
+
+	if bIndex == -1 {
+		t.Error("B was not executed")
+	}
+	if c2Index == -1 {
+		t.Error("C2 was not executed")
+	}
+	if dIndex == -1 {
+		t.Error("D was not executed")
+	}
+
+	// The critical assertion: D must execute after BOTH B and C2
+	if !(dIndex > bIndex && dIndex > c2Index) {
+		t.Errorf("D should execute after both B and C2, got B at %d, C2 at %d, D at %d",
+			bIndex, c2Index, dIndex)
+	}
+}
+
+// TestGraphAsymmetricConvergence tests a more complex asymmetric DAG
+// similar to the ASR pipeline structure that was failing.
+func TestGraphAsymmetricConvergence(t *testing.T) {
+	// Graph topology:
+	// prepare → vad → xid ↘
+	//             ↘ chunk → asr → merge
+	//
+	// This creates an asymmetric convergence where:
+	// - xid is reached directly from vad
+	// - asr is reached through chunk
+	// - merge must wait for both xid and asr
+
+	g := NewGraph()
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+	executionOrder := make([]string, 0)
+	record := func(name string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			executionOrder = append(executionOrder, name)
+			mu.Unlock()
+
+			next := state.Clone()
+			// Each node sets its own key to avoid mergeStates overwriting
+			next[name+"_data"] = "processed"
+			return next, nil
+		}
+	}
+
+	g.AddNode("prepare", record("prepare"))
+	g.AddNode("vad", record("vad"))
+	g.AddNode("xid", record("xid"))
+	g.AddNode("chunk", record("chunk"))
+	g.AddNode("asr", record("asr"))
+	g.AddNode("merge", record("merge"))
+
+	// Build asymmetric structure
+	g.AddEdge("prepare", "vad")
+	g.AddEdge("vad", "xid")   // Shorter path to merge
+	g.AddEdge("vad", "chunk") // Longer path to merge
+	g.AddEdge("chunk", "asr")
+	g.AddEdge("xid", "merge")
+	g.AddEdge("asr", "merge")
+
+	g.SetEntryPoint("prepare")
+	g.SetFinishPoint("merge")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	_, err = executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	t.Logf("Execution order: %v", executionOrder)
+
+	// Verify all nodes executed
+	expectedNodes := []string{"prepare", "vad", "xid", "chunk", "asr", "merge"}
+	for _, node := range expectedNodes {
+		if executed[node] != 1 {
+			t.Errorf("expected %s to execute once, got %d", node, executed[node])
+		}
+	}
+
+	// Verify execution order: both xid and asr must complete before merge
+	xidIndex := -1
+	asrIndex := -1
+	mergeIndex := -1
+	for i, node := range executionOrder {
+		switch node {
+		case "xid":
+			xidIndex = i
+		case "asr":
+			asrIndex = i
+		case "merge":
+			mergeIndex = i
+		}
+	}
+
+	// The critical assertion: merge must execute after BOTH xid and asr
+	if !(mergeIndex > xidIndex && mergeIndex > asrIndex) {
+		t.Errorf("merge should execute after both xid and asr, got xid at %d, asr at %d, merge at %d",
+			xidIndex, asrIndex, mergeIndex)
 	}
 }

@@ -9,13 +9,15 @@ import (
 
 // Executor represents a compiled graph ready for execution.
 type Executor struct {
-	graph       *Graph
-	queue       []Step
-	waiting     map[string]int
-	visited     map[string]bool
-	finished    bool
-	finishState State
-	stepCount   int // tracks total number of steps executed
+	graph        *Graph
+	queue        []Step
+	waiting      map[string]int
+	predecessors map[string][]string // predecessors for each node
+	pending      map[string]State    // nodes waiting for predecessors, with their accumulated state
+	visited      map[string]bool
+	finished     bool
+	finishState  State
+	stepCount    int // tracks total number of steps executed
 }
 
 // Step represents a single execution step in the graph.
@@ -23,6 +25,7 @@ type Step struct {
 	node         string
 	state        State
 	allowRevisit bool
+	waitAllPreds bool // if true, wait for all predecessors to be visited
 }
 
 type edgeResolution struct {
@@ -38,16 +41,28 @@ type branchResult struct {
 
 // NewExecutor creates a new Executor for the given graph.
 func NewExecutor(g *Graph) *Executor {
+	// Build predecessors map
+	predecessors := make(map[string][]string)
+	for from, edges := range g.edges {
+		for _, edge := range edges {
+			predecessors[edge.to] = append(predecessors[edge.to], from)
+		}
+	}
+
 	return &Executor{
-		graph:   g,
-		queue:   []Step{{node: g.entryPoint}},
-		waiting: make(map[string]int),
-		visited: make(map[string]bool, len(g.nodes)),
+		graph:        g,
+		queue:        []Step{{node: g.entryPoint}},
+		waiting:      make(map[string]int),
+		predecessors: predecessors,
+		pending:      make(map[string]State),
+		visited:      make(map[string]bool, len(g.nodes)),
 	}
 }
 
 // Execute runs the graph execution starting from the given state.
 func (e *Executor) Execute(ctx context.Context, state State) (State, error) {
+	e.reset(state)
+
 	for len(e.queue) > 0 {
 		// Check if we've exceeded the maximum number of steps
 		if e.stepCount >= e.graph.maxSteps {
@@ -78,6 +93,24 @@ func (e *Executor) Execute(ctx context.Context, state State) (State, error) {
 	return nil, fmt.Errorf("graph: finish node not reachable: %s", e.graph.finishPoint)
 }
 
+func (e *Executor) reset(initial State) {
+	var entryState State
+	if initial != nil {
+		entryState = initial.Clone()
+		e.finishState = entryState.Clone()
+	} else {
+		entryState = nil
+		e.finishState = nil
+	}
+
+	e.queue = []Step{{node: e.graph.entryPoint, state: entryState}}
+	e.waiting = make(map[string]int)
+	e.pending = make(map[string]State)
+	e.visited = make(map[string]bool, len(e.graph.nodes))
+	e.finished = false
+	e.stepCount = 0
+}
+
 func (e *Executor) dequeue() Step {
 	step := e.queue[0]
 	e.queue = e.queue[1:]
@@ -85,15 +118,47 @@ func (e *Executor) dequeue() Step {
 }
 
 func (e *Executor) shouldSkip(step Step) bool {
-	// Defer if waiting for other edges
+	// Skip if already visited (unless revisit is allowed)
+	if e.visited[step.node] && !step.allowRevisit {
+		return true
+	}
+
+	// Only check all predecessors if explicitly requested (from fanOutParallel successors)
+	if step.waitAllPreds && !e.visited[step.node] {
+		// Check if all predecessors have been visited
+		// Exclude self-loops (cycles to the same node)
+		allPredsVisited := true
+		for _, pred := range e.predecessors[step.node] {
+			// Skip self-loops
+			if pred == step.node {
+				continue
+			}
+			// Skip cycle edges: if pred is already visited and leads back to us, ignore it
+			if !e.visited[pred] {
+				allPredsVisited = false
+				break
+			}
+		}
+
+		if !allPredsVisited {
+			// Store this in pending instead of re-queueing to avoid infinite loops
+			e.pending[step.node] = mergeStates(e.pending[step.node], step.state)
+			return true
+		}
+
+		// If we reach here and the node was pending, merge its pending state
+		if pendingState, exists := e.pending[step.node]; exists {
+			step.state = mergeStates(pendingState, step.state)
+			delete(e.pending, step.node)
+		}
+	}
+
+	// Legacy waiting mechanism for backward compatibility
 	if e.waiting[step.node] > 0 && !step.allowRevisit {
 		e.queue = append(e.queue, step)
 		return true
 	}
-	// Skip if already visited
-	if e.visited[step.node] && !step.allowRevisit {
-		return true
-	}
+
 	return false
 }
 
@@ -111,7 +176,38 @@ func (e *Executor) executeNode(ctx context.Context, step Step) (State, error) {
 		return nil, fmt.Errorf("graph: node %s: %w", step.node, err)
 	}
 	e.visited[step.node] = true
+
+	// Check if any pending nodes are now ready (all their predecessors are visited)
+	e.checkPendingNodes()
+
 	return nextState.Clone(), nil
+}
+
+// checkPendingNodes checks if any pending nodes can now be activated
+func (e *Executor) checkPendingNodes() {
+	for nodeName, state := range e.pending {
+		allPredsVisited := true
+		for _, pred := range e.predecessors[nodeName] {
+			// Skip self-loops
+			if pred == nodeName {
+				continue
+			}
+			if !e.visited[pred] {
+				allPredsVisited = false
+				break
+			}
+		}
+		if allPredsVisited {
+			// This node is ready to execute
+			e.enqueue(Step{
+				node:         nodeName,
+				state:        state.Clone(),
+				allowRevisit: false,
+				waitAllPreds: true, // Keep the flag
+			})
+			delete(e.pending, nodeName)
+		}
+	}
 }
 
 func (e *Executor) stateFor(step Step) State {
@@ -263,14 +359,7 @@ func (e *Executor) fanOutSerial(step Step, edges []conditionalEdge) {
 }
 
 func (e *Executor) fanOutParallel(ctx context.Context, step Step, state State, edges []conditionalEdge) (State, error) {
-	for _, edge := range edges {
-		e.waiting[edge.to]++
-	}
-	for _, edge := range edges {
-		for _, nextEdge := range e.graph.edges[edge.to] {
-			e.waiting[nextEdge.to]++
-		}
-	}
+	// Execute all parallel branches concurrently
 	results := make([]branchResult, len(edges))
 	eg, egCtx := errgroup.WithContext(ctx)
 	for i, edge := range edges {
@@ -292,31 +381,33 @@ func (e *Executor) fanOutParallel(ctx context.Context, step Step, state State, e
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
-	successorStates := make(map[string]State)
-	pending := make(map[string]State)
+
+	// Mark branches as visited and collect their successors
 	mergedBranches := state.Clone()
+	successorStates := make(map[string]State)
+
 	for _, result := range results {
 		edge := edges[result.idx]
-		e.waiting[edge.to]--
-		branchEdges := e.graph.edges[edge.to]
-		for _, nextEdge := range branchEdges {
-			e.waiting[nextEdge.to]--
-			pending[nextEdge.to] = mergeStates(pending[nextEdge.to], result.state)
-			if e.waiting[nextEdge.to] == 0 {
-				successorStates[nextEdge.to] = pending[nextEdge.to].Clone()
-				delete(pending, nextEdge.to)
-			}
-		}
-		mergedBranches = mergeStates(mergedBranches, result.state)
+		// Mark this branch node as visited
 		e.visited[edge.to] = true
+		mergedBranches = mergeStates(mergedBranches, result.state)
+
+		// Collect states for successor nodes
+		for _, nextEdge := range e.graph.edges[edge.to] {
+			successorStates[nextEdge.to] = mergeStates(successorStates[nextEdge.to], result.state)
+		}
 	}
+
+	// Enqueue all successors with waitAllPreds=true so they wait for all predecessors
 	for successor, successorState := range successorStates {
 		e.enqueue(Step{
 			node:         successor,
 			state:        successorState.Clone(),
 			allowRevisit: step.allowRevisit,
+			waitAllPreds: true, // Wait for all predecessors to complete
 		})
 	}
+
 	return mergedBranches, nil
 }
 

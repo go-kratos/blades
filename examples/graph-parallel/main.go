@@ -42,7 +42,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	state, err := executor.Execute(context.Background(), graph.State{})
+	state, err := executor.Execute(context.Background(), graph.State{"a": 1})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -18,10 +18,31 @@ const (
 	stateKeyDraft    = "draft"
 )
 
+func getString(state graph.State, key string) (string, bool) {
+	if v, ok := state[key]; ok {
+		if s, ok := v.(string); ok {
+			return s, true
+		}
+	}
+	return "", false
+}
+
+func getInt(state graph.State, key string) (int, bool) {
+	if v, ok := state[key]; ok {
+		if i, ok := v.(int); ok {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 func outline(ctx context.Context, state graph.State) (graph.State, error) {
 	next := state.Clone()
-	if _, ok := next[stateKeyDraft]; !ok {
+	if draft, ok := getString(next, stateKeyDraft); !ok || draft == "" {
 		next[stateKeyDraft] = "Outline TODO: add twist."
+	}
+	if _, ok := getInt(next, stateKeyRevision); !ok {
+		next[stateKeyRevision] = 0
 	}
 	return next, nil
 }
@@ -31,8 +52,9 @@ func review(ctx context.Context, state graph.State) (graph.State, error) {
 }
 
 func revise(ctx context.Context, state graph.State) (graph.State, error) {
-	draft := state[stateKeyDraft].(string)
-	revision := state[stateKeyRevision].(int) + 1
+	draft, _ := getString(state, stateKeyDraft)
+	revision, _ := getInt(state, stateKeyRevision)
+	revision++
 
 	// Apply revision-specific updates
 	draft = strings.Replace(draft, "TODO: add twist.", "A surprise reveal changes everything.", 1)
@@ -51,21 +73,31 @@ func revise(ctx context.Context, state graph.State) (graph.State, error) {
 func publish(ctx context.Context, state graph.State) (graph.State, error) {
 	fmt.Printf(
 		"Final draft after %d revision(s): %s\n",
-		state[stateKeyRevision].(int),
-		state[stateKeyDraft].(string),
+		func() int {
+			if revision, ok := getInt(state, stateKeyRevision); ok {
+				return revision
+			}
+			return 0
+		}(),
+		func() string {
+			if draft, ok := getString(state, stateKeyDraft); ok {
+				return draft
+			}
+			return ""
+		}(),
 	)
 	return state.Clone(), nil
 }
 
 func needsRevision(state graph.State, max int) bool {
-	draft := state[stateKeyDraft].(string)
-	revision := state[stateKeyRevision].(int)
+	draft, _ := getString(state, stateKeyDraft)
+	revision, _ := getInt(state, stateKeyRevision)
 	return strings.Contains(draft, "TODO") && revision < max
 }
 
 func publishReady(state graph.State, max int) bool {
-	draft := state[stateKeyDraft].(string)
-	revision := state[stateKeyRevision].(int)
+	draft, _ := getString(state, stateKeyDraft)
+	revision, _ := getInt(state, stateKeyRevision)
 	return !strings.Contains(draft, "TODO") || revision >= max
 }
 
