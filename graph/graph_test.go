@@ -1263,6 +1263,310 @@ func TestGraphDifferentPathLengths(t *testing.T) {
 	}
 }
 
+// TestGraphDifferentPathLengthsMultipleBranches extends the path-length coverage to three
+// asymmetric branches converging at a single finish node.
+func TestGraphDifferentPathLengthsMultipleBranches(t *testing.T) {
+	// Graph topology:
+	// start → branch_short → finish
+	// start → branch_mid → branch_mid2 → finish
+	// start → branch_long1 → branch_long2 → branch_long3 → finish
+
+	g := NewGraph()
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+	executionOrder := make([]string, 0)
+	record := func(name string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			executionOrder = append(executionOrder, name)
+			mu.Unlock()
+
+			next := state.Clone()
+			next[name+"_executed"] = true
+			return next, nil
+		}
+	}
+
+	g.AddNode("start", record("start"))
+	g.AddNode("branch_short", record("branch_short"))
+	g.AddNode("branch_mid", record("branch_mid"))
+	g.AddNode("branch_mid2", record("branch_mid2"))
+	g.AddNode("branch_long1", record("branch_long1"))
+	g.AddNode("branch_long2", record("branch_long2"))
+	g.AddNode("branch_long3", record("branch_long3"))
+	g.AddNode("finish", record("finish"))
+
+	g.AddEdge("start", "branch_short")
+	g.AddEdge("start", "branch_mid")
+	g.AddEdge("start", "branch_long1")
+	g.AddEdge("branch_short", "finish")
+	g.AddEdge("branch_mid", "branch_mid2")
+	g.AddEdge("branch_mid2", "finish")
+	g.AddEdge("branch_long1", "branch_long2")
+	g.AddEdge("branch_long2", "branch_long3")
+	g.AddEdge("branch_long3", "finish")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	_, err = executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	// Ensure each node executed exactly once.
+	expectedNodes := []string{
+		"start",
+		"branch_short",
+		"branch_mid",
+		"branch_mid2",
+		"branch_long1",
+		"branch_long2",
+		"branch_long3",
+		"finish",
+	}
+	for _, node := range expectedNodes {
+		if executed[node] != 1 {
+			t.Errorf("expected %s to execute once, got %d", node, executed[node])
+		}
+	}
+
+	// Finish must wait for all predecessors (branch_short, branch_mid2, branch_long3).
+	shortIdx := -1
+	midIdx := -1
+	longIdx := -1
+	finishIdx := -1
+	for i, node := range executionOrder {
+		switch node {
+		case "branch_short":
+			shortIdx = i
+		case "branch_mid2":
+			midIdx = i
+		case "branch_long3":
+			longIdx = i
+		case "finish":
+			finishIdx = i
+		}
+	}
+
+	if finishIdx == -1 {
+		t.Error("finish node did not execute")
+	}
+	if shortIdx == -1 || midIdx == -1 || longIdx == -1 {
+		t.Fatalf("missing branch execution indices: short=%d mid=%d long=%d", shortIdx, midIdx, longIdx)
+	}
+	if !(finishIdx > shortIdx && finishIdx > midIdx && finishIdx > longIdx) {
+		t.Errorf("finish should run after all branch endpoints; got short=%d mid=%d long=%d finish=%d",
+			shortIdx, midIdx, longIdx, finishIdx)
+	}
+}
+
+func TestGraphDifferentPathLengthsConditionalBranches(t *testing.T) {
+	// Graph topology with conditional exits:
+	// start → branch_short ──► finish
+	// start → branch_mid ─┐
+	//             └─(cond false)──► mid_skip
+	//             └─(cond true) ──► branch_mid2 ──► finish
+	// start → branch_long1 → branch_long2 → branch_long3 ──► finish
+
+	g := NewGraph()
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+	executionOrder := make([]string, 0)
+	record := func(name string, mutate func(State) State) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			executionOrder = append(executionOrder, name)
+			mu.Unlock()
+
+			next := state.Clone()
+			next[name+"_executed"] = true
+			if mutate != nil {
+				return mutate(next), nil
+			}
+			return next, nil
+		}
+	}
+
+	g.AddNode("start", record("start", func(state State) State {
+		next := state.Clone()
+		next["mid_condition"] = true
+		return next
+	}))
+	g.AddNode("branch_short", record("branch_short", nil))
+	g.AddNode("branch_mid", record("branch_mid", nil))
+	g.AddNode("mid_skip", record("mid_skip", nil))
+	g.AddNode("branch_mid2", record("branch_mid2", nil))
+	g.AddNode("branch_long1", record("branch_long1", nil))
+	g.AddNode("branch_long2", record("branch_long2", nil))
+	g.AddNode("branch_long3", record("branch_long3", nil))
+	g.AddNode("finish", record("finish", nil))
+
+	g.AddEdge("start", "branch_short")
+	g.AddEdge("start", "branch_mid")
+	g.AddEdge("start", "branch_long1")
+	g.AddEdge("branch_short", "finish")
+	g.AddEdge("branch_mid", "mid_skip", WithEdgeCondition(func(_ context.Context, state State) bool {
+		cond, _ := state["mid_condition"].(bool)
+		return !cond
+	}))
+	g.AddEdge("branch_mid", "branch_mid2", WithEdgeCondition(func(_ context.Context, state State) bool {
+		cond, _ := state["mid_condition"].(bool)
+		return cond
+	}))
+	g.AddEdge("branch_mid2", "finish")
+	g.AddEdge("mid_skip", "finish")
+	g.AddEdge("branch_long1", "branch_long2")
+	g.AddEdge("branch_long2", "branch_long3")
+	g.AddEdge("branch_long3", "finish")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	result, err := executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	for _, node := range []string{
+		"start",
+		"branch_short",
+		"branch_mid",
+		"branch_mid2",
+		"branch_long1",
+		"branch_long2",
+		"branch_long3",
+		"finish",
+	} {
+		if executed[node] != 1 {
+			t.Errorf("expected %s to execute once, got %d", node, executed[node])
+		}
+	}
+	if executed["branch_mid2"] == 0 {
+		t.Errorf("expected branch_mid2 to execute, got counts=%v", executed)
+	}
+
+	shortIdx := -1
+	midIdx := -1
+	longIdx := -1
+	finishIdx := -1
+	for i, node := range executionOrder {
+		switch node {
+		case "branch_short":
+			shortIdx = i
+		case "branch_mid2":
+			midIdx = i
+		case "branch_long3":
+			longIdx = i
+		case "finish":
+			finishIdx = i
+		}
+	}
+
+	if finishIdx == -1 {
+		t.Fatal("finish node did not execute")
+	}
+	if shortIdx == -1 || midIdx == -1 || longIdx == -1 {
+		t.Fatalf("missing branch indices short=%d mid=%d long=%d", shortIdx, midIdx, longIdx)
+	}
+	if !(finishIdx > shortIdx && finishIdx > midIdx && finishIdx > longIdx) {
+		t.Errorf("finish should wait for all active branches; got short=%d mid=%d long=%d finish=%d",
+			shortIdx, midIdx, longIdx, finishIdx)
+	}
+
+	if _, ok := result["branch_mid2_executed"]; !ok {
+		t.Fatalf("branch_mid2 execution marker missing from result: %#v", result)
+	}
+	if _, ok := result["finish_executed"]; !ok {
+		t.Fatalf("finish state missing from result: %#v", result)
+	}
+}
+
+func TestGraphSingleEdgeWaitPropagation(t *testing.T) {
+	g := NewGraph()
+
+	var mu sync.Mutex
+	executionOrder := make([]string, 0)
+	record := func(name string, transform func(State) State) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executionOrder = append(executionOrder, name)
+			mu.Unlock()
+			next := state.Clone()
+			next[name+"_visited"] = true
+			if transform != nil {
+				return transform(next), nil
+			}
+			return next, nil
+		}
+	}
+
+	g.AddNode("start", record("start", nil))
+	g.AddNode("branchA", record("branchA", func(state State) State {
+		next := state.Clone()
+		next["fromA"] = true
+		return next
+	}))
+	g.AddNode("mid", record("mid", nil))
+	g.AddNode("branchB", record("branchB", nil))
+	g.AddNode("branchB2", record("branchB2", func(state State) State {
+		next := state.Clone()
+		next["fromB"] = true
+		return next
+	}))
+	g.AddNode("join", func(ctx context.Context, state State) (State, error) {
+		mu.Lock()
+		executionOrder = append(executionOrder, "join")
+		mu.Unlock()
+		if _, ok := state["fromA"].(bool); !ok {
+			return nil, fmt.Errorf("join missing fromA: %#v", state)
+		}
+		if _, ok := state["fromB"].(bool); !ok {
+			return nil, fmt.Errorf("join missing fromB: %#v", state)
+		}
+		next := state.Clone()
+		next["join_verified"] = true
+		return next, nil
+	})
+
+	g.AddEdge("start", "branchA")
+	g.AddEdge("start", "branchB")
+	g.AddEdge("branchA", "mid")
+	g.AddEdge("mid", "join")
+	g.AddEdge("branchB", "branchB2")
+	g.AddEdge("branchB2", "join")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+		t.Fatalf("execution error: %v (order=%v)", err, executionOrder)
+	}
+
+	if len(executionOrder) == 0 || executionOrder[len(executionOrder)-1] != "join" {
+		t.Fatalf("expected join to execute last, order=%v", executionOrder)
+	}
+}
+
 // TestGraphAsymmetricConvergence tests a more complex asymmetric DAG
 // similar to the ASR pipeline structure that was failing.
 func TestGraphAsymmetricConvergence(t *testing.T) {
