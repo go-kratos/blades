@@ -40,6 +40,7 @@ type task struct {
 	pending     map[string]State
 	visited     map[string]bool
 	skippedCnt  map[string]int
+	skippedFrom map[string]map[string]bool
 	finished    bool
 	finishState State
 }
@@ -59,7 +60,7 @@ func NewExecutor(g *Graph) *Executor {
 	}
 }
 
-// Execute runs the graph execution starting from the given state.
+// Execute runs the graph task starting from the given state.
 func (e *Executor) Execute(ctx context.Context, state State) (State, error) {
 	t := e.newTask(state)
 	return t.execute(ctx)
@@ -76,9 +77,10 @@ func (e *Executor) newTask(initial State) *task {
 			node:  e.graph.entryPoint,
 			state: entryState,
 		}},
-		pending:    make(map[string]State),
-		visited:    make(map[string]bool, len(e.graph.nodes)),
-		skippedCnt: make(map[string]int, len(e.graph.nodes)),
+		pending:     make(map[string]State),
+		visited:     make(map[string]bool, len(e.graph.nodes)),
+		skippedCnt:  make(map[string]int, len(e.graph.nodes)),
+		skippedFrom: make(map[string]map[string]bool, len(e.graph.nodes)),
 	}
 }
 
@@ -259,7 +261,7 @@ func (x *task) resolveAllConditional(ctx context.Context, state State, edges []c
 	if len(matched) == 0 {
 		return edgeResolution{}, fmt.Errorf("graph: no condition matched for edges from node %s", nodeName)
 	}
-	x.registerSkippedTargets(skippedTargets)
+	x.registerSkippedTargets(nodeName, skippedTargets)
 	if len(matched) == 1 {
 		return edgeResolution{
 			immediate: []Step{{
@@ -280,7 +282,7 @@ func (x *task) resolveMixed(ctx context.Context, state State, edges []conditiona
 			for _, trailing := range edges[idx+1:] {
 				skippedTargets = append(skippedTargets, trailing.to)
 			}
-			x.registerSkippedTargets(skippedTargets)
+			x.registerSkippedTargets(nodeName, skippedTargets)
 			return edgeResolution{
 				immediate: []Step{{
 					node:         edge.to,
@@ -401,13 +403,13 @@ func (x *task) shouldWaitForNode(node string) bool {
 	return false
 }
 
-func (x *task) registerSkippedTargets(targets []string) {
+func (x *task) registerSkippedTargets(parent string, targets []string) {
 	for _, target := range targets {
-		x.registerSkipForTarget(target)
+		x.registerSkip(parent, target)
 	}
 }
 
-func (x *task) registerSkipForTarget(target string) {
+func (x *task) registerSkip(parent, target string) {
 	preds := x.executor.predecessors[target]
 	if len(preds) == 0 {
 		return
@@ -415,6 +417,13 @@ func (x *task) registerSkipForTarget(target string) {
 	if x.visited[target] {
 		return
 	}
+	if x.skippedFrom[target] == nil {
+		x.skippedFrom[target] = make(map[string]bool)
+	}
+	if x.skippedFrom[target][parent] {
+		return
+	}
+	x.skippedFrom[target][parent] = true
 	x.skippedCnt[target]++
 	if x.skippedCnt[target] >= len(preds) {
 		x.markNodeSkipped(target)
@@ -428,6 +437,6 @@ func (x *task) markNodeSkipped(node string) {
 	x.visited[node] = true
 	delete(x.pending, node)
 	for _, edge := range x.executor.graph.edges[node] {
-		x.registerSkipForTarget(edge.to)
+		x.registerSkip(node, edge.to)
 	}
 }
