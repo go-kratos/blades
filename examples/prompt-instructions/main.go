@@ -19,7 +19,7 @@ func main() {
 		blades.UserMessage("Tell me a joke."),
 	)
 	// Create a new session
-	session := blades.NewSession(map[string]any{
+	session := blades.NewSession("conversation_123", map[string]any{
 		"style": "robot",
 	})
 	ctx := blades.NewSessionContext(context.Background(), session)

@@ -74,7 +74,7 @@ Do not add any other text before or after the code block.`),
 	prompt := blades.NewPrompt(
 		blades.UserMessage("Write a Python function that takes a list of integers and returns a new list containing only the even integers from the original list."),
 	)
-	session := blades.NewSession()
+	session := blades.NewSession("conversation_123")
 	ctx := blades.NewSessionContext(context.Background(), session)
 	result, err := seq.Run(ctx, prompt)
 	if err != nil {
