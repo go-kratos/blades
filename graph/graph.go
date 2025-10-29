@@ -56,9 +56,8 @@ type Graph struct {
 	entryPoint  string
 	finishPoint string
 	parallel    bool
-	maxSteps    int   // maximum number of node execution steps (default 1000)
+	maxSteps    int // maximum number of node execution steps (default 1000)
 	middlewares []Middleware
-	err         error // accumulated error for builder pattern
 }
 
 // NewGraph creates a new empty Graph.
@@ -78,13 +77,9 @@ func NewGraph(opts ...Option) *Graph {
 }
 
 // AddNode adds a named node with its handler to the graph.
-// Returns the graph for chaining. Check error with Compile().
+// Returns the graph for chaining.
 func (g *Graph) AddNode(name string, handler Handler) *Graph {
-	if g.err != nil {
-		return g
-	}
 	if _, ok := g.nodes[name]; ok {
-		g.err = fmt.Errorf("graph: node %s already exists", name)
 		return g
 	}
 	g.nodes[name] = handler
@@ -92,61 +87,43 @@ func (g *Graph) AddNode(name string, handler Handler) *Graph {
 }
 
 // AddEdge adds a directed edge from one node to another. Options can configure the edge.
-// Returns the graph for chaining. Check error with Compile().
+// Returns the graph for chaining.
 func (g *Graph) AddEdge(from, to string, opts ...EdgeOption) *Graph {
-	if g.err != nil {
-		return g
-	}
 	for _, edge := range g.edges[from] {
 		if edge.to == to {
-			g.err = fmt.Errorf("graph: edge from %s to %s already exists", from, to)
 			return g
 		}
 	}
 	newEdge := conditionalEdge{to: to}
 	for _, opt := range opts {
-		if opt == nil {
-			continue
+		if opt != nil {
+			opt(&newEdge)
 		}
-		opt(&newEdge)
 	}
 	g.edges[from] = append(g.edges[from], newEdge)
 	return g
 }
 
 // SetEntryPoint marks a node as the entry point.
-// Returns the graph for chaining. Check error with Compile().
+// Returns the graph for chaining.
 func (g *Graph) SetEntryPoint(start string) *Graph {
-	if g.err != nil {
-		return g
+	if g.entryPoint == "" {
+		g.entryPoint = start
 	}
-	if g.entryPoint != "" {
-		g.err = fmt.Errorf("graph: entry point already set to %s", g.entryPoint)
-		return g
-	}
-	g.entryPoint = start
 	return g
 }
 
 // SetFinishPoint marks a node as the finish point.
-// Returns the graph for chaining. Check error with Compile().
+// Returns the graph for chaining.
 func (g *Graph) SetFinishPoint(end string) *Graph {
-	if g.err != nil {
-		return g
+	if g.finishPoint == "" {
+		g.finishPoint = end
 	}
-	if g.finishPoint != "" {
-		g.err = fmt.Errorf("graph: finish point already set to %s", g.finishPoint)
-		return g
-	}
-	g.finishPoint = end
 	return g
 }
 
 // validate ensures the graph configuration is correct before compiling.
 func (g *Graph) validate() error {
-	if g.err != nil {
-		return g.err
-	}
 	if g.entryPoint == "" {
 		return fmt.Errorf("graph: entry point not set")
 	}

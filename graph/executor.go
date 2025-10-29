@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -28,14 +29,9 @@ type Step struct {
 }
 
 type edgeResolution struct {
-	immediate []Step
-	fanOut    []conditionalEdge
-	prepend   bool
-}
-
-type branchResult struct {
-	idx   int
-	state State
+	steps   []Step
+	fanOut  []conditionalEdge
+	prepend bool
 }
 
 // NewExecutor creates a new Executor for the given graph.
@@ -184,8 +180,8 @@ func (e *Executor) processOutgoingEdges(ctx context.Context, step Step, state St
 		return err
 	}
 	// Handle immediate transitions (single matched conditional edge)
-	if len(resolution.immediate) > 0 {
-		e.enqueueSteps(resolution.immediate, resolution.prepend)
+	if len(resolution.steps) > 0 {
+		e.enqueueSteps(resolution.steps, resolution.prepend)
 		return nil
 	}
 	edges := resolution.fanOut
@@ -206,10 +202,7 @@ func (e *Executor) processOutgoingEdges(ctx context.Context, step Step, state St
 	}
 	// Multiple edges: execute in parallel
 	_, err = e.fanOutParallel(ctx, step, state, edges)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func (e *Executor) enqueue(step Step) {
@@ -272,7 +265,7 @@ func (e *Executor) resolveAllConditional(ctx context.Context, state State, edges
 	// Single match - take it immediately
 	if len(matched) == 1 {
 		return edgeResolution{
-			immediate: []Step{{
+			steps: []Step{{
 				node:         matched[0].to,
 				state:        state.Clone(),
 				allowRevisit: true,
@@ -289,7 +282,7 @@ func (e *Executor) resolveMixed(ctx context.Context, state State, edges []condit
 	for _, edge := range edges {
 		if edge.condition == nil || edge.condition(ctx, state) {
 			return edgeResolution{
-				immediate: []Step{{
+				steps: []Step{{
 					node:         edge.to,
 					state:        state.Clone(),
 					allowRevisit: true,
@@ -313,11 +306,9 @@ func (e *Executor) fanOutSerial(step Step, edges []conditionalEdge) {
 
 func (e *Executor) fanOutParallel(ctx context.Context, step Step, state State, edges []conditionalEdge) (State, error) {
 	// Execute all parallel branches concurrently
-	results := make([]branchResult, len(edges))
+	results := make([]State, len(edges))
 	eg, egCtx := errgroup.WithContext(ctx)
 	for i, edge := range edges {
-		i := i
-		edge := edge
 		eg.Go(func() error {
 			handler := e.graph.nodes[edge.to]
 			if handler == nil {
@@ -327,7 +318,7 @@ func (e *Executor) fanOutParallel(ctx context.Context, step Step, state State, e
 			if err != nil {
 				return fmt.Errorf("graph: node %s: %w", edge.to, err)
 			}
-			results[i] = branchResult{idx: i, state: nextState.Clone()}
+			results[i] = nextState.Clone()
 			return nil
 		})
 	}
@@ -339,15 +330,14 @@ func (e *Executor) fanOutParallel(ctx context.Context, step Step, state State, e
 	mergedBranches := state.Clone()
 	successorStates := make(map[string]State)
 
-	for _, result := range results {
-		edge := edges[result.idx]
+	for i, edge := range edges {
 		// Mark this branch node as visited
 		e.visited[edge.to] = true
-		mergedBranches = mergeStates(mergedBranches, result.state)
+		mergedBranches = mergeStates(mergedBranches, results[i])
 
 		// Collect states for successor nodes
 		for _, nextEdge := range e.graph.edges[edge.to] {
-			successorStates[nextEdge.to] = mergeStates(successorStates[nextEdge.to], result.state)
+			successorStates[nextEdge.to] = mergeStates(successorStates[nextEdge.to], results[i])
 		}
 	}
 
@@ -373,11 +363,8 @@ func mergeStates(base State, updates ...State) State {
 		merged = base.Clone()
 	}
 	for _, update := range updates {
-		if update == nil {
-			continue
-		}
-		for k, v := range update {
-			merged[k] = v
+		if update != nil {
+			maps.Copy(merged, update)
 		}
 	}
 	return merged
