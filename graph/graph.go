@@ -85,31 +85,25 @@ func (g *Graph) AddEdge(from, to string, opts ...EdgeOption) *Graph {
 			return g
 		}
 	}
-	newEdge := conditionalEdge{to: to}
+	edge := conditionalEdge{to: to}
 	for _, opt := range opts {
-		if opt != nil {
-			opt(&newEdge)
-		}
+		opt(&edge)
 	}
-	g.edges[from] = append(g.edges[from], newEdge)
+	g.edges[from] = append(g.edges[from], edge)
 	return g
 }
 
 // SetEntryPoint marks a node as the entry point.
 // Returns the graph for chaining.
 func (g *Graph) SetEntryPoint(start string) *Graph {
-	if g.entryPoint == "" {
-		g.entryPoint = start
-	}
+	g.entryPoint = start
 	return g
 }
 
 // SetFinishPoint marks a node as the finish point.
 // Returns the graph for chaining.
 func (g *Graph) SetFinishPoint(end string) *Graph {
-	if g.finishPoint == "" {
-		g.finishPoint = end
-	}
+	g.finishPoint = end
 	return g
 }
 
