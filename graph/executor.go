@@ -26,6 +26,7 @@ type edgeResolution struct {
 	immediate []Step
 	fanOut    []conditionalEdge
 	prepend   bool
+	skipped   []conditionalEdge
 }
 
 type branchResult struct {
@@ -39,6 +40,8 @@ type task struct {
 	queue       []Step
 	pending     map[string]State
 	visited     map[string]bool
+	skipped     map[string]bool
+	inactive    map[string]int
 	finished    bool
 	finishState State
 }
@@ -75,8 +78,10 @@ func (e *Executor) newTask(initial State) *task {
 			node:  e.graph.entryPoint,
 			state: entryState,
 		}},
-		pending: make(map[string]State),
-		visited: make(map[string]bool, len(e.graph.nodes)),
+		pending:  make(map[string]State),
+		visited:  make(map[string]bool, len(e.graph.nodes)),
+		skipped:  make(map[string]bool, len(e.graph.nodes)),
+		inactive: make(map[string]int, len(e.graph.nodes)),
 	}
 }
 
@@ -178,6 +183,7 @@ func (x *task) processOutgoingEdges(ctx context.Context, step Step, state State)
 	if err != nil {
 		return err
 	}
+	x.registerSkipped(resolution.skipped)
 	if len(resolution.immediate) > 0 {
 		x.enqueueSteps(resolution.immediate, resolution.prepend)
 		return nil
@@ -246,9 +252,12 @@ func (x *task) classifyEdges(edges []conditionalEdge) (conditional, unconditiona
 
 func (x *task) resolveAllConditional(ctx context.Context, state State, edges []conditionalEdge, nodeName string) (edgeResolution, error) {
 	matched := make([]conditionalEdge, 0, len(edges))
+	skipped := make([]conditionalEdge, 0, len(edges))
 	for _, edge := range edges {
 		if edge.condition(ctx, state) {
 			matched = append(matched, edge)
+		} else {
+			skipped = append(skipped, edge)
 		}
 	}
 	if len(matched) == 0 {
@@ -262,14 +271,20 @@ func (x *task) resolveAllConditional(ctx context.Context, state State, edges []c
 				allowRevisit: true,
 				waitAllPreds: x.shouldWaitForNode(matched[0].to),
 			}},
+			skipped: skipped,
 		}, nil
 	}
-	return edgeResolution{fanOut: matched}, nil
+	return edgeResolution{fanOut: matched, skipped: skipped}, nil
 }
 
 func (x *task) resolveMixed(ctx context.Context, state State, edges []conditionalEdge, nodeName string) (edgeResolution, error) {
-	for _, edge := range edges {
+	skipped := make([]conditionalEdge, 0, len(edges))
+	for idx, edge := range edges {
 		if edge.condition == nil || edge.condition(ctx, state) {
+			skippedEdges := append([]conditionalEdge{}, skipped...)
+			if idx+1 < len(edges) {
+				skippedEdges = append(skippedEdges, edges[idx+1:]...)
+			}
 			return edgeResolution{
 				immediate: []Step{{
 					node:         edge.to,
@@ -278,8 +293,10 @@ func (x *task) resolveMixed(ctx context.Context, state State, edges []conditiona
 					waitAllPreds: x.shouldWaitForNode(edge.to),
 				}},
 				prepend: true,
+				skipped: skippedEdges,
 			}, nil
 		}
+		skipped = append(skipped, edge)
 	}
 	return edgeResolution{}, fmt.Errorf("graph: no condition matched for edges from node %s", nodeName)
 }
@@ -365,6 +382,9 @@ func (x *task) predecessorsReady(node string) bool {
 		if pred == node {
 			continue
 		}
+		if x.skipped[pred] {
+			continue
+		}
 		if !x.visited[pred] {
 			return false
 		}
@@ -378,6 +398,9 @@ func (x *task) shouldWaitForNode(node string) bool {
 		if pred == node {
 			continue
 		}
+		if x.skipped[pred] {
+			continue
+		}
 		if !x.visited[pred] {
 			return true
 		}
@@ -387,4 +410,20 @@ func (x *task) shouldWaitForNode(node string) bool {
 		}
 	}
 	return false
+}
+
+func (x *task) registerSkipped(edges []conditionalEdge) {
+	if len(edges) == 0 {
+		return
+	}
+	for _, edge := range edges {
+		preds := x.executor.predecessors[edge.to]
+		if len(preds) == 0 {
+			continue
+		}
+		x.inactive[edge.to]++
+		if x.inactive[edge.to] >= len(preds) {
+			x.skipped[edge.to] = true
+		}
+	}
 }

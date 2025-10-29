@@ -1424,3 +1424,707 @@ func TestGraphAsymmetricConvergence(t *testing.T) {
 			xidIndex, asrIndex, mergeIndex)
 	}
 }
+
+// TestGraphComplexMixedOrchestration tests a complex scenario mixing:
+// - Parallel branches
+// - Conditional routing
+// - Serial chains
+// - Multiple convergence points
+func TestGraphComplexMixedOrchestration(t *testing.T) {
+	// Graph topology:
+	//                   → process_a → transform_a ↘
+	// start → split ───→ process_b ────────────────→ join1 → validate_check → (cond) → skip/validate → final
+	//                   → process_c ─────────────────↗
+	//
+	// Scenarios tested:
+	// - Parallel split (split → process_a/b/c)
+	// - Serial chain (process_a → transform_a)
+	// - Multiple convergence (join1 waits for transform_a, process_b, process_c)
+	// - Conditional branch after convergence
+
+	g := NewGraph()
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+	executionOrder := make([]string, 0)
+	record := func(name string, stateMutator func(State) State) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			executionOrder = append(executionOrder, name)
+			mu.Unlock()
+
+			next := state.Clone()
+			next[name+"_visited"] = true
+			if stateMutator != nil {
+				return stateMutator(next), nil
+			}
+			return next, nil
+		}
+	}
+
+	// Setup nodes
+	g.AddNode("start", record("start", func(s State) State {
+		s["enable_validate"] = true
+		return s
+	}))
+	g.AddNode("split", record("split", nil))
+	g.AddNode("process_a", record("process_a", nil))
+	g.AddNode("transform_a", record("transform_a", func(s State) State {
+		s["data_a"] = "transformed"
+		return s
+	}))
+	g.AddNode("process_b", record("process_b", func(s State) State {
+		s["data_b"] = "processed"
+		return s
+	}))
+	g.AddNode("process_c", record("process_c", nil))
+	g.AddNode("join1", record("join1", nil))
+	g.AddNode("validate_check", record("validate_check", nil))
+	g.AddNode("skip", record("skip", nil))
+	g.AddNode("validate", record("validate", func(s State) State {
+		s["validated"] = true
+		return s
+	}))
+	g.AddNode("final", record("final", nil))
+
+	// Build edges
+	g.AddEdge("start", "split")
+	g.AddEdge("split", "process_a")
+	g.AddEdge("split", "process_b")
+	g.AddEdge("split", "process_c")
+	g.AddEdge("process_a", "transform_a")
+	g.AddEdge("transform_a", "join1")
+	g.AddEdge("process_b", "join1")
+	g.AddEdge("process_c", "join1")
+	g.AddEdge("join1", "validate_check")
+
+	// Conditional routing after join
+	g.AddEdge("validate_check", "skip", WithEdgeCondition(func(_ context.Context, state State) bool {
+		enable, _ := state["enable_validate"].(bool)
+		return !enable
+	}))
+	g.AddEdge("validate_check", "validate", WithEdgeCondition(func(_ context.Context, state State) bool {
+		enable, _ := state["enable_validate"].(bool)
+		return enable
+	}))
+	g.AddEdge("skip", "final")
+	g.AddEdge("validate", "final")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("final")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	result, err := executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	t.Logf("Execution order: %v", executionOrder)
+
+	// Verify all expected nodes executed
+	expectedNodes := []string{"start", "split", "process_a", "transform_a", "process_b", "process_c", "join1", "validate_check", "validate", "final"}
+	for _, node := range expectedNodes {
+		if executed[node] != 1 {
+			t.Errorf("expected %s to execute once, got %d", node, executed[node])
+		}
+	}
+
+	// Verify skip was not executed (because enable_validate=true)
+	if executed["skip"] != 0 {
+		t.Errorf("expected skip not to execute, got %d", executed["skip"])
+	}
+
+	// Verify state merging
+	if _, ok := result["validated"].(bool); !ok {
+		t.Errorf("expected validated flag in result")
+	}
+	if _, ok := result["data_a"].(string); !ok {
+		t.Errorf("expected data_a in result")
+	}
+	if _, ok := result["data_b"].(string); !ok {
+		t.Errorf("expected data_b in result")
+	}
+
+	// Verify join1 executed after all its predecessors
+	findIndex := func(name string) int {
+		for i, n := range executionOrder {
+			if n == name {
+				return i
+			}
+		}
+		return -1
+	}
+
+	join1Idx := findIndex("join1")
+	if join1Idx == -1 {
+		t.Fatal("join1 not executed")
+	}
+
+	for _, pred := range []string{"transform_a", "process_b", "process_c"} {
+		predIdx := findIndex(pred)
+		if predIdx == -1 || predIdx >= join1Idx {
+			t.Errorf("expected %s to execute before join1, got %s=%d join1=%d", pred, pred, predIdx, join1Idx)
+		}
+	}
+}
+
+// TestGraphNestedParallelBranches tests parallel branches that contain parallel sub-branches
+func TestGraphNestedParallelBranches(t *testing.T) {
+	// Graph topology:
+	//                   → worker1a ↘
+	// start → fanout1 ──→ worker1b ─→ join1 ↘
+	//                   → worker1c ↗          ↘
+	//                                           → final_merge
+	//                   → worker2a ↘          ↗
+	//        → fanout2 ──→ worker2b ─→ join2 ↗
+	//                   → worker2c ↗
+
+	g := NewGraph()
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+	executionOrder := make([]string, 0)
+	record := func(name string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			executionOrder = append(executionOrder, name)
+			mu.Unlock()
+
+			// Simulate some work
+			time.Sleep(time.Millisecond)
+
+			next := state.Clone()
+			next[name+"_result"] = name + "_done"
+			return next, nil
+		}
+	}
+
+	// Build nested parallel structure
+	g.AddNode("start", record("start"))
+	g.AddNode("fanout1", record("fanout1"))
+	g.AddNode("worker1a", record("worker1a"))
+	g.AddNode("worker1b", record("worker1b"))
+	g.AddNode("worker1c", record("worker1c"))
+	g.AddNode("join1", record("join1"))
+	g.AddNode("fanout2", record("fanout2"))
+	g.AddNode("worker2a", record("worker2a"))
+	g.AddNode("worker2b", record("worker2b"))
+	g.AddNode("worker2c", record("worker2c"))
+	g.AddNode("join2", record("join2"))
+	g.AddNode("final_merge", record("final_merge"))
+
+	g.AddEdge("start", "fanout1")
+	g.AddEdge("start", "fanout2")
+	g.AddEdge("fanout1", "worker1a")
+	g.AddEdge("fanout1", "worker1b")
+	g.AddEdge("fanout1", "worker1c")
+	g.AddEdge("worker1a", "join1")
+	g.AddEdge("worker1b", "join1")
+	g.AddEdge("worker1c", "join1")
+	g.AddEdge("fanout2", "worker2a")
+	g.AddEdge("fanout2", "worker2b")
+	g.AddEdge("fanout2", "worker2c")
+	g.AddEdge("worker2a", "join2")
+	g.AddEdge("worker2b", "join2")
+	g.AddEdge("worker2c", "join2")
+	g.AddEdge("join1", "final_merge")
+	g.AddEdge("join2", "final_merge")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("final_merge")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	result, err := executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	t.Logf("Execution order: %v", executionOrder)
+
+	// Verify all nodes executed exactly once
+	allNodes := []string{
+		"start", "fanout1", "worker1a", "worker1b", "worker1c", "join1",
+		"fanout2", "worker2a", "worker2b", "worker2c", "join2", "final_merge",
+	}
+	for _, node := range allNodes {
+		if executed[node] != 1 {
+			t.Errorf("expected %s to execute once, got %d", node, executed[node])
+		}
+	}
+
+	// Verify all worker results are present
+	for _, worker := range []string{"worker1a", "worker1b", "worker1c", "worker2a", "worker2b", "worker2c"} {
+		key := worker + "_result"
+		if _, ok := result[key]; !ok {
+			t.Errorf("expected %s in result", key)
+		}
+	}
+
+	// Verify convergence order
+	findIndex := func(name string) int {
+		for i, n := range executionOrder {
+			if n == name {
+				return i
+			}
+		}
+		return -1
+	}
+
+	join1Idx := findIndex("join1")
+	join2Idx := findIndex("join2")
+	finalIdx := findIndex("final_merge")
+
+	// join1 must wait for all worker1x
+	for _, worker := range []string{"worker1a", "worker1b", "worker1c"} {
+		workerIdx := findIndex(worker)
+		if workerIdx >= join1Idx {
+			t.Errorf("%s should execute before join1", worker)
+		}
+	}
+
+	// join2 must wait for all worker2x
+	for _, worker := range []string{"worker2a", "worker2b", "worker2c"} {
+		workerIdx := findIndex(worker)
+		if workerIdx >= join2Idx {
+			t.Errorf("%s should execute before join2", worker)
+		}
+	}
+
+	// final_merge must wait for both joins
+	if join1Idx >= finalIdx || join2Idx >= finalIdx {
+		t.Errorf("both joins should execute before final_merge")
+	}
+}
+
+// TestGraphComplexConditionalRouting tests multiple conditional branches with cross-convergence
+func TestGraphComplexConditionalRouting(t *testing.T) {
+	// Graph topology:
+	//              → process_high → priority_handler ↘
+	// start → classify ─→ process_med → standard_handler ─→ aggregate → final
+	//              → process_low → (skip or retry) ────────↗
+	//
+	// Routes based on priority level in state
+
+	g := NewGraph()
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+
+	record := func(name string, mutator func(State) State) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			mu.Unlock()
+
+			next := state.Clone()
+			next[name+"_visited"] = true
+			if mutator != nil {
+				return mutator(next), nil
+			}
+			return next, nil
+		}
+	}
+
+	g.AddNode("start", record("start", func(s State) State {
+		s["priority"] = "medium"
+		s["retry_enabled"] = true
+		return s
+	}))
+	g.AddNode("classify", record("classify", nil))
+	g.AddNode("process_high", record("process_high", nil))
+	g.AddNode("process_med", record("process_med", nil))
+	g.AddNode("process_low", record("process_low", nil))
+	g.AddNode("priority_handler", record("priority_handler", func(s State) State {
+		s["handled_priority"] = true
+		return s
+	}))
+	g.AddNode("standard_handler", record("standard_handler", func(s State) State {
+		s["handled_standard"] = true
+		return s
+	}))
+	g.AddNode("skip", record("skip", nil))
+	g.AddNode("retry", record("retry", func(s State) State {
+		s["retried"] = true
+		return s
+	}))
+	g.AddNode("aggregate", record("aggregate", nil))
+	g.AddNode("final", record("final", nil))
+
+	// Conditional edges based on priority
+	g.AddEdge("start", "classify")
+	g.AddEdge("classify", "process_high", WithEdgeCondition(func(_ context.Context, state State) bool {
+		return state["priority"] == "high"
+	}))
+	g.AddEdge("classify", "process_med", WithEdgeCondition(func(_ context.Context, state State) bool {
+		return state["priority"] == "medium"
+	}))
+	g.AddEdge("classify", "process_low", WithEdgeCondition(func(_ context.Context, state State) bool {
+		return state["priority"] == "low"
+	}))
+
+	// Different paths for different priorities
+	g.AddEdge("process_high", "priority_handler")
+	g.AddEdge("priority_handler", "aggregate")
+
+	g.AddEdge("process_med", "standard_handler")
+	g.AddEdge("standard_handler", "aggregate")
+
+	g.AddEdge("process_low", "skip", WithEdgeCondition(func(_ context.Context, state State) bool {
+		retry, _ := state["retry_enabled"].(bool)
+		return !retry
+	}))
+	g.AddEdge("process_low", "retry", WithEdgeCondition(func(_ context.Context, state State) bool {
+		retry, _ := state["retry_enabled"].(bool)
+		return retry
+	}))
+	g.AddEdge("skip", "aggregate")
+	g.AddEdge("retry", "aggregate")
+
+	g.AddEdge("aggregate", "final")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("final")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	result, err := executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	// Verify correct path was taken (medium priority → standard handler)
+	if executed["process_med"] != 1 {
+		t.Errorf("expected process_med to execute once, got %d", executed["process_med"])
+	}
+	if executed["standard_handler"] != 1 {
+		t.Errorf("expected standard_handler to execute once, got %d", executed["standard_handler"])
+	}
+
+	// Verify other paths were not taken
+	if executed["process_high"] != 0 || executed["priority_handler"] != 0 {
+		t.Errorf("high priority path should not execute")
+	}
+	if executed["process_low"] != 0 || executed["skip"] != 0 || executed["retry"] != 0 {
+		t.Errorf("low priority path should not execute")
+	}
+
+	// Verify state
+	if _, ok := result["handled_standard"].(bool); !ok {
+		t.Errorf("expected handled_standard flag in result")
+	}
+
+	// Test with different priority
+	t.Run("low priority with retry", func(t *testing.T) {
+		mu.Lock()
+		executed = make(map[string]int)
+		mu.Unlock()
+
+		// Create a new graph for low priority test
+		g2 := NewGraph()
+		g2.AddNode("start", record("start", func(s State) State {
+			s["priority"] = "low"
+			s["retry_enabled"] = true
+			return s
+		}))
+		g2.AddNode("classify", record("classify", nil))
+		g2.AddNode("process_high", record("process_high", nil))
+		g2.AddNode("process_med", record("process_med", nil))
+		g2.AddNode("process_low", record("process_low", nil))
+		g2.AddNode("priority_handler", record("priority_handler", func(s State) State {
+			s["handled_priority"] = true
+			return s
+		}))
+		g2.AddNode("standard_handler", record("standard_handler", func(s State) State {
+			s["handled_standard"] = true
+			return s
+		}))
+		g2.AddNode("skip", record("skip", nil))
+		g2.AddNode("retry", record("retry", func(s State) State {
+			s["retried"] = true
+			return s
+		}))
+		g2.AddNode("aggregate", record("aggregate", nil))
+		g2.AddNode("final", record("final", nil))
+
+		g2.AddEdge("start", "classify")
+		g2.AddEdge("classify", "process_high", WithEdgeCondition(func(_ context.Context, state State) bool {
+			return state["priority"] == "high"
+		}))
+		g2.AddEdge("classify", "process_med", WithEdgeCondition(func(_ context.Context, state State) bool {
+			return state["priority"] == "medium"
+		}))
+		g2.AddEdge("classify", "process_low", WithEdgeCondition(func(_ context.Context, state State) bool {
+			return state["priority"] == "low"
+		}))
+
+		g2.AddEdge("process_high", "priority_handler")
+		g2.AddEdge("priority_handler", "aggregate")
+		g2.AddEdge("process_med", "standard_handler")
+		g2.AddEdge("standard_handler", "aggregate")
+
+		g2.AddEdge("process_low", "skip", WithEdgeCondition(func(_ context.Context, state State) bool {
+			retry, _ := state["retry_enabled"].(bool)
+			return !retry
+		}))
+		g2.AddEdge("process_low", "retry", WithEdgeCondition(func(_ context.Context, state State) bool {
+			retry, _ := state["retry_enabled"].(bool)
+			return retry
+		}))
+		g2.AddEdge("skip", "aggregate")
+		g2.AddEdge("retry", "aggregate")
+		g2.AddEdge("aggregate", "final")
+
+		g2.SetEntryPoint("start")
+		g2.SetFinishPoint("final")
+
+		executor2, err := g2.Compile()
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+
+		result2, err := executor2.Execute(context.Background(), State{})
+		if err != nil {
+			t.Fatalf("execution error: %v", err)
+		}
+
+		if executed["process_low"] != 1 || executed["retry"] != 1 {
+			t.Errorf("expected low priority retry path, got process_low=%d retry=%d",
+				executed["process_low"], executed["retry"])
+		}
+
+		if _, ok := result2["retried"].(bool); !ok {
+			t.Errorf("expected retried flag in result")
+		}
+	})
+}
+
+// TestGraphLargeScaleDAG tests a larger, more complex DAG scenario
+func TestGraphLargeScaleDAG(t *testing.T) {
+	// Simulates a complex data pipeline with multiple stages:
+	// Stage 1: Data ingestion (3 parallel sources)
+	// Stage 2: Data transformation (per source)
+	// Stage 3: Feature extraction (parallel)
+	// Stage 4: Model inference (conditional routing)
+	// Stage 5: Post-processing and aggregation
+
+	g := NewGraph()
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+
+	record := func(name string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			mu.Unlock()
+
+			next := state.Clone()
+			next[name+"_done"] = true
+			return next, nil
+		}
+	}
+
+	// Stage 1: Ingestion
+	g.AddNode("start", record("start"))
+	g.AddNode("ingest_db", record("ingest_db"))
+	g.AddNode("ingest_api", record("ingest_api"))
+	g.AddNode("ingest_file", record("ingest_file"))
+
+	// Stage 2: Transformation
+	g.AddNode("transform_db", record("transform_db"))
+	g.AddNode("transform_api", record("transform_api"))
+	g.AddNode("transform_file", record("transform_file"))
+
+	// Stage 3: Feature extraction
+	g.AddNode("extract_features", record("extract_features"))
+	g.AddNode("feature_normalize", record("feature_normalize"))
+	g.AddNode("feature_select", record("feature_select"))
+
+	// Stage 4: Model inference
+	g.AddNode("model_router", record("model_router"))
+	g.AddNode("model_fast", record("model_fast"))
+	g.AddNode("model_accurate", record("model_accurate"))
+
+	// Stage 5: Post-processing
+	g.AddNode("post_process", record("post_process"))
+	g.AddNode("aggregate", record("aggregate"))
+	g.AddNode("final", record("final"))
+
+	// Build the DAG
+	g.AddEdge("start", "ingest_db")
+	g.AddEdge("start", "ingest_api")
+	g.AddEdge("start", "ingest_file")
+
+	g.AddEdge("ingest_db", "transform_db")
+	g.AddEdge("ingest_api", "transform_api")
+	g.AddEdge("ingest_file", "transform_file")
+
+	g.AddEdge("transform_db", "extract_features")
+	g.AddEdge("transform_api", "extract_features")
+	g.AddEdge("transform_file", "extract_features")
+
+	g.AddEdge("extract_features", "feature_normalize")
+	g.AddEdge("extract_features", "feature_select")
+
+	g.AddEdge("feature_normalize", "model_router")
+	g.AddEdge("feature_select", "model_router")
+
+	g.AddEdge("model_router", "model_fast")
+	g.AddEdge("model_router", "model_accurate")
+
+	g.AddEdge("model_fast", "post_process")
+	g.AddEdge("model_accurate", "post_process")
+
+	g.AddEdge("post_process", "aggregate")
+	g.AddEdge("aggregate", "final")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("final")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	result, err := executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	// Verify all nodes executed
+	expectedNodes := []string{
+		"start",
+		"ingest_db", "ingest_api", "ingest_file",
+		"transform_db", "transform_api", "transform_file",
+		"extract_features", "feature_normalize", "feature_select",
+		"model_router", "model_fast", "model_accurate",
+		"post_process", "aggregate", "final",
+	}
+
+	for _, node := range expectedNodes {
+		if executed[node] != 1 {
+			t.Errorf("expected %s to execute once, got %d", node, executed[node])
+		}
+	}
+
+	// Verify all results are merged
+	for _, node := range expectedNodes {
+		key := node + "_done"
+		if _, ok := result[key].(bool); !ok {
+			t.Errorf("expected %s in result", key)
+		}
+	}
+
+	t.Logf("Successfully executed DAG with %d nodes", len(expectedNodes))
+}
+
+// TestGraphSerialWithConditionalRouting tests serial execution with conditional routing
+func TestGraphSerialWithConditionalRouting(t *testing.T) {
+	// Tests serial mode with conditional branches that converge
+	// Graph topology:
+	// start → check → [priority_high (cond) OR priority_low (fallback)] → process → final
+	g := NewGraph(WithParallel(false))
+
+	var mu sync.Mutex
+	executionOrder := make([]string, 0)
+
+	record := func(name string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executionOrder = append(executionOrder, name)
+			t.Logf("Executing node: %s", name)
+			mu.Unlock()
+
+			next := state.Clone()
+			next[name] = true
+			return next, nil
+		}
+	}
+
+	g.AddNode("start", record("start"))
+	g.AddNode("check", record("check"))
+	g.AddNode("priority_high", record("priority_high"))
+	g.AddNode("priority_low", record("priority_low"))
+	g.AddNode("process", record("process"))
+	g.AddNode("final", record("final"))
+
+	g.AddEdge("start", "check")
+	// Conditional edge first, then fallback
+	g.AddEdge("check", "priority_high", WithEdgeCondition(func(_ context.Context, state State) bool {
+		useHigh, _ := state["use_high"].(bool)
+		t.Logf("Condition check: use_high=%v", useHigh)
+		return useHigh
+	}))
+	g.AddEdge("check", "priority_low") // unconditional fallback
+
+	g.AddEdge("priority_high", "process")
+	g.AddEdge("priority_low", "process")
+	g.AddEdge("process", "final")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("final")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// Test high priority path
+	t.Run("high priority path", func(t *testing.T) {
+		mu.Lock()
+		executionOrder = make([]string, 0)
+		mu.Unlock()
+
+		result, err := executor.Execute(context.Background(), State{"use_high": true})
+		if err != nil {
+			t.Fatalf("execution error: %v", err)
+		}
+
+		t.Logf("Execution order: %v", executionOrder)
+
+		if !result["priority_high"].(bool) {
+			t.Errorf("expected priority_high to execute")
+		}
+
+		expected := []string{"start", "check", "priority_high", "process", "final"}
+		if !reflect.DeepEqual(executionOrder, expected) {
+			t.Errorf("expected execution order %v, got %v", expected, executionOrder)
+		}
+	})
+
+	// Test low priority path (fallback)
+	t.Run("low priority path", func(t *testing.T) {
+		mu.Lock()
+		executionOrder = make([]string, 0)
+		mu.Unlock()
+
+		result, err := executor.Execute(context.Background(), State{})
+		if err != nil {
+			t.Fatalf("execution error: %v", err)
+		}
+
+		t.Logf("Execution order: %v", executionOrder)
+
+		if !result["priority_low"].(bool) {
+			t.Errorf("expected priority_low to execute")
+		}
+
+		expected := []string{"start", "check", "priority_low", "process", "final"}
+		if !reflect.DeepEqual(executionOrder, expected) {
+			t.Errorf("expected execution order %v, got %v", expected, executionOrder)
+		}
+	})
+}
