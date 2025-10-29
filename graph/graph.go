@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // Option configures the Graph behavior.
@@ -19,14 +20,6 @@ func WithParallel(enabled bool) Option {
 func WithMiddleware(ms ...Middleware) Option {
 	return func(g *Graph) {
 		g.middlewares = ms
-	}
-}
-
-// WithMaxSteps sets the maximum number of node execution steps allowed.
-// This prevents infinite loops in cyclic graphs. Defaults to 1000.
-func WithMaxSteps(maxSteps int) Option {
-	return func(g *Graph) {
-		g.maxSteps = maxSteps
 	}
 }
 
@@ -56,9 +49,7 @@ type Graph struct {
 	entryPoint  string
 	finishPoint string
 	parallel    bool
-	maxSteps    int   // maximum number of node execution steps (default 1000)
 	middlewares []Middleware
-	err         error // accumulated error for builder pattern
 }
 
 // NewGraph creates a new empty Graph.
@@ -67,7 +58,6 @@ func NewGraph(opts ...Option) *Graph {
 		nodes:    make(map[string]Handler),
 		edges:    make(map[string][]conditionalEdge),
 		parallel: true,
-		maxSteps: 1000,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -78,13 +68,9 @@ func NewGraph(opts ...Option) *Graph {
 }
 
 // AddNode adds a named node with its handler to the graph.
-// Returns the graph for chaining. Check error with Compile().
+// Returns the graph for chaining.
 func (g *Graph) AddNode(name string, handler Handler) *Graph {
-	if g.err != nil {
-		return g
-	}
 	if _, ok := g.nodes[name]; ok {
-		g.err = fmt.Errorf("graph: node %s already exists", name)
 		return g
 	}
 	g.nodes[name] = handler
@@ -92,61 +78,37 @@ func (g *Graph) AddNode(name string, handler Handler) *Graph {
 }
 
 // AddEdge adds a directed edge from one node to another. Options can configure the edge.
-// Returns the graph for chaining. Check error with Compile().
+// Returns the graph for chaining.
 func (g *Graph) AddEdge(from, to string, opts ...EdgeOption) *Graph {
-	if g.err != nil {
-		return g
-	}
 	for _, edge := range g.edges[from] {
 		if edge.to == to {
-			g.err = fmt.Errorf("graph: edge from %s to %s already exists", from, to)
 			return g
 		}
 	}
-	newEdge := conditionalEdge{to: to}
+	edge := conditionalEdge{to: to}
 	for _, opt := range opts {
-		if opt == nil {
-			continue
-		}
-		opt(&newEdge)
+		opt(&edge)
 	}
-	g.edges[from] = append(g.edges[from], newEdge)
+	g.edges[from] = append(g.edges[from], edge)
 	return g
 }
 
 // SetEntryPoint marks a node as the entry point.
-// Returns the graph for chaining. Check error with Compile().
+// Returns the graph for chaining.
 func (g *Graph) SetEntryPoint(start string) *Graph {
-	if g.err != nil {
-		return g
-	}
-	if g.entryPoint != "" {
-		g.err = fmt.Errorf("graph: entry point already set to %s", g.entryPoint)
-		return g
-	}
 	g.entryPoint = start
 	return g
 }
 
 // SetFinishPoint marks a node as the finish point.
-// Returns the graph for chaining. Check error with Compile().
+// Returns the graph for chaining.
 func (g *Graph) SetFinishPoint(end string) *Graph {
-	if g.err != nil {
-		return g
-	}
-	if g.finishPoint != "" {
-		g.err = fmt.Errorf("graph: finish point already set to %s", g.finishPoint)
-		return g
-	}
 	g.finishPoint = end
 	return g
 }
 
 // validate ensures the graph configuration is correct before compiling.
 func (g *Graph) validate() error {
-	if g.err != nil {
-		return g.err
-	}
 	if g.entryPoint == "" {
 		return fmt.Errorf("graph: entry point not set")
 	}
@@ -196,11 +158,64 @@ func (g *Graph) ensureReachable() error {
 	return fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
 }
 
+// ensureAcyclic verifies that the graph does not contain directed cycles.
+func (g *Graph) ensureAcyclic() error {
+	const (
+		stateUnvisited = iota
+		stateVisiting
+		stateVisited
+	)
+	states := make(map[string]int, len(g.nodes))
+	stack := make([]string, 0, len(g.nodes))
+
+	var visit func(string) error
+	visit = func(node string) error {
+		states[node] = stateVisiting
+		stack = append(stack, node)
+
+		for _, edge := range g.edges[node] {
+			next := edge.to
+			switch states[next] {
+			case stateVisiting:
+				cycleStart := 0
+				for i, name := range stack {
+					if name == next {
+						cycleStart = i
+						break
+					}
+				}
+				cycle := append(append([]string{}, stack[cycleStart:]...), next)
+				return fmt.Errorf("graph: cycles are not supported (cycle: %s)", strings.Join(cycle, " -> "))
+			case stateUnvisited:
+				if err := visit(next); err != nil {
+					return err
+				}
+			}
+		}
+
+		stack = stack[:len(stack)-1]
+		states[node] = stateVisited
+		return nil
+	}
+
+	for name := range g.nodes {
+		if states[name] == stateUnvisited {
+			if err := visit(name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // Compile validates and compiles the graph into an Executor.
 // Nodes wait for all activated incoming edges to complete before executing (join semantics).
 // An edge is "activated" when its source node executes and chooses that edge.
 func (g *Graph) Compile() (*Executor, error) {
 	if err := g.validate(); err != nil {
+		return nil, err
+	}
+	if err := g.ensureAcyclic(); err != nil {
 		return nil, err
 	}
 	if err := g.ensureReachable(); err != nil {

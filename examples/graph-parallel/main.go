@@ -11,7 +11,7 @@ import (
 func logger(name string) graph.Handler {
 	return func(ctx context.Context, state graph.State) (graph.State, error) {
 		log.Println("execute node:", name)
-		time.Sleep(time.Second)
+		time.Sleep(time.Millisecond * 100)
 		return state, nil
 	}
 }
@@ -42,7 +42,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	state, err := executor.Execute(context.Background(), graph.State{})
+	state, err := executor.Execute(context.Background(), graph.State{"a": 1})
 	if err != nil {
 		log.Fatal(err)
 	}
