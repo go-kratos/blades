@@ -34,7 +34,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.10 // indirect
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.5 // indirect
 	github.com/aws/smithy-go v1.23.1 // indirect
-	github.com/go-kratos/generics v0.0.0-20251015114009-68dee470a252 // indirect
+	github.com/go-kratos/generics v0.0.0-20251029060051-60e1c39e5390 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect

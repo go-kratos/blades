@@ -34,9 +34,9 @@ func (s *Session) Record(input []*Message, output *Message) {
 	s.History.Append(messages...)
 }
 
-// NewSession creates a new Session instance with a unique ID.
-func NewSession(states ...map[string]any) *Session {
-	session := &Session{ID: uuid.NewString()}
+// NewSession creates a new Session instance with the provided ID.
+func NewSession(id string, states ...map[string]any) *Session {
+	session := &Session{ID: id}
 	for _, state := range states {
 		for k, v := range state {
 			session.PutState(k, v)
@@ -63,7 +63,7 @@ func FromSessionContext(ctx context.Context) (*Session, bool) {
 func EnsureSession(ctx context.Context) (*Session, context.Context) {
 	session, ok := FromSessionContext(ctx)
 	if !ok {
-		session = NewSession()
+		session = NewSession(uuid.NewString())
 		ctx = NewSessionContext(ctx, session)
 	}
 	return session, ctx

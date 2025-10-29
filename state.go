@@ -12,15 +12,7 @@ import (
 )
 
 // State holds arbitrary key-value pairs representing the state.
-type State struct {
-	generics.Map[string, any]
-}
-
-// MarshalJSON serializes the State to JSON.
-func (s *State) MarshalJSON() ([]byte, error) { return s.Map.MarshalJSON() }
-
-// UnmarshalJSON deserializes JSON data into the State.
-func (s *State) UnmarshalJSON(data []byte) error { return s.Map.UnmarshalJSON(data) }
+type State = generics.Map[string, any]
 
 // StateInputHandler is a function type that processes input prompts with access to the current state.
 type StateInputHandler func(ctx context.Context, input *Prompt, state *State) (*Prompt, error)
