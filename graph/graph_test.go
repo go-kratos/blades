@@ -1337,7 +1337,6 @@ func TestExecutorConcurrentRuns(t *testing.T) {
 	wg.Add(runs)
 
 	for i := 0; i < runs; i++ {
-		i := i
 		go func() {
 			defer wg.Done()
 			initial := State{"value": i}

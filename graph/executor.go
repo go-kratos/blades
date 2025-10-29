@@ -79,67 +79,67 @@ func (e *Executor) newTask(initial State) *task {
 	}
 }
 
-func (x *task) execute(ctx context.Context) (State, error) {
-	for len(x.queue) > 0 {
-		step := x.dequeue()
-		if x.shouldSkip(&step) {
+func (t *task) execute(ctx context.Context) (State, error) {
+	for len(t.queue) > 0 {
+		step := t.dequeue()
+		if t.shouldSkip(&step) {
 			continue
 		}
 
-		nextState, err := x.executeNode(ctx, step)
+		nextState, err := t.executeNode(ctx, step)
 		if err != nil {
 			return nil, err
 		}
 
 		// Update finish state and check if we're done
-		x.finishState = nextState.Clone()
-		if step.node == x.executor.graph.finishPoint {
-			x.finished = true
+		t.finishState = nextState.Clone()
+		if step.node == t.executor.graph.finishPoint {
+			t.finished = true
 			break
 		}
 
-		if err := x.processOutgoingEdges(ctx, step, nextState); err != nil {
+		if err := t.processOutgoingEdges(ctx, step, nextState); err != nil {
 			return nil, err
 		}
 	}
 
-	if x.finished {
-		return x.finishState, nil
+	if t.finished {
+		return t.finishState, nil
 	}
-	return nil, fmt.Errorf("graph: finish node not reachable: %s", x.executor.graph.finishPoint)
+	return nil, fmt.Errorf("graph: finish node not reachable: %s", t.executor.graph.finishPoint)
 }
 
-func (x *task) dequeue() Step {
-	step := x.queue[0]
-	x.queue = x.queue[1:]
+func (t *task) dequeue() Step {
+	step := t.queue[0]
+	t.queue = t.queue[1:]
 	return step
 }
 
-func (x *task) shouldSkip(step *Step) bool {
-	if x.visited[step.node] && !step.allowRevisit {
+func (t *task) shouldSkip(step *Step) bool {
+	if t.visited[step.node] && !step.allowRevisit {
 		return true
 	}
 
-	if step.waitAllPreds && !x.allPredsReady(step.node) {
-		x.pending[step.node] = mergeStates(x.pending[step.node], step.state)
+	if step.waitAllPreds && !t.allPredsReady(step.node) {
+		t.pending[step.node] = mergeStates(t.pending[step.node], step.state)
 		return true
 	}
 
-	if pendingState, exists := x.pending[step.node]; exists {
+	if pendingState, exists := t.pending[step.node]; exists {
 		step.state = mergeStates(pendingState, step.state)
-		delete(x.pending, step.node)
+		delete(t.pending, step.node)
 	}
 
 	return false
 }
 
 // allPredsReady checks if all predecessors are ready and no duplicate is in the queue.
-func (x *task) allPredsReady(node string) bool {
-	if !x.predecessorsReady(node) {
+func (t *task) allPredsReady(node string) bool {
+	if !t.predecessorsReady(node) {
 		return false
 	}
 	// Check if there's a duplicate in the queue that shouldn't be revisited
-	for _, queued := range x.queue {
+	for _, queued := range t.queue {
 		if queued.node == node && !queued.allowRevisit {
 			return false
 		}
@@ -147,47 +147,47 @@ func (x *task) allPredsReady(node string) bool {
 	return true
 }
 
-func (x *task) executeNode(ctx context.Context, step Step) (State, error) {
-	state := x.stateFor(step)
-	handler := x.executor.graph.nodes[step.node]
+func (t *task) executeNode(ctx context.Context, step Step) (State, error) {
+	state := t.stateFor(step)
+	handler := t.executor.graph.nodes[step.node]
 	if handler == nil {
 		return nil, fmt.Errorf("graph: node %s handler missing", step.node)
 	}
-	if len(x.executor.graph.middlewares) > 0 {
-		handler = ChainMiddlewares(x.executor.graph.middlewares...)(handler)
+	if len(t.executor.graph.middlewares) > 0 {
+		handler = ChainMiddlewares(t.executor.graph.middlewares...)(handler)
 	}
 	nextState, err := handler(ctx, state)
 	if err != nil {
 		return nil, fmt.Errorf("graph: node %s: %w", step.node, err)
 	}
-	x.visited[step.node] = true
+	t.visited[step.node] = true
 
 	return nextState.Clone(), nil
 }
 
-func (x *task) stateFor(step Step) State {
+func (t *task) stateFor(step Step) State {
 	if step.state != nil {
 		return step.state
 	}
-	return x.finishState
+	return t.finishState
 }
 
-func (x *task) processOutgoingEdges(ctx context.Context, step Step, state State) error {
-	resolution, err := x.resolveEdges(ctx, step, state)
+func (t *task) processOutgoingEdges(ctx context.Context, step Step, state State) error {
+	resolution, err := t.resolveEdges(ctx, step, state)
 	if err != nil {
 		return err
 	}
 	if len(resolution.immediate) > 0 {
-		x.enqueueSteps(resolution.immediate, resolution.prepend)
+		t.enqueueSteps(resolution.immediate, resolution.prepend)
 		return nil
 	}
 	edges := resolution.fanOut
-	if !x.executor.graph.parallel {
-		x.fanOutSerial(step, state, edges)
+	if !t.executor.graph.parallel {
+		t.fanOutSerial(step, state, edges)
 		return nil
 	}
 	if len(edges) == 1 {
-		x.enqueue(Step{
+		t.enqueue(Step{
 			node:         edges[0].to,
 			state:        state.Clone(),
 			allowRevisit: step.allowRevisit,
@@ -195,30 +195,30 @@ func (x *task) processOutgoingEdges(ctx context.Context, step Step, state State)
 		})
 		return nil
 	}
-	_, err = x.fanOutParallel(ctx, step, state, edges)
+	_, err = t.fanOutParallel(ctx, step, state, edges)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (x *task) enqueue(step Step) {
-	x.queue = append(x.queue, step)
+func (t *task) enqueue(step Step) {
+	t.queue = append(t.queue, step)
 }
 
-func (x *task) enqueueSteps(steps []Step, prepend bool) {
+func (t *task) enqueueSteps(steps []Step, prepend bool) {
 	if len(steps) == 0 {
 		return
 	}
 	if prepend {
-		x.queue = append(steps, x.queue...)
+		t.queue = append(steps, t.queue...)
 		return
 	}
-	x.queue = append(x.queue, steps...)
+	t.queue = append(t.queue, steps...)
 }
 
-func (x *task) resolveEdges(ctx context.Context, step Step, state State) (edgeResolution, error) {
-	edges := x.executor.graph.edges[step.node]
+func (t *task) resolveEdges(ctx context.Context, step Step, state State) (edgeResolution, error) {
+	edges := t.executor.graph.edges[step.node]
 	if len(edges) == 0 {
 		return edgeResolution{}, fmt.Errorf("graph: no outgoing edges from node %s", step.node)
 	}
@@ -281,7 +281,7 @@ func (x *task) resolveEdges(ctx context.Context, step Step, state State) (edgeRe
 		return edgeResolution{}, fmt.Errorf("graph: no condition matched for edges from node %s", step.node)
 	}
 
-	x.registerSkippedTargets(step.node, skipped)
+	t.registerSkippedTargets(step.node, skipped)
 
 	// Single matched edge: execute immediately
 	if len(matched) == 1 {
@@ -290,7 +290,7 @@ func (x *task) resolveEdges(ctx context.Context, step Step, state State) (edgeRe
 				node:         matched[0].to,
 				state:        state.Clone(),
 				allowRevisit: true,
-				waitAllPreds: x.shouldWaitForNode(matched[0].to),
+				waitAllPreds: t.shouldWaitForNode(matched[0].to),
 			}},
 			prepend: hasUnconditional,
 		}, nil
@@ -300,10 +300,10 @@ func (x *task) resolveEdges(ctx context.Context, step Step, state State) (edgeRe
 	return edgeResolution{fanOut: matched}, nil
 }
 
-func (x *task) fanOutSerial(step Step, current State, edges []conditionalEdge) {
+func (t *task) fanOutSerial(step Step, current State, edges []conditionalEdge) {
 	for _, edge := range edges {
-		waitAllPreds := x.shouldWaitForNode(edge.to)
-		x.enqueue(Step{
+		waitAllPreds := t.shouldWaitForNode(edge.to)
+		t.enqueue(Step{
 			node:         edge.to,
 			state:        current.Clone(),
 			allowRevisit: step.allowRevisit,
@@ -312,7 +312,7 @@ func (x *task) fanOutSerial(step Step, current State, edges []conditionalEdge) {
 	}
 }
 
-func (x *task) fanOutParallel(ctx context.Context, step Step, state State, edges []conditionalEdge) (State, error) {
+func (t *task) fanOutParallel(ctx context.Context, step Step, state State, edges []conditionalEdge) (State, error) {
 	type branchState struct {
 		to    string
 		state State
@@ -322,9 +322,8 @@ func (x *task) fanOutParallel(ctx context.Context, step Step, state State, edges
 	eg, egCtx := errgroup.WithContext(ctx)
 
 	for i, edge := range edges {
-		i, edge := i, edge
 		eg.Go(func() error {
-			handler := x.executor.graph.nodes[edge.to]
+			handler := t.executor.graph.nodes[edge.to]
 			if handler == nil {
 				return fmt.Errorf("graph: node %s handler missing", edge.to)
 			}
@@ -344,15 +343,15 @@ func (x *task) fanOutParallel(ctx context.Context, step Step, state State, edges
 	// Mark all branch nodes as visited and collect successor states
 	successors := make(map[string]State)
 	for _, bs := range states {
-		x.visited[bs.to] = true
-		for _, nextEdge := range x.executor.graph.edges[bs.to] {
+		t.visited[bs.to] = true
+		for _, nextEdge := range t.executor.graph.edges[bs.to] {
 			successors[nextEdge.to] = mergeStates(successors[nextEdge.to], bs.state)
 		}
 	}
 
 	// Enqueue successor nodes
 	for successor, successorState := range successors {
-		x.enqueue(Step{
+		t.enqueue(Step{
 			node:         successor,
 			state:        successorState,
 			allowRevisit: step.allowRevisit,
@@ -384,25 +383,25 @@ func mergeStates(base State, updates ...State) State {
 	return merged
 }
 
-func (x *task) predecessorsReady(node string) bool {
-	for _, pred := range x.executor.predecessors[node] {
+func (t *task) predecessorsReady(node string) bool {
+	for _, pred := range t.executor.predecessors[node] {
 		if pred == node {
 			continue
 		}
-		if !x.visited[pred] {
+		if !t.visited[pred] {
 			return false
 		}
 	}
 	return true
 }
 
-func (x *task) shouldWaitForNode(node string) bool {
+func (t *task) shouldWaitForNode(node string) bool {
 	activePreds := 0
-	for _, pred := range x.executor.predecessors[node] {
+	for _, pred := range t.executor.predecessors[node] {
 		if pred == node {
 			continue
 		}
-		if !x.visited[pred] {
+		if !t.visited[pred] {
 			return true
 		}
 		activePreds++
@@ -413,40 +412,40 @@ func (x *task) shouldWaitForNode(node string) bool {
 	return false
 }
 
-func (x *task) registerSkippedTargets(parent string, targets []string) {
+func (t *task) registerSkippedTargets(parent string, targets []string) {
 	for _, target := range targets {
-		x.registerSkip(parent, target)
+		t.registerSkip(parent, target)
 	}
 }
 
-func (x *task) registerSkip(parent, target string) {
-	preds := x.executor.predecessors[target]
+func (t *task) registerSkip(parent, target string) {
+	preds := t.executor.predecessors[target]
 	if len(preds) == 0 {
 		return
 	}
-	if x.visited[target] {
+	if t.visited[target] {
 		return
 	}
-	if x.skippedFrom[target] == nil {
-		x.skippedFrom[target] = make(map[string]bool)
+	if t.skippedFrom[target] == nil {
+		t.skippedFrom[target] = make(map[string]bool)
 	}
-	if x.skippedFrom[target][parent] {
+	if t.skippedFrom[target][parent] {
 		return
 	}
-	x.skippedFrom[target][parent] = true
-	x.skippedCnt[target]++
-	if x.skippedCnt[target] >= len(preds) {
-		x.markNodeSkipped(target)
+	t.skippedFrom[target][parent] = true
+	t.skippedCnt[target]++
+	if t.skippedCnt[target] >= len(preds) {
+		t.markNodeSkipped(target)
 	}
 }
 
-func (x *task) markNodeSkipped(node string) {
-	if x.visited[node] {
+func (t *task) markNodeSkipped(node string) {
+	if t.visited[node] {
 		return
 	}
-	x.visited[node] = true
-	delete(x.pending, node)
-	for _, edge := range x.executor.graph.edges[node] {
-		x.registerSkip(node, edge.to)
+	t.visited[node] = true
+	delete(t.pending, node)
+	for _, edge := range t.executor.graph.edges[node] {
+		t.registerSkip(node, edge.to)
 	}
 }
