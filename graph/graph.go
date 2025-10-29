@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // Option configures the Graph behavior.
@@ -19,14 +20,6 @@ func WithParallel(enabled bool) Option {
 func WithMiddleware(ms ...Middleware) Option {
 	return func(g *Graph) {
 		g.middlewares = ms
-	}
-}
-
-// WithMaxSteps sets the maximum number of node execution steps allowed.
-// This prevents infinite loops in cyclic graphs. Defaults to 1000.
-func WithMaxSteps(maxSteps int) Option {
-	return func(g *Graph) {
-		g.maxSteps = maxSteps
 	}
 }
 
@@ -56,7 +49,6 @@ type Graph struct {
 	entryPoint  string
 	finishPoint string
 	parallel    bool
-	maxSteps    int // maximum number of node execution steps (default 1000)
 	middlewares []Middleware
 }
 
@@ -66,7 +58,6 @@ func NewGraph(opts ...Option) *Graph {
 		nodes:    make(map[string]Handler),
 		edges:    make(map[string][]conditionalEdge),
 		parallel: true,
-		maxSteps: 1000,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -173,11 +164,64 @@ func (g *Graph) ensureReachable() error {
 	return fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
 }
 
+// ensureAcyclic verifies that the graph does not contain directed cycles.
+func (g *Graph) ensureAcyclic() error {
+	const (
+		stateUnvisited = iota
+		stateVisiting
+		stateVisited
+	)
+	states := make(map[string]int, len(g.nodes))
+	stack := make([]string, 0, len(g.nodes))
+
+	var visit func(string) error
+	visit = func(node string) error {
+		states[node] = stateVisiting
+		stack = append(stack, node)
+
+		for _, edge := range g.edges[node] {
+			next := edge.to
+			switch states[next] {
+			case stateVisiting:
+				cycleStart := 0
+				for i, name := range stack {
+					if name == next {
+						cycleStart = i
+						break
+					}
+				}
+				cycle := append(append([]string{}, stack[cycleStart:]...), next)
+				return fmt.Errorf("graph: cycles are not supported (cycle: %s)", strings.Join(cycle, " -> "))
+			case stateUnvisited:
+				if err := visit(next); err != nil {
+					return err
+				}
+			}
+		}
+
+		stack = stack[:len(stack)-1]
+		states[node] = stateVisited
+		return nil
+	}
+
+	for name := range g.nodes {
+		if states[name] == stateUnvisited {
+			if err := visit(name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // Compile validates and compiles the graph into an Executor.
 // Nodes wait for all activated incoming edges to complete before executing (join semantics).
 // An edge is "activated" when its source node executes and chooses that edge.
 func (g *Graph) Compile() (*Executor, error) {
 	if err := g.validate(); err != nil {
+		return nil, err
+	}
+	if err := g.ensureAcyclic(); err != nil {
 		return nil, err
 	}
 	if err := g.ensureReachable(); err != nil {

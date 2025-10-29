@@ -11,13 +11,15 @@ import (
 func logger(name string) graph.Handler {
 	return func(ctx context.Context, state graph.State) (graph.State, error) {
 		log.Println("execute node:", name)
-		time.Sleep(time.Second)
+		time.Sleep(time.Millisecond * 100)
 		return state, nil
 	}
 }
 
 func main() {
-	g := graph.NewGraph()
+	g := graph.NewGraph(
+	//graph.WithParallel(false),
+	)
 
 	g.AddNode("start", logger("start"))
 	g.AddNode("branch_a", logger("branch_a"))

@@ -41,7 +41,6 @@ type task struct {
 	visited     map[string]bool
 	finished    bool
 	finishState State
-	stepCount   int
 }
 
 // NewExecutor creates a new Executor for the given graph.
@@ -83,16 +82,10 @@ func (e *Executor) newTask(initial State) *task {
 
 func (x *task) execute(ctx context.Context) (State, error) {
 	for len(x.queue) > 0 {
-		if x.stepCount >= x.executor.graph.maxSteps {
-			return nil, fmt.Errorf("graph: exceeded maximum steps limit (%d)", x.executor.graph.maxSteps)
-		}
-
 		step := x.dequeue()
 		if x.shouldSkip(&step) {
 			continue
 		}
-
-		x.stepCount++
 
 		nextState, err := x.executeNode(ctx, step)
 		if err != nil {
@@ -191,7 +184,7 @@ func (x *task) processOutgoingEdges(ctx context.Context, step Step, state State)
 	}
 	edges := resolution.fanOut
 	if !x.executor.graph.parallel {
-		x.fanOutSerial(step, edges)
+		x.fanOutSerial(step, state, edges)
 		return nil
 	}
 	if len(edges) == 1 {
@@ -291,13 +284,14 @@ func (x *task) resolveMixed(ctx context.Context, state State, edges []conditiona
 	return edgeResolution{}, fmt.Errorf("graph: no condition matched for edges from node %s", nodeName)
 }
 
-func (x *task) fanOutSerial(step Step, edges []conditionalEdge) {
+func (x *task) fanOutSerial(step Step, current State, edges []conditionalEdge) {
 	for _, edge := range edges {
+		waitAllPreds := x.shouldWaitForNode(edge.to)
 		x.enqueue(Step{
 			node:         edge.to,
-			state:        nil,
+			state:        current.Clone(),
 			allowRevisit: step.allowRevisit,
-			waitAllPreds: false,
+			waitAllPreds: waitAllPreds,
 		})
 	}
 }

@@ -74,6 +74,42 @@ func TestGraphCompileValidation(t *testing.T) {
 	})
 }
 
+func TestGraphCompileRejectsCycles(t *testing.T) {
+	g := NewGraph()
+	_ = g.AddNode("A", stepHandler("A"))
+	_ = g.AddNode("B", stepHandler("B"))
+	_ = g.AddEdge("A", "B")
+	_ = g.AddEdge("B", "A")
+	_ = g.SetEntryPoint("A")
+	_ = g.SetFinishPoint("B")
+
+	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "cycles are not supported") {
+		t.Fatalf("expected cycle detection error, got %v", err)
+	}
+}
+
+func TestGraphCompileRejectsCyclesInDisconnectedComponent(t *testing.T) {
+	g := NewGraph()
+
+	_ = g.AddNode("start", stepHandler("start"))
+	_ = g.AddNode("end", stepHandler("end"))
+	_ = g.AddEdge("start", "end")
+	_ = g.SetEntryPoint("start")
+	_ = g.SetFinishPoint("end")
+
+	// Add a disconnected cyclic component: X -> Y -> Z -> X
+	_ = g.AddNode("X", stepHandler("X"))
+	_ = g.AddNode("Y", stepHandler("Y"))
+	_ = g.AddNode("Z", stepHandler("Z"))
+	_ = g.AddEdge("X", "Y")
+	_ = g.AddEdge("Y", "Z")
+	_ = g.AddEdge("Z", "X")
+
+	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "cycles are not supported") {
+		t.Fatalf("expected cycle detection error from disconnected component, got %v", err)
+	}
+}
+
 func TestGraphSequentialOrder(t *testing.T) {
 	g := NewGraph(WithParallel(false))
 	execOrder := make([]string, 0, 4)
@@ -169,6 +205,71 @@ func TestGraphConditionalRouting(t *testing.T) {
 	}
 }
 
+func TestGraphConditionalMixedPrecedence(t *testing.T) {
+	g := NewGraph()
+
+	visited := make(map[string]int)
+	record := func(name string, allow bool) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			visited[name]++
+			next := state.Clone()
+			next["path"] = append(getStringSlice(state["path"]), name)
+			next["allow"] = allow
+			return next, nil
+		}
+	}
+
+	_ = g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		next["path"] = []string{"start"}
+		return next, nil
+	})
+	_ = g.AddNode("decision", func(ctx context.Context, state State) (State, error) {
+		return state.Clone(), nil
+	})
+	_ = g.AddNode("first", record("first", false))
+	_ = g.AddNode("second", record("second", true))
+	_ = g.AddNode("fallback", record("fallback", false))
+	_ = g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		visited["finish"]++
+		return state.Clone(), nil
+	})
+
+	_ = g.AddEdge("start", "decision")
+	_ = g.AddEdge("decision", "first", WithEdgeCondition(func(_ context.Context, state State) bool {
+		return false
+	}))
+	_ = g.AddEdge("decision", "second", WithEdgeCondition(func(_ context.Context, state State) bool {
+		return true
+	}))
+	_ = g.AddEdge("decision", "fallback")
+	_ = g.AddEdge("first", "finish")
+	_ = g.AddEdge("second", "finish")
+	_ = g.AddEdge("fallback", "finish")
+
+	_ = g.SetEntryPoint("start")
+	_ = g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	if visited["second"] != 1 {
+		t.Fatalf("expected second branch to execute once, got %d (visited=%v)", visited["second"], visited)
+	}
+	if visited["first"] != 0 || visited["fallback"] != 0 {
+		t.Fatalf("unexpected branches executed, counts=%v", visited)
+	}
+	if visited["finish"] != 1 {
+		t.Fatalf("expected finish to execute once, got %d", visited["finish"])
+	}
+}
+
 func TestGraphSerialVsParallel(t *testing.T) {
 	build := func(parallel bool) *Graph {
 		g := NewGraph(WithParallel(parallel))
@@ -207,103 +308,9 @@ func TestGraphSerialVsParallel(t *testing.T) {
 		t.Fatalf("serial run error: %v", err)
 	}
 
-	if serialState[valueKey].(int) <= parallelState[valueKey].(int) {
-		t.Fatalf("serial mode should accumulate more due to sequential execution")
-	}
-}
-
-func TestGraphParallelNestedLoops(t *testing.T) {
-	g := NewGraph(WithParallel(true))
-
-	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
-		return state.Clone(), nil
-	})
-	g.AddNode("outer_loop", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		val, _ := next[valueKey].(int)
-		next[valueKey] = val + 1
-		return next, nil
-	})
-	g.AddNode("inner_loop", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		val, _ := next[valueKey].(int)
-		next[valueKey] = val + 10
-		return next, nil
-	})
-	g.AddNode("done", func(ctx context.Context, state State) (State, error) {
-		return state.Clone(), nil
-	})
-
-	g.AddEdge("start", "outer_loop")
-	g.AddEdge("outer_loop", "inner_loop")
-	g.AddEdge("inner_loop", "inner_loop", WithEdgeCondition(func(_ context.Context, state State) bool {
-		val, _ := state[valueKey].(int)
-		return val < 30
-	}))
-	g.AddEdge("inner_loop", "outer_loop", WithEdgeCondition(func(_ context.Context, state State) bool {
-		val, _ := state[valueKey].(int)
-		return val >= 30 && val < 100
-	}))
-	g.AddEdge("inner_loop", "done", WithEdgeCondition(func(_ context.Context, state State) bool {
-		val, _ := state[valueKey].(int)
-		return val >= 100
-	}))
-
-	g.SetEntryPoint("start")
-	g.SetFinishPoint("done")
-
-	executor, err := g.Compile()
-	if err != nil {
-		t.Fatalf("compile error: %v", err)
-	}
-
-	result, err := executor.Execute(context.Background(), State{valueKey: 0})
-	if err != nil {
-		t.Fatalf("run error: %v", err)
-	}
-
-	if val, _ := result[valueKey].(int); val < 100 {
-		t.Fatalf("expected value >= 100, got %d", val)
-	}
-}
-
-func TestGraphParallelSelfLoopExit(t *testing.T) {
-	g := NewGraph(WithParallel(true))
-
-	g.AddNode("loop", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		val, _ := next[valueKey].(int)
-		next[valueKey] = val + 1
-		return next, nil
-	})
-	g.AddNode("exit", func(ctx context.Context, state State) (State, error) {
-		return state.Clone(), nil
-	})
-
-	g.AddEdge("loop", "loop", WithEdgeCondition(func(_ context.Context, state State) bool {
-		val, _ := state[valueKey].(int)
-		return val < 5
-	}))
-	g.AddEdge("loop", "exit", WithEdgeCondition(func(_ context.Context, state State) bool {
-		val, _ := state[valueKey].(int)
-		return val >= 5
-	}))
-
-	g.SetEntryPoint("loop")
-	g.SetFinishPoint("exit")
-
-	executor, err := g.Compile()
-	if err != nil {
-		t.Fatalf("compile error: %v", err)
-	}
-
-	result, err := executor.Execute(context.Background(), State{valueKey: 0})
-	if err != nil {
-		t.Fatalf("run error: %v", err)
-	}
-
-	if val, _ := result[valueKey].(int); val != 5 {
-		t.Fatalf("expected value 5, got %d", val)
+	if serialState[valueKey].(int) != parallelState[valueKey].(int) {
+		t.Fatalf("expected serial and parallel execution to yield same result, got serial=%d parallel=%d",
+			serialState[valueKey].(int), parallelState[valueKey].(int))
 	}
 }
 
@@ -701,468 +708,6 @@ func TestGraphParallelJoinSkipsUnselectedEdges(t *testing.T) {
 	}
 }
 
-// TestGraphComplexTopology tests a complex graph with:
-// 1. Branch -> Branch (multi-level branching)
-// 2. Parallel execution of branches
-// 3. Loop within branches
-// 4. Asymmetric convergence (branches converge at different points)
-func TestGraphComplexTopology(t *testing.T) {
-	g := NewGraph()
-
-	var mu sync.Mutex
-	executed := make(map[string]int)
-	record := func(name string, transform func(State) State) Handler {
-		return func(ctx context.Context, state State) (State, error) {
-			mu.Lock()
-			executed[name]++
-			mu.Unlock()
-			if transform != nil {
-				return transform(state), nil
-			}
-			return state.Clone(), nil
-		}
-	}
-
-	// Graph topology:
-	// start
-	//   ├─> branchA1
-	//   │     ├─> branchA2_1 (loop until counter >= 3)
-	//   │     │     └─> branchA2_1 (loop back)
-	//   │     │     └─> parallelA1 ─┐
-	//   │     └─> branchA2_2        ├─> joinA ─┐
-	//   │           └─> parallelA2 ─┘          │
-	//   │                                       ├─> final
-	//   └─> branchB                             │
-	//         └─> parallelB ────────────────────┘
-	//               (shorter path)
-
-	// Start node
-	g.AddNode("start", record("start", func(state State) State {
-		next := state.Clone()
-		next["counter"] = 0
-		next["visited"] = []string{"start"}
-		return next
-	}))
-
-	// Branch A1
-	g.AddNode("branchA1", record("branchA1", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "branchA1")
-		next["visited"] = visited
-		return next
-	}))
-
-	// Branch A2_1 (with loop)
-	g.AddNode("branchA2_1", record("branchA2_1", func(state State) State {
-		next := state.Clone()
-		counter, _ := next["counter"].(int)
-		next["counter"] = counter + 1
-		visited := append(getStringSlice(state["visited"]), "branchA2_1")
-		next["visited"] = visited
-		return next
-	}))
-
-	// Branch A2_2
-	g.AddNode("branchA2_2", record("branchA2_2", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "branchA2_2")
-		next["visited"] = visited
-		return next
-	}))
-
-	// Parallel workers in branch A
-	g.AddNode("parallelA1", record("parallelA1", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "parallelA1")
-		next["visited"] = visited
-		next["parallelA1_data"] = "processed"
-		return next
-	}))
-
-	g.AddNode("parallelA2", record("parallelA2", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "parallelA2")
-		next["visited"] = visited
-		next["parallelA2_data"] = "processed"
-		return next
-	}))
-
-	// Join point for branch A
-	g.AddNode("joinA", record("joinA", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "joinA")
-		next["visited"] = visited
-		return next
-	}))
-
-	// Branch B (shorter path)
-	g.AddNode("branchB", record("branchB", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "branchB")
-		next["visited"] = visited
-		return next
-	}))
-
-	g.AddNode("parallelB", record("parallelB", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "parallelB")
-		next["visited"] = visited
-		next["parallelB_data"] = "processed"
-		return next
-	}))
-
-	// Final convergence point
-	g.AddNode("final", record("final", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "final")
-		next["visited"] = visited
-		return next
-	}))
-
-	// Build edges
-	g.AddEdge("start", "branchA1")
-	g.AddEdge("start", "branchB")
-
-	// Branch A1 splits into A2_1 and A2_2
-	g.AddEdge("branchA1", "branchA2_1")
-	g.AddEdge("branchA1", "branchA2_2")
-
-	// Branch A2_1 loops until counter >= 3
-	g.AddEdge("branchA2_1", "branchA2_1", WithEdgeCondition(func(_ context.Context, state State) bool {
-		counter, _ := state["counter"].(int)
-		return counter < 3
-	}))
-	g.AddEdge("branchA2_1", "parallelA1", WithEdgeCondition(func(_ context.Context, state State) bool {
-		counter, _ := state["counter"].(int)
-		return counter >= 3
-	}))
-
-	// Branch A2_2 goes to parallelA2
-	g.AddEdge("branchA2_2", "parallelA2")
-
-	// Parallel branches converge at joinA
-	g.AddEdge("parallelA1", "joinA")
-	g.AddEdge("parallelA2", "joinA")
-
-	// Branch B goes directly to parallelB
-	g.AddEdge("branchB", "parallelB")
-
-	// Asymmetric convergence: both joinA and parallelB go to final
-	g.AddEdge("joinA", "final")
-	g.AddEdge("parallelB", "final")
-
-	g.SetEntryPoint("start")
-	g.SetFinishPoint("final")
-
-	executor, err := g.Compile()
-	if err != nil {
-		t.Fatalf("compile error: %v", err)
-	}
-
-	result, err := executor.Execute(context.Background(), State{})
-	if err != nil {
-		t.Fatalf("execution error: %v", err)
-	}
-
-	// Verify execution counts
-	if executed["start"] != 1 {
-		t.Errorf("expected start to execute once, got %d", executed["start"])
-	}
-	if executed["branchA1"] != 1 {
-		t.Errorf("expected branchA1 to execute once, got %d", executed["branchA1"])
-	}
-	if executed["branchA2_1"] != 3 {
-		t.Errorf("expected branchA2_1 to loop 3 times, got %d", executed["branchA2_1"])
-	}
-	if executed["branchA2_2"] != 1 {
-		t.Errorf("expected branchA2_2 to execute once, got %d", executed["branchA2_2"])
-	}
-	if executed["parallelA1"] != 1 {
-		t.Errorf("expected parallelA1 to execute once, got %d", executed["parallelA1"])
-	}
-	if executed["parallelA2"] != 1 {
-		t.Errorf("expected parallelA2 to execute once, got %d", executed["parallelA2"])
-	}
-	// joinA is executed by both parallelA1 and parallelA2, but due to parallel execution,
-	// it may be executed multiple times (once per incoming edge)
-	if executed["joinA"] == 0 {
-		t.Errorf("expected joinA to execute at least once, got %d", executed["joinA"])
-	}
-	if executed["branchB"] != 1 {
-		t.Errorf("expected branchB to execute once, got %d", executed["branchB"])
-	}
-	if executed["parallelB"] != 1 {
-		t.Errorf("expected parallelB to execute once, got %d", executed["parallelB"])
-	}
-	// final is the asymmetric convergence point for joinA and parallelB
-	if executed["final"] == 0 {
-		t.Errorf("expected final to execute at least once, got %d", executed["final"])
-	}
-
-	// Verify final counter value (from the looping branch)
-	counter, _ := result["counter"].(int)
-	if counter != 3 {
-		t.Errorf("expected counter to be 3, got %d", counter)
-	}
-
-	// Verify that parallel branches executed (checking execution counts instead of merged state)
-	// Because our mergeStates only keeps the last value for each key, we verify via execution counts
-	if executed["parallelA1"] == 0 {
-		t.Error("expected parallelA1 to execute")
-	}
-	if executed["parallelA2"] == 0 {
-		t.Error("expected parallelA2 to execute")
-	}
-	if executed["parallelB"] == 0 {
-		t.Error("expected parallelB to execute")
-	}
-
-	// The final visited path will only contain one branch's path due to simple mergeStates
-	// But we can verify that the graph structure worked correctly via execution counts
-	visited := getStringSlice(result["visited"])
-	if len(visited) == 0 {
-		t.Error("expected non-empty visited path")
-	}
-
-	t.Logf("Execution counts: %v", executed)
-	t.Logf("Final state visited (one branch's path): %v", visited)
-	t.Logf("Counter value: %d", counter)
-}
-
-// TestGraphComplexTopologySerial tests the same complex topology in serial mode.
-// This ensures sequential execution through the same complex graph structure.
-func TestGraphComplexTopologySerial(t *testing.T) {
-	g := NewGraph(WithParallel(false)) // Serial mode
-
-	var mu sync.Mutex
-	executed := make(map[string]int)
-	executionOrder := []string{}
-	record := func(name string, transform func(State) State) Handler {
-		return func(ctx context.Context, state State) (State, error) {
-			mu.Lock()
-			executed[name]++
-			executionOrder = append(executionOrder, name)
-			mu.Unlock()
-			if transform != nil {
-				return transform(state), nil
-			}
-			return state.Clone(), nil
-		}
-	}
-
-	// Same graph topology as TestGraphComplexTopology but in serial mode
-	// start
-	//   ├─> branchA1
-	//   │     ├─> branchA2_1 (loop until counter >= 3)
-	//   │     │     └─> branchA2_1 (loop back)
-	//   │     │     └─> parallelA1 ─┐
-	//   │     └─> branchA2_2        ├─> joinA ─┐
-	//   │           └─> parallelA2 ─┘          │
-	//   │                                       ├─> final
-	//   └─> branchB                             │
-	//         └─> parallelB ────────────────────┘
-
-	// Start node
-	g.AddNode("start", record("start", func(state State) State {
-		next := state.Clone()
-		next["counter"] = 0
-		next["visited"] = []string{"start"}
-		return next
-	}))
-
-	// Branch A1
-	g.AddNode("branchA1", record("branchA1", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "branchA1")
-		next["visited"] = visited
-		return next
-	}))
-
-	// Branch A2_1 (with loop)
-	g.AddNode("branchA2_1", record("branchA2_1", func(state State) State {
-		next := state.Clone()
-		counter, _ := next["counter"].(int)
-		next["counter"] = counter + 1
-		visited := append(getStringSlice(state["visited"]), "branchA2_1")
-		next["visited"] = visited
-		return next
-	}))
-
-	// Branch A2_2
-	g.AddNode("branchA2_2", record("branchA2_2", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "branchA2_2")
-		next["visited"] = visited
-		return next
-	}))
-
-	// Serial workers in branch A
-	g.AddNode("parallelA1", record("parallelA1", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "parallelA1")
-		next["visited"] = visited
-		next["parallelA1_data"] = "processed"
-		return next
-	}))
-
-	g.AddNode("parallelA2", record("parallelA2", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "parallelA2")
-		next["visited"] = visited
-		next["parallelA2_data"] = "processed"
-		return next
-	}))
-
-	// Join point for branch A
-	g.AddNode("joinA", record("joinA", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "joinA")
-		next["visited"] = visited
-		return next
-	}))
-
-	// Branch B (shorter path)
-	g.AddNode("branchB", record("branchB", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "branchB")
-		next["visited"] = visited
-		return next
-	}))
-
-	g.AddNode("parallelB", record("parallelB", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "parallelB")
-		next["visited"] = visited
-		next["parallelB_data"] = "processed"
-		return next
-	}))
-
-	// Final convergence point
-	g.AddNode("final", record("final", func(state State) State {
-		next := state.Clone()
-		visited := append(getStringSlice(state["visited"]), "final")
-		next["visited"] = visited
-		return next
-	}))
-
-	// Build edges (same as parallel version)
-	g.AddEdge("start", "branchA1")
-	g.AddEdge("start", "branchB")
-
-	g.AddEdge("branchA1", "branchA2_1")
-	g.AddEdge("branchA1", "branchA2_2")
-
-	g.AddEdge("branchA2_1", "branchA2_1", WithEdgeCondition(func(_ context.Context, state State) bool {
-		counter, _ := state["counter"].(int)
-		return counter < 3
-	}))
-	g.AddEdge("branchA2_1", "parallelA1", WithEdgeCondition(func(_ context.Context, state State) bool {
-		counter, _ := state["counter"].(int)
-		return counter >= 3
-	}))
-
-	g.AddEdge("branchA2_2", "parallelA2")
-
-	g.AddEdge("parallelA1", "joinA")
-	g.AddEdge("parallelA2", "joinA")
-
-	g.AddEdge("branchB", "parallelB")
-
-	g.AddEdge("joinA", "final")
-	g.AddEdge("parallelB", "final")
-
-	g.SetEntryPoint("start")
-	g.SetFinishPoint("final")
-
-	executor, err := g.Compile()
-	if err != nil {
-		t.Fatalf("compile error: %v", err)
-	}
-
-	result, err := executor.Execute(context.Background(), State{})
-	if err != nil {
-		t.Fatalf("execution error: %v", err)
-	}
-
-	// Verify execution counts (same as parallel version)
-	if executed["start"] != 1 {
-		t.Errorf("expected start to execute once, got %d", executed["start"])
-	}
-	if executed["branchA1"] != 1 {
-		t.Errorf("expected branchA1 to execute once, got %d", executed["branchA1"])
-	}
-	if executed["branchA2_1"] != 3 {
-		t.Errorf("expected branchA2_1 to loop 3 times, got %d", executed["branchA2_1"])
-	}
-	if executed["branchA2_2"] != 1 {
-		t.Errorf("expected branchA2_2 to execute once, got %d", executed["branchA2_2"])
-	}
-	if executed["parallelA1"] != 1 {
-		t.Errorf("expected parallelA1 to execute once, got %d", executed["parallelA1"])
-	}
-	if executed["parallelA2"] != 1 {
-		t.Errorf("expected parallelA2 to execute once, got %d", executed["parallelA2"])
-	}
-	if executed["joinA"] == 0 {
-		t.Errorf("expected joinA to execute at least once, got %d", executed["joinA"])
-	}
-	if executed["branchB"] != 1 {
-		t.Errorf("expected branchB to execute once, got %d", executed["branchB"])
-	}
-	if executed["parallelB"] != 1 {
-		t.Errorf("expected parallelB to execute once, got %d", executed["parallelB"])
-	}
-	if executed["final"] == 0 {
-		t.Errorf("expected final to execute at least once, got %d", executed["final"])
-	}
-
-	// Verify final counter value
-	counter, _ := result["counter"].(int)
-	if counter != 3 {
-		t.Errorf("expected counter to be 3, got %d", counter)
-	}
-
-	// In serial mode, execution should be deterministic and sequential
-	// Verify that execution is truly sequential (no concurrent execution)
-	if len(executionOrder) == 0 {
-		t.Error("expected non-empty execution order")
-	}
-
-	// Verify visited path includes nodes from the completed path
-	visited := getStringSlice(result["visited"])
-	if len(visited) == 0 {
-		t.Error("expected non-empty visited path")
-	}
-
-	// In serial mode, the execution should follow a deterministic order
-	// The order should be: start -> branchA1 -> (branchA2_1 x3 + branchA2_2) -> (parallelA1 + parallelA2) -> joinA -> branchB -> parallelB -> final
-	t.Logf("Execution counts: %v", executed)
-	t.Logf("Execution order: %v", executionOrder)
-	t.Logf("Final state visited: %v", visited)
-	t.Logf("Counter value: %d", counter)
-
-	// Verify sequential execution order properties
-	startIdx := -1
-	finalIdx := -1
-	for i, node := range executionOrder {
-		if node == "start" {
-			startIdx = i
-		}
-		if node == "final" {
-			finalIdx = i
-		}
-	}
-	if startIdx == -1 {
-		t.Error("start node not found in execution order")
-	}
-	if finalIdx == -1 {
-		t.Error("final node not found in execution order")
-	}
-	if startIdx >= finalIdx {
-		t.Errorf("start should execute before final, got start at %d, final at %d", startIdx, finalIdx)
-	}
-}
-
 // TestGraphDifferentPathLengths tests that convergence nodes correctly wait for all predecessors
 // even when the paths to reach them have different lengths.
 // This is the bug that was fixed: previously, fanOutParallel only handled same-length paths.
@@ -1496,6 +1041,158 @@ func TestGraphDifferentPathLengthsConditionalBranches(t *testing.T) {
 	}
 }
 
+func TestGraphSerialFanOutOrder(t *testing.T) {
+	g := NewGraph(WithParallel(false))
+
+	var mu sync.Mutex
+	executed := make([]string, 0, 6)
+
+	record := func(name string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed = append(executed, name)
+			mu.Unlock()
+			return state.Clone(), nil
+		}
+	}
+
+	g.AddNode("start", record("start"))
+	g.AddNode("branch_a", record("branch_a"))
+	g.AddNode("branch_b", record("branch_b"))
+	g.AddNode("branch_c", record("branch_c"))
+	g.AddNode("branch_d", record("branch_d"))
+	g.AddNode("join", record("join"))
+
+	g.AddEdge("start", "branch_a")
+	g.AddEdge("start", "branch_b")
+	g.AddEdge("branch_b", "branch_c")
+	g.AddEdge("branch_b", "branch_d")
+	g.AddEdge("branch_c", "join")
+	g.AddEdge("branch_d", "join")
+	g.AddEdge("branch_a", "join")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if _, err := executor.Execute(context.Background(), State{"a": 1}); err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	expected := []string{"start", "branch_a", "branch_b", "branch_c", "branch_d", "join"}
+	if len(executed) != len(expected) {
+		t.Fatalf("unexpected execution count: got %v want %v", executed, expected)
+	}
+	for i, name := range expected {
+		if executed[i] != name {
+			t.Fatalf("execution order mismatch at %d: got %s want %s (full=%v)", i, executed[i], name, executed)
+		}
+	}
+}
+
+func TestGraphLoopFlow(t *testing.T) {
+	g := NewGraph()
+
+	g.AddNode("outline", stepHandler("outline"))
+	g.AddNode("review", stepHandler("review"))
+	g.AddNode("revise", stepHandler("revise"))
+	g.AddNode("publish", stepHandler("publish"))
+
+	g.AddEdge("outline", "review")
+	g.AddEdge("review", "revise")
+	g.AddEdge("revise", "review") // introduces a cycle
+	g.AddEdge("revise", "publish")
+
+	g.SetEntryPoint("outline")
+	g.SetFinishPoint("publish")
+
+	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "cycles are not supported") {
+		t.Fatalf("expected compile error for cyclic graph, got %v", err)
+	}
+}
+func TestGraphSerialFanOutStateIsolation(t *testing.T) {
+	g := NewGraph(WithParallel(false))
+
+	var (
+		mu               sync.Mutex
+		branchBSawFromA  bool
+		joinVerifiedBoth bool
+	)
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		next := State{}
+		next["path"] = []string{"start"}
+		return next, nil
+	})
+
+	g.AddNode("branchA", func(ctx context.Context, state State) (State, error) {
+		path := getStringSlice(state["path"])
+		if len(path) != 1 || path[0] != "start" {
+			t.Fatalf("branchA received unexpected path: %v", path)
+		}
+		next := state.Clone()
+		next["path"] = append(path, "branchA")
+		next["fromA"] = true
+		return next, nil
+	})
+
+	g.AddNode("branchB", func(ctx context.Context, state State) (State, error) {
+		path := getStringSlice(state["path"])
+		if len(path) != 1 || path[0] != "start" {
+			t.Fatalf("branchB received unexpected path: %v", path)
+		}
+		if _, ok := state["fromA"]; ok {
+			mu.Lock()
+			branchBSawFromA = true
+			mu.Unlock()
+		}
+		next := state.Clone()
+		next["path"] = append(path, "branchB")
+		next["fromB"] = true
+		return next, nil
+	})
+
+	g.AddNode("join", func(ctx context.Context, state State) (State, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if _, ok := state["fromA"].(bool); !ok {
+			return nil, fmt.Errorf("join missing fromA flag: %#v", state)
+		}
+		if _, ok := state["fromB"].(bool); !ok {
+			return nil, fmt.Errorf("join missing fromB flag: %#v", state)
+		}
+		joinVerifiedBoth = true
+		return state.Clone(), nil
+	})
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	g.AddEdge("start", "branchA")
+	g.AddEdge("start", "branchB")
+	g.AddEdge("branchA", "join")
+	g.AddEdge("branchB", "join")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	if branchBSawFromA {
+		t.Fatalf("expected branchB to see an isolated state, but fromA was present")
+	}
+	if !joinVerifiedBoth {
+		t.Fatalf("join did not observe contributions from both branches")
+	}
+}
 func TestGraphSingleEdgeWaitPropagation(t *testing.T) {
 	g := NewGraph()
 
