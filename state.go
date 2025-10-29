@@ -14,9 +14,6 @@ import (
 // State holds arbitrary key-value pairs representing the state.
 type State = generics.Map[string, any]
 
-// U is a shorthand for a generic map with string keys and any values.
-type MessageSlice = generics.Slice[*Message]
-
 // StateInputHandler is a function type that processes input prompts with access to the current state.
 type StateInputHandler func(ctx context.Context, input *Prompt, state *State) (*Prompt, error)
 
