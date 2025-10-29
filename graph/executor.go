@@ -11,7 +11,6 @@ import (
 type Executor struct {
 	graph        *Graph
 	queue        []Step
-	waiting      map[string]int
 	predecessors map[string][]string // predecessors for each node
 	pending      map[string]State    // nodes waiting for predecessors, with their accumulated state
 	visited      map[string]bool
@@ -52,7 +51,6 @@ func NewExecutor(g *Graph) *Executor {
 	return &Executor{
 		graph:        g,
 		queue:        []Step{{node: g.entryPoint}},
-		waiting:      make(map[string]int),
 		predecessors: predecessors,
 		pending:      make(map[string]State),
 		visited:      make(map[string]bool, len(g.nodes)),
@@ -81,13 +79,11 @@ func (e *Executor) Execute(ctx context.Context, state State) (State, error) {
 			return nil, err
 		}
 		if e.handleFinish(step.node, nextState) {
-			e.checkPendingNodes()
 			continue
 		}
 		if err := e.processOutgoingEdges(ctx, step, nextState); err != nil {
 			return nil, err
 		}
-		e.checkPendingNodes()
 	}
 	if e.finished {
 		return e.finishState, nil
@@ -106,7 +102,6 @@ func (e *Executor) reset(initial State) {
 	}
 
 	e.queue = []Step{{node: e.graph.entryPoint, state: entryState}}
-	e.waiting = make(map[string]int)
 	e.pending = make(map[string]State)
 	e.visited = make(map[string]bool, len(e.graph.nodes))
 	e.finished = false
@@ -125,53 +120,20 @@ func (e *Executor) shouldSkip(step *Step) bool {
 		return true
 	}
 
-	// Only check all predecessors if explicitly requested (from fanOutParallel successors)
 	if step.waitAllPreds {
-		deferExecution := false
-
-		if !e.visited[step.node] {
-			// Check if all predecessors have been visited
-			deferExecution = false
-			for _, pred := range e.predecessors[step.node] {
-				// Skip self-loops
-				if pred == step.node {
-					continue
-				}
-				// Skip cycle edges: if pred is already visited and leads back to us, ignore it
-				if !e.visited[pred] {
-					deferExecution = true
-					break
-				}
-			}
-		}
-
-		if !deferExecution {
-			// If there are additional queued steps for this node, wait until they have been processed
+		ready := e.predecessorsReady(step.node)
+		if ready {
 			for _, queued := range e.queue {
 				if queued.node == step.node && !queued.allowRevisit {
-					deferExecution = true
+					ready = false
 					break
 				}
 			}
 		}
-
-		if deferExecution {
-			// Store this in pending instead of executing immediately
+		if !ready {
 			e.pending[step.node] = mergeStates(e.pending[step.node], step.state)
 			return true
 		}
-
-		// Merge any accumulated pending state before execution
-		if pendingState, exists := e.pending[step.node]; exists {
-			step.state = mergeStates(pendingState, step.state)
-			delete(e.pending, step.node)
-		}
-	}
-
-	// Legacy waiting mechanism for backward compatibility
-	if e.waiting[step.node] > 0 && !step.allowRevisit {
-		e.queue = append(e.queue, *step)
-		return true
 	}
 
 	if pendingState, exists := e.pending[step.node]; exists {
@@ -198,32 +160,6 @@ func (e *Executor) executeNode(ctx context.Context, step Step) (State, error) {
 	e.visited[step.node] = true
 
 	return nextState.Clone(), nil
-}
-
-// checkPendingNodes checks if any pending nodes can now be activated
-func (e *Executor) checkPendingNodes() {
-	for nodeName, state := range e.pending {
-		allPredsVisited := true
-		for _, pred := range e.predecessors[nodeName] {
-			// Skip self-loops
-			if pred == nodeName {
-				continue
-			}
-			if !e.visited[pred] {
-				allPredsVisited = false
-				break
-			}
-		}
-		if allPredsVisited {
-			// This node is ready to execute
-			e.enqueue(Step{
-				node:         nodeName,
-				state:        state.Clone(),
-				allowRevisit: false,
-				waitAllPreds: false,
-			})
-		}
-	}
 }
 
 func (e *Executor) stateFor(step Step) State {
@@ -445,4 +381,16 @@ func mergeStates(base State, updates ...State) State {
 		}
 	}
 	return merged
+}
+
+func (e *Executor) predecessorsReady(node string) bool {
+	for _, pred := range e.predecessors[node] {
+		if pred == node {
+			continue
+		}
+		if !e.visited[pred] {
+			return false
+		}
+	}
+	return true
 }
