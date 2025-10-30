@@ -15,89 +15,46 @@ import (
 
 const scope = "github.com/go-kratos/blades/contrib/otel"
 
-type Option func(*tracingOptions)
+type Option func(*tracing)
 
-// tracingOptions holds configuration for the agent tracing middleware
-type tracingOptions struct {
+// tracing holds configuration for the agent tracing middleware
+type tracing struct {
 	system string // e.g., "openai", "claude", "gemini"
 	tracer trace.Tracer
+	next   blades.Runnable
 }
 
 // WithSystem sets the AI system name for tracing, e.g., "openai", "claude", "gemini"
 func WithSystem(system string) Option {
-	return func(t *tracingOptions) {
+	return func(t *tracing) {
 		t.system = system
 	}
 }
 
 // WithTracerProvider sets a custom TracerProvider for the tracing middleware
 func WithTracerProvider(tr trace.TracerProvider) Option {
-	return func(t *tracingOptions) {
+	return func(t *tracing) {
 		t.tracer = tr.Tracer(scope)
 	}
 }
 
 // Tracing returns a middleware that adds OpenTelemetry tracing to agent invocations
 func Tracing(opts ...Option) blades.Middleware {
-	t := tracingOptions{
+	t := &tracing{
 		system: "unknown",
 		tracer: otel.GetTracerProvider().Tracer(scope),
 	}
 	for _, o := range opts {
-		o(&t)
+		o(t)
 	}
 
-	return blades.ChainMiddlewares(
-		blades.Unary(func(next blades.RunHandler) blades.RunHandler {
-			return func(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
-				ac, ok := blades.FromContext(ctx)
-				if !ok {
-					return next(ctx, prompt, opts...)
-				}
-
-				ctx, span := t.start(ctx, ac, opts...)
-
-				msg, err := next(ctx, prompt, opts...)
-
-				t.end(span, msg, err)
-
-				return msg, err
-			}
-		}),
-		blades.Streaming(func(next blades.StreamHandler) blades.StreamHandler {
-			return func(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
-				ac, ok := blades.FromContext(ctx)
-				if !ok {
-					return next(ctx, prompt, opts...)
-				}
-
-				ctx, span := t.start(ctx, ac, opts...)
-
-				stream, err := next(ctx, prompt, opts...)
-				if err != nil {
-					t.end(span, nil, err)
-					return nil, err
-				}
-
-				return blades.NewMappedStream[*blades.Message, *blades.Message](stream, func(m *blades.Message) (*blades.Message, error) {
-					msg, err := stream.Current()
-					if err != nil {
-						t.end(span, nil, err)
-						return nil, err
-					}
-
-					if msg.Status == blades.StatusCompleted {
-						t.end(span, msg, nil)
-					}
-
-					return m, nil
-				}), nil
-			}
-		}),
-	)
+	return func(next blades.Runnable) blades.Runnable {
+		t.next = next
+		return t
+	}
 }
 
-func (t *tracingOptions) start(ctx context.Context, ac *blades.AgentContext, opts ...blades.ModelOption) (context.Context, trace.Span) {
+func (t *tracing) start(ctx context.Context, ac *blades.AgentContext, opts ...blades.ModelOption) (context.Context, trace.Span) {
 	ctx, span := t.tracer.Start(ctx, fmt.Sprintf("invoke_agent %s", ac.Name))
 
 	mo := &blades.ModelOptions{}
@@ -128,7 +85,53 @@ func (t *tracingOptions) start(ctx context.Context, ac *blades.AgentContext, opt
 	return ctx, span
 }
 
-func (t *tracingOptions) end(span trace.Span, msg *blades.Message, err error) {
+// Run processes the prompt and adds guardrails before passing it to the next runnable.
+func (t *tracing) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
+	ac, ok := blades.FromContext(ctx)
+	if !ok {
+		return t.next.Run(ctx, prompt, opts...)
+	}
+
+	ctx, span := t.start(ctx, ac, opts...)
+
+	msg, err := t.next.Run(ctx, prompt, opts...)
+
+	t.end(span, msg, err)
+
+	return msg, err
+}
+
+// RunStream processes the prompt in a streaming manner and adds guardrails before passing it to the next runnable.
+func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
+	ac, ok := blades.FromContext(ctx)
+	if !ok {
+		return t.next.RunStream(ctx, prompt, opts...)
+	}
+
+	ctx, span := t.start(ctx, ac, opts...)
+
+	stream, err := t.next.RunStream(ctx, prompt, opts...)
+	if err != nil {
+		t.end(span, nil, err)
+		return nil, err
+	}
+
+	return blades.NewMappedStream[*blades.Message, *blades.Message](stream, func(m *blades.Message) (*blades.Message, error) {
+		msg, err := stream.Current()
+		if err != nil {
+			t.end(span, nil, err)
+			return nil, err
+		}
+
+		if msg.Status == blades.StatusCompleted {
+			t.end(span, msg, nil)
+		}
+
+		return m, nil
+	}), nil
+}
+
+func (t *tracing) end(span trace.Span, msg *blades.Message, err error) {
 	defer span.End()
 
 	if err != nil {

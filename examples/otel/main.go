@@ -37,7 +37,7 @@ func main() {
 	agent := blades.NewAgent(
 		"otel agent",
 		blades.WithMiddleware(ot.Tracing()),
-		blades.WithModel("gpt-5"),
+		blades.WithModel("qwen-max"),
 		blades.WithProvider(openai.NewChatProvider()),
 	)
 
