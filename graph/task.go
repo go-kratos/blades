@@ -327,7 +327,7 @@ func (t *Task) addContributionLocked(node, parent string, state State) {
 		t.contributions[node] = make(map[string]State)
 	}
 	existing := t.contributions[node][parent]
-	t.contributions[node][parent] = mergeStates(existing, state.Clone())
+	t.contributions[node][parent] = mergeStates(existing, state)
 }
 
 func resolveEdgeSelection(ctx context.Context, node string, edges []conditionalEdge, state State) ([]conditionalEdge, []conditionalEdge, error) {
