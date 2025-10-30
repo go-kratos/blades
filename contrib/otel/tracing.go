@@ -41,7 +41,7 @@ func WithTracerProvider(tr trace.TracerProvider) Option {
 // Tracing returns a middleware that adds OpenTelemetry tracing to agent invocations
 func Tracing(opts ...Option) blades.Middleware {
 	t := &tracing{
-		system: "unknown",
+		system: "_OTHER",
 		tracer: otel.GetTracerProvider().Tracer(scope),
 	}
 	for _, o := range opts {
@@ -138,7 +138,7 @@ func (t *tracing) end(span trace.Span, msg *blades.Message, err error) {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	} else {
-		span.SetStatus(codes.Ok, "OK")
+		span.SetStatus(codes.Ok, codes.Ok.String())
 	}
 
 	if msg == nil {

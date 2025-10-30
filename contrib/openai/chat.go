@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"strconv"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
@@ -76,7 +77,7 @@ func (p *ChatProvider) Generate(ctx context.Context, req *blades.ModelRequest, o
 	if err != nil {
 		return nil, err
 	}
-	res, err := choiceToResponse(ctx, params, chatResponse.Choices)
+	res, err := choiceToResponse(ctx, params, chatResponse)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +109,7 @@ func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, 
 			}
 			pipe.Send(res)
 		}
-		finalResponse, err := choiceToResponse(ctx, params, acc.ChatCompletion.Choices)
+		finalResponse, err := choiceToResponse(ctx, params, &acc.ChatCompletion)
 		if err != nil {
 			return err
 		}
@@ -329,14 +330,21 @@ func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []opena
 }
 
 // choiceToResponse converts a non-streaming choice to a ModelResponse.
-func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams, choices []openai.ChatCompletionChoice) (*blades.ModelResponse, error) {
+func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams, cc *openai.ChatCompletion) (*blades.ModelResponse, error) {
 	msg := &blades.Message{
 		Role:     blades.RoleAssistant,
 		Status:   blades.StatusCompleted,
 		Metadata: map[string]string{},
 	}
 
-	for _, choice := range choices {
+	if cc.Usage.PromptTokens > 0 {
+		msg.Metadata["input_tokens"] = strconv.FormatInt(cc.Usage.PromptTokens, 10)
+	}
+	if cc.Usage.CompletionTokens > 0 {
+		msg.Metadata["output_tokens"] = strconv.FormatInt(cc.Usage.CompletionTokens, 10)
+	}
+
+	for _, choice := range cc.Choices {
 		if choice.Message.Content != "" {
 			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Message.Content})
 		}
