@@ -30,7 +30,7 @@ func main() {
 	)
 	agent := blades.NewAgent(
 		"Weather Agent",
-		blades.WithModel("qwen-plus"),
+		blades.WithModel("gpt-5"),
 		blades.WithInstructions("You are a helpful assistant that provides weather information."),
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithTools(weatherTool),

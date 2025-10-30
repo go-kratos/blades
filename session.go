@@ -7,26 +7,42 @@ import (
 	"github.com/google/uuid"
 )
 
+// SessionStore defines the interface for session storage backends.
+type SessionStore interface {
+	Get(ctx context.Context, id string) (*Session, error)
+	Save(ctx context.Context, session *Session) error
+	Delete(ctx context.Context, id string) error
+}
+
 // Session holds the state of a flow along with a unique session ID.
 type Session struct {
-	ID      string                         `json:"id"` // Unique identifier for the session
-	Inputs  generics.Map[string, *Prompt]  `json:"inputs"`
-	Outputs generics.Map[string, *Message] `json:"outputs"`
-	History generics.Slice[*Message]       `json:"history"`
-	State   generics.Map[string, any]      `json:"state"`
+	ID      string                   `json:"id"`
+	History generics.Slice[*Message] `json:"history"`
+	State   State                    `json:"state"`
+}
+
+// PutState sets a key-value pair in the session state.
+func (s *Session) PutState(key string, value any) {
+	s.State.Store(key, value)
 }
 
 // Record records the input prompt and output message under the given name.
-func (s *Session) Record(name string, input *Prompt, output *Message) {
-	s.Inputs.Store(name, input)
-	s.Outputs.Store(name, output)
-	s.History.Append(input.Messages...)
-	s.History.Append(output)
+func (s *Session) Record(input []*Message, output *Message) {
+	messages := make([]*Message, 0, len(input)+1)
+	messages = append(messages, input...)
+	messages = append(messages, output)
+	s.History.Append(messages...)
 }
 
-// NewSession creates a new Session instance with a unique ID.
-func NewSession(id string) *Session {
-	return &Session{ID: id}
+// NewSession creates a new Session instance with the provided ID.
+func NewSession(id string, states ...map[string]any) *Session {
+	session := &Session{ID: id}
+	for _, state := range states {
+		for k, v := range state {
+			session.PutState(k, v)
+		}
+	}
+	return session
 }
 
 // ctxSessionKey is an unexported type for keys defined in this package.

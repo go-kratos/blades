@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -11,7 +10,7 @@ import (
 )
 
 // convertPartsToContent converts Blades Parts to Claude ContentBlockParamUnion.
-func convertPartsToContent(parts []blades.Part) ([]anthropic.ContentBlockParamUnion, error) {
+func convertPartsToContent(parts []blades.Part) []anthropic.ContentBlockParamUnion {
 	var content []anthropic.ContentBlockParamUnion
 	for _, part := range parts {
 		switch p := part.(type) {
@@ -19,7 +18,7 @@ func convertPartsToContent(parts []blades.Part) ([]anthropic.ContentBlockParamUn
 			content = append(content, anthropic.NewTextBlock(p.Text))
 		}
 	}
-	return content, nil
+	return content
 }
 
 // convertBladesToolsToClaude converts Blades Tools to Claude ToolParams.
@@ -50,31 +49,24 @@ func convertBladesToolsToClaude(tools []*tools.Tool) ([]anthropic.ToolUnionParam
 
 // convertClaudeToBlades converts a Claude Message to Blades ModelResponse.
 func convertClaudeToBlades(message *anthropic.Message) (*blades.ModelResponse, error) {
-	var (
-		parts     []blades.Part
-		toolCalls []*blades.ToolCall
-	)
+	msg := blades.NewMessage(blades.RoleAssistant)
 	for _, block := range message.Content {
 		switch b := block.AsAny().(type) {
 		case anthropic.TextBlock:
-			parts = append(parts, blades.TextPart{Text: b.Text})
+			msg.Parts = append(msg.Parts, blades.TextPart{Text: b.Text})
 		case anthropic.ToolUseBlock:
-			args, err := json.Marshal(b.Input)
+			input, err := json.Marshal(b.Input)
 			if err != nil {
-				return nil, fmt.Errorf("marshaling tool input: %w", err)
+				return nil, err
 			}
-			toolCalls = append(toolCalls, &blades.ToolCall{
-				ID:        b.ID,
-				Name:      b.Name,
-				Arguments: string(args),
+			msg.Parts = append(msg.Parts, blades.ToolPart{
+				ID:      b.ID,
+				Name:    b.Name,
+				Request: string(input),
 			})
 		}
 	}
-	msg := &blades.Message{
-		Role:      blades.RoleAssistant,
-		Parts:     parts,
-		ToolCalls: toolCalls,
-	}
+
 	return &blades.ModelResponse{
 		Message: msg,
 	}, nil
@@ -94,35 +86,4 @@ func convertStreamDeltaToBlades(event anthropic.ContentBlockDeltaEvent) (*blades
 		response.Message = msg
 	}
 	return response, nil
-}
-
-func buildToolMesssage(ctx context.Context, message *anthropic.Message, tools []*tools.Tool) ([]anthropic.MessageParam, error) {
-	var (
-		toolMessages []anthropic.MessageParam
-		toolResults  []anthropic.ContentBlockParamUnion
-	)
-	for _, block := range message.Content {
-		switch variant := block.AsAny().(type) {
-		case anthropic.ToolUseBlock:
-			args := variant.JSON.Input.Raw()
-			result, err := handleToolCall(ctx, tools, variant.Name, args)
-			if err != nil {
-				return nil, err
-			}
-			toolResults = append(toolResults, anthropic.NewToolResultBlock(variant.ID, result, false))
-		}
-	}
-	toolMessages = append(toolMessages, message.ToParam())
-	toolMessages = append(toolMessages, anthropic.NewUserMessage(toolResults...))
-	return toolMessages, nil
-}
-
-// handleToolCall invokes a tool by name with the given arguments.
-func handleToolCall(ctx context.Context, tools []*tools.Tool, name, arguments string) (string, error) {
-	for _, tool := range tools {
-		if tool.Name == name {
-			return tool.Handler.Handle(ctx, arguments)
-		}
-	}
-	return "", ErrToolNotFound
 }

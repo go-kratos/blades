@@ -28,10 +28,11 @@ func (p *Prompt) Latest() *Message {
 // String returns the string representation of the prompt by concatenating all message strings.
 func (p *Prompt) String() string {
 	var buf strings.Builder
-	for _, msg := range p.Messages {
-		buf.WriteString(msg.String())
+	for _, m := range p.Messages {
+		buf.WriteString(m.Text())
+		buf.WriteByte('\n')
 	}
-	return buf.String()
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 // Streamable yields a sequence of assistant responses until completion.
@@ -42,8 +43,7 @@ type Streamable[T any] interface {
 }
 
 // Runnable represents an entity that can process prompts and generate responses.
-type Runnable[Input, Output, Option any] interface {
-	Name() string
-	Run(context.Context, Input, ...Option) (Output, error)
-	RunStream(context.Context, Input, ...Option) (Streamable[Output], error)
+type Runnable interface {
+	Run(context.Context, *Prompt, ...ModelOption) (*Message, error)
+	RunStream(context.Context, *Prompt, ...ModelOption) (Streamable[*Message], error)
 }

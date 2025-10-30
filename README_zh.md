@@ -22,19 +22,18 @@ Blades 框架通过一系列精心设计的核心组件，实现了其强大的�
 * Memory (记忆)：为 Agent 提供短期或长期的记忆能力，实现具备上下文的连续对话。
 * Middleware (中间件)：类似于 Web 框架中的中间件，可以实现对 Agent 的横切面控制。
 
-### Runner
-`Runner` 是 Blades 框架中最核心的接口，它定义了所有可执行组件的基本行为。其设计旨在提供一个统一的执行范式，通过 `Run` 和 `RunStream` 方法，实现了框架内各种功能模块的**解耦、标准化和高度可组合性**。`Agent`、`Chain`、`ModelProvider` 等组件都实现了此接口，从而统一了它们的执行逻辑，使得不同组件能够像乐高积木一样灵活组合，构建复杂的 AI Agent。
+### Runnable
+`Runnable` 是 Blades 框架中最核心的接口，它定义了所有可执行组件的基本行为。其设计旨在提供一个统一的执行范式，通过 `Run` 和 `RunStream` 方法，实现了框架内各种功能模块的**解耦、标准化和高度可组合性**。`Agent`、`Chain`、`ModelProvider` 等组件都实现了此接口，从而统一了它们的执行逻辑，使得不同组件能够像乐高积木一样灵活组合，构建复杂的 AI Agent。
 
 ```go
-// Runner represents an entity that can process prompts and generate responses.
-type Runner interface {
-    // Run 执行一个同步的、非流式的操作，返回一个完整的 Generation 结果。
+// Runnable represents an entity that can process prompts and generate responses.
+type Runnable interface {
+    Name() string
     Run(context.Context, *Prompt, ...ModelOption) (*Message, error)
-	// RunStream 执行一个异步的、流式的操作，返回一个 Streamable，用于逐步接收 Generation 结果。
     RunStream(context.Context, *Prompt, ...ModelOption) (Streamable[*Message], error)
 }
 ```
-![runner](docs/images/runner.png)
+![runnable](docs/images/runnable.png)
 
 
 ### ModelProvider
@@ -51,10 +50,10 @@ type ModelProvider interface {
 ![ModelProvider](./docs/images/model.png)
 
 ### Agent
-`Agent` 是 `Blades` 框架中的核心协调者，作为最高层的 `Runner`，它整合并编排 `ModelProvider`、`Tool`、`Memory` 和 `Middleware` 等组件，以理解用户意图并执行复杂的任务。其设计允许通过灵活的 `Option` 函数进行配置，从而驱动智能应用的行为和能力，实现任务编排、上下文管理和指令遵循等核心职责。
+`Agent` 是 `Blades` 框架中的核心协调者，作为最高层的 `Runnable`，它整合并编排 `ModelProvider`、`Tool`、`Memory` 和 `Middleware` 等组件，以理解用户意图并执行复杂的任务。其设计允许通过灵活的 `Option` 函数进行配置，从而驱动智能应用的行为和能力，实现任务编排、上下文管理和指令遵循等核心职责。
 
-### Chain
-`Chain` 用于构建复杂工作流和多步骤推理。其设计理念是将多个 `Runner` 实例按序串联，实现数据和控制流的传递，前一个 `Runner` 的输出可作为下一个 `Runner` 的输入。这种机制使得开发者可以灵活组合组件，构建高度定制化的 AI 工作流，实现多步推理和复杂数据处理，是实现 Agent 复杂决策流的关键。
+### Flow
+`flow` 用于构建复杂的工作流和多步推理。其设计理念是将多个 `Runnable` 做编排，实现数据和控制流的传递，其中一个 `Runnable` 的输出可以作为下一个 `Runnable` 的输入。该机制使得开发者能够灵活地组合组件，构建高度定制化的 AI 工作流，实现多步推理和复杂数据处理，是实现 Agent 复杂决策流程的关键。
 
 ### Tool
 `Tool` 是扩展 AI Agent 能力的关键组件，代表 Agent 可调用的外部功能或服务。其设计旨在赋予 Agent 与真实世界交互的能力，执行特定动作或获取外部信息。通过清晰的 `InputSchema`，它指导 LLM 生成正确的调用参数，并通过内部的 `Handle` 函数执行实际逻辑，从而将各种外部 API、数据库查询等封装成 Agent 可理解和可调用的形式。

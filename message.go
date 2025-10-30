@@ -52,6 +52,13 @@ type DataPart struct {
 	MIMEType MIMEType `json:"mimeType"`
 }
 
+type ToolPart struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Request  string `json:"arguments"`
+	Response string `json:"result,omitempty"`
+}
+
 // Part is a part of a message, which can be text or a file.
 type Part interface {
 	isPart()
@@ -60,33 +67,28 @@ type Part interface {
 func (TextPart) isPart() {}
 func (FilePart) isPart() {}
 func (DataPart) isPart() {}
-
-// ToolCall represents a call to an external tool.
-type ToolCall struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-	Result    string `json:"result,omitempty"`
-}
+func (ToolPart) isPart() {}
 
 // Message represents a single message in a conversation.
 type Message struct {
-	ID        string            `json:"id"`
-	Role      Role              `json:"role"`
-	Parts     []Part            `json:"parts"`
-	Status    Status            `json:"status"`
-	ToolCalls []*ToolCall       `json:"toolCalls,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	ID       string            `json:"id"`
+	Role     Role              `json:"role"`
+	Parts    []Part            `json:"parts"`
+	Status   Status            `json:"status"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // Text returns the first text part of the message, or an empty string if none exists.
 func (m *Message) Text() string {
+	var buf strings.Builder
 	for _, part := range m.Parts {
-		if text, ok := part.(TextPart); ok {
-			return text.Text
+		switch v := any(part).(type) {
+		case TextPart:
+			buf.WriteString(v.Text)
+			buf.WriteByte('\n')
 		}
 	}
-	return ""
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 // File returns the first file part of the message, or nil if none exists.
@@ -119,6 +121,8 @@ func (m *Message) String() string {
 			buf.WriteString("[File: " + v.Name + " (" + string(v.MIMEType) + ")]")
 		case DataPart:
 			buf.WriteString("[Data: " + v.Name + " (" + string(v.MIMEType) + "), " + fmt.Sprintf("%d bytes", len(v.Bytes)) + "]")
+		case ToolPart:
+			buf.WriteString("[Tool: " + v.Name + " (Request: " + v.Request + ", Response: " + v.Response + ")]")
 		}
 	}
 	return buf.String()
@@ -126,7 +130,7 @@ func (m *Message) String() string {
 
 // contentPart is a type constraint for valid content inputs.
 type contentPart interface {
-	string | TextPart | FilePart | DataPart
+	string | TextPart | FilePart | DataPart | ToolPart
 }
 
 // UserMessage creates a user-authored message from parts.
@@ -158,9 +162,16 @@ func Parts[T contentPart](inputs ...T) []Part {
 			parts = append(parts, v)
 		case DataPart:
 			parts = append(parts, v)
+		case ToolPart:
+			parts = append(parts, v)
 		}
 	}
 	return parts
+}
+
+// NewMessage creates a new empty message with a unique ID.
+func NewMessage(role Role) *Message {
+	return &Message{ID: NewMessageID(), Role: role}
 }
 
 // NewMessageID generates a new random message identifier.

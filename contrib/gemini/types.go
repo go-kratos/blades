@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/go-kratos/blades"
@@ -16,29 +17,30 @@ func convertMessageToGenAI(req *blades.ModelRequest) (*genai.Content, []*genai.C
 	for _, msg := range req.Messages {
 		switch msg.Role {
 		case blades.RoleSystem:
-			parts, err := convertMessagePartsToGenAI(msg.Parts)
-			if err != nil {
-				return nil, nil, err
-			}
-			system = &genai.Content{Parts: parts}
+			system = &genai.Content{Parts: convertMessagePartsToGenAI(msg.Parts)}
 		case blades.RoleUser:
-			parts, err := convertMessagePartsToGenAI(msg.Parts)
-			if err != nil {
-				return nil, nil, err
+			contents = append(contents, &genai.Content{Role: genai.RoleUser, Parts: convertMessagePartsToGenAI(msg.Parts)})
+		case blades.RoleAssistant:
+			contents = append(contents, &genai.Content{Role: genai.RoleUser, Parts: convertMessagePartsToGenAI(msg.Parts)})
+		case blades.RoleTool:
+			var parts []*genai.Part
+			for _, part := range msg.Parts {
+				switch v := any(part).(type) {
+				case blades.ToolPart:
+					response := map[string]any{}
+					if err := json.Unmarshal([]byte(v.Response), &response); err != nil {
+						response["output"] = v.Response
+					}
+					parts = append(parts, genai.NewPartFromFunctionResponse(v.Name, response))
+				}
 			}
 			contents = append(contents, &genai.Content{Role: genai.RoleUser, Parts: parts})
-		case blades.RoleAssistant:
-			parts, err := convertMessagePartsToGenAI(msg.Parts)
-			if err != nil {
-				return nil, nil, err
-			}
-			contents = append(contents, &genai.Content{Role: genai.RoleModel, Parts: parts})
 		}
 	}
 	return system, contents, nil
 }
 
-func convertMessagePartsToGenAI(parts []blades.Part) ([]*genai.Part, error) {
+func convertMessagePartsToGenAI(parts []blades.Part) []*genai.Part {
 	res := make([]*genai.Part, 0, len(parts))
 	for _, part := range parts {
 		switch v := part.(type) {
@@ -60,11 +62,9 @@ func convertMessagePartsToGenAI(parts []blades.Part) ([]*genai.Part, error) {
 					MIMEType:    string(v.MIMEType),
 				},
 			})
-		default:
-			return nil, fmt.Errorf("unsupported part type: %T", part)
 		}
 	}
-	return res, nil
+	return res
 }
 
 func convertBladesToolsToGenAI(tools []*tools.Tool) ([]*genai.Tool, error) {

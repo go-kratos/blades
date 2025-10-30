@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/go-kratos/blades"
 	"github.com/go-kratos/generics"
 )
 
@@ -23,6 +24,16 @@ func (s *InMemoryStore) AddMemory(ctx context.Context, m *Memory) error {
 	return nil
 }
 
+func (s *InMemoryStore) SaveSession(ctx context.Context, session *blades.Session) error {
+	session.History.Range(func(_ int, m *blades.Message) bool {
+		s.memories.Append(&Memory{
+			Content: m,
+		})
+		return true
+	})
+	return nil
+}
+
 // SearchMemory searches for memories containing the given query string.
 func (s *InMemoryStore) SearchMemory(ctx context.Context, query string) ([]*Memory, error) {
 	// Simple case-insensitive substring match
@@ -32,6 +43,7 @@ func (s *InMemoryStore) SearchMemory(ctx context.Context, query string) ([]*Memo
 		for _, word := range words {
 			if strings.Contains(strings.ToLower(m.Content.Text()), word) {
 				sets.Insert(m)
+				break
 			}
 		}
 		return true

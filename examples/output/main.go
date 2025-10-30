@@ -19,11 +19,11 @@ type ActorsFilms struct {
 
 // OutputConverter is a wrapper around a Runnable runner that ensures the output conforms to a specified type T using JSON schema validation.
 type OutputConverter[T any] struct {
-	runner blades.Runnable[*blades.Prompt, *blades.Message, blades.ModelOption]
+	runner blades.Runnable
 }
 
 // NewOutput creates a new Output instance that wraps the given Runnable runner.
-func NewOutputConverter[T any](runner blades.Runnable[*blades.Prompt, *blades.Message, blades.ModelOption]) *OutputConverter[T] {
+func NewOutputConverter[T any](runner blades.Runnable) *OutputConverter[T] {
 	return &OutputConverter[T]{runner: runner}
 }
 

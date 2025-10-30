@@ -7,37 +7,50 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// ParallelMerger is a function that merges the outputs of multiple runners into a single output.
-type ParallelMerger[O any] func(ctx context.Context, outputs []O) (O, error)
+// ParallelOption defines a function type for configuring Parallel.
+type ParallelOption func(*Parallel)
 
-// Parallel represents a sequence of Runnable runners that process input sequentially.
-type Parallel[I, O, Option any] struct {
-	name    string
-	merger  ParallelMerger[O]
-	runners []blades.Runnable[I, O, Option]
-}
-
-// NewParallel creates a new Parallel with the given runners.
-func NewParallel[I, O, Option any](name string, merger ParallelMerger[O], runners ...blades.Runnable[I, O, Option]) *Parallel[I, O, Option] {
-	return &Parallel[I, O, Option]{
-		name:    name,
-		merger:  merger,
-		runners: runners,
+// WithParallelMerger sets a custom merger function for the Parallel.
+func WithParallelMerger(merger ParallelMerger) ParallelOption {
+	return func(p *Parallel) {
+		p.merger = merger
 	}
 }
 
-// Name returns the name of the Parallel.
-func (c *Parallel[I, O, Option]) Name() string {
-	return c.name
+// ParallelMerger is a function that merges the outputs of multiple runners into a single output.
+type ParallelMerger func(ctx context.Context, outputs []*blades.Message) (*blades.Message, error)
+
+// Parallel represents a collection of Runnable runners that process input concurrently.
+type Parallel struct {
+	merger  ParallelMerger
+	runners []blades.Runnable
+}
+
+// NewParallel creates a new Parallel with the given runners.
+func NewParallel(runners []blades.Runnable, opts ...ParallelOption) *Parallel {
+	p := &Parallel{
+		runners: runners,
+		merger: func(ctx context.Context, outputs []*blades.Message) (*blades.Message, error) {
+			result := blades.NewMessage(blades.RoleAssistant)
+			for _, output := range outputs {
+				result.Parts = append(result.Parts, output.Parts...)
+			}
+			return result, nil
+		},
+	}
+	for _, apply := range opts {
+		apply(p)
+	}
+	return p
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.
-func (c *Parallel[I, O, Option]) Run(ctx context.Context, input I, opts ...Option) (o O, err error) {
+func (p *Parallel) Run(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (o *blades.Message, err error) {
 	var (
-		outputs = make([]O, len(c.runners))
+		outputs = make([]*blades.Message, len(p.runners))
 	)
 	eg, ctx := errgroup.WithContext(ctx)
-	for idx, runner := range c.runners {
+	for idx, runner := range p.runners {
 		idxCopy := idx
 		eg.Go(func() error {
 			output, err := runner.Run(ctx, input, opts...)
@@ -51,15 +64,15 @@ func (c *Parallel[I, O, Option]) Run(ctx context.Context, input I, opts ...Optio
 	if err = eg.Wait(); err != nil {
 		return
 	}
-	return c.merger(ctx, outputs)
+	return p.merger(ctx, outputs)
 }
 
 // RunStream executes the runners sequentially, streaming each output as it is produced.
 // Note: Although this method belongs to the Parallel struct, it runs runners one after another, not in parallel.
-func (c *Parallel[I, O, Option]) RunStream(ctx context.Context, input I, opts ...Option) (blades.Streamable[O], error) {
-	pipe := blades.NewStreamPipe[O]()
+func (p *Parallel) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
+	pipe := blades.NewStreamPipe[*blades.Message]()
 	pipe.Go(func() error {
-		output, err := c.Run(ctx, input, opts...)
+		output, err := p.Run(ctx, input, opts...)
 		if err != nil {
 			return err
 		}

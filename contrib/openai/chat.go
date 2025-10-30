@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"strconv"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
@@ -19,21 +18,10 @@ import (
 var (
 	// ErrEmptyResponse indicates the provider returned no choices.
 	ErrEmptyResponse = errors.New("empty completion response")
-	// ErrToolNotFound indicates a tool call was made to an unknown tool.
-	ErrToolNotFound = errors.New("tool not found")
-	// ErrTooManyIterations indicates the max iterations option is less than 1.
-	ErrTooManyIterations = errors.New("too many iterations requested")
 )
 
 // ChatOption defines options for chat providers.
 type ChatOption func(*ChatOptions)
-
-// WithMaxToolIterations sets the maximum number of tool iterations for chat completions.
-func WithMaxToolIterations(n int) ChatOption {
-	return func(o *ChatOptions) {
-		o.MaxToolIterations = n
-	}
-}
 
 // WithReasoningEffort sets the reasoning effort for chat completions.
 func WithReasoningEffort(effort shared.ReasoningEffort) ChatOption {
@@ -50,9 +38,8 @@ func WithChatOptions(opts ...option.RequestOption) ChatOption {
 }
 
 type ChatOptions struct {
-	MaxToolIterations int
-	ReasoningEffort   shared.ReasoningEffort
-	RequestOpts       []option.RequestOption
+	ReasoningEffort shared.ReasoningEffort
+	RequestOpts     []option.RequestOption
 }
 
 // ChatProvider implements blades.ModelProvider for OpenAI-compatible chat models.
@@ -65,9 +52,7 @@ type ChatProvider struct {
 // the OPENAI_API_KEY environment variable. If OPENAI_BASE_URL is set,
 // it is used as the API base URL; otherwise the library default is used.
 func NewChatProvider(opts ...ChatOption) blades.ModelProvider {
-	chatOpts := ChatOptions{
-		MaxToolIterations: 5,
-	}
+	chatOpts := ChatOptions{}
 	for _, opt := range opts {
 		opt(&chatOpts)
 	}
@@ -75,33 +60,6 @@ func NewChatProvider(opts ...ChatOption) blades.ModelProvider {
 		opts:   chatOpts,
 		client: openai.NewClient(chatOpts.RequestOpts...),
 	}
-}
-
-// New executes a non-streaming chat completion request.
-func (p *ChatProvider) New(ctx context.Context,
-	params openai.ChatCompletionNewParams, tools []*tools.Tool, opts blades.ModelOptions, maxToolIterations int) (*blades.ModelResponse, error) {
-	// Ensure we have at least one iteration left.
-	if maxToolIterations < 1 {
-		return nil, ErrTooManyIterations
-	}
-	chatResponse, err := p.client.Chat.Completions.New(ctx, params)
-	if err != nil {
-		return nil, err
-	}
-	res, err := choiceToResponse(ctx, &params, tools, chatResponse)
-	if err != nil {
-		return nil, err
-	}
-	msg := res.Message
-	switch msg.Role {
-	case blades.RoleTool:
-		if len(msg.ToolCalls) > 0 {
-			// Recursively call Execute to handle multiple tool calls.
-			maxToolIterations--
-			return p.New(ctx, params, tools, opts, maxToolIterations)
-		}
-	}
-	return res, nil
 }
 
 // Generate executes a non-streaming chat completion request.
@@ -114,57 +72,15 @@ func (p *ChatProvider) Generate(ctx context.Context, req *blades.ModelRequest, o
 	if err != nil {
 		return nil, err
 	}
-	return p.New(ctx, params, req.Tools, opt, p.opts.MaxToolIterations)
-}
-
-// NewStreaming executes a streaming chat completion request.
-func (p *ChatProvider) NewStreaming(ctx context.Context,
-	params openai.ChatCompletionNewParams, tools []*tools.Tool, opts blades.ModelOptions, maxToolIterations int) (blades.Streamable[*blades.ModelResponse], error) {
-	// Ensure we have at least one iteration left.
-	if maxToolIterations < 1 {
-		return nil, ErrTooManyIterations
+	chatResponse, err := p.client.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return nil, err
 	}
-	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
-	pipe := blades.NewStreamPipe[*blades.ModelResponse]()
-	pipe.Go(func() error {
-		defer stream.Close()
-		acc := openai.ChatCompletionAccumulator{}
-		for stream.Next() {
-			chunk := stream.Current()
-			acc.AddChunk(chunk)
-			res, err := chunkChoiceToResponse(ctx, tools, chunk)
-			if err != nil {
-				return err
-			}
-			pipe.Send(res)
-		}
-		lastResponse, err := choiceToResponse(ctx, &params, tools, &acc.ChatCompletion)
-		if err != nil {
-			return err
-		}
-		pipe.Send(lastResponse)
-		msg := lastResponse.Message
-		switch msg.Role {
-		case blades.RoleTool:
-			if len(msg.ToolCalls) > 0 {
-				// Recursively call Execute to handle multiple tool calls.
-				maxToolIterations--
-				toolStream, err := p.NewStreaming(ctx, params, tools, opts, maxToolIterations)
-				if err != nil {
-					return err
-				}
-				for toolStream.Next() {
-					res, err := toolStream.Current()
-					if err != nil {
-						return err
-					}
-					pipe.Send(res)
-				}
-			}
-		}
-		return nil
-	})
-	return pipe, nil
+	res, err := choiceToResponse(ctx, params, chatResponse.Choices)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 // NewStream streams chat completion chunks and converts each choice delta
@@ -178,7 +94,28 @@ func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, 
 	if err != nil {
 		return nil, err
 	}
-	return p.NewStreaming(ctx, params, req.Tools, opt, p.opts.MaxToolIterations)
+	pipe := blades.NewStreamPipe[*blades.ModelResponse]()
+	pipe.Go(func() error {
+		stream := p.client.Chat.Completions.NewStreaming(ctx, params)
+		defer stream.Close()
+		acc := openai.ChatCompletionAccumulator{}
+		for stream.Next() {
+			chunk := stream.Current()
+			acc.AddChunk(chunk)
+			res, err := chunkChoiceToResponse(ctx, chunk.Choices)
+			if err != nil {
+				return err
+			}
+			pipe.Send(res)
+		}
+		finalResponse, err := choiceToResponse(ctx, params, acc.ChatCompletion.Choices)
+		if err != nil {
+			return err
+		}
+		pipe.Send(finalResponse)
+		return nil
+	})
+	return pipe, nil
 }
 
 // toChatCompletionParams converts a generic model request into OpenAI params.
@@ -231,7 +168,6 @@ func (p *ChatProvider) toChatCompletionParams(req *blades.ModelRequest, opt blad
 		}
 	}
 	for _, msg := range req.Messages {
-		log.Println("Processing message:", msg.Role, msg.Parts)
 		switch msg.Role {
 		case blades.RoleUser:
 			params.Messages = append(params.Messages, openai.UserMessage(toContentParts(msg)))
@@ -239,9 +175,41 @@ func (p *ChatProvider) toChatCompletionParams(req *blades.ModelRequest, opt blad
 			params.Messages = append(params.Messages, openai.UserMessage(toContentParts(msg)))
 		case blades.RoleSystem:
 			params.Messages = append(params.Messages, openai.SystemMessage(toTextParts(msg)))
+		case blades.RoleTool:
+			params.Messages = append(params.Messages, toToolCallMessage(msg))
+			// Also include any tool responses in the messages.
+			for _, part := range msg.Parts {
+				switch v := any(part).(type) {
+				case blades.ToolPart:
+					params.Messages = append(params.Messages, openai.ToolMessage(v.Response, v.ID))
+				}
+			}
 		}
 	}
 	return params, nil
+}
+
+func toToolCallMessage(msg *blades.Message) openai.ChatCompletionMessageParamUnion {
+	toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(msg.Parts))
+	for _, part := range msg.Parts {
+		switch v := any(part).(type) {
+		case blades.ToolPart:
+			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+					ID: v.ID,
+					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+						Name:      v.Name,
+						Arguments: v.Request,
+					},
+				},
+			})
+		}
+	}
+	return openai.ChatCompletionMessageParamUnion{
+		OfAssistant: &openai.ChatCompletionAssistantMessageParam{
+			ToolCalls: toolCalls,
+		},
+	}
 }
 
 func toTools(tools []*tools.Tool) ([]openai.ChatCompletionToolUnionParam, error) {
@@ -335,16 +303,6 @@ func toContentParts(message *blades.Message) []openai.ChatCompletionContentPartU
 	return parts
 }
 
-// toolCall invokes a tool by name with the given arguments.
-func toolCall(ctx context.Context, tools []*tools.Tool, name, arguments string) (string, error) {
-	for _, tool := range tools {
-		if tool.Name == name {
-			return tool.Handler.Handle(ctx, arguments)
-		}
-	}
-	return "", ErrToolNotFound
-}
-
 func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []openai.ChatCompletionChoice) (*blades.ModelResponse, error) {
 	msg := &blades.Message{
 		Role:   blades.RoleTool,
@@ -356,16 +314,11 @@ func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []opena
 		}
 		if len(choice.Message.ToolCalls) > 0 {
 			for _, call := range choice.Message.ToolCalls {
-				result, err := toolCall(ctx, tools, call.Function.Name, call.Function.Arguments)
-				if err != nil {
-					return nil, err
-				}
 				msg.Role = blades.RoleTool
-				msg.ToolCalls = append(msg.ToolCalls, &blades.ToolCall{
-					ID:        call.ID,
-					Name:      call.Function.Name,
-					Arguments: call.Function.Arguments,
-					Result:    result,
+				msg.Parts = append(msg.Parts, blades.ToolPart{
+					ID:      call.ID,
+					Name:    call.Function.Name,
+					Request: call.Function.Arguments,
 				})
 			}
 		}
@@ -376,20 +329,14 @@ func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []opena
 }
 
 // choiceToResponse converts a non-streaming choice to a ModelResponse.
-func choiceToResponse(ctx context.Context, params *openai.ChatCompletionNewParams, tools []*tools.Tool, cc *openai.ChatCompletion) (*blades.ModelResponse, error) {
+func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams, choices []openai.ChatCompletionChoice) (*blades.ModelResponse, error) {
 	msg := &blades.Message{
 		Role:     blades.RoleAssistant,
 		Status:   blades.StatusCompleted,
 		Metadata: map[string]string{},
 	}
-	if cc.Usage.PromptTokens > 0 {
-		msg.Metadata["input_tokens"] = strconv.FormatInt(cc.Usage.PromptTokens, 10)
-	}
-	if cc.Usage.CompletionTokens > 0 {
-		msg.Metadata["output_tokens"] = strconv.FormatInt(cc.Usage.CompletionTokens, 10)
-	}
 
-	for _, choice := range cc.Choices {
+	for _, choice := range choices {
 		if choice.Message.Content != "" {
 			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Message.Content})
 		}
@@ -406,43 +353,27 @@ func choiceToResponse(ctx context.Context, params *openai.ChatCompletionNewParam
 		if choice.FinishReason != "" {
 			msg.Metadata["finish_reason"] = choice.FinishReason
 		}
-		if len(choice.Message.ToolCalls) > 0 {
-			// If there is a was a function call, continue the conversation
-			params.Messages = append(params.Messages, choice.Message.ToParam())
-		}
 		for _, call := range choice.Message.ToolCalls {
-			result, err := toolCall(ctx, tools, call.Function.Name, call.Function.Arguments)
-			if err != nil {
-				return nil, err
-			}
 			msg.Role = blades.RoleTool
-			msg.ToolCalls = append(msg.ToolCalls, &blades.ToolCall{
-				ID:        call.ID,
-				Name:      call.Function.Name,
-				Arguments: call.Function.Arguments,
-				Result:    result,
+			msg.Parts = append(msg.Parts, blades.ToolPart{
+				ID:      call.ID,
+				Name:    call.Function.Name,
+				Request: call.Function.Arguments,
 			})
-			params.Messages = append(params.Messages, openai.ToolMessage(result, call.ID))
 		}
+
 	}
 	return &blades.ModelResponse{Message: msg}, nil
 }
 
 // chunkChoiceToResponse converts a streaming chunk choice to a ModelResponse.
-func chunkChoiceToResponse(ctx context.Context, tools []*tools.Tool, chunk openai.ChatCompletionChunk) (*blades.ModelResponse, error) {
+func chunkChoiceToResponse(ctx context.Context, choices []openai.ChatCompletionChunkChoice) (*blades.ModelResponse, error) {
 	msg := &blades.Message{
 		Role:     blades.RoleAssistant,
 		Status:   blades.StatusIncomplete,
 		Metadata: map[string]string{},
 	}
-	if chunk.Usage.PromptTokens > 0 {
-		msg.Metadata["input_tokens"] = strconv.FormatInt(chunk.Usage.PromptTokens, 10)
-	}
-	if chunk.Usage.CompletionTokens > 0 {
-		msg.Metadata["output_tokens"] = strconv.FormatInt(chunk.Usage.CompletionTokens, 10)
-	}
-
-	for _, choice := range chunk.Choices {
+	for _, choice := range choices {
 		if choice.Delta.Content != "" {
 			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Delta.Content})
 		}
@@ -452,13 +383,12 @@ func chunkChoiceToResponse(ctx context.Context, tools []*tools.Tool, chunk opena
 		if choice.FinishReason != "" {
 			msg.Metadata["finish_reason"] = choice.FinishReason
 		}
-
 		for _, call := range choice.Delta.ToolCalls {
 			msg.Role = blades.RoleTool
-			msg.ToolCalls = append(msg.ToolCalls, &blades.ToolCall{
-				ID:        call.ID,
-				Name:      call.Function.Name,
-				Arguments: call.Function.Arguments,
+			msg.Parts = append(msg.Parts, blades.ToolPart{
+				ID:      call.ID,
+				Name:    call.Function.Name,
+				Request: call.Function.Arguments,
 			})
 		}
 	}

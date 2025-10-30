@@ -1,17 +1,36 @@
 package blades
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/go-kratos/generics"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-func parseMessageState(schema *jsonschema.Schema, msg *Message) (any, error) {
+// State holds arbitrary key-value pairs representing the state.
+type State = generics.Map[string, any]
+
+// StateInputHandler is a function type that processes input prompts with access to the current state.
+type StateInputHandler func(ctx context.Context, input *Prompt, state *State) (*Prompt, error)
+
+// StateOutputHandler is a function type that processes output messages with access to the current state.
+type StateOutputHandler func(ctx context.Context, output *Message, state *State) (*Message, error)
+
+// StateInputEmpty returns a StateInputHandler that returns an empty Prompt.
+func StateInputEmpty() StateInputHandler {
+	return func(ctx context.Context, input *Prompt, state *State) (*Prompt, error) {
+		return NewPrompt(), nil
+	}
+}
+
+// ParseMessageState parses the content of a Message according to the provided JSON schema.
+func ParseMessageState(output *Message, schema *jsonschema.Schema) (any, error) {
 	schemaType := schema.Type
-	text := strings.TrimSpace(msg.Text())
+	text := strings.TrimSpace(output.Text())
 	switch schemaType {
 	case "string":
 		return text, nil
