@@ -72,6 +72,32 @@ func WithTools(tools ...*tools.Tool) Option {
 	}
 }
 
+// WithMCPProvider sets the MCP tool provider for the Agent.
+// The provider manages connections to external MCP servers and provides their tools.
+// MCP tools are loaded lazily on first use and cached in the Agent's tools list.
+func WithMCPProvider(provider tools.MCPToolProvider) Option {
+	return func(a *Agent) {
+		a.mcpProvider = provider
+	}
+}
+
+// loadMCPTools loads MCP tools and caches them (called once)
+func (a *Agent) loadMCPTools(ctx context.Context) error {
+	if a.mcpProvider == nil || a.mcpTools != nil {
+		return nil
+	}
+
+	mcpTools, err := a.mcpProvider.GetTools(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Cache MCP tools separately
+	a.mcpTools = mcpTools
+
+	return nil
+}
+
 // WithMiddleware sets the middleware for the Agent.
 func WithMiddleware(ms ...Middleware) Option {
 	return func(a *Agent) {
@@ -116,6 +142,8 @@ type Agent struct {
 	middlewares   []Middleware
 	provider      ModelProvider
 	tools         []*tools.Tool
+	mcpProvider   tools.MCPToolProvider // MCP tool provider for external tools
+	mcpTools      []*tools.Tool         // Cached MCP tools
 }
 
 // NewAgent creates a new Agent with the given name and options.
@@ -159,9 +187,15 @@ func (a *Agent) buildContext(ctx context.Context) (context.Context, *Session) {
 
 // buildRequest builds the request for the Agent by combining system instructions and user messages.
 func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prompt) (*ModelRequest, error) {
+	// Combine native tools with cached MCP tools
+	allTools := a.tools
+	if a.mcpTools != nil {
+		allTools = append(allTools, a.mcpTools...)
+	}
+
 	req := ModelRequest{
 		Model:        a.model,
-		Tools:        a.tools,
+		Tools:        allTools,
 		InputSchema:  a.inputSchema,
 		OutputSchema: a.outputSchema,
 	}
@@ -182,6 +216,11 @@ func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prom
 
 // Run runs the agent with the given prompt and options, returning the response message.
 func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
+	// Load MCP tools on first use
+	if err := a.loadMCPTools(ctx); err != nil {
+		return nil, fmt.Errorf("failed to load MCP tools: %w", err)
+	}
+
 	ctx, session := a.buildContext(ctx)
 	input, err := a.inputHandler(ctx, prompt, &session.State)
 	if err != nil {
@@ -197,6 +236,11 @@ func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*
 
 // RunStream runs the agent with the given prompt and options, returning a streamable response.
 func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
+	// Load MCP tools on first use
+	if err := a.loadMCPTools(ctx); err != nil {
+		return nil, fmt.Errorf("failed to load MCP tools: %w", err)
+	}
+
 	ctx, session := a.buildContext(ctx)
 	input, err := a.inputHandler(ctx, prompt, &session.State)
 	if err != nil {
@@ -228,7 +272,19 @@ func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
 }
 
 func (a *Agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error) {
+	// Search in native tools
 	for _, tool := range a.tools {
+		if tool.Name == part.Name {
+			response, err := tool.Handler.Handle(ctx, part.Request)
+			if err != nil {
+				return part, err
+			}
+			part.Response = response
+			return part, nil
+		}
+	}
+	// Search in MCP tools
+	for _, tool := range a.mcpTools {
 		if tool.Name == part.Name {
 			response, err := tool.Handler.Handle(ctx, part.Request)
 			if err != nil {
