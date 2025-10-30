@@ -197,7 +197,7 @@ func (t *Task) registerSkip(parent string, edge conditionalEdge) {
 		t.mu.Unlock()
 		return
 	}
-
+	//跳过也会消费依赖
 	t.consumeDependencyLocked(target, edge.group)
 
 	preds := t.executor.predecessors[target]
@@ -229,6 +229,7 @@ func (t *Task) registerSkip(parent string, edge conditionalEdge) {
 	}
 }
 
+// 递归传播跳过
 func (t *Task) markNodeSkipped(node string) {
 	t.mu.Lock()
 	if t.visited[node] {
