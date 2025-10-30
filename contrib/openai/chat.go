@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"strconv"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
@@ -87,7 +88,7 @@ func (p *ChatProvider) New(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	res, err := choiceToResponse(ctx, &params, tools, chatResponse.Choices)
+	res, err := choiceToResponse(ctx, &params, tools, chatResponse)
 	if err != nil {
 		return nil, err
 	}
@@ -131,13 +132,13 @@ func (p *ChatProvider) NewStreaming(ctx context.Context,
 		for stream.Next() {
 			chunk := stream.Current()
 			acc.AddChunk(chunk)
-			res, err := chunkChoiceToResponse(ctx, tools, chunk.Choices)
+			res, err := chunkChoiceToResponse(ctx, tools, chunk)
 			if err != nil {
 				return err
 			}
 			pipe.Send(res)
 		}
-		lastResponse, err := choiceToResponse(ctx, &params, tools, acc.ChatCompletion.Choices)
+		lastResponse, err := choiceToResponse(ctx, &params, tools, &acc.ChatCompletion)
 		if err != nil {
 			return err
 		}
@@ -375,14 +376,20 @@ func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []opena
 }
 
 // choiceToResponse converts a non-streaming choice to a ModelResponse.
-func choiceToResponse(ctx context.Context, params *openai.ChatCompletionNewParams, tools []*tools.Tool, choices []openai.ChatCompletionChoice) (*blades.ModelResponse, error) {
+func choiceToResponse(ctx context.Context, params *openai.ChatCompletionNewParams, tools []*tools.Tool, cc *openai.ChatCompletion) (*blades.ModelResponse, error) {
 	msg := &blades.Message{
 		Role:     blades.RoleAssistant,
 		Status:   blades.StatusCompleted,
 		Metadata: map[string]string{},
 	}
-	for _, choice := range choices {
+	if cc.Usage.PromptTokens > 0 {
+		msg.Metadata["input_tokens"] = strconv.FormatInt(cc.Usage.PromptTokens, 10)
+	}
+	if cc.Usage.CompletionTokens > 0 {
+		msg.Metadata["output_tokens"] = strconv.FormatInt(cc.Usage.CompletionTokens, 10)
+	}
 
+	for _, choice := range cc.Choices {
 		if choice.Message.Content != "" {
 			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Message.Content})
 		}
@@ -422,13 +429,20 @@ func choiceToResponse(ctx context.Context, params *openai.ChatCompletionNewParam
 }
 
 // chunkChoiceToResponse converts a streaming chunk choice to a ModelResponse.
-func chunkChoiceToResponse(ctx context.Context, tools []*tools.Tool, choices []openai.ChatCompletionChunkChoice) (*blades.ModelResponse, error) {
+func chunkChoiceToResponse(ctx context.Context, tools []*tools.Tool, chunk openai.ChatCompletionChunk) (*blades.ModelResponse, error) {
 	msg := &blades.Message{
 		Role:     blades.RoleAssistant,
 		Status:   blades.StatusIncomplete,
 		Metadata: map[string]string{},
 	}
-	for _, choice := range choices {
+	if chunk.Usage.PromptTokens > 0 {
+		msg.Metadata["input_tokens"] = strconv.FormatInt(chunk.Usage.PromptTokens, 10)
+	}
+	if chunk.Usage.CompletionTokens > 0 {
+		msg.Metadata["output_tokens"] = strconv.FormatInt(chunk.Usage.CompletionTokens, 10)
+	}
+
+	for _, choice := range chunk.Choices {
 		if choice.Delta.Content != "" {
 			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Delta.Content})
 		}
@@ -438,6 +452,7 @@ func chunkChoiceToResponse(ctx context.Context, tools []*tools.Tool, choices []o
 		if choice.FinishReason != "" {
 			msg.Metadata["finish_reason"] = choice.FinishReason
 		}
+
 		for _, call := range choice.Delta.ToolCalls {
 			msg.Role = blades.RoleTool
 			msg.ToolCalls = append(msg.ToolCalls, &blades.ToolCall{
