@@ -120,7 +120,10 @@ func (t *Task) executeNode(node string, state State) {
 		handler = ChainMiddlewares(t.executor.graph.middlewares...)(handler)
 	}
 
-	nextState, err := handler(t.ctx, state)
+	// Inject node name into context for use in middlewares and handlers
+	ctx := context.WithValue(t.ctx, NodeNameKey, node)
+
+	nextState, err := handler(ctx, state)
 	if err != nil {
 		t.fail(fmt.Errorf("graph: node %s: %w", node, err))
 		return
@@ -320,9 +323,6 @@ func (t *Task) hasStateLocked(node string) bool {
 }
 
 func (t *Task) addContributionLocked(node, parent string, state State) {
-	if state == nil {
-		state = State{}
-	}
 	if t.contributions[node] == nil {
 		t.contributions[node] = make(map[string]State)
 	}
