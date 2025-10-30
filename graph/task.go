@@ -3,178 +3,345 @@ package graph
 import (
 	"context"
 	"fmt"
-
-	"golang.org/x/sync/errgroup"
+	"sync"
 )
 
-// Step represents a single execution step in the graph.
-type Step struct {
-	node         string
-	state        State
-	allowRevisit bool
-	waitAllPreds bool // if true, wait for all predecessors to be visited
-}
-
-// edgeResolution encapsulates the result of edge resolution.
-type edgeResolution struct {
-	immediate []conditionalEdge
-	fanOut    []conditionalEdge
-	prepend   bool
-}
-
-// Task execution encapsulates the mutable state for a single graph run.
+// Task coordinates a single execution of the graph.
 type Task struct {
-	executor      *Executor
-	queue         []Step
-	pending       map[string]State
+	executor *Executor
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	wg sync.WaitGroup
+
+	mu            sync.Mutex
+	aggregates    map[string]State
+	contributions map[string]map[string]State
+	remainingDeps map[string]map[string]int
+	inFlight      map[string]bool
 	visited       map[string]bool
 	skippedCnt    map[string]int
 	skippedFrom   map[string]map[string]bool
-	remainingDeps map[string]map[string]int
-	finished      bool
-	finishState   State
+
+	finished    bool
+	finishState State
+	err         error
+	errOnce     sync.Once
 }
 
-func (t *Task) execute(ctx context.Context) (State, error) {
-	for len(t.queue) > 0 {
-		step := t.dequeue()
-		if t.shouldSkip(&step) {
-			continue
-		}
+func newTask(e *Executor) *Task {
+	return &Task{
+		executor:      e,
+		aggregates:    make(map[string]State),
+		contributions: make(map[string]map[string]State),
+		remainingDeps: cloneDependencies(e.dependencies),
+		inFlight:      make(map[string]bool, len(e.graph.nodes)),
+		visited:       make(map[string]bool, len(e.graph.nodes)),
+		skippedCnt:    make(map[string]int, len(e.graph.nodes)),
+		skippedFrom:   make(map[string]map[string]bool, len(e.graph.nodes)),
+	}
+}
 
-		nextState, err := t.executeNode(ctx, step)
-		if err != nil {
-			return nil, err
-		}
+func (t *Task) run(ctx context.Context, initial State) (State, error) {
+	taskCtx, cancel := context.WithCancel(ctx)
+	t.ctx = taskCtx
+	t.cancel = cancel
+	defer cancel()
 
-		// Update finish state and check if we're done
+	t.storeAggregate(t.executor.graph.entryPoint, initial)
+	t.trySchedule(t.executor.graph.entryPoint)
+
+	t.wg.Wait()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.err != nil {
+		return nil, t.err
+	}
+	if !t.finished {
+		return nil, fmt.Errorf("graph: finish node not reachable: %s", t.executor.graph.finishPoint)
+	}
+	return t.finishState.Clone(), nil
+}
+
+func (t *Task) storeAggregate(node string, state State) {
+	if state == nil {
+		state = State{}
+	}
+	t.mu.Lock()
+	t.aggregates[node] = mergeStates(t.aggregates[node], state)
+	t.mu.Unlock()
+}
+
+func (t *Task) trySchedule(node string) {
+	t.mu.Lock()
+	if t.ctx.Err() != nil || t.err != nil || t.finished {
+		t.mu.Unlock()
+		return
+	}
+	if t.visited[node] || t.inFlight[node] {
+		t.mu.Unlock()
+		return
+	}
+	if !t.dependenciesSatisfiedLocked(node) {
+		t.mu.Unlock()
+		return
+	}
+
+	state := t.buildAggregateLocked(node)
+	t.inFlight[node] = true
+	t.wg.Add(1)
+	parallel := t.executor.graph.parallel
+	t.mu.Unlock()
+
+	run := func() {
+		defer t.nodeDone(node)
+		t.executeNode(node, state)
+	}
+
+	if parallel {
+		go run()
+	} else {
+		run()
+	}
+}
+
+func (t *Task) executeNode(node string, state State) {
+	if state == nil {
+		state = State{}
+	}
+
+	if err := t.ctx.Err(); err != nil {
+		return
+	}
+
+	handler := t.executor.graph.nodes[node]
+	if handler == nil {
+		t.fail(fmt.Errorf("graph: node %s handler missing", node))
+		return
+	}
+
+	if len(t.executor.graph.middlewares) > 0 {
+		handler = ChainMiddlewares(t.executor.graph.middlewares...)(handler)
+	}
+
+	nextState, err := handler(t.ctx, state)
+	if err != nil {
+		t.fail(fmt.Errorf("graph: node %s: %w", node, err))
+		return
+	}
+
+	nextState = nextState.Clone()
+
+	if t.markVisited(node, nextState) {
+		return
+	}
+
+	t.processOutgoing(node, nextState)
+}
+
+func (t *Task) markVisited(node string, nextState State) bool {
+	t.mu.Lock()
+	t.visited[node] = true
+	isFinish := node == t.executor.graph.finishPoint
+	if isFinish && !t.finished {
+		t.finished = true
 		t.finishState = nextState.Clone()
-		if step.node == t.executor.graph.finishPoint {
-			t.finished = true
-			break
-		}
+	}
+	finished := t.finished
+	t.mu.Unlock()
 
-		if err := t.processOutgoingEdges(ctx, step, nextState); err != nil {
-			return nil, err
-		}
+	if isFinish {
+		t.cancel()
 	}
 
-	if t.finished {
-		return t.finishState, nil
+	return finished && isFinish
+}
+
+func (t *Task) processOutgoing(node string, state State) {
+	edges := t.executor.graph.edges[node]
+	if len(edges) == 0 {
+		t.fail(fmt.Errorf("graph: no outgoing edges from node %s", node))
+		return
 	}
-	return nil, fmt.Errorf("graph: finish node not reachable: %s", t.executor.graph.finishPoint)
+
+	matched, skipped, err := resolveEdgeSelection(t.ctx, node, edges, state)
+	if err != nil {
+		t.fail(err)
+		return
+	}
+
+	for _, edge := range skipped {
+		t.registerSkip(node, edge)
+	}
+
+	for _, edge := range matched {
+		ready := t.consumeAndAggregate(node, edge.to, edge.group, state.Clone())
+		if ready {
+			t.trySchedule(edge.to)
+		}
+	}
 }
 
-func (t *Task) dequeue() Step {
-	step := t.queue[0]
-	t.queue = t.queue[1:]
-	return step
+func (t *Task) consumeAndAggregate(parent, target, group string, contribution State) bool {
+	t.mu.Lock()
+	if contribution != nil {
+		if t.contributions[target] == nil {
+			t.contributions[target] = make(map[string]State)
+		}
+		t.contributions[target][parent] = contribution.Clone()
+	}
+	ready := t.consumeDependencyLocked(target, group) && !t.visited[target]
+	t.mu.Unlock()
+	return ready
 }
 
-func (t *Task) shouldSkip(step *Step) bool {
-	if t.visited[step.node] && !step.allowRevisit {
+func (t *Task) registerSkip(parent string, edge conditionalEdge) {
+	target := edge.to
+
+	t.mu.Lock()
+	if t.visited[target] {
+		t.mu.Unlock()
+		return
+	}
+
+	t.consumeDependencyLocked(target, edge.group)
+
+	preds := t.executor.predecessors[target]
+	if len(preds) == 0 {
+		t.mu.Unlock()
+		return
+	}
+	if t.skippedFrom[target] == nil {
+		t.skippedFrom[target] = make(map[string]bool)
+	}
+	if t.skippedFrom[target][parent] {
+		t.mu.Unlock()
+		return
+	}
+	t.skippedFrom[target][parent] = true
+	t.skippedCnt[target]++
+
+	allSkipped := t.skippedCnt[target] >= len(preds)
+	hasState := t.hasStateLocked(target)
+	ready := t.dependenciesSatisfiedLocked(target)
+	t.mu.Unlock()
+
+	if allSkipped {
+		t.markNodeSkipped(target)
+		return
+	}
+	if ready && hasState {
+		t.trySchedule(target)
+	}
+}
+
+func (t *Task) markNodeSkipped(node string) {
+	t.mu.Lock()
+	if t.visited[node] {
+		t.mu.Unlock()
+		return
+	}
+	t.visited[node] = true
+	edges := cloneEdges(t.executor.graph.edges[node])
+	t.mu.Unlock()
+
+	for _, edge := range edges {
+		t.registerSkip(node, edge)
+	}
+}
+
+func (t *Task) nodeDone(node string) {
+	t.mu.Lock()
+	delete(t.inFlight, node)
+	t.mu.Unlock()
+	t.wg.Done()
+}
+
+func (t *Task) fail(err error) {
+	if err == nil {
+		return
+	}
+	t.errOnce.Do(func() {
+		t.mu.Lock()
+		t.err = err
+		t.mu.Unlock()
+		t.cancel()
+	})
+}
+
+func (t *Task) buildAggregateLocked(node string) State {
+	state := t.aggregates[node]
+
+	if contribs, ok := t.contributions[node]; ok {
+		order := t.executor.predecessors[node]
+		for _, parent := range order {
+			if contribution, exists := contribs[parent]; exists {
+				state = mergeStates(state, contribution)
+				delete(contribs, parent)
+			}
+		}
+		for parent, contribution := range contribs {
+			state = mergeStates(state, contribution)
+			delete(contribs, parent)
+		}
+		delete(t.contributions, node)
+	}
+
+	delete(t.aggregates, node)
+	if state == nil {
+		return State{}
+	}
+	return state.Clone()
+}
+
+func (t *Task) dependenciesSatisfiedLocked(node string) bool {
+	groups := t.remainingDeps[node]
+	if len(groups) == 0 {
 		return true
 	}
-
-	if step.waitAllPreds && !t.allPredsReady(step.node) {
-		t.pending[step.node] = mergeStates(t.pending[step.node], step.state)
-		return true
-	}
-
-	if pendingState, exists := t.pending[step.node]; exists {
-		step.state = mergeStates(pendingState, step.state)
-		delete(t.pending, step.node)
-	}
-
-	return false
-}
-
-// allPredsReady checks if all predecessors are ready and no duplicate is in the queue.
-func (t *Task) allPredsReady(node string) bool {
-	if !t.predecessorsReady(node) {
-		return false
-	}
-	// Check if there's a duplicate in the queue that shouldn't be revisited
-	for _, queued := range t.queue {
-		if queued.node == node && !queued.allowRevisit {
+	for _, count := range groups {
+		if count > 0 {
 			return false
 		}
 	}
 	return true
 }
 
-func (t *Task) executeNode(ctx context.Context, step Step) (State, error) {
-	state := t.stateFor(step)
-	handler := t.executor.graph.nodes[step.node]
-	if handler == nil {
-		return nil, fmt.Errorf("graph: node %s handler missing", step.node)
+func (t *Task) consumeDependencyLocked(node, group string) bool {
+	if group == "" {
+		group = node
 	}
-	if len(t.executor.graph.middlewares) > 0 {
-		handler = ChainMiddlewares(t.executor.graph.middlewares...)(handler)
-	}
-	nextState, err := handler(ctx, state)
-	if err != nil {
-		return nil, fmt.Errorf("graph: node %s: %w", step.node, err)
-	}
-	t.visited[step.node] = true
 
-	return nextState.Clone(), nil
+	groups := t.remainingDeps[node]
+	if len(groups) == 0 {
+		return true
+	}
+	if count, ok := groups[group]; ok {
+		if count > 0 {
+			groups[group] = count - 1
+		}
+	}
+	return t.dependenciesSatisfiedLocked(node)
 }
 
-func (t *Task) stateFor(step Step) State {
-	if step.state != nil {
-		return step.state
+func (t *Task) hasStateLocked(node string) bool {
+	if t.aggregates[node] != nil {
+		return true
 	}
-	return t.finishState
+	if contribs, ok := t.contributions[node]; ok {
+		return len(contribs) > 0
+	}
+	return false
 }
 
-func (t *Task) processOutgoingEdges(ctx context.Context, step Step, state State) error {
-	resolution, err := t.resolveEdges(ctx, step, state)
-	if err != nil {
-		return err
-	}
-	if len(resolution.immediate) > 0 {
-		t.enqueueEdge(resolution.immediate[0], step, state, true, resolution.prepend)
-		return nil
-	}
-	edges := resolution.fanOut
-	if !t.executor.graph.parallel {
-		t.fanOutSerial(step, state, edges)
-		return nil
-	}
-	if len(edges) == 1 {
-		t.enqueueEdge(edges[0], step, state, step.allowRevisit, false)
-		return nil
-	}
-	_, err = t.fanOutParallel(ctx, step, state, edges)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (t *Task) enqueue(step Step) {
-	t.queue = append(t.queue, step)
-}
-
-func (t *Task) enqueueSteps(steps []Step, prepend bool) {
-	if len(steps) == 0 {
-		return
-	}
-	if prepend {
-		t.queue = append(steps, t.queue...)
-		return
-	}
-	t.queue = append(t.queue, steps...)
-}
-
-func (t *Task) resolveEdges(ctx context.Context, step Step, state State) (edgeResolution, error) {
-	edges := t.executor.graph.edges[step.node]
+func resolveEdgeSelection(ctx context.Context, node string, edges []conditionalEdge, state State) ([]conditionalEdge, []conditionalEdge, error) {
 	if len(edges) == 0 {
-		return edgeResolution{}, fmt.Errorf("graph: no outgoing edges from node %s", step.node)
+		return nil, nil, fmt.Errorf("graph: no outgoing edges from node %s", node)
 	}
 
-	// Check if all edges are unconditional - if so, fan out directly
 	allUnconditional := true
 	for _, edge := range edges {
 		if edge.condition != nil {
@@ -183,10 +350,9 @@ func (t *Task) resolveEdges(ctx context.Context, step Step, state State) (edgeRe
 		}
 	}
 	if allUnconditional {
-		return edgeResolution{fanOut: cloneEdges(edges)}, nil
+		return cloneEdges(edges), nil, nil
 	}
 
-	// Evaluate conditional edges and collect matched/skipped
 	var matched []conditionalEdge
 	var skipped []conditionalEdge
 	hasUnconditional := false
@@ -204,14 +370,14 @@ func (t *Task) resolveEdges(ctx context.Context, step Step, state State) (edgeRe
 		if edge.condition(ctx, state) {
 			matched = append(matched, edge)
 			if i+1 < len(edges) {
-				hasTrailingUnconditional := false
+				hasTrailing := false
 				for _, trailing := range edges[i+1:] {
 					if trailing.condition == nil {
-						hasTrailingUnconditional = true
+						hasTrailing = true
 						break
 					}
 				}
-				if hasTrailingUnconditional {
+				if hasTrailing {
 					for _, trailing := range edges[i+1:] {
 						skipped = append(skipped, trailing)
 					}
@@ -225,207 +391,15 @@ func (t *Task) resolveEdges(ctx context.Context, step Step, state State) (edgeRe
 	}
 
 	if len(matched) == 0 {
-		return edgeResolution{}, fmt.Errorf("graph: no condition matched for edges from node %s", step.node)
+		return nil, nil, fmt.Errorf("graph: no condition matched for edges from node %s", node)
 	}
 
-	t.registerSkippedTargets(step.node, skipped)
-
-	// Single matched edge: execute immediately
-	if len(matched) == 1 {
-		return edgeResolution{
-			immediate: matched,
-			prepend:   hasUnconditional,
-		}, nil
+	if hasUnconditional && len(matched) > 1 {
+		// When an unconditional edge follows conditionals, only the first match is used.
+		matched = matched[:1]
 	}
 
-	// Multiple matched edges: fan out
-	return edgeResolution{fanOut: matched}, nil
-}
-
-func (t *Task) fanOutSerial(step Step, current State, edges []conditionalEdge) {
-	for _, edge := range edges {
-		t.enqueueEdge(edge, step, current, step.allowRevisit, false)
-	}
-}
-
-func (t *Task) fanOutParallel(ctx context.Context, step Step, state State, edges []conditionalEdge) (State, error) {
-	type branchState struct {
-		to    string
-		state State
-	}
-
-	states := make([]branchState, len(edges))
-	readyIndices := make([]int, 0, len(edges))
-	for i, edge := range edges {
-		ready := t.prepareEdge(edge)
-		if ready {
-			readyIndices = append(readyIndices, i)
-			continue
-		}
-		t.enqueuePreparedEdge(edge, step, state, step.allowRevisit, false, ready)
-	}
-
-	if len(readyIndices) == 0 {
-		return state.Clone(), nil
-	}
-
-	eg, egCtx := errgroup.WithContext(ctx)
-
-	for _, idx := range readyIndices {
-		i := idx
-		edge := edges[i]
-		eg.Go(func() error {
-			handler := t.executor.graph.nodes[edge.to]
-			if handler == nil {
-				return fmt.Errorf("graph: node %s handler missing", edge.to)
-			}
-			nextState, err := handler(egCtx, state.Clone())
-			if err != nil {
-				return fmt.Errorf("graph: node %s: %w", edge.to, err)
-			}
-			states[i] = branchState{to: edge.to, state: nextState.Clone()}
-			return nil
-		})
-	}
-
-	if err := eg.Wait(); err != nil {
-		return nil, err
-	}
-
-	type successorAggregation struct {
-		state State
-		ready bool
-	}
-	successors := make(map[string]successorAggregation)
-
-	for _, idx := range readyIndices {
-		bs := states[idx]
-		t.visited[bs.to] = true
-		for _, nextEdge := range t.executor.graph.edges[bs.to] {
-			ready := t.prepareEdge(nextEdge)
-			agg := successors[nextEdge.to]
-			agg.state = mergeStates(agg.state, bs.state)
-			agg.ready = ready
-			successors[nextEdge.to] = agg
-		}
-	}
-
-	for successor, agg := range successors {
-		nextStep := Step{
-			node:         successor,
-			state:        agg.state.Clone(),
-			allowRevisit: step.allowRevisit,
-			waitAllPreds: !agg.ready,
-		}
-		t.enqueue(nextStep)
-	}
-
-	merged := state.Clone()
-	for _, idx := range readyIndices {
-		merged = mergeStates(merged, states[idx].state)
-	}
-	return merged, nil
-}
-
-func (t *Task) predecessorsReady(node string) bool {
-	return t.dependenciesSatisfied(node)
-}
-
-func (t *Task) shouldWaitForNode(node string) bool {
-	return !t.dependenciesSatisfied(node)
-}
-
-func (t *Task) registerSkippedTargets(parent string, targets []conditionalEdge) {
-	for _, edge := range targets {
-		t.registerSkip(parent, edge)
-	}
-}
-
-func (t *Task) registerSkip(parent string, edge conditionalEdge) {
-	target := edge.to
-	t.consumeDependency(target, edge.group)
-	preds := t.executor.predecessors[target]
-	if len(preds) == 0 {
-		return
-	}
-	if t.visited[target] {
-		return
-	}
-	if t.skippedFrom[target] == nil {
-		t.skippedFrom[target] = make(map[string]bool)
-	}
-	if t.skippedFrom[target][parent] {
-		return
-	}
-	t.skippedFrom[target][parent] = true
-	t.skippedCnt[target]++
-	if t.skippedCnt[target] >= len(preds) {
-		t.markNodeSkipped(target)
-	}
-}
-
-func (t *Task) markNodeSkipped(node string) {
-	if t.visited[node] {
-		return
-	}
-	t.visited[node] = true
-	delete(t.pending, node)
-	for _, edge := range t.executor.graph.edges[node] {
-		t.registerSkip(node, edge)
-	}
-}
-
-func (t *Task) prepareEdge(edge conditionalEdge) bool {
-	t.consumeDependency(edge.to, edge.group)
-	return t.dependenciesSatisfied(edge.to)
-}
-
-func (t *Task) enqueueEdge(edge conditionalEdge, from Step, state State, allowRevisit bool, prepend bool) {
-	ready := t.prepareEdge(edge)
-	t.enqueuePreparedEdge(edge, from, state, allowRevisit, prepend, ready)
-}
-
-func (t *Task) enqueuePreparedEdge(edge conditionalEdge, from Step, state State, allowRevisit bool, prepend bool, ready bool) {
-	next := Step{
-		node:         edge.to,
-		state:        state.Clone(),
-		allowRevisit: allowRevisit,
-		waitAllPreds: !ready,
-	}
-	if prepend {
-		t.enqueueSteps([]Step{next}, true)
-		return
-	}
-	t.enqueue(next)
-}
-
-func (t *Task) dependenciesSatisfied(node string) bool {
-	groups, ok := t.remainingDeps[node]
-	if !ok || len(groups) == 0 {
-		return true
-	}
-	for _, remaining := range groups {
-		if remaining > 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func (t *Task) consumeDependency(target, group string) {
-	if target == "" {
-		return
-	}
-	if group == "" {
-		group = target
-	}
-	groups, ok := t.remainingDeps[target]
-	if !ok {
-		return
-	}
-	if count, ok := groups[group]; ok && count > 0 {
-		groups[group] = count - 1
-	}
+	return cloneEdges(matched), skipped, nil
 }
 
 func cloneEdges(edges []conditionalEdge) []conditionalEdge {

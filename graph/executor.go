@@ -49,17 +49,6 @@ func cloneDependencies(src map[string]map[string]int) map[string]map[string]int 
 
 // Execute runs the graph task starting from the given state.
 func (e *Executor) Execute(ctx context.Context, state State) (State, error) {
-	t := &Task{
-		executor: e,
-		queue: []Step{{
-			node:  e.graph.entryPoint,
-			state: state,
-		}},
-		pending:       make(map[string]State),
-		visited:       make(map[string]bool, len(e.graph.nodes)),
-		skippedCnt:    make(map[string]int, len(e.graph.nodes)),
-		skippedFrom:   make(map[string]map[string]bool, len(e.graph.nodes)),
-		remainingDeps: cloneDependencies(e.dependencies),
-	}
-	return t.execute(ctx)
+	t := newTask(e)
+	return t.run(ctx, state)
 }
