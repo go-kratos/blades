@@ -879,9 +879,9 @@ func TestGraphJoinWithEdgeGroups(t *testing.T) {
 	g.AddEdge("start", "branch_a")
 	g.AddEdge("start", "branch_b")
 	g.AddEdge("start", "control")
-	g.AddEdge("branch_a", "join", WithEdgeGroup("branches"))
-	g.AddEdge("branch_b", "join", WithEdgeGroup("branches"))
-	g.AddEdge("control", "join", WithEdgeGroup("control"))
+	g.AddEdge("branch_a", "join")
+	g.AddEdge("branch_b", "join")
+	g.AddEdge("control", "join")
 
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("join")

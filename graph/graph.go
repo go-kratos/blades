@@ -36,14 +36,6 @@ func WithEdgeCondition(condition EdgeCondition) EdgeOption {
 	}
 }
 
-// WithEdgeGroup assigns the edge to a logical activation group for the target node.
-// Groups default to the target node name when unset.
-func WithEdgeGroup(group string) EdgeOption {
-	return func(edge *conditionalEdge) {
-		edge.group = group
-	}
-}
-
 // conditionalEdge represents an edge with an optional condition.
 type conditionalEdge struct {
 	to        string
