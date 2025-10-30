@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"sort"
 )
 
 // Executor represents a compiled graph ready for execution. It is safe for
@@ -24,6 +25,10 @@ func NewExecutor(g *Graph) *Executor {
 			}
 			dependencies[edge.to][edge.group]++
 		}
+	}
+	for node, parents := range predecessors {
+		sort.Strings(parents)
+		predecessors[node] = parents
 	}
 	return &Executor{
 		graph:        g,

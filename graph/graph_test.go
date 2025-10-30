@@ -390,6 +390,120 @@ func TestGraphParallelFanOutBranches(t *testing.T) {
 	}
 }
 
+func TestGraphParallelNestedFanOutConcurrency(t *testing.T) {
+	g := NewGraph(WithParallel(true))
+
+	var mu sync.Mutex
+	started := make(map[string]bool, 2)
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	var readyOnce sync.Once
+	var releaseOnce sync.Once
+
+	blockingBranch := func(name string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			next := state.Clone()
+			next[name] = true
+
+			mu.Lock()
+			started[name] = true
+			if len(started) == 2 {
+				readyOnce.Do(func() {
+					close(ready)
+				})
+			}
+			mu.Unlock()
+
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+
+			return next, nil
+		}
+	}
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		next["start"] = true
+		return next, nil
+	})
+	g.AddNode("branch_b", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		next["branch_b"] = true
+		return next, nil
+	})
+	g.AddNode("branch_c", blockingBranch("branch_c"))
+	g.AddNode("branch_d", blockingBranch("branch_d"))
+	g.AddNode("join", func(ctx context.Context, state State) (State, error) {
+		if _, ok := state["branch_c"].(bool); !ok {
+			return nil, fmt.Errorf("join missing branch_c contribution: %#v", state)
+		}
+		if _, ok := state["branch_d"].(bool); !ok {
+			return nil, fmt.Errorf("join missing branch_d contribution: %#v", state)
+		}
+		next := state.Clone()
+		next["joined"] = true
+		return next, nil
+	})
+
+	g.AddEdge("start", "branch_b")
+	g.AddEdge("branch_b", "branch_c")
+	g.AddEdge("branch_b", "branch_d")
+	g.AddEdge("branch_c", "join")
+	g.AddEdge("branch_d", "join")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	type result struct {
+		state State
+		err   error
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	resCh := make(chan result, 1)
+	go func() {
+		state, err := executor.Execute(ctx, State{})
+		resCh <- result{state: state, err: err}
+	}()
+
+	select {
+	case <-ready:
+	case <-time.After(200 * time.Millisecond):
+		releaseOnce.Do(func() { close(release) })
+		t.Fatalf("expected branch_c and branch_d to start concurrently")
+	}
+
+	releaseOnce.Do(func() { close(release) })
+
+	select {
+	case res := <-resCh:
+		if res.err != nil {
+			t.Fatalf("execution error: %v", res.err)
+		}
+		if _, ok := res.state["joined"].(bool); !ok {
+			t.Fatalf("expected join to run, result=%#v", res.state)
+		}
+		if _, ok := res.state["branch_c"].(bool); !ok {
+			t.Fatalf("expected branch_c contribution, result=%#v", res.state)
+		}
+		if _, ok := res.state["branch_d"].(bool); !ok {
+			t.Fatalf("expected branch_d contribution, result=%#v", res.state)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("execution did not complete after releasing branch workers")
+	}
+}
+
 func TestGraphParallelPropagatesBranchError(t *testing.T) {
 	g := NewGraph()
 

@@ -16,7 +16,6 @@ type Task struct {
 	wg sync.WaitGroup
 
 	mu            sync.Mutex
-	aggregates    map[string]State
 	contributions map[string]map[string]State
 	remainingDeps map[string]map[string]int
 	inFlight      map[string]bool
@@ -33,7 +32,6 @@ type Task struct {
 func newTask(e *Executor) *Task {
 	return &Task{
 		executor:      e,
-		aggregates:    make(map[string]State),
 		contributions: make(map[string]map[string]State),
 		remainingDeps: cloneDependencies(e.dependencies),
 		inFlight:      make(map[string]bool, len(e.graph.nodes)),
@@ -43,13 +41,17 @@ func newTask(e *Executor) *Task {
 	}
 }
 
+const seedParent = "__seed__"
+
 func (t *Task) run(ctx context.Context, initial State) (State, error) {
 	taskCtx, cancel := context.WithCancel(ctx)
 	t.ctx = taskCtx
 	t.cancel = cancel
 	defer cancel()
 
-	t.storeAggregate(t.executor.graph.entryPoint, initial)
+	t.mu.Lock()
+	t.addContributionLocked(t.executor.graph.entryPoint, seedParent, initial)
+	t.mu.Unlock()
 	t.trySchedule(t.executor.graph.entryPoint)
 
 	t.wg.Wait()
@@ -64,15 +66,6 @@ func (t *Task) run(ctx context.Context, initial State) (State, error) {
 		return nil, fmt.Errorf("graph: finish node not reachable: %s", t.executor.graph.finishPoint)
 	}
 	return t.finishState.Clone(), nil
-}
-
-func (t *Task) storeAggregate(node string, state State) {
-	if state == nil {
-		state = State{}
-	}
-	t.mu.Lock()
-	t.aggregates[node] = mergeStates(t.aggregates[node], state)
-	t.mu.Unlock()
 }
 
 func (t *Task) trySchedule(node string) {
@@ -187,12 +180,7 @@ func (t *Task) processOutgoing(node string, state State) {
 
 func (t *Task) consumeAndAggregate(parent, target, group string, contribution State) bool {
 	t.mu.Lock()
-	if contribution != nil {
-		if t.contributions[target] == nil {
-			t.contributions[target] = make(map[string]State)
-		}
-		t.contributions[target][parent] = contribution.Clone()
-	}
+	t.addContributionLocked(target, parent, contribution)
 	ready := t.consumeDependencyLocked(target, group) && !t.visited[target]
 	t.mu.Unlock()
 	return ready
@@ -273,8 +261,7 @@ func (t *Task) fail(err error) {
 }
 
 func (t *Task) buildAggregateLocked(node string) State {
-	state := t.aggregates[node]
-
+	var state State
 	if contribs, ok := t.contributions[node]; ok {
 		order := t.executor.predecessors[node]
 		for _, parent := range order {
@@ -289,8 +276,6 @@ func (t *Task) buildAggregateLocked(node string) State {
 		}
 		delete(t.contributions, node)
 	}
-
-	delete(t.aggregates, node)
 	if state == nil {
 		return State{}
 	}
@@ -328,13 +313,21 @@ func (t *Task) consumeDependencyLocked(node, group string) bool {
 }
 
 func (t *Task) hasStateLocked(node string) bool {
-	if t.aggregates[node] != nil {
-		return true
-	}
 	if contribs, ok := t.contributions[node]; ok {
 		return len(contribs) > 0
 	}
 	return false
+}
+
+func (t *Task) addContributionLocked(node, parent string, state State) {
+	if state == nil {
+		state = State{}
+	}
+	if t.contributions[node] == nil {
+		t.contributions[node] = make(map[string]State)
+	}
+	existing := t.contributions[node][parent]
+	t.contributions[node][parent] = mergeStates(existing, state.Clone())
 }
 
 func resolveEdgeSelection(ctx context.Context, node string, edges []conditionalEdge, state State) ([]conditionalEdge, []conditionalEdge, error) {
