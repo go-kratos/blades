@@ -63,7 +63,7 @@ func (t *Task) run(ctx context.Context, initial State) (State, error) {
 	if !t.finished {
 		return nil, fmt.Errorf("graph: finish node not reachable: %s", t.executor.graph.finishPoint)
 	}
-	return t.finishState.Clone(), nil
+	return t.finishState, nil
 }
 
 func (t *Task) trySchedule(node string) {
@@ -140,7 +140,7 @@ func (t *Task) markVisited(node string, nextState State) bool {
 	isFinish := node == t.executor.graph.finishPoint
 	if isFinish && !t.finished {
 		t.finished = true
-		t.finishState = nextState
+		t.finishState = nextState.Clone()
 	}
 	finished := t.finished
 	t.mu.Unlock()
