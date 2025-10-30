@@ -2335,13 +2335,13 @@ func TestNodeNameInContext(t *testing.T) {
 	// Handler that extracts node name from context
 	handlerWithNodeName := func(expectedName string) Handler {
 		return func(ctx context.Context, state State) (State, error) {
-			nodeName, ok := GetNodeName(ctx)
+			node, ok := FromNodeContext(ctx)
 			if !ok {
 				return nil, fmt.Errorf("node name not found in context for node %s", expectedName)
 			}
 
 			mu.Lock()
-			nodeNames[expectedName] = nodeName
+			nodeNames[expectedName] = node.Name
 			mu.Unlock()
 
 			return state.Clone(), nil
@@ -2390,10 +2390,10 @@ func TestNodeNameInMiddleware(t *testing.T) {
 	// Middleware that logs node names
 	loggingMiddleware := func(next Handler) Handler {
 		return func(ctx context.Context, state State) (State, error) {
-			nodeName, ok := GetNodeName(ctx)
+			node, ok := FromNodeContext(ctx)
 			if ok {
 				mu.Lock()
-				middlewareNodeNames = append(middlewareNodeNames, nodeName)
+				middlewareNodeNames = append(middlewareNodeNames, node.Name)
 				mu.Unlock()
 			}
 			return next(ctx, state)
@@ -2403,10 +2403,10 @@ func TestNodeNameInMiddleware(t *testing.T) {
 	// Handler that also checks node name
 	recordHandler := func(name string) Handler {
 		return func(ctx context.Context, state State) (State, error) {
-			nodeName, ok := GetNodeName(ctx)
-			if ok && nodeName == name {
+			node, ok := FromNodeContext(ctx)
+			if ok && node.Name == name {
 				mu.Lock()
-				handlerNodeNames = append(handlerNodeNames, nodeName)
+				handlerNodeNames = append(handlerNodeNames, node.Name)
 				mu.Unlock()
 			}
 			return state.Clone(), nil
@@ -2475,16 +2475,16 @@ func TestNodeNameInParallelExecution(t *testing.T) {
 
 	handlerWithNodeName := func(expectedName string) Handler {
 		return func(ctx context.Context, state State) (State, error) {
-			nodeName, ok := GetNodeName(ctx)
+			node, ok := FromNodeContext(ctx)
 			if !ok {
 				return nil, fmt.Errorf("node name not found in context")
 			}
-			if nodeName != expectedName {
-				return nil, fmt.Errorf("expected node name %s, got %s", expectedName, nodeName)
+			if node.Name != expectedName {
+				return nil, fmt.Errorf("expected node name %s, got %s", expectedName, node.Name)
 			}
 
 			mu.Lock()
-			nodeNames[nodeName] = true
+			nodeNames[node.Name] = true
 			mu.Unlock()
 
 			// Simulate some work
@@ -2541,10 +2541,10 @@ func TestNodeNameWithMultipleMiddlewares(t *testing.T) {
 
 	middleware1 := func(next Handler) Handler {
 		return func(ctx context.Context, state State) (State, error) {
-			nodeName, ok := GetNodeName(ctx)
+			node, ok := FromNodeContext(ctx)
 			if ok {
 				mu.Lock()
-				middleware1Calls[nodeName]++
+				middleware1Calls[node.Name]++
 				mu.Unlock()
 			}
 			return next(ctx, state)
@@ -2553,10 +2553,10 @@ func TestNodeNameWithMultipleMiddlewares(t *testing.T) {
 
 	middleware2 := func(next Handler) Handler {
 		return func(ctx context.Context, state State) (State, error) {
-			nodeName, ok := GetNodeName(ctx)
+			node, ok := FromNodeContext(ctx)
 			if ok {
 				mu.Lock()
-				middleware2Calls[nodeName]++
+				middleware2Calls[node.Name]++
 				mu.Unlock()
 			}
 			return next(ctx, state)

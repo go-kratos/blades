@@ -21,16 +21,3 @@ func ChainMiddlewares(mws ...Middleware) Middleware {
 		return h
 	}
 }
-
-// contextKey is a private type for context keys to avoid collisions.
-type contextKey string
-
-// NodeNameKey is the context key for retrieving the current node name.
-const NodeNameKey contextKey = "node_name"
-
-// GetNodeName retrieves the node name from the context.
-// Returns the node name and true if found, or empty string and false if not found.
-func GetNodeName(ctx context.Context) (string, bool) {
-	name, ok := ctx.Value(NodeNameKey).(string)
-	return name, ok
-}

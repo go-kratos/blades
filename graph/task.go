@@ -41,8 +41,6 @@ func newTask(e *Executor) *Task {
 	}
 }
 
-const seedParent = "__seed__"
-
 func (t *Task) run(ctx context.Context, initial State) (State, error) {
 	taskCtx, cancel := context.WithCancel(ctx)
 	t.ctx = taskCtx
@@ -50,7 +48,7 @@ func (t *Task) run(ctx context.Context, initial State) (State, error) {
 	defer cancel()
 
 	t.mu.Lock()
-	t.addContributionLocked(t.executor.graph.entryPoint, seedParent, initial)
+	t.addContributionLocked(t.executor.graph.entryPoint, "start", initial)
 	t.mu.Unlock()
 	t.trySchedule(t.executor.graph.entryPoint)
 
@@ -120,9 +118,7 @@ func (t *Task) executeNode(node string, state State) {
 		handler = ChainMiddlewares(t.executor.graph.middlewares...)(handler)
 	}
 
-	// Inject node name into context for use in middlewares and handlers
-	ctx := context.WithValue(t.ctx, NodeNameKey, node)
-
+	ctx := NewNodeContext(t.ctx, &NodeContext{Name: node, State: state})
 	nextState, err := handler(ctx, state)
 	if err != nil {
 		t.fail(fmt.Errorf("graph: node %s: %w", node, err))
@@ -173,16 +169,8 @@ func (t *Task) processOutgoing(node string, state State) {
 		t.registerSkip(node, edge)
 	}
 
-	parallel := t.executor.graph.parallel
-	for i, edge := range matched {
-		contribution := state
-		// 并行模式下需要 clone 以避免并发访问冲突
-		// 串行模式下不需要 clone,因为 trySchedule 是同步执行的
-		// 最后一个边也不需要 clone,因为后续不再使用 state
-		if parallel && i < len(matched)-1 {
-			contribution = state.Clone()
-		}
-		ready := t.consumeAndAggregate(node, edge.to, edge.group, contribution)
+	for _, edge := range matched {
+		ready := t.consumeAndAggregate(node, edge.to, edge.group, state.Clone())
 		if ready {
 			t.trySchedule(edge.to)
 		}
@@ -205,7 +193,6 @@ func (t *Task) registerSkip(parent string, edge conditionalEdge) {
 		t.mu.Unlock()
 		return
 	}
-	//跳过也会消费依赖
 	t.consumeDependencyLocked(target, edge.group)
 
 	preds := t.executor.predecessors[target]
@@ -237,7 +224,6 @@ func (t *Task) registerSkip(parent string, edge conditionalEdge) {
 	}
 }
 
-// 递归传播跳过
 func (t *Task) markNodeSkipped(node string) {
 	t.mu.Lock()
 	if t.visited[node] {
@@ -273,7 +259,7 @@ func (t *Task) fail(err error) {
 }
 
 func (t *Task) buildAggregateLocked(node string) State {
-	var state State
+	state := State{}
 	if contribs, ok := t.contributions[node]; ok {
 		order := t.executor.predecessors[node]
 		for _, parent := range order {
@@ -288,10 +274,6 @@ func (t *Task) buildAggregateLocked(node string) State {
 		}
 		delete(t.contributions, node)
 	}
-	if state == nil {
-		return State{}
-	}
-	// mergeStates 已经返回新的 State 对象,这里不需要再 Clone
 	return state
 }
 
