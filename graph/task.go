@@ -100,19 +100,12 @@ func (t *Task) trySchedule(node string) {
 }
 
 func (t *Task) executeNode(node string, state State) {
-	if state == nil {
-		state = State{}
-	}
-
 	if err := t.ctx.Err(); err != nil {
+		t.fail(err)
 		return
 	}
 
 	handler := t.executor.graph.nodes[node]
-	if handler == nil {
-		t.fail(fmt.Errorf("graph: node %s handler missing", node))
-		return
-	}
 
 	if len(t.executor.graph.middlewares) > 0 {
 		handler = ChainMiddlewares(t.executor.graph.middlewares...)(handler)
@@ -121,7 +114,7 @@ func (t *Task) executeNode(node string, state State) {
 	ctx := NewNodeContext(t.ctx, &NodeContext{Name: node, State: state})
 	nextState, err := handler(ctx, state)
 	if err != nil {
-		t.fail(fmt.Errorf("graph: node %s: %w", node, err))
+		t.fail(fmt.Errorf("Failed to execute node %s: %w", node, err))
 		return
 	}
 
