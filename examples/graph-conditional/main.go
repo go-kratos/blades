@@ -12,7 +12,7 @@ const valueKey = "value"
 const pathKey = "path"
 
 func main() {
-	g := graph.NewGraph(graph.WithParallel(true))
+	g := graph.NewGraph()
 
 	// Define node handlers using the helper function
 	g.AddNode("start", nodeHandler("start", func(ctx context.Context, state graph.State) (graph.State, error) {

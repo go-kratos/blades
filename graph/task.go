@@ -144,7 +144,7 @@ func (t *Task) markVisited(node string, nextState State) bool {
 	isFinish := node == t.executor.graph.finishPoint
 	if isFinish && !t.finished {
 		t.finished = true
-		t.finishState = nextState.Clone()
+		t.finishState = nextState
 	}
 	finished := t.finished
 	t.mu.Unlock()
@@ -173,8 +173,16 @@ func (t *Task) processOutgoing(node string, state State) {
 		t.registerSkip(node, edge)
 	}
 
-	for _, edge := range matched {
-		ready := t.consumeAndAggregate(node, edge.to, edge.group, state.Clone())
+	parallel := t.executor.graph.parallel
+	for i, edge := range matched {
+		contribution := state
+		// 并行模式下需要 clone 以避免并发访问冲突
+		// 串行模式下不需要 clone,因为 trySchedule 是同步执行的
+		// 最后一个边也不需要 clone,因为后续不再使用 state
+		if parallel && i < len(matched)-1 {
+			contribution = state.Clone()
+		}
+		ready := t.consumeAndAggregate(node, edge.to, edge.group, contribution)
 		if ready {
 			t.trySchedule(edge.to)
 		}
@@ -283,7 +291,8 @@ func (t *Task) buildAggregateLocked(node string) State {
 	if state == nil {
 		return State{}
 	}
-	return state.Clone()
+	// mergeStates 已经返回新的 State 对象,这里不需要再 Clone
+	return state
 }
 
 func (t *Task) dependenciesSatisfiedLocked(node string) bool {
