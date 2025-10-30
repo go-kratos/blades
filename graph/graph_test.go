@@ -708,6 +708,88 @@ func TestGraphParallelJoinSkipsUnselectedEdges(t *testing.T) {
 	}
 }
 
+func TestGraphJoinWithEdgeGroups(t *testing.T) {
+	g := NewGraph(WithParallel(false))
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+	record := func(name string, mutate func(State) State) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			mu.Unlock()
+			if mutate != nil {
+				return mutate(state.Clone()), nil
+			}
+			return state.Clone(), nil
+		}
+	}
+
+	g.AddNode("start", record("start", func(state State) State {
+		next := state.Clone()
+		next["seed"] = 1
+		return next
+	}))
+	g.AddNode("branch_a", record("branch_a", func(state State) State {
+		next := state.Clone()
+		next["a"] = true
+		return next
+	}))
+	g.AddNode("branch_b", record("branch_b", func(state State) State {
+		next := state.Clone()
+		next["b"] = true
+		return next
+	}))
+	g.AddNode("control", record("control", func(state State) State {
+		next := state.Clone()
+		next["control"] = true
+		return next
+	}))
+	var joinExecuted bool
+	g.AddNode("join", func(ctx context.Context, state State) (State, error) {
+		joinExecuted = true
+		if _, ok := state["a"].(bool); !ok {
+			return nil, fmt.Errorf("missing branch_a contribution: %#v", state)
+		}
+		if _, ok := state["b"].(bool); !ok {
+			return nil, fmt.Errorf("missing branch_b contribution: %#v", state)
+		}
+		if _, ok := state["control"].(bool); !ok {
+			return nil, fmt.Errorf("missing control contribution: %#v", state)
+		}
+		next := state.Clone()
+		next["joined"] = true
+		return next, nil
+	})
+
+	g.AddEdge("start", "branch_a")
+	g.AddEdge("start", "branch_b")
+	g.AddEdge("start", "control")
+	g.AddEdge("branch_a", "join", WithEdgeGroup("branches"))
+	g.AddEdge("branch_b", "join", WithEdgeGroup("branches"))
+	g.AddEdge("control", "join", WithEdgeGroup("control"))
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	result, err := executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execute error: %v", err)
+	}
+
+	if !joinExecuted {
+		t.Fatalf("expected join to execute, got executed=%v", executed)
+	}
+	if _, ok := result["joined"].(bool); !ok {
+		t.Fatalf("expected join result flag, got %#v", result)
+	}
+}
+
 // TestGraphDifferentPathLengths tests that convergence nodes correctly wait for all predecessors
 // even when the paths to reach them have different lengths.
 // This is the bug that was fixed: previously, fanOutParallel only handled same-length paths.

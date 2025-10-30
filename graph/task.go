@@ -17,21 +17,22 @@ type Step struct {
 
 // edgeResolution encapsulates the result of edge resolution.
 type edgeResolution struct {
-	immediate []Step
+	immediate []conditionalEdge
 	fanOut    []conditionalEdge
 	prepend   bool
 }
 
 // Task execution encapsulates the mutable state for a single graph run.
 type Task struct {
-	executor    *Executor
-	queue       []Step
-	pending     map[string]State
-	visited     map[string]bool
-	skippedCnt  map[string]int
-	skippedFrom map[string]map[string]bool
-	finished    bool
-	finishState State
+	executor      *Executor
+	queue         []Step
+	pending       map[string]State
+	visited       map[string]bool
+	skippedCnt    map[string]int
+	skippedFrom   map[string]map[string]bool
+	remainingDeps map[string]map[string]int
+	finished      bool
+	finishState   State
 }
 
 func (t *Task) execute(ctx context.Context) (State, error) {
@@ -133,7 +134,7 @@ func (t *Task) processOutgoingEdges(ctx context.Context, step Step, state State)
 		return err
 	}
 	if len(resolution.immediate) > 0 {
-		t.enqueueSteps(resolution.immediate, resolution.prepend)
+		t.enqueueEdge(resolution.immediate[0], step, state, true, resolution.prepend)
 		return nil
 	}
 	edges := resolution.fanOut
@@ -142,12 +143,7 @@ func (t *Task) processOutgoingEdges(ctx context.Context, step Step, state State)
 		return nil
 	}
 	if len(edges) == 1 {
-		t.enqueue(Step{
-			node:         edges[0].to,
-			state:        state.Clone(),
-			allowRevisit: step.allowRevisit,
-			waitAllPreds: step.waitAllPreds,
-		})
+		t.enqueueEdge(edges[0], step, state, step.allowRevisit, false)
 		return nil
 	}
 	_, err = t.fanOutParallel(ctx, step, state, edges)
@@ -187,29 +183,26 @@ func (t *Task) resolveEdges(ctx context.Context, step Step, state State) (edgeRe
 		}
 	}
 	if allUnconditional {
-		return edgeResolution{fanOut: edges}, nil
+		return edgeResolution{fanOut: cloneEdges(edges)}, nil
 	}
 
 	// Evaluate conditional edges and collect matched/skipped
 	var matched []conditionalEdge
-	var skipped []string
+	var skipped []conditionalEdge
 	hasUnconditional := false
 
 	for i, edge := range edges {
 		if edge.condition == nil {
-			// Unconditional edge in mixed mode: take it and skip all following edges
 			matched = append(matched, edge)
 			hasUnconditional = true
 			for _, trailing := range edges[i+1:] {
-				skipped = append(skipped, trailing.to)
+				skipped = append(skipped, trailing)
 			}
 			break
 		}
 
-		// Conditional edge: evaluate condition
 		if edge.condition(ctx, state) {
 			matched = append(matched, edge)
-			// Check if there's an unconditional edge following
 			if i+1 < len(edges) {
 				hasTrailingUnconditional := false
 				for _, trailing := range edges[i+1:] {
@@ -219,16 +212,15 @@ func (t *Task) resolveEdges(ctx context.Context, step Step, state State) (edgeRe
 					}
 				}
 				if hasTrailingUnconditional {
-					// Mixed mode: first match wins, skip rest
 					for _, trailing := range edges[i+1:] {
-						skipped = append(skipped, trailing.to)
+						skipped = append(skipped, trailing)
 					}
 					hasUnconditional = true
 					break
 				}
 			}
 		} else {
-			skipped = append(skipped, edge.to)
+			skipped = append(skipped, edge)
 		}
 	}
 
@@ -241,13 +233,8 @@ func (t *Task) resolveEdges(ctx context.Context, step Step, state State) (edgeRe
 	// Single matched edge: execute immediately
 	if len(matched) == 1 {
 		return edgeResolution{
-			immediate: []Step{{
-				node:         matched[0].to,
-				state:        state.Clone(),
-				allowRevisit: true,
-				waitAllPreds: t.shouldWaitForNode(matched[0].to),
-			}},
-			prepend: hasUnconditional,
+			immediate: matched,
+			prepend:   hasUnconditional,
 		}, nil
 	}
 
@@ -257,13 +244,7 @@ func (t *Task) resolveEdges(ctx context.Context, step Step, state State) (edgeRe
 
 func (t *Task) fanOutSerial(step Step, current State, edges []conditionalEdge) {
 	for _, edge := range edges {
-		waitAllPreds := t.shouldWaitForNode(edge.to)
-		t.enqueue(Step{
-			node:         edge.to,
-			state:        current.Clone(),
-			allowRevisit: step.allowRevisit,
-			waitAllPreds: waitAllPreds,
-		})
+		t.enqueueEdge(edge, step, current, step.allowRevisit, false)
 	}
 }
 
@@ -274,9 +255,25 @@ func (t *Task) fanOutParallel(ctx context.Context, step Step, state State, edges
 	}
 
 	states := make([]branchState, len(edges))
+	readyIndices := make([]int, 0, len(edges))
+	for i, edge := range edges {
+		ready := t.prepareEdge(edge)
+		if ready {
+			readyIndices = append(readyIndices, i)
+			continue
+		}
+		t.enqueuePreparedEdge(edge, step, state, step.allowRevisit, false, ready)
+	}
+
+	if len(readyIndices) == 0 {
+		return state.Clone(), nil
+	}
+
 	eg, egCtx := errgroup.WithContext(ctx)
 
-	for i, edge := range edges {
+	for _, idx := range readyIndices {
+		i := idx
+		edge := edges[i]
 		eg.Go(func() error {
 			handler := t.executor.graph.nodes[edge.to]
 			if handler == nil {
@@ -295,69 +292,58 @@ func (t *Task) fanOutParallel(ctx context.Context, step Step, state State, edges
 		return nil, err
 	}
 
-	// Mark all branch nodes as visited and collect successor states
-	successors := make(map[string]State)
-	for _, bs := range states {
+	type successorAggregation struct {
+		state State
+		ready bool
+	}
+	successors := make(map[string]successorAggregation)
+
+	for _, idx := range readyIndices {
+		bs := states[idx]
 		t.visited[bs.to] = true
 		for _, nextEdge := range t.executor.graph.edges[bs.to] {
-			successors[nextEdge.to] = mergeStates(successors[nextEdge.to], bs.state)
+			ready := t.prepareEdge(nextEdge)
+			agg := successors[nextEdge.to]
+			agg.state = mergeStates(agg.state, bs.state)
+			agg.ready = ready
+			successors[nextEdge.to] = agg
 		}
 	}
 
-	// Enqueue successor nodes
-	for successor, successorState := range successors {
-		t.enqueue(Step{
+	for successor, agg := range successors {
+		nextStep := Step{
 			node:         successor,
-			state:        successorState,
+			state:        agg.state.Clone(),
 			allowRevisit: step.allowRevisit,
-			waitAllPreds: true,
-		})
+			waitAllPreds: !agg.ready,
+		}
+		t.enqueue(nextStep)
 	}
 
-	// Merge all branch states for return
 	merged := state.Clone()
-	for _, bs := range states {
-		merged = mergeStates(merged, bs.state)
+	for _, idx := range readyIndices {
+		merged = mergeStates(merged, states[idx].state)
 	}
 	return merged, nil
 }
 
 func (t *Task) predecessorsReady(node string) bool {
-	for _, pred := range t.executor.predecessors[node] {
-		if pred == node {
-			continue
-		}
-		if !t.visited[pred] {
-			return false
-		}
-	}
-	return true
+	return t.dependenciesSatisfied(node)
 }
 
 func (t *Task) shouldWaitForNode(node string) bool {
-	activePreds := 0
-	for _, pred := range t.executor.predecessors[node] {
-		if pred == node {
-			continue
-		}
-		if !t.visited[pred] {
-			return true
-		}
-		activePreds++
-		if activePreds > 1 {
-			return true
-		}
-	}
-	return false
+	return !t.dependenciesSatisfied(node)
 }
 
-func (t *Task) registerSkippedTargets(parent string, targets []string) {
-	for _, target := range targets {
-		t.registerSkip(parent, target)
+func (t *Task) registerSkippedTargets(parent string, targets []conditionalEdge) {
+	for _, edge := range targets {
+		t.registerSkip(parent, edge)
 	}
 }
 
-func (t *Task) registerSkip(parent, target string) {
+func (t *Task) registerSkip(parent string, edge conditionalEdge) {
+	target := edge.to
+	t.consumeDependency(target, edge.group)
 	preds := t.executor.predecessors[target]
 	if len(preds) == 0 {
 		return
@@ -385,8 +371,70 @@ func (t *Task) markNodeSkipped(node string) {
 	t.visited[node] = true
 	delete(t.pending, node)
 	for _, edge := range t.executor.graph.edges[node] {
-		t.registerSkip(node, edge.to)
+		t.registerSkip(node, edge)
 	}
+}
+
+func (t *Task) prepareEdge(edge conditionalEdge) bool {
+	t.consumeDependency(edge.to, edge.group)
+	return t.dependenciesSatisfied(edge.to)
+}
+
+func (t *Task) enqueueEdge(edge conditionalEdge, from Step, state State, allowRevisit bool, prepend bool) {
+	ready := t.prepareEdge(edge)
+	t.enqueuePreparedEdge(edge, from, state, allowRevisit, prepend, ready)
+}
+
+func (t *Task) enqueuePreparedEdge(edge conditionalEdge, from Step, state State, allowRevisit bool, prepend bool, ready bool) {
+	next := Step{
+		node:         edge.to,
+		state:        state.Clone(),
+		allowRevisit: allowRevisit,
+		waitAllPreds: !ready,
+	}
+	if prepend {
+		t.enqueueSteps([]Step{next}, true)
+		return
+	}
+	t.enqueue(next)
+}
+
+func (t *Task) dependenciesSatisfied(node string) bool {
+	groups, ok := t.remainingDeps[node]
+	if !ok || len(groups) == 0 {
+		return true
+	}
+	for _, remaining := range groups {
+		if remaining > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (t *Task) consumeDependency(target, group string) {
+	if target == "" {
+		return
+	}
+	if group == "" {
+		group = target
+	}
+	groups, ok := t.remainingDeps[target]
+	if !ok {
+		return
+	}
+	if count, ok := groups[group]; ok && count > 0 {
+		groups[group] = count - 1
+	}
+}
+
+func cloneEdges(edges []conditionalEdge) []conditionalEdge {
+	if len(edges) == 0 {
+		return nil
+	}
+	out := make([]conditionalEdge, len(edges))
+	copy(out, edges)
+	return out
 }
 
 func mergeStates(base State, updates ...State) State {
