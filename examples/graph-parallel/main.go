@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"strings"
-	"time"
 
 	"github.com/go-kratos/blades/graph"
 )
@@ -12,9 +10,7 @@ import (
 func logger(name string) graph.Handler {
 	return func(ctx context.Context, state graph.State) (graph.State, error) {
 		log.Println("execute node:", name)
-		if strings.HasPrefix(name, "branch") {
-			time.Sleep(time.Millisecond * 1000)
-		}
+		state[name] = "visited"
 		return state, nil
 	}
 }
@@ -45,7 +41,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	state, err := executor.Execute(context.Background(), graph.State{"a": 1})
+	state, err := executor.Execute(context.Background(), graph.State{})
 	if err != nil {
 		log.Fatal(err)
 	}
