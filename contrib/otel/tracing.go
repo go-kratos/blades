@@ -85,7 +85,7 @@ func (t *tracing) start(ctx context.Context, ac *blades.AgentContext, opts ...bl
 	return ctx, span
 }
 
-// Run processes the prompt and adds guardrails before passing it to the next runnable.
+// Run processes the prompt and adds OpenTelemetry tracing to the invocation before passing it to the next runnable.
 func (t *tracing) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
 	ac, ok := blades.FromContext(ctx)
 	if !ok {
@@ -101,7 +101,7 @@ func (t *tracing) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades
 	return msg, err
 }
 
-// RunStream processes the prompt in a streaming manner and adds guardrails before passing it to the next runnable.
+// RunStream processes the prompt in a streaming manner and adds OpenTelemetry tracing to the invocation before passing it to the next runnable.
 func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
 	ac, ok := blades.FromContext(ctx)
 	if !ok {
@@ -117,14 +117,14 @@ func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...
 	}
 
 	return blades.NewMappedStream[*blades.Message, *blades.Message](stream, func(m *blades.Message) (*blades.Message, error) {
-		msg, err := stream.Current()
+		_, err = stream.Current()
 		if err != nil {
-			t.end(span, nil, err)
+			t.end(span, m, err)
 			return nil, err
 		}
 
-		if msg.Status == blades.StatusCompleted {
-			t.end(span, msg, nil)
+		if m.Status == blades.StatusCompleted {
+			t.end(span, m, nil)
 		}
 
 		return m, nil

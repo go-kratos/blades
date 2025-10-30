@@ -26,6 +26,9 @@ func main() {
 			semconv.ServiceNameKey.String("otel-demo"),
 		),
 	)
+	if err != nil {
+		panic(err)
+	}
 
 	otel.SetTracerProvider(
 		sdktrace.NewTracerProvider(
@@ -43,13 +46,15 @@ func main() {
 
 	prompt := blades.NewPrompt(blades.UserMessage("Write a diary about spring, within 100 words"))
 
-	msg, err := agent.Run(context.Background(), prompt)
+	ctx := context.Background()
+
+	msg, err := agent.Run(ctx, prompt)
 	if err != nil {
 		panic(err)
 	}
 	println(msg.Text())
 
-	stream, err := agent.RunStream(context.Background(), prompt)
+	stream, err := agent.RunStream(ctx, prompt)
 	if err != nil {
 		panic(err)
 	}
