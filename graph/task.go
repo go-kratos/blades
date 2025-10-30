@@ -354,9 +354,7 @@ func resolveEdgeSelection(ctx context.Context, node string, edges []conditionalE
 		if edge.condition == nil {
 			matched = append(matched, edge)
 			hasUnconditional = true
-			for _, trailing := range edges[i+1:] {
-				skipped = append(skipped, trailing)
-			}
+			skipped = append(skipped, edges[i+1:]...)
 			break
 		}
 
@@ -371,9 +369,7 @@ func resolveEdgeSelection(ctx context.Context, node string, edges []conditionalE
 					}
 				}
 				if hasTrailing {
-					for _, trailing := range edges[i+1:] {
-						skipped = append(skipped, trailing)
-					}
+					skipped = append(skipped, edges[i+1:]...)
 					hasUnconditional = true
 					break
 				}
