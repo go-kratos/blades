@@ -15,9 +15,9 @@ type Evaluation struct {
 
 // Result represents the outcome of an evaluation.
 type Result struct {
-	Pass    bool                   `json:"pass"`    // whether the case passed the evaluation
-	Score   float64                `json:"score"`   // evaluation score
-	Details map[string]interface{} `json:"details"` // additional details
+	Pass    bool                   `json:"pass" jsonschema:"Indicates whether the response satisfies the evaluation criteria."`
+	Score   float64                `json:"score"  jsonschema:"LLM-judged similarity to the expected response; score in [0,1], higher is better."`
+	Details map[string]interface{} `json:"details" jsonschema:"Additional details about the evaluation result."`
 }
 
 // Evaluator defines the interface for evaluating LLM responses.
