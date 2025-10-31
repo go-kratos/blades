@@ -342,6 +342,50 @@ func TestGraphAddEdgeDuplicatePanics(t *testing.T) {
 	}))
 }
 
+func TestMiddlewareReceivesNodeName(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	mw := func(next Handler) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			if name, ok := NodeNameFromContext(ctx); ok {
+				mu.Lock()
+				seen = append(seen, name)
+				mu.Unlock()
+			} else {
+				t.Fatalf("node name missing from context")
+			}
+			return next(ctx, state)
+		}
+	}
+
+	g := NewGraph(WithMiddleware(mw))
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		next[stepsKey] = append(getStringSlice(state[stepsKey]), "start")
+		return next, nil
+	})
+	g.AddNode("finish", stepHandler("finish"))
+	g.AddEdge("start", "finish")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+		t.Fatalf("execute error: %v", err)
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("expected to see two node names, got %v", seen)
+	}
+	if seen[0] != "start" || seen[1] != "finish" {
+		t.Fatalf("unexpected node names order: %v", seen)
+	}
+}
+
 func TestGraphSerialVsParallel(t *testing.T) {
 	build := func(parallel bool) *Graph {
 		g := NewGraph(WithParallel(parallel))
