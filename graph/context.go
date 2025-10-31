@@ -11,11 +11,7 @@ type NodeContext struct {
 
 // NewNodeContext returns a new context with the given NodeContext.
 func NewNodeContext(ctx context.Context, node *NodeContext) context.Context {
-	ctx = context.WithValue(ctx, ctxNodeKey{}, node)
-	if node != nil {
-		ctx = context.WithValue(ctx, ctxNodeNameKey{}, node.Name)
-	}
-	return ctx
+	return context.WithValue(ctx, ctxNodeKey{}, node)
 }
 
 // FromNodeContext retrieves the NodeContext from the context, if present.
