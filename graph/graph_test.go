@@ -347,9 +347,9 @@ func TestMiddlewareReceivesNodeName(t *testing.T) {
 	var seen []string
 	mw := func(next Handler) Handler {
 		return func(ctx context.Context, state State) (State, error) {
-			if name, ok := NodeNameFromContext(ctx); ok {
+			if node, ok := FromNodeContext(ctx); ok {
 				mu.Lock()
-				seen = append(seen, name)
+				seen = append(seen, node.Name)
 				mu.Unlock()
 			} else {
 				t.Fatalf("node name missing from context")
