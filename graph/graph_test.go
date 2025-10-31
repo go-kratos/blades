@@ -270,6 +270,101 @@ func TestGraphConditionalMixedPrecedence(t *testing.T) {
 	}
 }
 
+func TestGraphConditionalUnconditionalOrder(t *testing.T) {
+	g := NewGraph(WithParallel(false))
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+	record := func(name string, mutate func(State) State) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			mu.Unlock()
+			if mutate != nil {
+				return mutate(state), nil
+			}
+			return state.Clone(), nil
+		}
+	}
+
+	g.AddNode("start", record("start", func(state State) State {
+		next := state.Clone()
+		next["allow_conditional"] = true
+		return next
+	}))
+	g.AddNode("always", record("always", nil))
+	g.AddNode("conditional", record("conditional", nil))
+	g.AddNode("join", record("join", nil))
+
+	g.AddEdge("start", "always")
+	g.AddEdge("start", "conditional", WithEdgeCondition(func(_ context.Context, state State) bool {
+		allow, _ := state["allow_conditional"].(bool)
+		return allow
+	}))
+	g.AddEdge("always", "join")
+	g.AddEdge("conditional", "join")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	if executed["conditional"] == 0 {
+		t.Fatalf("expected conditional branch to execute when condition true, executed=%v", executed)
+	}
+}
+
+func TestMiddlewareReceivesNodeName(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	mw := func(next Handler) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			if node, ok := FromNodeContext(ctx); ok {
+				mu.Lock()
+				seen = append(seen, node.Name)
+				mu.Unlock()
+			} else {
+				t.Fatalf("node name missing from context")
+			}
+			return next(ctx, state)
+		}
+	}
+
+	g := NewGraph(WithMiddleware(mw))
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		next[stepsKey] = append(getStringSlice(state[stepsKey]), "start")
+		return next, nil
+	})
+	g.AddNode("finish", stepHandler("finish"))
+	g.AddEdge("start", "finish")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+		t.Fatalf("execute error: %v", err)
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("expected to see two node names, got %v", seen)
+	}
+	if seen[0] != "start" || seen[1] != "finish" {
+		t.Fatalf("unexpected node names order: %v", seen)
+	}
+}
+
 func TestGraphSerialVsParallel(t *testing.T) {
 	build := func(parallel bool) *Graph {
 		g := NewGraph(WithParallel(parallel))
@@ -387,6 +482,120 @@ func TestGraphParallelFanOutBranches(t *testing.T) {
 	}
 	if called["join"] != 1 {
 		t.Fatalf("expected join to execute once, got %v", called)
+	}
+}
+
+func TestGraphParallelNestedFanOutConcurrency(t *testing.T) {
+	g := NewGraph(WithParallel(true))
+
+	var mu sync.Mutex
+	started := make(map[string]bool, 2)
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	var readyOnce sync.Once
+	var releaseOnce sync.Once
+
+	blockingBranch := func(name string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			next := state.Clone()
+			next[name] = true
+
+			mu.Lock()
+			started[name] = true
+			if len(started) == 2 {
+				readyOnce.Do(func() {
+					close(ready)
+				})
+			}
+			mu.Unlock()
+
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+
+			return next, nil
+		}
+	}
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		next["start"] = true
+		return next, nil
+	})
+	g.AddNode("branch_b", func(ctx context.Context, state State) (State, error) {
+		next := state.Clone()
+		next["branch_b"] = true
+		return next, nil
+	})
+	g.AddNode("branch_c", blockingBranch("branch_c"))
+	g.AddNode("branch_d", blockingBranch("branch_d"))
+	g.AddNode("join", func(ctx context.Context, state State) (State, error) {
+		if _, ok := state["branch_c"].(bool); !ok {
+			return nil, fmt.Errorf("join missing branch_c contribution: %#v", state)
+		}
+		if _, ok := state["branch_d"].(bool); !ok {
+			return nil, fmt.Errorf("join missing branch_d contribution: %#v", state)
+		}
+		next := state.Clone()
+		next["joined"] = true
+		return next, nil
+	})
+
+	g.AddEdge("start", "branch_b")
+	g.AddEdge("branch_b", "branch_c")
+	g.AddEdge("branch_b", "branch_d")
+	g.AddEdge("branch_c", "join")
+	g.AddEdge("branch_d", "join")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	type result struct {
+		state State
+		err   error
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	resCh := make(chan result, 1)
+	go func() {
+		state, err := executor.Execute(ctx, State{})
+		resCh <- result{state: state, err: err}
+	}()
+
+	select {
+	case <-ready:
+	case <-time.After(200 * time.Millisecond):
+		releaseOnce.Do(func() { close(release) })
+		t.Fatalf("expected branch_c and branch_d to start concurrently")
+	}
+
+	releaseOnce.Do(func() { close(release) })
+
+	select {
+	case res := <-resCh:
+		if res.err != nil {
+			t.Fatalf("execution error: %v", res.err)
+		}
+		if _, ok := res.state["joined"].(bool); !ok {
+			t.Fatalf("expected join to run, result=%#v", res.state)
+		}
+		if _, ok := res.state["branch_c"].(bool); !ok {
+			t.Fatalf("expected branch_c contribution, result=%#v", res.state)
+		}
+		if _, ok := res.state["branch_d"].(bool); !ok {
+			t.Fatalf("expected branch_d contribution, result=%#v", res.state)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("execution did not complete after releasing branch workers")
 	}
 }
 
@@ -708,7 +917,7 @@ func TestGraphParallelJoinSkipsUnselectedEdges(t *testing.T) {
 	}
 }
 
-func TestGraphJoinWithEdgeGroups(t *testing.T) {
+func TestGraphJoinRequiresAllInputs(t *testing.T) {
 	g := NewGraph(WithParallel(false))
 
 	var mu sync.Mutex
@@ -765,9 +974,9 @@ func TestGraphJoinWithEdgeGroups(t *testing.T) {
 	g.AddEdge("start", "branch_a")
 	g.AddEdge("start", "branch_b")
 	g.AddEdge("start", "control")
-	g.AddEdge("branch_a", "join", WithEdgeGroup("branches"))
-	g.AddEdge("branch_b", "join", WithEdgeGroup("branches"))
-	g.AddEdge("control", "join", WithEdgeGroup("control"))
+	g.AddEdge("branch_a", "join")
+	g.AddEdge("branch_b", "join")
+	g.AddEdge("control", "join")
 
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("join")
@@ -2209,4 +2418,275 @@ func TestGraphSerialWithConditionalRouting(t *testing.T) {
 			t.Errorf("expected execution order %v, got %v", expected, executionOrder)
 		}
 	})
+}
+
+// TestNodeNameInContext tests that the node name is correctly propagated via context
+func TestNodeNameInContext(t *testing.T) {
+	g := NewGraph()
+
+	var mu sync.Mutex
+	nodeNames := make(map[string]string) // maps expected node name to actual node name from context
+
+	// Handler that extracts node name from context
+	handlerWithNodeName := func(expectedName string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			node, ok := FromNodeContext(ctx)
+			if !ok {
+				return nil, fmt.Errorf("node name not found in context for node %s", expectedName)
+			}
+
+			mu.Lock()
+			nodeNames[expectedName] = node.Name
+			mu.Unlock()
+
+			return state.Clone(), nil
+		}
+	}
+
+	g.AddNode("start", handlerWithNodeName("start"))
+	g.AddNode("process", handlerWithNodeName("process"))
+	g.AddNode("finish", handlerWithNodeName("finish"))
+
+	g.AddEdge("start", "process")
+	g.AddEdge("process", "finish")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	_, err = executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	// Verify each node received its correct name
+	expectedNodes := []string{"start", "process", "finish"}
+	for _, nodeName := range expectedNodes {
+		actualName, ok := nodeNames[nodeName]
+		if !ok {
+			t.Errorf("node %s did not execute or did not extract node name", nodeName)
+			continue
+		}
+		if actualName != nodeName {
+			t.Errorf("expected node name %s, got %s", nodeName, actualName)
+		}
+	}
+}
+
+// TestNodeNameInMiddleware tests that middleware can access the node name via context
+func TestNodeNameInMiddleware(t *testing.T) {
+	var mu sync.Mutex
+	middlewareNodeNames := make([]string, 0)
+	handlerNodeNames := make([]string, 0)
+
+	// Middleware that logs node names
+	loggingMiddleware := func(next Handler) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			node, ok := FromNodeContext(ctx)
+			if ok {
+				mu.Lock()
+				middlewareNodeNames = append(middlewareNodeNames, node.Name)
+				mu.Unlock()
+			}
+			return next(ctx, state)
+		}
+	}
+
+	// Handler that also checks node name
+	recordHandler := func(name string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			node, ok := FromNodeContext(ctx)
+			if ok && node.Name == name {
+				mu.Lock()
+				handlerNodeNames = append(handlerNodeNames, node.Name)
+				mu.Unlock()
+			}
+			return state.Clone(), nil
+		}
+	}
+
+	g := NewGraph(WithMiddleware(loggingMiddleware))
+
+	g.AddNode("node_a", recordHandler("node_a"))
+	g.AddNode("node_b", recordHandler("node_b"))
+	g.AddNode("node_c", recordHandler("node_c"))
+
+	g.AddEdge("node_a", "node_b")
+	g.AddEdge("node_b", "node_c")
+	g.SetEntryPoint("node_a")
+	g.SetFinishPoint("node_c")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	_, err = executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	// Verify middleware saw all node names
+	expectedNodes := []string{"node_a", "node_b", "node_c"}
+	if len(middlewareNodeNames) != len(expectedNodes) {
+		t.Errorf("middleware expected to see %d nodes, got %d", len(expectedNodes), len(middlewareNodeNames))
+	}
+
+	for i, expected := range expectedNodes {
+		if i >= len(middlewareNodeNames) {
+			t.Errorf("middleware missing node name at index %d", i)
+			continue
+		}
+		if middlewareNodeNames[i] != expected {
+			t.Errorf("middleware at index %d: expected %s, got %s", i, expected, middlewareNodeNames[i])
+		}
+	}
+
+	// Verify handlers also saw correct node names
+	if len(handlerNodeNames) != len(expectedNodes) {
+		t.Errorf("handlers expected to see %d nodes, got %d", len(expectedNodes), len(handlerNodeNames))
+	}
+
+	for i, expected := range expectedNodes {
+		if i >= len(handlerNodeNames) {
+			t.Errorf("handler missing node name at index %d", i)
+			continue
+		}
+		if handlerNodeNames[i] != expected {
+			t.Errorf("handler at index %d: expected %s, got %s", i, expected, handlerNodeNames[i])
+		}
+	}
+}
+
+// TestNodeNameInParallelExecution tests node name propagation in parallel execution mode
+func TestNodeNameInParallelExecution(t *testing.T) {
+	g := NewGraph(WithParallel(true))
+
+	var mu sync.Mutex
+	nodeNames := make(map[string]bool)
+
+	handlerWithNodeName := func(expectedName string) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			node, ok := FromNodeContext(ctx)
+			if !ok {
+				return nil, fmt.Errorf("node name not found in context")
+			}
+			if node.Name != expectedName {
+				return nil, fmt.Errorf("expected node name %s, got %s", expectedName, node.Name)
+			}
+
+			mu.Lock()
+			nodeNames[node.Name] = true
+			mu.Unlock()
+
+			// Simulate some work
+			time.Sleep(time.Millisecond)
+
+			return state.Clone(), nil
+		}
+	}
+
+	g.AddNode("start", handlerWithNodeName("start"))
+	g.AddNode("branch_a", handlerWithNodeName("branch_a"))
+	g.AddNode("branch_b", handlerWithNodeName("branch_b"))
+	g.AddNode("branch_c", handlerWithNodeName("branch_c"))
+	g.AddNode("join", handlerWithNodeName("join"))
+
+	g.AddEdge("start", "branch_a")
+	g.AddEdge("start", "branch_b")
+	g.AddEdge("start", "branch_c")
+	g.AddEdge("branch_a", "join")
+	g.AddEdge("branch_b", "join")
+	g.AddEdge("branch_c", "join")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	_, err = executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	// Verify all nodes executed with correct names
+	expectedNodes := []string{"start", "branch_a", "branch_b", "branch_c", "join"}
+	for _, nodeName := range expectedNodes {
+		if !nodeNames[nodeName] {
+			t.Errorf("node %s did not execute or had incorrect name", nodeName)
+		}
+	}
+
+	if len(nodeNames) != len(expectedNodes) {
+		t.Errorf("expected %d nodes to execute, got %d", len(expectedNodes), len(nodeNames))
+	}
+}
+
+// TestNodeNameWithMultipleMiddlewares tests node name with multiple middleware layers
+func TestNodeNameWithMultipleMiddlewares(t *testing.T) {
+	var mu sync.Mutex
+	middleware1Calls := make(map[string]int)
+	middleware2Calls := make(map[string]int)
+
+	middleware1 := func(next Handler) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			node, ok := FromNodeContext(ctx)
+			if ok {
+				mu.Lock()
+				middleware1Calls[node.Name]++
+				mu.Unlock()
+			}
+			return next(ctx, state)
+		}
+	}
+
+	middleware2 := func(next Handler) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			node, ok := FromNodeContext(ctx)
+			if ok {
+				mu.Lock()
+				middleware2Calls[node.Name]++
+				mu.Unlock()
+			}
+			return next(ctx, state)
+		}
+	}
+
+	g := NewGraph(WithMiddleware(middleware1, middleware2))
+
+	g.AddNode("alpha", stepHandler("alpha"))
+	g.AddNode("beta", stepHandler("beta"))
+	g.AddNode("gamma", stepHandler("gamma"))
+
+	g.AddEdge("alpha", "beta")
+	g.AddEdge("beta", "gamma")
+	g.SetEntryPoint("alpha")
+	g.SetFinishPoint("gamma")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	_, err = executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	// Verify both middlewares saw all nodes
+	expectedNodes := []string{"alpha", "beta", "gamma"}
+	for _, nodeName := range expectedNodes {
+		if middleware1Calls[nodeName] != 1 {
+			t.Errorf("middleware1 expected to see node %s once, got %d", nodeName, middleware1Calls[nodeName])
+		}
+		if middleware2Calls[nodeName] != 1 {
+			t.Errorf("middleware2 expected to see node %s once, got %d", nodeName, middleware2Calls[nodeName])
+		}
+	}
 }

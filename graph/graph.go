@@ -36,19 +36,10 @@ func WithEdgeCondition(condition EdgeCondition) EdgeOption {
 	}
 }
 
-// WithEdgeGroup assigns the edge to a logical activation group for the target node.
-// Groups default to the target node name when unset.
-func WithEdgeGroup(group string) EdgeOption {
-	return func(edge *conditionalEdge) {
-		edge.group = group
-	}
-}
-
 // conditionalEdge represents an edge with an optional condition.
 type conditionalEdge struct {
 	to        string
 	condition EdgeCondition // nil means always follow this edge
-	group     string
 }
 
 // Graph represents a directed graph of processing nodes. Cycles are allowed.
@@ -89,17 +80,9 @@ func (g *Graph) AddNode(name string, handler Handler) *Graph {
 // AddEdge adds a directed edge from one node to another. Options can configure the edge.
 // Returns the graph for chaining.
 func (g *Graph) AddEdge(from, to string, opts ...EdgeOption) *Graph {
-	for _, edge := range g.edges[from] {
-		if edge.to == to {
-			return g
-		}
-	}
 	edge := conditionalEdge{to: to}
 	for _, opt := range opts {
 		opt(&edge)
-	}
-	if edge.group == "" {
-		edge.group = to
 	}
 	g.edges[from] = append(g.edges[from], edge)
 	return g
