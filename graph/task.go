@@ -111,7 +111,7 @@ func (t *Task) executeNode(node string, state State) {
 		handler = ChainMiddlewares(t.executor.graph.middlewares...)(handler)
 	}
 
-	ctx := NewNodeContext(t.ctx, &NodeContext{Name: node, State: state})
+	ctx := NewNodeContext(t.ctx, &NodeContext{Name: node})
 	nextState, err := handler(ctx, state)
 	if err != nil {
 		t.fail(fmt.Errorf("Failed to execute node %s: %w", node, err))
