@@ -47,6 +47,9 @@ func main() {
 			"Input":  q,
 			"Output": a,
 		})
+		if err != nil {
+			log.Fatal(err)
+		}
 		result, err := r.Evaluate(context.Background(), prompt)
 		if err != nil {
 			log.Fatal(err)
