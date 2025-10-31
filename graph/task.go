@@ -305,12 +305,18 @@ func (t *Task) hasStateLocked(node string) bool {
 	return false
 }
 
+// addContributionLocked adds a contribution for a node from a parent.
+// If a contribution from the same parent already exists, it will not be added again,
+// and a warning will be printed. This prevents unexpected state accumulation from duplicate edges.
 func (t *Task) addContributionLocked(node, parent string, state State) {
 	if t.contributions[node] == nil {
 		t.contributions[node] = make(map[string]State)
 	}
-	existing := t.contributions[node][parent]
-	t.contributions[node][parent] = mergeStates(existing, state)
+	if _, exists := t.contributions[node][parent]; exists {
+		fmt.Printf("Warning: duplicate contribution from parent %s to node %s ignored\n", parent, node)
+		return
+	}
+	t.contributions[node][parent] = state
 }
 
 func resolveEdgeSelection(ctx context.Context, node string, edges []conditionalEdge, state State) ([]conditionalEdge, []conditionalEdge, error) {
