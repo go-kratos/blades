@@ -3,6 +3,7 @@ package evaluate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/go-kratos/blades"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -14,13 +15,16 @@ type Relevancy struct {
 }
 
 // NewRelevancy creates a new Relevancy evaluator.
-func NewRelevancy() (*Relevancy, error) {
+func NewRelevancy(opts ...blades.Option) (*Relevancy, error) {
 	schema, err := jsonschema.For[Result](nil)
 	if err != nil {
 		return nil, err
 	}
-	agent := blades.NewAgent("Relevancy Agent",
-		blades.WithOutputSchema(schema),
+	b, _ := json.Marshal(schema)
+	fmt.Println(string(b))
+	agent := blades.NewAgent(
+		"Relevancy Agent",
+		append(opts, blades.WithOutputSchema(schema))...,
 	)
 	return &Relevancy{agent: agent}, nil
 }
@@ -40,10 +44,10 @@ Please follow these guidelines:
 Use the above guidelines to evaluate the LLM's response.
 
 Below are the inputs:
-{{
+{
   "User prompt": {{ .Input }},
   "Agent response": {{ .Output }},
-}}`, map[string]any{
+}`, map[string]any{
 			"Input":  evaluation.Input.Text(),
 			"Output": evaluation.Output.Text(),
 		}).
