@@ -270,6 +270,78 @@ func TestGraphConditionalMixedPrecedence(t *testing.T) {
 	}
 }
 
+func TestGraphConditionalUnconditionalOrder(t *testing.T) {
+	g := NewGraph(WithParallel(false))
+
+	var mu sync.Mutex
+	executed := make(map[string]int)
+	record := func(name string, mutate func(State) State) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			mu.Lock()
+			executed[name]++
+			mu.Unlock()
+			if mutate != nil {
+				return mutate(state), nil
+			}
+			return state.Clone(), nil
+		}
+	}
+
+	g.AddNode("start", record("start", func(state State) State {
+		next := state.Clone()
+		next["allow_conditional"] = true
+		return next
+	}))
+	g.AddNode("always", record("always", nil))
+	g.AddNode("conditional", record("conditional", nil))
+	g.AddNode("join", record("join", nil))
+
+	g.AddEdge("start", "always")
+	g.AddEdge("start", "conditional", WithEdgeCondition(func(_ context.Context, state State) bool {
+		allow, _ := state["allow_conditional"].(bool)
+		return allow
+	}))
+	g.AddEdge("always", "join")
+	g.AddEdge("conditional", "join")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	if executed["conditional"] == 0 {
+		t.Fatalf("expected conditional branch to execute when condition true, executed=%v", executed)
+	}
+}
+
+func TestGraphAddEdgeDuplicatePanics(t *testing.T) {
+	g := NewGraph()
+
+	g.AddNode("start", stepHandler("start"))
+	g.AddNode("branch", stepHandler("branch"))
+
+	g.AddEdge("start", "branch")
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic when adding duplicate edge")
+		} else if msg := fmt.Sprint(r); !strings.Contains(msg, "edge from start to branch already exists") {
+			t.Fatalf("unexpected panic message: %v", r)
+		}
+	}()
+
+	g.AddEdge("start", "branch", WithEdgeCondition(func(_ context.Context, state State) bool {
+		return true
+	}))
+}
+
 func TestGraphSerialVsParallel(t *testing.T) {
 	build := func(parallel bool) *Graph {
 		g := NewGraph(WithParallel(parallel))

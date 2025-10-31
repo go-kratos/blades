@@ -331,31 +331,41 @@ func resolveEdgeSelection(ctx context.Context, node string, edges []conditionalE
 		return cloneEdges(edges), nil, nil
 	}
 
-	var matched []conditionalEdge
-	var skipped []conditionalEdge
-	hasUnconditional := false
+	leading := 0
+	for leading < len(edges) && edges[leading].condition == nil {
+		leading++
+	}
 
-	for i, edge := range edges {
+	matched := cloneEdges(edges[:leading])
+	var skipped []conditionalEdge
+
+	if leading == len(edges) {
+		return matched, nil, nil
+	}
+
+	rest := edges[leading:]
+	var restMatched []conditionalEdge
+	hasFallback := false
+
+	for i, edge := range rest {
 		if edge.condition == nil {
-			matched = append(matched, edge)
-			hasUnconditional = true
-			skipped = append(skipped, edges[i+1:]...)
+			restMatched = append(restMatched, edge)
+			hasFallback = true
+			skipped = append(skipped, cloneEdges(rest[i+1:])...)
 			break
 		}
 
 		if edge.condition(ctx, state) {
-			matched = append(matched, edge)
-			if i+1 < len(edges) {
-				hasTrailing := false
-				for _, trailing := range edges[i+1:] {
+			restMatched = append(restMatched, edge)
+			if i+1 < len(rest) {
+				for _, trailing := range rest[i+1:] {
 					if trailing.condition == nil {
-						hasTrailing = true
+						hasFallback = true
+						skipped = append(skipped, cloneEdges(rest[i+1:])...)
 						break
 					}
 				}
-				if hasTrailing {
-					skipped = append(skipped, edges[i+1:]...)
-					hasUnconditional = true
+				if hasFallback {
 					break
 				}
 			}
@@ -364,14 +374,16 @@ func resolveEdgeSelection(ctx context.Context, node string, edges []conditionalE
 		}
 	}
 
-	if len(matched) == 0 {
+	if len(matched)+len(restMatched) == 0 {
 		return nil, nil, fmt.Errorf("graph: no condition matched for edges from node %s", node)
 	}
 
-	if hasUnconditional && len(matched) > 1 {
-		// When an unconditional edge follows conditionals, only the first match is used.
-		matched = matched[:1]
+	if hasFallback && len(restMatched) > 1 {
+		// When an unconditional fallback follows conditionals, only the first match is used.
+		restMatched = restMatched[:1]
 	}
+
+	matched = append(matched, cloneEdges(restMatched)...)
 
 	return cloneEdges(matched), skipped, nil
 }
