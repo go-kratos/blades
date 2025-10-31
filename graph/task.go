@@ -63,7 +63,7 @@ func (t *Task) run(ctx context.Context, initial State) (State, error) {
 	if !t.finished {
 		return nil, fmt.Errorf("graph: finish node not reachable: %s", t.executor.graph.finishPoint)
 	}
-	return t.finishState, nil
+	return t.finishState.Clone(), nil
 }
 
 func (t *Task) trySchedule(node string) {
