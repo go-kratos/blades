@@ -894,7 +894,7 @@ func TestGraphParallelJoinSkipsUnselectedEdges(t *testing.T) {
 	}
 }
 
-func TestGraphJoinWithEdgeGroups(t *testing.T) {
+func TestGraphJoinRequiresAllInputs(t *testing.T) {
 	g := NewGraph(WithParallel(false))
 
 	var mu sync.Mutex

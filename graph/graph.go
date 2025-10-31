@@ -40,7 +40,6 @@ func WithEdgeCondition(condition EdgeCondition) EdgeOption {
 type conditionalEdge struct {
 	to        string
 	condition EdgeCondition // nil means always follow this edge
-	group     string
 }
 
 // Graph represents a directed graph of processing nodes. Cycles are allowed.
@@ -91,9 +90,6 @@ func (g *Graph) AddEdge(from, to string, opts ...EdgeOption) *Graph {
 	edge := conditionalEdge{to: to}
 	for _, opt := range opts {
 		opt(&edge)
-	}
-	if edge.group == "" {
-		edge.group = to
 	}
 	g.edges[from] = append(g.edges[from], edge)
 	return g

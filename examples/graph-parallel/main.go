@@ -10,7 +10,7 @@ import (
 
 func logger(name string) graph.Handler {
 	return func(ctx context.Context, state graph.State) (graph.State, error) {
-		time.Sleep(time.Millisecond * 200)
+		time.Sleep(time.Millisecond * 500)
 		log.Println("execute node:", name)
 		state[name] = "visited"
 		return state, nil

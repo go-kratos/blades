@@ -17,7 +17,7 @@ type Task struct {
 
 	mu            sync.Mutex
 	contributions map[string]map[string]State
-	remainingDeps map[string]map[string]int
+	remainingDeps map[string]int
 	inFlight      map[string]bool
 	visited       map[string]bool
 	skippedCnt    map[string]int
@@ -163,17 +163,17 @@ func (t *Task) processOutgoing(node string, state State) {
 	}
 
 	for _, edge := range matched {
-		ready := t.consumeAndAggregate(node, edge.to, edge.group, state.Clone())
+		ready := t.consumeAndAggregate(node, edge.to, state.Clone())
 		if ready {
 			t.trySchedule(edge.to)
 		}
 	}
 }
 
-func (t *Task) consumeAndAggregate(parent, target, group string, contribution State) bool {
+func (t *Task) consumeAndAggregate(parent, target string, contribution State) bool {
 	t.mu.Lock()
 	t.addContributionLocked(target, parent, contribution)
-	ready := t.consumeDependencyLocked(target, group) && !t.visited[target]
+	ready := t.consumeDependencyLocked(target) && !t.visited[target]
 	t.mu.Unlock()
 	return ready
 }
@@ -186,7 +186,7 @@ func (t *Task) registerSkip(parent string, edge conditionalEdge) {
 		t.mu.Unlock()
 		return
 	}
-	t.consumeDependencyLocked(target, edge.group)
+	t.consumeDependencyLocked(target)
 
 	preds := t.executor.predecessors[target]
 	if len(preds) == 0 {
@@ -271,30 +271,28 @@ func (t *Task) buildAggregateLocked(node string) State {
 }
 
 func (t *Task) dependenciesSatisfiedLocked(node string) bool {
-	groups := t.remainingDeps[node]
-	if len(groups) == 0 {
+	if len(t.remainingDeps) == 0 {
 		return true
 	}
-	for _, count := range groups {
-		if count > 0 {
-			return false
-		}
+	remaining, ok := t.remainingDeps[node]
+	if !ok {
+		return true
 	}
-	return true
+	return remaining <= 0
 }
 
-func (t *Task) consumeDependencyLocked(node, group string) bool {
-	if group == "" {
-		group = node
-	}
-
-	groups := t.remainingDeps[node]
-	if len(groups) == 0 {
+func (t *Task) consumeDependencyLocked(node string) bool {
+	if len(t.remainingDeps) == 0 {
 		return true
 	}
-	if count, ok := groups[group]; ok {
-		if count > 0 {
-			groups[group] = count - 1
+	if remaining, ok := t.remainingDeps[node]; ok {
+		if remaining > 0 {
+			remaining--
+			if remaining == 0 {
+				delete(t.remainingDeps, node)
+			} else {
+				t.remainingDeps[node] = remaining
+			}
 		}
 	}
 	return t.dependenciesSatisfiedLocked(node)

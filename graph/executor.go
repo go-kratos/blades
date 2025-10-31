@@ -10,20 +10,17 @@ import (
 type Executor struct {
 	graph        *Graph
 	predecessors map[string][]string
-	dependencies map[string]map[string]int
+	dependencies map[string]int
 }
 
 // NewExecutor creates a new Executor for the given graph.
 func NewExecutor(g *Graph) *Executor {
 	predecessors := make(map[string][]string)
-	dependencies := make(map[string]map[string]int)
+	dependencies := make(map[string]int)
 	for from, edges := range g.edges {
 		for _, edge := range edges {
 			predecessors[edge.to] = append(predecessors[edge.to], from)
-			if dependencies[edge.to] == nil {
-				dependencies[edge.to] = make(map[string]int)
-			}
-			dependencies[edge.to][edge.group]++
+			dependencies[edge.to]++
 		}
 	}
 	for node, parents := range predecessors {
@@ -37,17 +34,13 @@ func NewExecutor(g *Graph) *Executor {
 	}
 }
 
-func cloneDependencies(src map[string]map[string]int) map[string]map[string]int {
+func cloneDependencies(src map[string]int) map[string]int {
 	if len(src) == 0 {
 		return nil
 	}
-	dst := make(map[string]map[string]int, len(src))
-	for node, groups := range src {
-		copied := make(map[string]int, len(groups))
-		for group, count := range groups {
-			copied[group] = count
-		}
-		dst[node] = copied
+	dst := make(map[string]int, len(src))
+	for node, count := range src {
+		dst[node] = count
 	}
 	return dst
 }
