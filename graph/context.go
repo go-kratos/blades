@@ -3,7 +3,6 @@ package graph
 import "context"
 
 type ctxNodeKey struct{}
-type ctxNodeNameKey struct{}
 
 // NodeContext holds information about the current node in the graph.
 type NodeContext struct {
