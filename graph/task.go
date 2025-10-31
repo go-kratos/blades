@@ -369,7 +369,7 @@ func resolveEdgeSelection(ctx context.Context, node string, edges []conditionalE
         restMatched = restMatched[:1]
     }
     matched = append(matched, restMatched...)
-    return cloneEdges(matched), skipped, nil
+    return matched, skipped, nil
 }
 
 func cloneEdges(edges []conditionalEdge) []conditionalEdge {
