@@ -80,13 +80,6 @@ func (g *Graph) AddNode(name string, handler Handler) *Graph {
 // AddEdge adds a directed edge from one node to another. Options can configure the edge.
 // Returns the graph for chaining.
 func (g *Graph) AddEdge(from, to string, opts ...EdgeOption) *Graph {
-	if edges := g.edges[from]; len(edges) > 0 {
-		for _, edge := range edges {
-			if edge.to == to {
-				panic(fmt.Sprintf("graph: edge from %s to %s already exists", from, to))
-			}
-		}
-	}
 	edge := conditionalEdge{to: to}
 	for _, opt := range opts {
 		opt(&edge)

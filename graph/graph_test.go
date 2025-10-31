@@ -321,27 +321,6 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 	}
 }
 
-func TestGraphAddEdgeDuplicatePanics(t *testing.T) {
-	g := NewGraph()
-
-	g.AddNode("start", stepHandler("start"))
-	g.AddNode("branch", stepHandler("branch"))
-
-	g.AddEdge("start", "branch")
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("expected panic when adding duplicate edge")
-		} else if msg := fmt.Sprint(r); !strings.Contains(msg, "edge from start to branch already exists") {
-			t.Fatalf("unexpected panic message: %v", r)
-		}
-	}()
-
-	g.AddEdge("start", "branch", WithEdgeCondition(func(_ context.Context, state State) bool {
-		return true
-	}))
-}
-
 func TestMiddlewareReceivesNodeName(t *testing.T) {
 	var mu sync.Mutex
 	var seen []string

@@ -16,6 +16,6 @@ func NewNodeContext(ctx context.Context, node *NodeContext) context.Context {
 
 // FromNodeContext retrieves the NodeContext from the context, if present.
 func FromNodeContext(ctx context.Context) (*NodeContext, bool) {
-	agent, ok := ctx.Value(ctxNodeKey{}).(*NodeContext)
-	return agent, ok
+	node, ok := ctx.Value(ctxNodeKey{}).(*NodeContext)
+	return node, ok
 }
