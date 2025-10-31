@@ -114,7 +114,7 @@ func (t *Task) executeNode(node string, state State) {
 	ctx := NewNodeContext(t.ctx, &NodeContext{Name: node})
 	nextState, err := handler(ctx, state)
 	if err != nil {
-		t.fail(fmt.Errorf("Failed to execute node %s: %w", node, err))
+		t.fail(fmt.Errorf("graph: failed to execute node %s: %w", node, err))
 		return
 	}
 
