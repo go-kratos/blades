@@ -51,6 +51,6 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		log.Println(result)
+		log.Printf("Pass: %t Score: %f Feedback: %+v", result.Pass, result.Score, result.Feedback)
 	}
 }
