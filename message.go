@@ -69,13 +69,23 @@ func (FilePart) isPart() {}
 func (DataPart) isPart() {}
 func (ToolPart) isPart() {}
 
+// TokenUsage tracks token consumption for a message.
+type TokenUsage struct {
+	PromptTokens     int64 `json:"promptTokens"`
+	CompletionTokens int64 `json:"completionTokens"`
+	TotalTokens      int64 `json:"totalTokens"`
+}
+
 // Message represents a single message in a conversation.
 type Message struct {
-	ID       string            `json:"id"`
-	Role     Role              `json:"role"`
-	Parts    []Part            `json:"parts"`
-	Status   Status            `json:"status"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	ID           string            `json:"id"`
+	Role         Role              `json:"role"`
+	Parts        []Part            `json:"parts"`
+	Status       Status            `json:"status"`
+	Refusal      string            `json:"refusal,omitempty"`
+	FinishReason string            `json:"finishReason,omitempty"`
+	TokenUsage   TokenUsage        `json:"tokenUsage,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 // Text returns the first text part of the message, or an empty string if none exists.

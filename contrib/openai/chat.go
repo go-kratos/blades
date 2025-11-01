@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"strconv"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
@@ -332,18 +331,15 @@ func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []opena
 // choiceToResponse converts a non-streaming choice to a ModelResponse.
 func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams, cc *openai.ChatCompletion) (*blades.ModelResponse, error) {
 	msg := &blades.Message{
-		Role:     blades.RoleAssistant,
-		Status:   blades.StatusCompleted,
+		Role:   blades.RoleAssistant,
+		Status: blades.StatusCompleted,
+		TokenUsage: blades.TokenUsage{
+			PromptTokens:     cc.Usage.PromptTokens,
+			CompletionTokens: cc.Usage.CompletionTokens,
+			TotalTokens:      cc.Usage.TotalTokens,
+		},
 		Metadata: map[string]string{},
 	}
-
-	if cc.Usage.PromptTokens > 0 {
-		msg.Metadata["input_tokens"] = strconv.FormatInt(cc.Usage.PromptTokens, 10)
-	}
-	if cc.Usage.CompletionTokens > 0 {
-		msg.Metadata["output_tokens"] = strconv.FormatInt(cc.Usage.CompletionTokens, 10)
-	}
-
 	for _, choice := range cc.Choices {
 		if choice.Message.Content != "" {
 			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Message.Content})
@@ -356,10 +352,10 @@ func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams
 			msg.Parts = append(msg.Parts, blades.DataPart{Bytes: bytes})
 		}
 		if choice.Message.Refusal != "" {
-			msg.Metadata["refusal"] = choice.Message.Refusal
+			msg.Refusal = choice.Message.Refusal
 		}
 		if choice.FinishReason != "" {
-			msg.Metadata["finish_reason"] = choice.FinishReason
+			msg.FinishReason = choice.FinishReason
 		}
 		for _, call := range choice.Message.ToolCalls {
 			msg.Role = blades.RoleTool

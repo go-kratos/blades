@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -12,65 +13,45 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
-	ot "github.com/go-kratos/blades/contrib/otel"
+	middleware "github.com/go-kratos/blades/contrib/otel"
 )
 
 func main() {
 	exporter, err := stdouttrace.New()
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-
-	res, err := resource.New(context.Background(),
+	resource, err := resource.New(context.Background(),
 		resource.WithAttributes(
 			semconv.ServiceNameKey.String("otel-demo"),
 		),
 	)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-
 	otel.SetTracerProvider(
 		sdktrace.NewTracerProvider(
 			sdktrace.WithBatcher(exporter, sdktrace.WithBatchTimeout(1*time.Millisecond)),
-			sdktrace.WithResource(res),
+			sdktrace.WithResource(resource),
 		),
 	)
-
+	// Create a blades agent with OpenTelemetry middleware
 	agent := blades.NewAgent(
-		"otel agent",
-		blades.WithMiddleware(ot.Tracing()),
+		"OpenTelemetry Agent",
+		blades.WithMiddleware(middleware.Tracing()),
 		blades.WithModel("qwen-max"),
 		blades.WithProvider(openai.NewChatProvider()),
 	)
-
-	prompt := blades.NewPrompt(blades.UserMessage("Write a diary about spring, within 100 words"))
-
-	ctx := context.Background()
-
-	msg, err := agent.Run(ctx, prompt)
+	prompt := blades.NewPrompt(
+		blades.UserMessage("Write a diary about spring, within 100 words"),
+	)
+	msg, err := agent.Run(context.Background(), prompt)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-	println(msg.Text())
-
-	stream, err := agent.RunStream(ctx, prompt)
-	if err != nil {
-		panic(err)
-	}
-
-	for stream.Next() {
-		m, err := stream.Current()
-		if err != nil {
-			panic(err)
-		}
-		println(m.Text())
-	}
-
-	time.Sleep(2 * time.Second) // wait for exporter to flush
-
-	err = exporter.Shutdown(context.Background())
-	if err != nil {
-		panic(err)
+	log.Println(msg.Text())
+	// Shutdown the exporter to flush any remaining spans
+	if err := exporter.Shutdown(context.Background()); err != nil {
+		log.Fatal(err)
 	}
 }
