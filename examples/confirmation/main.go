@@ -48,7 +48,7 @@ func main() {
 	// Run the agent; if the confirmation is denied, handle gracefully.
 	res, err := agent.Run(context.Background(), prompt)
 	if err != nil {
-		if errors.Is(err, blades.ErrConfirmationDenied) {
+		if errors.Is(err, blades.ErrConfirmDenied) {
 			log.Println("Confirmation denied. Aborting.")
 			return
 		}

@@ -10,8 +10,9 @@ import (
 
 func logger(name string) graph.Handler {
 	return func(ctx context.Context, state graph.State) (graph.State, error) {
+		time.Sleep(time.Millisecond * 500)
 		log.Println("execute node:", name)
-		time.Sleep(time.Millisecond * 100)
+		state[name] = "visited"
 		return state, nil
 	}
 }
@@ -42,7 +43,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	state, err := executor.Execute(context.Background(), graph.State{"a": 1})
+	state, err := executor.Execute(context.Background(), graph.State{})
 	if err != nil {
 		log.Fatal(err)
 	}
