@@ -24,13 +24,12 @@ func (s *InMemoryStore) AddMemory(ctx context.Context, m *Memory) error {
 	return nil
 }
 
-func (s *InMemoryStore) SaveSession(ctx context.Context, session *blades.Session) error {
-	session.History.Range(func(_ int, m *blades.Message) bool {
+func (s *InMemoryStore) SaveSession(ctx context.Context, session blades.Session) error {
+	for _, m := range session.History() {
 		s.memories.Append(&Memory{
 			Content: m,
 		})
-		return true
-	})
+	}
 	return nil
 }
 

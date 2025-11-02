@@ -3,6 +3,7 @@ package blades
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"text/template"
 )
@@ -97,9 +98,7 @@ func (p *PromptTemplate) BuildContext(ctx context.Context) (*Prompt, error) {
 	}
 	messages := make([]*Message, 0, len(p.tmpls))
 	for _, tmpl := range p.tmpls {
-		var (
-			state = session.State.ToMap()
-		)
+		state := maps.Clone(map[string]any(session.State()))
 		for k, v := range tmpl.vars {
 			state[k] = v
 		}

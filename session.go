@@ -2,8 +2,8 @@ package blades
 
 import (
 	"context"
+	"sync"
 
-	"github.com/go-kratos/generics"
 	"github.com/google/uuid"
 )
 
@@ -15,31 +15,19 @@ type SessionStore interface {
 }
 
 // Session holds the state of a flow along with a unique session ID.
-type Session struct {
-	ID      string                   `json:"id"`
-	History generics.Slice[*Message] `json:"history"`
-	State   State                    `json:"state"`
-}
-
-// PutState sets a key-value pair in the session state.
-func (s *Session) PutState(key string, value any) {
-	s.State.Store(key, value)
-}
-
-// Record records the input prompt and output message under the given name.
-func (s *Session) Record(input []*Message, output *Message) {
-	messages := make([]*Message, 0, len(input)+1)
-	messages = append(messages, input...)
-	messages = append(messages, output)
-	s.History.Append(messages...)
+type Session interface {
+	ID() string
+	State() State
+	History() []*Message
+	Append(context.Context, State, []*Message) error
 }
 
 // NewSession creates a new Session instance with the provided ID.
-func NewSession(id string, states ...map[string]any) *Session {
-	session := &Session{ID: id}
+func NewSession(id string, states ...map[string]any) Session {
+	session := &sessionInMemory{id: id, state: State{}}
 	for _, state := range states {
 		for k, v := range state {
-			session.PutState(k, v)
+			session.state[k] = v
 		}
 	}
 	return session
@@ -49,22 +37,53 @@ func NewSession(id string, states ...map[string]any) *Session {
 type ctxSessionKey struct{}
 
 // NewSessionContext returns a new Context that carries value.
-func NewSessionContext(ctx context.Context, session *Session) context.Context {
+func NewSessionContext(ctx context.Context, session Session) context.Context {
 	return context.WithValue(ctx, ctxSessionKey{}, session)
 }
 
 // FromSessionContext retrieves the SessionContext from the context.
-func FromSessionContext(ctx context.Context) (*Session, bool) {
-	session, ok := ctx.Value(ctxSessionKey{}).(*Session)
+func FromSessionContext(ctx context.Context) (Session, bool) {
+	session, ok := ctx.Value(ctxSessionKey{}).(Session)
 	return session, ok
 }
 
 // EnsureSession retrieves the SessionContext from the context, or creates a new one if it doesn't exist.
-func EnsureSession(ctx context.Context) (*Session, context.Context) {
+func EnsureSession(ctx context.Context) (Session, context.Context) {
 	session, ok := FromSessionContext(ctx)
 	if !ok {
 		session = NewSession(uuid.NewString())
 		ctx = NewSessionContext(ctx, session)
 	}
 	return session, ctx
+}
+
+// sessionInMemory is an in-memory implementation of the Session interface.
+type sessionInMemory struct {
+	id      string
+	state   State
+	history []*Message
+	m       sync.RWMutex
+}
+
+func (s *sessionInMemory) ID() string {
+	return s.id
+}
+func (s *sessionInMemory) State() State {
+	s.m.RLock()
+	defer s.m.RUnlock()
+	return s.state
+}
+func (s *sessionInMemory) History() []*Message {
+	s.m.RLock()
+	defer s.m.RUnlock()
+	return s.history
+}
+func (s *sessionInMemory) Append(ctx context.Context, state State, history []*Message) error {
+	s.m.RLock()
+	defer s.m.RUnlock()
+	for k, v := range state {
+		s.state[k] = v
+	}
+	s.history = append(s.history, history...)
+	return nil
 }

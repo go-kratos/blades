@@ -123,10 +123,10 @@ func NewAgent(name string, opts ...Option) *Agent {
 	a := &Agent{
 		name:          name,
 		maxIterations: 10,
-		inputHandler: func(ctx context.Context, prompt *Prompt, state *State) (*Prompt, error) {
+		inputHandler: func(ctx context.Context, prompt *Prompt, state State) (*Prompt, error) {
 			return prompt, nil
 		},
-		outputHandler: func(ctx context.Context, output *Message, state *State) (*Message, error) {
+		outputHandler: func(ctx context.Context, output *Message, state State) (*Message, error) {
 			return output, nil
 		},
 	}
@@ -147,7 +147,7 @@ func (a *Agent) Description() string {
 }
 
 // buildContext builds the context for the Agent by embedding the AgentContext.
-func (a *Agent) buildContext(ctx context.Context) (context.Context, *Session) {
+func (a *Agent) buildContext(ctx context.Context) (context.Context, Session) {
 	session, ctx := EnsureSession(ctx)
 	return NewContext(ctx, &AgentContext{
 		Name:         a.name,
@@ -158,7 +158,7 @@ func (a *Agent) buildContext(ctx context.Context) (context.Context, *Session) {
 }
 
 // buildRequest builds the request for the Agent by combining system instructions and user messages.
-func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prompt) (*ModelRequest, error) {
+func (a *Agent) buildRequest(ctx context.Context, session Session, prompt *Prompt) (*ModelRequest, error) {
 	req := ModelRequest{
 		Model:        a.model,
 		Tools:        a.tools,
@@ -183,7 +183,7 @@ func (a *Agent) buildRequest(ctx context.Context, session *Session, prompt *Prom
 // Run runs the agent with the given prompt and options, returning the response message.
 func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
 	ctx, session := a.buildContext(ctx)
-	input, err := a.inputHandler(ctx, prompt, &session.State)
+	input, err := a.inputHandler(ctx, prompt, session.State())
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +198,7 @@ func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*
 // RunStream runs the agent with the given prompt and options, returning a streamable response.
 func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
 	ctx, session := a.buildContext(ctx)
-	input, err := a.inputHandler(ctx, prompt, &session.State)
+	input, err := a.inputHandler(ctx, prompt, session.State())
 	if err != nil {
 		return nil, err
 	}
@@ -211,19 +211,21 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 }
 
 // storeOutputToState stores the output of the Agent to the session state if an output key is defined.
-func (a *Agent) storeOutputToState(session *Session, res *ModelResponse) error {
-	if a.outputKey == "" {
-		return nil
-	}
+func (a *Agent) storeSession(ctx context.Context, session Session, req *ModelRequest, res *ModelResponse) error {
+	state := State{}
 	if a.outputSchema != nil {
 		value, err := ParseMessageState(res.Message, a.outputSchema)
 		if err != nil {
 			return err
 		}
-		session.PutState(a.outputKey, value)
+		state[a.outputKey] = value
 	} else {
-		session.PutState(a.outputKey, res.Message.Text())
+		state[a.outputKey] = res.Message.Text()
 	}
+	stores := make([]*Message, 0, len(req.Messages)+1)
+	stores = append(stores, req.Messages...)
+	stores = append(stores, res.Message)
+	session.Append(ctx, state, stores)
 	return nil
 }
 
@@ -262,7 +264,7 @@ func (a *Agent) executeTools(ctx context.Context, message *Message) (*Message, e
 }
 
 // handler constructs the default handlers for Run and Stream using the provider.
-func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
+func (a *Agent) handler(session Session, req *ModelRequest) Runnable {
 	handler := Runnable(&HandleFunc{
 		Handle: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
 			for i := 0; i < a.maxIterations; i++ {
@@ -278,11 +280,10 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
 					req.Messages = append(req.Messages, toolMessage)
 					continue // continue to the next iteration
 				}
-				if err := a.storeOutputToState(session, res); err != nil {
+				if err := a.storeSession(ctx, session, req, res); err != nil {
 					return nil, err
 				}
-				session.Record(req.Messages, res.Message)
-				return a.outputHandler(ctx, res.Message, &session.State)
+				return a.outputHandler(ctx, res.Message, session.State())
 			}
 			return nil, ErrMaxIterationsExceeded
 		},
@@ -317,12 +318,11 @@ func (a *Agent) handler(session *Session, req *ModelRequest) Runnable {
 						req.Messages = append(req.Messages, toolMessage)
 						continue // continue to the next iteration
 					}
-					if err := a.storeOutputToState(session, finalResponse); err != nil {
+					if err := a.storeSession(ctx, session, req, finalResponse); err != nil {
 						return err
 					}
-					session.Record(req.Messages, finalResponse.Message)
 					// handle the final response before sending
-					finalResponse.Message, err = a.outputHandler(ctx, finalResponse.Message, &session.State)
+					finalResponse.Message, err = a.outputHandler(ctx, finalResponse.Message, session.State())
 					if err != nil {
 						return err
 					}
