@@ -8,13 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// SessionStore defines the interface for session storage backends.
-type SessionStore interface {
-	Get(ctx context.Context, id string) (*Session, error)
-	Save(ctx context.Context, session *Session) error
-	Delete(ctx context.Context, id string) error
-}
-
 // Session holds the state of a flow along with a unique session ID.
 type Session interface {
 	ID() string
