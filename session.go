@@ -2,6 +2,7 @@ package blades
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/google/uuid"
@@ -76,11 +77,11 @@ func (s *sessionInMemory) State() State {
 func (s *sessionInMemory) History() []*Message {
 	s.m.RLock()
 	defer s.m.RUnlock()
-	return s.history
+	return slices.Clone(s.history)
 }
 func (s *sessionInMemory) Append(ctx context.Context, state State, history []*Message) error {
-	s.m.RLock()
-	defer s.m.RUnlock()
+	s.m.Lock()
+	defer s.m.Unlock()
 	for k, v := range state {
 		s.state[k] = v
 	}
