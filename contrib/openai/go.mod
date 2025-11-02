@@ -8,7 +8,6 @@ require (
 )
 
 require (
-	github.com/go-kratos/generics v0.0.0-20251029060051-60e1c39e5390 // indirect
 	github.com/google/jsonschema-go v0.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect

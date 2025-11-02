@@ -80,10 +80,6 @@ Do not add any other text before or after the code block.`),
 	if err != nil {
 		log.Fatal(err)
 	}
-	// Log the entire session state
-	session.State.Range(func(key string, value any) bool {
-		log.Println(key, value)
-		return true
-	})
+	log.Println(session.State())
 	log.Println(result.Text())
 }

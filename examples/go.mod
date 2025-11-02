@@ -8,16 +8,13 @@ replace (
 	github.com/go-kratos/blades/contrib/gemini => ../contrib/gemini
 	github.com/go-kratos/blades/contrib/openai => ../contrib/openai
 	github.com/go-kratos/blades/contrib/otel => ../contrib/otel
-	github.com/go-kratos/blades/contrib/s3 => ../contrib/s3
 )
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.39.3
 	github.com/go-kratos/blades v0.0.0
 	github.com/go-kratos/blades/contrib/gemini v0.0.0-00010101000000-000000000000
 	github.com/go-kratos/blades/contrib/openai v0.0.0-00010101000000-000000000000
 	github.com/go-kratos/blades/contrib/otel v0.0.0-00010101000000-000000000000
-	github.com/go-kratos/blades/contrib/s3 v0.0.0-00010101000000-000000000000
 	github.com/google/jsonschema-go v0.3.0
 	go.opentelemetry.io/otel v1.38.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.38.0
@@ -29,17 +26,6 @@ require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.8.4 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.2 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.10 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.10 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.10 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.10 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.10 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.5 // indirect
-	github.com/aws/smithy-go v1.23.1 // indirect
-	github.com/go-kratos/generics v0.0.0-20251029060051-60e1c39e5390 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect

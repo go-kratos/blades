@@ -211,7 +211,7 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 }
 
 // storeOutputToState stores the output of the Agent to the session state if an output key is defined.
-func (a *Agent) storeSession(ctx context.Context, session Session, req *ModelRequest, res *ModelResponse) error {
+func (a *Agent) storeSession(ctx context.Context, session Session, prompt *Prompt, res *ModelResponse) error {
 	state := State{}
 	if a.outputSchema != nil {
 		value, err := ParseMessageState(res.Message, a.outputSchema)
@@ -222,8 +222,8 @@ func (a *Agent) storeSession(ctx context.Context, session Session, req *ModelReq
 	} else {
 		state[a.outputKey] = res.Message.Text()
 	}
-	stores := make([]*Message, 0, len(req.Messages)+1)
-	stores = append(stores, req.Messages...)
+	stores := make([]*Message, 0, len(prompt.Messages)+1)
+	stores = append(stores, prompt.Messages...)
 	stores = append(stores, res.Message)
 	return session.Append(ctx, state, stores)
 }
@@ -279,7 +279,7 @@ func (a *Agent) handler(session Session, req *ModelRequest) Runnable {
 					req.Messages = append(req.Messages, toolMessage)
 					continue // continue to the next iteration
 				}
-				if err := a.storeSession(ctx, session, req, res); err != nil {
+				if err := a.storeSession(ctx, session, prompt, res); err != nil {
 					return nil, err
 				}
 				return a.outputHandler(ctx, res.Message, session.State())
@@ -317,7 +317,7 @@ func (a *Agent) handler(session Session, req *ModelRequest) Runnable {
 						req.Messages = append(req.Messages, toolMessage)
 						continue // continue to the next iteration
 					}
-					if err := a.storeSession(ctx, session, req, finalResponse); err != nil {
+					if err := a.storeSession(ctx, session, prompt, finalResponse); err != nil {
 						return err
 					}
 					// handle the final response before sending

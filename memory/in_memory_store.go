@@ -3,14 +3,15 @@ package memory
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/generics"
 )
 
 // InMemoryStore is an in-memory implementation of MemoryStore.
 type InMemoryStore struct {
-	memories generics.Slice[*Memory]
+	m        sync.RWMutex
+	memories []*Memory
 }
 
 // NewInMemoryStore creates a new instance of InMemoryStore.
@@ -20,15 +21,16 @@ func NewInMemoryStore() *InMemoryStore {
 
 // AddMemory adds a new memory to the in-memory store.
 func (s *InMemoryStore) AddMemory(ctx context.Context, m *Memory) error {
-	s.memories.Append(m)
+	s.m.Lock()
+	s.memories = append(s.memories, m)
+	s.m.Unlock()
 	return nil
 }
 
+// SaveSession saves the session's history as memories in the store.
 func (s *InMemoryStore) SaveSession(ctx context.Context, session blades.Session) error {
 	for _, m := range session.History() {
-		s.memories.Append(&Memory{
-			Content: m,
-		})
+		s.AddMemory(ctx, &Memory{Content: m})
 	}
 	return nil
 }
@@ -37,15 +39,14 @@ func (s *InMemoryStore) SaveSession(ctx context.Context, session blades.Session)
 func (s *InMemoryStore) SearchMemory(ctx context.Context, query string) ([]*Memory, error) {
 	// Simple case-insensitive substring match
 	words := strings.Fields(strings.ToLower(query))
-	sets := generics.NewSet[*Memory]()
-	s.memories.Range(func(i int, m *Memory) bool {
+	var result []*Memory
+	for _, m := range s.memories {
 		for _, word := range words {
 			if strings.Contains(strings.ToLower(m.Content.Text()), word) {
-				sets.Insert(m)
+				result = append(result, m)
 				break
 			}
 		}
-		return true
-	})
-	return sets.ToSlice(), nil
+	}
+	return result, nil
 }

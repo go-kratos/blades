@@ -11,7 +11,6 @@ require (
 )
 
 require (
-	github.com/go-kratos/generics v0.0.0-20251029060051-60e1c39e5390 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/jsonschema-go v0.2.3 // indirect
