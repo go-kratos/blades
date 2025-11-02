@@ -29,6 +29,8 @@ func (s *InMemoryStore) AddMemory(ctx context.Context, m *Memory) error {
 
 // SaveSession saves the session's history as memories in the store.
 func (s *InMemoryStore) SaveSession(ctx context.Context, session blades.Session) error {
+	s.m.Lock()
+	defer s.m.Unlock()
 	for _, m := range session.History() {
 		s.AddMemory(ctx, &Memory{Content: m})
 	}
@@ -37,6 +39,8 @@ func (s *InMemoryStore) SaveSession(ctx context.Context, session blades.Session)
 
 // SearchMemory searches for memories containing the given query string.
 func (s *InMemoryStore) SearchMemory(ctx context.Context, query string) ([]*Memory, error) {
+	s.m.RLock()
+	defer s.m.RUnlock()
 	// Simple case-insensitive substring match
 	words := strings.Fields(strings.ToLower(query))
 	var result []*Memory
