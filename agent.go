@@ -225,8 +225,7 @@ func (a *Agent) storeSession(ctx context.Context, session Session, req *ModelReq
 	stores := make([]*Message, 0, len(req.Messages)+1)
 	stores = append(stores, req.Messages...)
 	stores = append(stores, res.Message)
-	session.Append(ctx, state, stores)
-	return nil
+	return session.Append(ctx, state, stores)
 }
 
 func (a *Agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error) {
