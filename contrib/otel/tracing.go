@@ -80,7 +80,7 @@ func (t *tracing) start(ctx context.Context, ac *blades.AgentContext, opts ...bl
 	// if a session is present, add the conversation ID attribute
 	if s, ok := blades.FromSessionContext(ctx); ok {
 		span.SetAttributes(
-			semconv.GenAIConversationID(s.ID),
+			semconv.GenAIConversationID(s.ID()),
 		)
 	}
 	return ctx, span
@@ -92,13 +92,9 @@ func (t *tracing) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades
 	if !ok {
 		return t.next.Run(ctx, prompt, opts...)
 	}
-
 	ctx, span := t.start(ctx, ac, opts...)
-
 	msg, err := t.next.Run(ctx, prompt, opts...)
-
 	t.end(span, msg, err)
-
 	return msg, err
 }
 

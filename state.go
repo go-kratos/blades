@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -12,6 +13,11 @@ import (
 
 // State holds arbitrary key-value pairs representing the state.
 type State map[string]any
+
+// Clone creates a deep copy of the State.
+func (s State) Clone() State {
+	return State(maps.Clone(map[string]any(s)))
+}
 
 // StateInputHandler is a function type that processes input prompts with access to the current state.
 type StateInputHandler func(ctx context.Context, input *Prompt, state State) (*Prompt, error)

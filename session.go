@@ -71,7 +71,7 @@ func (s *sessionInMemory) ID() string {
 func (s *sessionInMemory) State() State {
 	s.m.RLock()
 	defer s.m.RUnlock()
-	return s.state
+	return s.state.Clone()
 }
 func (s *sessionInMemory) History() []*Message {
 	s.m.RLock()

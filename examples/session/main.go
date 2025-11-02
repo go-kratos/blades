@@ -4,10 +4,8 @@ import (
 	"context"
 	"log"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
-	"github.com/go-kratos/blades/contrib/s3"
 )
 
 func main() {
@@ -26,14 +24,6 @@ func main() {
 	// Run the agent
 	result, err := agent.Run(ctx, prompt)
 	if err != nil {
-		log.Fatal(err)
-	}
-	// Save session to S3
-	sessionStore, err := s3.NewSessionStore("blades", aws.Config{}) // TODO: add your AWS config here
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := sessionStore.Save(ctx, session); err != nil {
 		log.Fatal(err)
 	}
 	log.Println(result.Text())
