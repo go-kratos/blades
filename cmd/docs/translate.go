@@ -24,7 +24,7 @@ func translate(from string) error {
 	)
 	agent := blades.NewAgent(
 		"Document translator",
-		blades.WithModel("gpt-5"),
+		blades.WithModel(model),
 		blades.WithProvider(provider),
 	)
 	prompt, err := blades.NewPromptTemplate().
