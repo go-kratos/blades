@@ -24,6 +24,7 @@ var (
 		Use:   "translate",
 		Short: "Translate markdown file",
 		Long:  `Translate markdown file using OpenAI API`,
+		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := translate(args[0]); err != nil {
 				log.Fatal(err)
