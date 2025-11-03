@@ -14,13 +14,13 @@ type Criteria struct {
 }
 
 // NewCriteria creates a new Criteria evaluator.
-func NewCriteria(opts ...blades.Option) (*Criteria, error) {
+func NewCriteria(name string, opts ...blades.Option) (*Criteria, error) {
 	schema, err := jsonschema.For[Evaluation](nil)
 	if err != nil {
 		return nil, err
 	}
 	agent := blades.NewAgent(
-		"Evaluation Agent",
+		name,
 		append(opts, blades.WithOutputSchema(schema))...,
 	)
 	return &Criteria{agent: agent}, nil

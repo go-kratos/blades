@@ -9,9 +9,7 @@ import (
 	"github.com/go-kratos/blades/evaluate"
 )
 
-func buildPrompt(vars map[string]any) (*blades.Prompt, error) {
-	return blades.NewPromptTemplate().
-		System(`You are an expert evaluator. Your task is to assess the relevancy of the LLM's response to the given input prompt.
+const evaluationTmpl = `You are an expert evaluator. Your task is to assess the relevancy of the LLM's response to the given input prompt.
 Please follow these guidelines:
 1. Understand the Input Prompt: Carefully read and comprehend the input prompt to grasp what is being asked.
 2. Analyze the LLM's Response: Evaluate the response provided by the LLM in relation to the input prompt.
@@ -25,9 +23,7 @@ Below are the inputs:
 {
   "User prompt": {{ .Input }},
   "Agent response": {{ .Output }},
-}`, vars).
-		Build()
-}
+}`
 
 func main() {
 	qa := map[string]string{
@@ -35,6 +31,7 @@ func main() {
 		"Convert 5 kilometers to meters.": "60 km/h.",
 	}
 	r, err := evaluate.NewCriteria(
+		"Evaluation Agent",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(openai.NewChatProvider()),
 	)
@@ -43,10 +40,12 @@ func main() {
 	}
 
 	for q, a := range qa {
-		prompt, err := buildPrompt(map[string]any{
-			"Input":  q,
-			"Output": a,
-		})
+		prompt, err := blades.NewPromptTemplate().
+			System(evaluationTmpl, map[string]any{
+				"Input":  q,
+				"Output": a,
+			}).
+			Build()
 		if err != nil {
 			log.Fatal(err)
 		}
