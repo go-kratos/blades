@@ -41,7 +41,7 @@ func init() {
 }
 
 func main() {
-	if err := translateCmd.Execute(); err != nil {
+	if err := rootCmd.Execute(); err != nil {
 		log.Fatal(err)
 	}
 }
