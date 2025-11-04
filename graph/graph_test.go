@@ -110,6 +110,25 @@ func TestGraphCompileRejectsCyclesInDisconnectedComponent(t *testing.T) {
 	}
 }
 
+func TestGraphCompileRejectsDanglingNode(t *testing.T) {
+	g := NewGraph()
+
+	_ = g.AddNode("start", stepHandler("start"))
+	_ = g.AddNode("mid", stepHandler("mid"))
+	_ = g.AddNode("finish", stepHandler("finish"))
+	_ = g.AddEdge("start", "mid")
+	_ = g.AddEdge("mid", "finish")
+	// Add dangling node without outgoing edges
+	_ = g.AddNode("orphan", stepHandler("orphan"))
+
+	_ = g.SetEntryPoint("start")
+	_ = g.SetFinishPoint("finish")
+
+	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "has no outgoing edges") {
+		t.Fatalf("expected dangling node validation error, got %v", err)
+	}
+}
+
 func TestGraphSequentialOrder(t *testing.T) {
 	g := NewGraph(WithParallel(false))
 	execOrder := make([]string, 0, 4)

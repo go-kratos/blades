@@ -137,6 +137,15 @@ func (g *Graph) validateStructure() error {
 		return fmt.Errorf("graph: finish node '%s' cannot have outgoing edges", g.finishPoint)
 	}
 
+	for nodeName := range g.nodes {
+		if nodeName == g.finishPoint {
+			continue
+		}
+		if len(g.edges[nodeName]) == 0 {
+			return fmt.Errorf("graph: non-finish node '%s' has no outgoing edges", nodeName)
+		}
+	}
+
 	// Check for mixed conditional and unconditional edges from the same node
 	for from, edges := range g.edges {
 		hasConditional := false

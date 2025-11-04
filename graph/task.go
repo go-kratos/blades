@@ -6,6 +6,8 @@ import (
 	"sync"
 )
 
+const entryContributionParent = "__graph_entry__"
+
 // Task coordinates a single execution of the graph using a ready-queue based scheduler.
 // This implementation combines:
 // - Autogen's clean ready-queue + dependency counting approach
@@ -24,6 +26,8 @@ type Task struct {
 	remaining map[string]int
 	// Contributions: target -> parent -> state (for aggregation)
 	contributions map[string]map[string]State
+	// Number of contributions observed per node
+	received map[string]int
 	// In-flight: nodes currently executing
 	inFlight map[string]bool
 	// Visited: nodes that have completed
@@ -52,6 +56,7 @@ func newTask(e *Executor) *Task {
 		ready:         ready,
 		remaining:     remaining,
 		contributions: make(map[string]map[string]State),
+		received:      make(map[string]int),
 		inFlight:      make(map[string]bool, len(e.graph.nodes)),
 		visited:       make(map[string]bool, len(e.graph.nodes)),
 	}
@@ -88,28 +93,32 @@ type terminationResult struct {
 func (t *Task) addInitialContribution(initial State) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.addContributionLocked(t.executor.graph.entryPoint, "start", initial)
+	if t.addContributionLocked(t.executor.graph.entryPoint, entryContributionParent, initial) {
+		t.received[t.executor.graph.entryPoint]++
+	}
 }
 
 // checkTermination checks if execution should terminate and returns the result
 func (t *Task) checkTermination() (bool, terminationResult) {
 	t.mu.Lock()
+	err := t.err
+	finished := t.finished
+	var state State
+	if finished {
+		state = t.finishState.Clone()
+	}
+	t.mu.Unlock()
 
-	if t.err != nil {
-		err := t.err
-		t.mu.Unlock()
+	if err != nil {
 		t.wg.Wait()
 		return true, terminationResult{err: err}
 	}
 
-	if t.finished {
-		state := t.finishState.Clone()
-		t.mu.Unlock()
+	if finished {
 		t.wg.Wait()
 		return true, terminationResult{state: state}
 	}
 
-	t.mu.Unlock()
 	return false, terminationResult{}
 }
 
@@ -200,7 +209,6 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 		t.finishState = nextState.Clone()
 		t.readyCond.Broadcast()
 	}
-	edges := info.outEdges
 	t.mu.Unlock()
 
 	// If this is the finish node, we're done (no outgoing edges guaranteed by compile-time validation)
@@ -209,13 +217,19 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 	}
 
 	// Process outgoing edges (at least one edge guaranteed by compile-time validation)
-	t.processOutgoing(ctx, node, edges, nextState)
+	t.processOutgoing(ctx, node, info, nextState)
 }
 
-func (t *Task) processOutgoing(ctx context.Context, node string, edges []conditionalEdge, state State) {
-	matched := false
+func (t *Task) processOutgoing(ctx context.Context, node string, info *nodeInfo, state State) {
+	if !info.hasConditions {
+		for _, dest := range info.unconditionalDests {
+			t.satisfy(node, dest, state.Clone())
+		}
+		return
+	}
 
-	for _, edge := range edges {
+	matched := false
+	for _, edge := range info.outEdges {
 		if edge.condition == nil || edge.condition(ctx, state) {
 			matched = true
 			t.satisfy(node, edge.to, state.Clone())
@@ -250,7 +264,9 @@ func (t *Task) satisfy(from, to string, state State) {
 
 	// Add contribution if state provided
 	if state != nil {
-		t.addContributionLocked(to, from, state)
+		if t.addContributionLocked(to, from, state) {
+			t.received[to]++
+		}
 	}
 
 	// Decrement remaining count
@@ -260,15 +276,14 @@ func (t *Task) satisfy(from, to string, state State) {
 
 	// Check if node is ready
 	if t.remaining[to] == 0 && !t.visited[to] && !t.inFlight[to] {
-		hasContributions := len(t.contributions[to]) > 0
-		if !hasContributions {
+		if t.received[to] == 0 {
 			// All predecessors skipped - mark as skipped and propagate skip
 			t.visited[to] = true
-			edges := info.outEdges
+			delete(t.contributions, to)
+			delete(t.received, to)
 			t.readyCond.Signal()
 			t.mu.Unlock()
-			// Propagate skip to all children
-			for _, edge := range edges {
+			for _, edge := range info.outEdges {
 				t.satisfy(to, edge.to, nil)
 			}
 			return
@@ -302,6 +317,7 @@ func (t *Task) buildAggregateLocked(node string) State {
 	state := State{}
 	contribs, ok := t.contributions[node]
 	if !ok || len(contribs) == 0 {
+		delete(t.received, node)
 		return state
 	}
 
@@ -309,34 +325,29 @@ func (t *Task) buildAggregateLocked(node string) State {
 	info := t.executor.nodeInfos[node]
 	order := info.predecessors
 
-	// Merge in predecessor order for determinism
+	// Merge in predecessor order for determinism, including the synthetic entry parent
 	for _, parent := range order {
 		if contribution, exists := contribs[parent]; exists {
 			state = mergeStates(state, contribution)
-			delete(contribs, parent)
 		}
-	}
-
-	// Merge any remaining contributions (e.g., initial state for entry point)
-	// Entry point has no predecessors but receives initial contribution from "start"
-	for _, contribution := range contribs {
-		state = mergeStates(state, contribution)
 	}
 
 	// Clean up contributions
 	delete(t.contributions, node)
+	delete(t.received, node)
 	return state
 }
 
-func (t *Task) addContributionLocked(node, parent string, state State) {
+func (t *Task) addContributionLocked(node, parent string, state State) bool {
 	if t.contributions[node] == nil {
 		t.contributions[node] = make(map[string]State)
 	}
 	if _, exists := t.contributions[node][parent]; exists {
 		// Ignore duplicate contribution
-		return
+		return false
 	}
 	t.contributions[node][parent] = state
+	return true
 }
 
 func mergeStates(base State, updates ...State) State {
