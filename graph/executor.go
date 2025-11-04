@@ -27,23 +27,18 @@ func NewExecutor(g *Graph) *Executor {
 	// Build predecessors map for deterministic state aggregation
 	predecessors := make(map[string][]string, len(g.nodes))
 	dependencyCounts := make(map[string]int)
-
 	for from, edges := range g.edges {
 		for _, edge := range edges {
 			predecessors[edge.to] = append(predecessors[edge.to], from)
 			dependencyCounts[edge.to]++
 		}
 	}
-
-	entry := g.entryPoint
-	predecessors[entry] = append([]string{entryContributionParent}, predecessors[entry]...)
-
+	predecessors[g.entryPoint] = append([]string{entryContributionParent}, predecessors[g.entryPoint]...)
 	// Sort predecessors for deterministic state aggregation
 	for node, parents := range predecessors {
 		sort.Strings(parents)
 		predecessors[node] = parents
 	}
-
 	// Build nodeInfo map with precomputed data
 	nodeInfos := make(map[string]*nodeInfo, len(g.nodes))
 	for nodeName := range g.nodes {
@@ -57,8 +52,7 @@ func NewExecutor(g *Graph) *Executor {
 				unconditionalDests = append(unconditionalDests, edge.to)
 			}
 		}
-
-		info := &nodeInfo{
+		node := &nodeInfo{
 			outEdges:           rawEdges,
 			unconditionalDests: unconditionalDests,
 			predecessors:       predecessors[nodeName],
@@ -66,9 +60,8 @@ func NewExecutor(g *Graph) *Executor {
 			isFinish:           nodeName == g.finishPoint,
 			hasConditions:      hasConditions,
 		}
-		nodeInfos[nodeName] = info
+		nodeInfos[nodeName] = node
 	}
-
 	return &Executor{
 		graph:     g,
 		nodeInfos: nodeInfos,

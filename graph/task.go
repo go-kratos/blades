@@ -46,14 +46,9 @@ func newTask(e *Executor) *Task {
 			remaining[nodeName] = info.dependencies
 		}
 	}
-
-	// Initialize ready queue with nodes that have no dependencies
-	ready := make([]string, 0, 4)
-	ready = append(ready, e.graph.entryPoint)
-
 	task := &Task{
 		executor:      e,
-		ready:         ready,
+		ready:         make([]string, 0, 4),
 		remaining:     remaining,
 		contributions: make(map[string]map[string]State),
 		received:      make(map[string]int),
@@ -64,17 +59,15 @@ func newTask(e *Executor) *Task {
 	return task
 }
 
-func (t *Task) run(ctx context.Context, initial State) (State, error) {
+func (t *Task) run(ctx context.Context, state State) (State, error) {
 	// Add initial contribution to entry point
-	t.addInitialContribution(initial)
-
+	t.addInitialContribution(state)
 	// Main scheduling loop
 	for {
 		// Check termination conditions
 		if shouldStop, result := t.checkTermination(); shouldStop {
 			return result.state, result.err
 		}
-
 		// Schedule next ready node
 		if !t.scheduleNext(ctx) {
 			// No ready nodes, wait for in-flight to complete
@@ -96,6 +89,7 @@ func (t *Task) addInitialContribution(initial State) {
 	if t.addContributionLocked(t.executor.graph.entryPoint, entryContributionParent, initial) {
 		t.received[t.executor.graph.entryPoint]++
 	}
+	t.ready = append(t.ready, t.executor.graph.entryPoint)
 }
 
 // checkTermination checks if execution should terminate and returns the result
