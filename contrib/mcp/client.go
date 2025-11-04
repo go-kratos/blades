@@ -127,6 +127,8 @@ func (c *Client) ListTools(ctx context.Context) ([]*mcp.Tool, error) {
 
 // Resolve implements the tools.Resolver interface.
 func (c *Client) Resolve(ctx context.Context) ([]*tools.Tool, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+	defer cancel()
 	mcpTools, err := c.ListTools(ctx)
 	if err != nil {
 		return nil, err
@@ -164,6 +166,8 @@ func (c *Client) handler(name string) tools.HandleFunc[string, string] {
 
 // CallTool calls a tool on the server.
 func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (*mcp.CallToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+	defer cancel()
 	if !c.connected {
 		if err := c.Connect(ctx); err != nil {
 			return nil, err
