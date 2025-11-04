@@ -242,20 +242,21 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 }
 
 // storeOutputToState stores the output of the Agent to the session state if an output key is defined.
-func (a *Agent) storeSession(ctx context.Context, session Session, prompt *Prompt, res *ModelResponse) error {
+func (a *Agent) storeSession(ctx context.Context, session Session, userMessages, toolMessages []*Message, assistantMessage *Message) error {
 	state := State{}
 	if a.outputSchema != nil {
-		value, err := ParseMessageState(res.Message, a.outputSchema)
+		value, err := ParseMessageState(assistantMessage, a.outputSchema)
 		if err != nil {
 			return err
 		}
 		state[a.outputKey] = value
 	} else {
-		state[a.outputKey] = res.Message.Text()
+		state[a.outputKey] = assistantMessage.Text()
 	}
-	stores := make([]*Message, 0, len(prompt.Messages)+1)
-	stores = append(stores, prompt.Messages...)
-	stores = append(stores, res.Message)
+	stores := make([]*Message, len(userMessages)+len(toolMessages)+1)
+	stores = append(stores, userMessages...)
+	stores = append(stores, toolMessages...)
+	stores = append(stores, assistantMessage)
 	return session.Append(ctx, state, stores)
 }
 
@@ -303,6 +304,7 @@ func (a *Agent) executeTools(ctx context.Context, message *Message) (*Message, e
 func (a *Agent) handler(session Session, req *ModelRequest) Runnable {
 	handler := Runnable(&HandleFunc{
 		Handle: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
+			var toolMessages []*Message
 			for i := 0; i < a.maxIterations; i++ {
 				res, err := a.provider.Generate(ctx, req, opts...)
 				if err != nil {
@@ -314,9 +316,10 @@ func (a *Agent) handler(session Session, req *ModelRequest) Runnable {
 						return nil, err
 					}
 					req.Messages = append(req.Messages, toolMessage)
+					toolMessages = append(toolMessages, toolMessage)
 					continue // continue to the next iteration
 				}
-				if err := a.storeSession(ctx, session, prompt, res); err != nil {
+				if err := a.storeSession(ctx, session, prompt.Messages, toolMessages, res.Message); err != nil {
 					return nil, err
 				}
 				return a.outputHandler(ctx, res.Message, session.State())
@@ -326,6 +329,7 @@ func (a *Agent) handler(session Session, req *ModelRequest) Runnable {
 		HandleStream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
 			pipe := NewStreamPipe[*Message]()
 			pipe.Go(func() error {
+				var toolMessages []*Message
 				for i := 0; i < a.maxIterations; i++ {
 					stream, err := a.provider.NewStream(ctx, req, opts...)
 					if err != nil {
@@ -352,9 +356,10 @@ func (a *Agent) handler(session Session, req *ModelRequest) Runnable {
 							return err
 						}
 						req.Messages = append(req.Messages, toolMessage)
+						toolMessages = append(toolMessages, toolMessage)
 						continue // continue to the next iteration
 					}
-					if err := a.storeSession(ctx, session, prompt, finalResponse); err != nil {
+					if err := a.storeSession(ctx, session, prompt.Messages, toolMessages, finalResponse.Message); err != nil {
 						return err
 					}
 					// handle the final response before sending
