@@ -116,6 +116,7 @@ func (g *Graph) validate() error {
 	if _, ok := g.nodes[g.finishPoint]; !ok {
 		return fmt.Errorf("graph: end node not found: %s", g.finishPoint)
 	}
+
 	for from, edges := range g.edges {
 		if _, ok := g.nodes[from]; !ok {
 			return fmt.Errorf("graph: edge from unknown node: %s", from)
@@ -124,6 +125,31 @@ func (g *Graph) validate() error {
 			if _, ok := g.nodes[edge.to]; !ok {
 				return fmt.Errorf("graph: edge to unknown node: %s", edge.to)
 			}
+		}
+	}
+	return nil
+}
+
+// validateStructure performs structural validations that should run after cycle detection.
+func (g *Graph) validateStructure() error {
+	// Validate that finish node has no outgoing edges
+	if len(g.edges[g.finishPoint]) > 0 {
+		return fmt.Errorf("graph: finish node '%s' cannot have outgoing edges", g.finishPoint)
+	}
+
+	// Check for mixed conditional and unconditional edges from the same node
+	for from, edges := range g.edges {
+		hasConditional := false
+		hasUnconditional := false
+		for _, edge := range edges {
+			if edge.condition == nil {
+				hasUnconditional = true
+			} else {
+				hasConditional = true
+			}
+		}
+		if hasConditional && hasUnconditional {
+			return fmt.Errorf("graph: node '%s' has mixed conditional and unconditional edges", from)
 		}
 	}
 	return nil
@@ -207,13 +233,20 @@ func (g *Graph) ensureAcyclic() error {
 // Nodes wait for all activated incoming edges to complete before executing (join semantics).
 // An edge is "activated" when its source node executes and chooses that edge.
 func (g *Graph) Compile() (*Executor, error) {
+	// First do basic validation
 	if err := g.validate(); err != nil {
 		return nil, err
 	}
+	// Check for cycles before other structural checks
 	if err := g.ensureAcyclic(); err != nil {
 		return nil, err
 	}
+	// Check reachability
 	if err := g.ensureReachable(); err != nil {
+		return nil, err
+	}
+	// Final structural validations
+	if err := g.validateStructure(); err != nil {
 		return nil, err
 	}
 	return NewExecutor(g), nil

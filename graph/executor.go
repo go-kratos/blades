@@ -10,6 +10,7 @@ type nodeInfo struct {
 	outEdges     []conditionalEdge // Precomputed outgoing edges
 	predecessors []string          // Ordered list of predecessors
 	depCount     int               // Number of dependencies (predecessor count)
+	isFinish     bool              // Whether this is the finish node
 }
 
 // Executor represents a compiled graph ready for execution. It is safe for
@@ -47,6 +48,7 @@ func NewExecutor(g *Graph) *Executor {
 			outEdges:     cloneEdges(g.edges[nodeName]),
 			predecessors: predecessors[nodeName],
 			depCount:     dependencies[nodeName],
+			isFinish:     nodeName == g.finishPoint,
 		}
 		nodeInfos[nodeName] = info
 	}
@@ -57,17 +59,6 @@ func NewExecutor(g *Graph) *Executor {
 		predecessors: predecessors,
 		dependencies: dependencies,
 	}
-}
-
-func cloneDependencies(src map[string]int) map[string]int {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make(map[string]int, len(src))
-	for node, count := range src {
-		dst[node] = count
-	}
-	return dst
 }
 
 // Execute runs the graph task starting from the given state.

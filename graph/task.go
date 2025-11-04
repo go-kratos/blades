@@ -192,38 +192,31 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 
 	nextState = nextState.Clone()
 
-	// Mark as visited
+	// Mark as visited and get precomputed node info
 	t.mu.Lock()
 	t.visited[node] = true
-	isFinish := node == t.executor.graph.finishPoint
-	if isFinish && !t.finished {
+	info := t.executor.nodeInfos[node]
+	if info.isFinish && !t.finished {
 		t.finished = true
 		t.finishState = nextState.Clone()
 		if t.readyCond != nil {
 			t.readyCond.Broadcast()
 		}
 	}
-	// Use precomputed edges from nodeInfo
-	info := t.executor.nodeInfos[node]
 	edges := info.outEdges
 	t.mu.Unlock()
 
-	// If this is the finish node, we're done
-	if isFinish {
+	// If this is the finish node, we're done (no outgoing edges guaranteed by compile-time validation)
+	if info.isFinish {
 		return
 	}
 
-	// Process outgoing edges
+	// Process outgoing edges (at least one edge guaranteed by compile-time validation)
 	t.processOutgoing(ctx, node, edges, nextState)
 }
 
 func (t *Task) processOutgoing(ctx context.Context, node string, edges []conditionalEdge, state State) {
-	if len(edges) == 0 {
-		t.fail(fmt.Errorf("graph: no outgoing edges from node %s", node))
-		return
-	}
-
-	// Simplified edge evaluation: each edge is independent
+	// Evaluate edges: each edge is independent
 	matched, skipped := t.evaluateEdges(ctx, edges, state)
 
 	// Validate: at least one edge must match
@@ -234,12 +227,12 @@ func (t *Task) processOutgoing(ctx context.Context, node string, edges []conditi
 
 	// Register skips (this will trigger skip propagation)
 	for _, edge := range skipped {
-		t.registerSkip(ctx, node, edge.to)
+		t.registerSkip(node, edge.to)
 	}
 
 	// Propagate state along matched edges
 	for _, edge := range matched {
-		t.propagate(ctx, node, edge.to, state.Clone())
+		t.propagate(node, edge.to, state.Clone())
 	}
 }
 
@@ -257,7 +250,7 @@ func (t *Task) evaluateEdges(ctx context.Context, edges []conditionalEdge, state
 }
 
 // propagate sends state contribution along an edge and schedules target if ready.
-func (t *Task) propagate(ctx context.Context, from, to string, state State) {
+func (t *Task) propagate(from, to string, state State) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -281,7 +274,7 @@ func (t *Task) propagate(ctx context.Context, from, to string, state State) {
 
 // registerSkip marks that a parent skipped a target node and propagates skip if needed.
 // This implements automatic skip propagation like the original Blades design.
-func (t *Task) registerSkip(ctx context.Context, parent, target string) {
+func (t *Task) registerSkip(parent, target string) {
 	t.mu.Lock()
 
 	if t.visited[target] {
@@ -330,7 +323,7 @@ func (t *Task) registerSkip(ctx context.Context, parent, target string) {
 			t.mu.Unlock()
 			// Propagate skip to all children
 			for _, edge := range edges {
-				t.registerSkip(ctx, target, edge.to)
+				t.registerSkip(target, edge.to)
 			}
 			return
 		}

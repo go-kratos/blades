@@ -184,7 +184,10 @@ func TestGraphConditionalRouting(t *testing.T) {
 		steps, _ := state[stepsKey].([]string)
 		return len(steps) == 2 && steps[1] == "B"
 	}))
-	_ = g.AddEdge("B", "D")
+	_ = g.AddEdge("B", "D", WithEdgeCondition(func(_ context.Context, state State) bool {
+		steps, _ := state[stepsKey].([]string)
+		return !(len(steps) == 2 && steps[1] == "B")
+	}))
 	_ = g.AddEdge("D", "C") // D also needs to eventually reach C (the finish point)
 
 	_ = g.SetEntryPoint("A")
@@ -300,7 +303,9 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 	g.AddNode("conditional", record("conditional", nil))
 	g.AddNode("join", record("join", nil))
 
-	g.AddEdge("start", "always")
+	g.AddEdge("start", "always", WithEdgeCondition(func(_ context.Context, state State) bool {
+		return true // Always execute
+	}))
 	g.AddEdge("start", "conditional", WithEdgeCondition(func(_ context.Context, state State) bool {
 		allow, _ := state["allow_conditional"].(bool)
 		return allow
@@ -889,7 +894,9 @@ func TestGraphParallelJoinIgnoresInactiveBranches(t *testing.T) {
 	g.AddNode("branch_b", record("branch_b", nil))
 	g.AddNode("join", record("join", nil))
 
-	g.AddEdge("start", "branch_a")
+	g.AddEdge("start", "branch_a", WithEdgeCondition(func(_ context.Context, state State) bool {
+		return true // Always execute
+	}))
 	g.AddEdge("start", "branch_b", WithEdgeCondition(func(_ context.Context, state State) bool {
 		enabled, _ := state["enable_b"].(bool)
 		return enabled
