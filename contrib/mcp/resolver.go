@@ -68,7 +68,6 @@ func (r *ToolsResolver) Resolve(ctx context.Context) ([]*tools.Tool, error) {
 			}
 			allTools = append(allTools, tool)
 		}
-		r.clients = append(r.clients, client)
 	}
 	// If we collected errors but also got some tools, log errors but continue
 	if len(errors) > 0 {
