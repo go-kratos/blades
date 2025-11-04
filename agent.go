@@ -169,30 +169,30 @@ func (a *Agent) buildContext(ctx context.Context) (context.Context, Session) {
 
 // resolveTools combines static tools with dynamically resolved tools.
 func (a *Agent) resolveTools(ctx context.Context) ([]*tools.Tool, error) {
-	allTools := make([]*tools.Tool, 0, len(a.tools))
-	allTools = append(allTools, a.tools...)
-
+	tools := make([]*tools.Tool, 0, len(a.tools))
+	if len(a.tools) > 0 {
+		tools = append(tools, a.tools...)
+	}
 	if a.toolsResolver != nil {
 		resolved, err := a.toolsResolver.Resolve(ctx)
 		if err != nil {
 			return nil, err
 		}
-		allTools = append(allTools, resolved...)
+		tools = append(tools, resolved...)
 	}
-
-	return allTools, nil
+	return tools, nil
 }
 
 // buildRequest builds the request for the Agent by combining system instructions and user messages.
 func (a *Agent) buildRequest(ctx context.Context, _ Session, prompt *Prompt) (*ModelRequest, error) {
-	allTools, err := a.resolveTools(ctx)
+	tools, err := a.resolveTools(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	req := ModelRequest{
 		Model:        a.model,
-		Tools:        allTools,
+		Tools:        tools,
 		InputSchema:  a.inputSchema,
 		OutputSchema: a.outputSchema,
 	}
@@ -260,13 +260,13 @@ func (a *Agent) storeSession(ctx context.Context, session Session, prompt *Promp
 }
 
 func (a *Agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error) {
-	allTools, err := a.resolveTools(ctx)
+	tools, err := a.resolveTools(ctx)
 	if err != nil {
 		return part, err
 	}
 
 	// Search through all available tools (static + resolved)
-	for _, tool := range allTools {
+	for _, tool := range tools {
 		if tool.Name == part.Name {
 			response, err := tool.Handler.Handle(ctx, part.Request)
 			if err != nil {

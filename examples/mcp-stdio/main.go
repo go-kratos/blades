@@ -6,17 +6,15 @@ import (
 	"log"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/contrib/mcp"
 	"github.com/go-kratos/blades/contrib/openai"
-	"github.com/go-kratos/blades/tools/mcp"
 )
 
 func main() {
-	ctx := context.Background()
-
 	// 1. Configure MCP server to use the official time server
 	// This uses the @modelcontextprotocol/server-time from npm
 	mcpResolver, err := mcp.NewToolsResolver(
-		mcp.ServerConfig{
+		mcp.ClientConfig{
 			Name:      "time",
 			Transport: mcp.TransportStdio,
 			Command:   "npx",
@@ -34,7 +32,7 @@ func main() {
 	// 3. Create Agent with MCP tools resolver
 	// The resolver will dynamically provide tools from the MCP server
 	agent := blades.NewAgent("time-assistant",
-		blades.WithModel("gpt-4"),
+		blades.WithModel("gpt-5"),
 		blades.WithProvider(openaiProvider),
 		blades.WithInstructions("You are a helpful assistant that can tell time in different timezones."),
 		blades.WithToolsResolver(mcpResolver),
@@ -48,6 +46,7 @@ func main() {
 	fmt.Println("Asking agent: What time is it right now?")
 	fmt.Println("--------------------------------------------------")
 
+	ctx := context.Background()
 	result, err := agent.Run(ctx, prompt)
 	if err != nil {
 		log.Fatalf("Agent run failed: %v", err)
