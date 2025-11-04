@@ -36,7 +36,7 @@ var (
 
 func init() {
 	translateCmd.Flags().StringVarP(&to, "to", "t", "en", "Target language for translation")
-	translateCmd.Flags().StringVarP(&output, "output", "o", "./src/content/docs", "Output directory for translated files")
+	translateCmd.Flags().StringVarP(&output, "output", "o", "", "Output directory for translated files")
 	translateCmd.Flags().StringVarP(&model, "model", "m", os.Getenv("OPENAI_MODEL"), "OpenAI model to use for translation")
 	translateCmd.Flags().StringVarP(&baseURL, "base-url", "b", os.Getenv("OPENAI_BASE_URL"), "Base URL for OpenAI API")
 	translateCmd.Flags().StringVarP(&apiKey, "api-key", "k", os.Getenv("OPENAI_API_KEY"), "API key for OpenAI")

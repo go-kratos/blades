@@ -49,7 +49,7 @@ func translate(from string) error {
 	}
 
 	dir, _ := filepath.Split(translateOutput(from, output))
-	if _, err = os.Stat(dir); os.IsNotExist(err) {
+	if _, err = os.Stat(dir); os.IsNotExist(err) && dir != "" {
 		if err = os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
