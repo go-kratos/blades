@@ -37,10 +37,12 @@ type Task struct {
 }
 
 func newTask(e *Executor) *Task {
-	// Initialize remaining dependencies count for each node
+	// Initialize remaining dependencies count for each node from precomputed nodeInfo
 	remaining := make(map[string]int, len(e.graph.nodes))
-	for target, count := range e.dependencies {
-		remaining[target] = count
+	for nodeName, info := range e.nodeInfos {
+		if info.depCount > 0 {
+			remaining[nodeName] = info.depCount
+		}
 	}
 
 	// Initialize ready queue with nodes that have no dependencies

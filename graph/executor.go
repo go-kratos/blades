@@ -16,22 +16,20 @@ type nodeInfo struct {
 // Executor represents a compiled graph ready for execution. It is safe for
 // concurrent use; each Execute call runs on an isolated execution context.
 type Executor struct {
-	graph        *Graph
-	nodeInfos    map[string]*nodeInfo // Precomputed node information
-	predecessors map[string][]string  // Kept for backwards compatibility
-	dependencies map[string]int       // Kept for backwards compatibility
+	graph     *Graph
+	nodeInfos map[string]*nodeInfo // Precomputed node information
 }
 
 // NewExecutor creates a new Executor for the given graph.
 func NewExecutor(g *Graph) *Executor {
+	// Build predecessors map for deterministic state aggregation
 	predecessors := make(map[string][]string)
-	dependencies := make(map[string]int)
+	depCount := make(map[string]int)
 
-	// Build predecessors and dependencies
 	for from, edges := range g.edges {
 		for _, edge := range edges {
 			predecessors[edge.to] = append(predecessors[edge.to], from)
-			dependencies[edge.to]++
+			depCount[edge.to]++
 		}
 	}
 
@@ -47,17 +45,15 @@ func NewExecutor(g *Graph) *Executor {
 		info := &nodeInfo{
 			outEdges:     cloneEdges(g.edges[nodeName]),
 			predecessors: predecessors[nodeName],
-			depCount:     dependencies[nodeName],
+			depCount:     depCount[nodeName],
 			isFinish:     nodeName == g.finishPoint,
 		}
 		nodeInfos[nodeName] = info
 	}
 
 	return &Executor{
-		graph:        g,
-		nodeInfos:    nodeInfos,
-		predecessors: predecessors,
-		dependencies: dependencies,
+		graph:     g,
+		nodeInfos: nodeInfos,
 	}
 }
 
