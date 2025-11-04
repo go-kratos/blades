@@ -10,7 +10,7 @@ type nodeInfo struct {
 	outEdges           []conditionalEdge // Precomputed outgoing edges
 	unconditionalDests []string          // Target names for unconditional edges
 	predecessors       []string          // Ordered list of predecessors
-	depCount           int               // Number of dependencies (predecessor count)
+	dependencies       int               // Number of dependencies (predecessor count)
 	isFinish           bool              // Whether this is the finish node
 	hasConditions      bool              // Whether outgoing edges carry conditions
 }
@@ -26,12 +26,12 @@ type Executor struct {
 func NewExecutor(g *Graph) *Executor {
 	// Build predecessors map for deterministic state aggregation
 	predecessors := make(map[string][]string, len(g.nodes))
-	depCount := make(map[string]int)
+	dependencyCounts := make(map[string]int)
 
 	for from, edges := range g.edges {
 		for _, edge := range edges {
 			predecessors[edge.to] = append(predecessors[edge.to], from)
-			depCount[edge.to]++
+			dependencyCounts[edge.to]++
 		}
 	}
 
@@ -62,7 +62,7 @@ func NewExecutor(g *Graph) *Executor {
 			outEdges:           rawEdges,
 			unconditionalDests: unconditionalDests,
 			predecessors:       predecessors[nodeName],
-			depCount:           depCount[nodeName],
+			dependencies:       dependencyCounts[nodeName],
 			isFinish:           nodeName == g.finishPoint,
 			hasConditions:      hasConditions,
 		}

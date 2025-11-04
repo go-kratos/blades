@@ -42,8 +42,8 @@ func newTask(e *Executor) *Task {
 	// Initialize remaining dependencies count for each node from precomputed nodeInfo
 	remaining := make(map[string]int, len(e.graph.nodes))
 	for nodeName, info := range e.nodeInfos {
-		if info.depCount > 0 {
-			remaining[nodeName] = info.depCount
+		if info.dependencies > 0 {
+			remaining[nodeName] = info.dependencies
 		}
 	}
 
@@ -103,10 +103,7 @@ func (t *Task) checkTermination() (bool, terminationResult) {
 	t.mu.Lock()
 	err := t.err
 	finished := t.finished
-	var state State
-	if finished {
-		state = t.finishState.Clone()
-	}
+	state := t.finishState
 	t.mu.Unlock()
 
 	if err != nil {
@@ -198,15 +195,13 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 		return
 	}
 
-	nextState = nextState.Clone()
-
 	// Mark as visited and get precomputed node info
 	t.mu.Lock()
 	t.visited[node] = true
 	info := t.executor.nodeInfos[node]
 	if info.isFinish && !t.finished {
 		t.finished = true
-		t.finishState = nextState.Clone()
+		t.finishState = nextState
 		t.readyCond.Broadcast()
 	}
 	t.mu.Unlock()
@@ -256,7 +251,7 @@ func (t *Task) satisfy(from, to string, state State) {
 	}
 
 	info := t.executor.nodeInfos[to]
-	if info.depCount == 0 {
+	if info.dependencies == 0 {
 		// No predecessors, nothing to track
 		t.mu.Unlock()
 		return
