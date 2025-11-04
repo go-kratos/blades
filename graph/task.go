@@ -255,9 +255,6 @@ func (t *Task) satisfy(from, to string, state State) {
 
 	// Early exit if already visited
 	if t.visited[to] {
-		if t.readyCond != nil {
-			t.readyCond.Signal()
-		}
 		t.mu.Unlock()
 		return
 	}
@@ -301,10 +298,6 @@ func (t *Task) satisfy(from, to string, state State) {
 		if t.readyCond != nil {
 			t.readyCond.Signal()
 		}
-	} else {
-		if t.readyCond != nil {
-			t.readyCond.Signal()
-		}
 	}
 	t.mu.Unlock()
 }
@@ -323,9 +316,6 @@ func (t *Task) fail(err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.err != nil {
-		if t.readyCond != nil {
-			t.readyCond.Broadcast()
-		}
 		return
 	}
 	t.err = err
