@@ -70,8 +70,11 @@ func (r *ToolsResolver) Resolve(ctx context.Context) ([]*tools.Tool, error) {
 		}
 	}
 	// If we collected errors but also got some tools, log errors but continue
-	if len(errors) > 0 {
+	if len(errors) > 0 && len(allTools) == 0 {
 		return nil, fmt.Errorf("failed to load any tools: %v", errors)
+	}
+	if len(errors) > 0 {
+		fmt.Printf("Some errors occurred while loading tools: %v\n", errors)
 	}
 	r.tools = allTools
 	r.loaded = true
