@@ -198,79 +198,15 @@ func (t *Task) processOutgoing(ctx context.Context, node string, edges []conditi
 }
 
 // evaluateEdges evaluates all edges and returns matched and skipped edges.
-// Simplified from original but maintains compatibility with fallback edges.
+// Each edge is evaluated independently based on its condition.
 func (t *Task) evaluateEdges(ctx context.Context, edges []conditionalEdge, state State) (matched, skipped []conditionalEdge) {
-	if len(edges) == 0 {
-		return nil, nil
-	}
-
-	// Fast-path: all unconditional
-	allUnconditional := true
-	for _, e := range edges {
-		if e.condition != nil {
-			allUnconditional = false
-			break
-		}
-	}
-	if allUnconditional {
-		return cloneEdges(edges), nil
-	}
-
-	// Collect leading unconditional edges
-	leading := 0
-	for leading < len(edges) && edges[leading].condition == nil {
-		leading++
-	}
-	matched = cloneEdges(edges[:leading])
-	if leading == len(edges) {
-		return matched, nil
-	}
-
-	// Evaluate remaining edges: conditional(s) and possible unconditional fallback
-	rest := edges[leading:]
-	var restMatched []conditionalEdge
-	var restSkipped []conditionalEdge
-	hasFallback := false
-
-	for i, e := range rest {
-		if e.condition == nil { // unconditional fallback
-			restMatched = append(restMatched, e)
-			hasFallback = true
-			// Everything after fallback is skipped
-			if i+1 < len(rest) {
-				restSkipped = append(restSkipped, cloneEdges(rest[i+1:])...)
-			}
-			break
-		}
-		if e.condition(ctx, state) {
-			restMatched = append(restMatched, e)
-			// If a fallback exists later, prefer first match then fallback behavior
-			if i+1 < len(rest) {
-				for _, tr := range rest[i+1:] {
-					if tr.condition == nil {
-						hasFallback = true
-						restSkipped = append(restSkipped, cloneEdges(rest[i+1:])...)
-						break
-					}
-				}
-				if hasFallback {
-					break
-				}
-			}
+	for _, edge := range edges {
+		if edge.condition == nil || edge.condition(ctx, state) {
+			matched = append(matched, edge)
 		} else {
-			restSkipped = append(restSkipped, e)
+			skipped = append(skipped, edge)
 		}
 	}
-
-	if len(matched)+len(restMatched) == 0 {
-		return nil, nil
-	}
-	// When an unconditional fallback follows conditionals, only the first match is used.
-	if hasFallback && len(restMatched) > 1 {
-		restMatched = restMatched[:1]
-	}
-	matched = append(matched, restMatched...)
-	skipped = restSkipped
 	return matched, skipped
 }
 

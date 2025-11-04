@@ -185,6 +185,7 @@ func TestGraphConditionalRouting(t *testing.T) {
 		return len(steps) == 2 && steps[1] == "B"
 	}))
 	_ = g.AddEdge("B", "D")
+	_ = g.AddEdge("D", "C") // D also needs to eventually reach C (the finish point)
 
 	_ = g.SetEntryPoint("A")
 	_ = g.SetFinishPoint("C")
@@ -242,7 +243,10 @@ func TestGraphConditionalMixedPrecedence(t *testing.T) {
 	_ = g.AddEdge("decision", "second", WithEdgeCondition(func(_ context.Context, state State) bool {
 		return true
 	}))
-	_ = g.AddEdge("decision", "fallback")
+	// Changed: fallback is now conditional (when both first and second are false)
+	_ = g.AddEdge("decision", "fallback", WithEdgeCondition(func(_ context.Context, state State) bool {
+		return false // Only execute if first=false AND second=false (which is false here)
+	}))
 	_ = g.AddEdge("first", "finish")
 	_ = g.AddEdge("second", "finish")
 	_ = g.AddEdge("fallback", "finish")
@@ -2326,7 +2330,7 @@ func TestGraphLargeScaleDAG(t *testing.T) {
 func TestGraphSerialWithConditionalRouting(t *testing.T) {
 	// Tests serial mode with conditional branches that converge
 	// Graph topology:
-	// start → check → [priority_high (cond) OR priority_low (fallback)] → process → final
+	// start → check → [priority_high (cond) OR priority_low (cond: !useHigh)] → process → final
 	g := NewGraph(WithParallel(false))
 
 	var mu sync.Mutex
@@ -2353,13 +2357,17 @@ func TestGraphSerialWithConditionalRouting(t *testing.T) {
 	g.AddNode("final", record("final"))
 
 	g.AddEdge("start", "check")
-	// Conditional edge first, then fallback
+	// Conditional edge first
 	g.AddEdge("check", "priority_high", WithEdgeCondition(func(_ context.Context, state State) bool {
 		useHigh, _ := state["use_high"].(bool)
 		t.Logf("Condition check: use_high=%v", useHigh)
 		return useHigh
 	}))
-	g.AddEdge("check", "priority_low") // unconditional fallback
+	// Changed: priority_low is now conditional (!useHigh) instead of unconditional fallback
+	g.AddEdge("check", "priority_low", WithEdgeCondition(func(_ context.Context, state State) bool {
+		useHigh, _ := state["use_high"].(bool)
+		return !useHigh
+	}))
 
 	g.AddEdge("priority_high", "process")
 	g.AddEdge("priority_low", "process")
@@ -2396,7 +2404,7 @@ func TestGraphSerialWithConditionalRouting(t *testing.T) {
 		}
 	})
 
-	// Test low priority path (fallback)
+	// Test low priority path
 	t.Run("low priority path", func(t *testing.T) {
 		mu.Lock()
 		executionOrder = make([]string, 0)
