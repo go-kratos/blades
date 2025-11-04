@@ -28,7 +28,7 @@ func translate(from string) error {
 		blades.WithModel(model),
 		blades.WithProvider(provider),
 		blades.WithInstructions(`You are a professional technical translator.
-    Follow these strict rules:	
+	Follow these strict rules:	
 	1. **Preserve all Markdown formatting**, including headings, bold/italic text, lists, quotes, tables, code blocks, links, and images.
 	2. **Do not translate code in Markdown**, filenames, paths, variable names, commands, URLs, or HTML tags.
 	3. **Keep technical terms consistent** (e.g., API, SDK, Server, Client — keep them untranslated when appropriate).
