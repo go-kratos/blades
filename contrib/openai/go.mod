@@ -3,7 +3,7 @@ module github.com/go-kratos/blades/contrib/openai
 go 1.24.0
 
 require (
-	github.com/go-kratos/blades v0.0.0-20250928061855-93360cba17ff
+	github.com/go-kratos/blades v0.0.0-20251104140906-5d72b556bf96
 	github.com/openai/openai-go/v2 v2.7.0
 )
 

@@ -3,7 +3,7 @@ module github.com/go-kratos/blades/contrib/gemini
 go 1.24.0
 
 require (
-	github.com/go-kratos/blades v0.0.0-20250928061855-93360cba17ff
+	github.com/go-kratos/blades v0.0.0-20251104140906-5d72b556bf96
 	google.golang.org/genai v1.26.0
 )
 

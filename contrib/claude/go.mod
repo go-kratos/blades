@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.13.0
-	github.com/go-kratos/blades v0.0.0-20250928061855-93360cba17ff
+	github.com/go-kratos/blades v0.0.0-20251104140906-5d72b556bf96
 )
 
 require (

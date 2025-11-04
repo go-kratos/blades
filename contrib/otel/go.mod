@@ -5,7 +5,7 @@ go 1.24.0
 toolchain go1.24.6
 
 require (
-	github.com/go-kratos/blades v0.0.0
+	github.com/go-kratos/blades v0.0.0-20251104140906-5d72b556bf96
 	go.opentelemetry.io/otel v1.38.0
 	go.opentelemetry.io/otel/trace v1.38.0
 )
