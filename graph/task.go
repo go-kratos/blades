@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-const entryContributionParent = "__graph_entry__"
+const entryContributionParent = "graph_entry"
 
 // Task coordinates a single execution of the graph using a ready-queue based scheduler.
 // This implementation combines:
