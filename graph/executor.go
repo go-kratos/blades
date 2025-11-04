@@ -5,30 +5,55 @@ import (
 	"sort"
 )
 
+// nodeInfo contains precomputed information for a node to avoid runtime lookups.
+type nodeInfo struct {
+	outEdges     []conditionalEdge // Precomputed outgoing edges
+	predecessors []string          // Ordered list of predecessors
+	depCount     int               // Number of dependencies (predecessor count)
+}
+
 // Executor represents a compiled graph ready for execution. It is safe for
 // concurrent use; each Execute call runs on an isolated execution context.
 type Executor struct {
 	graph        *Graph
-	predecessors map[string][]string
-	dependencies map[string]int
+	nodeInfos    map[string]*nodeInfo // Precomputed node information
+	predecessors map[string][]string  // Kept for backwards compatibility
+	dependencies map[string]int       // Kept for backwards compatibility
 }
 
 // NewExecutor creates a new Executor for the given graph.
 func NewExecutor(g *Graph) *Executor {
 	predecessors := make(map[string][]string)
 	dependencies := make(map[string]int)
+
+	// Build predecessors and dependencies
 	for from, edges := range g.edges {
 		for _, edge := range edges {
 			predecessors[edge.to] = append(predecessors[edge.to], from)
 			dependencies[edge.to]++
 		}
 	}
+
+	// Sort predecessors for deterministic state aggregation
 	for node, parents := range predecessors {
 		sort.Strings(parents)
 		predecessors[node] = parents
 	}
+
+	// Build nodeInfo map with precomputed data
+	nodeInfos := make(map[string]*nodeInfo, len(g.nodes))
+	for nodeName := range g.nodes {
+		info := &nodeInfo{
+			outEdges:     cloneEdges(g.edges[nodeName]),
+			predecessors: predecessors[nodeName],
+			depCount:     dependencies[nodeName],
+		}
+		nodeInfos[nodeName] = info
+	}
+
 	return &Executor{
 		graph:        g,
+		nodeInfos:    nodeInfos,
 		predecessors: predecessors,
 		dependencies: dependencies,
 	}
@@ -49,4 +74,14 @@ func cloneDependencies(src map[string]int) map[string]int {
 func (e *Executor) Execute(ctx context.Context, state State) (State, error) {
 	t := newTask(e)
 	return t.run(ctx, state)
+}
+
+// cloneEdges creates a copy of edge slice to avoid shared state issues.
+func cloneEdges(edges []conditionalEdge) []conditionalEdge {
+	if len(edges) == 0 {
+		return nil
+	}
+	out := make([]conditionalEdge, len(edges))
+	copy(out, edges)
+	return out
 }

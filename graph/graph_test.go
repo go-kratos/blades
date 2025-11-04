@@ -325,6 +325,65 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 	}
 }
 
+func TestGraphParallelDoesNotStallIndependentBranches(t *testing.T) {
+	g := NewGraph()
+
+	var mu sync.Mutex
+	execTime := make(map[string]time.Time)
+	record := func(name string, fn func()) Handler {
+		return func(ctx context.Context, state State) (State, error) {
+			if fn != nil {
+				fn()
+			}
+			now := time.Now()
+			mu.Lock()
+			execTime[name] = now
+			mu.Unlock()
+			return state.Clone(), nil
+		}
+	}
+
+	g.AddNode("start", record("start", nil))
+	g.AddNode("fast", record("fast", nil))
+	g.AddNode("slow", record("slow", func() {
+		time.Sleep(200 * time.Millisecond)
+	}))
+	g.AddNode("downstream", record("downstream", nil))
+	g.AddNode("finish", record("finish", nil))
+
+	g.AddEdge("start", "fast")
+	g.AddEdge("start", "slow")
+	g.AddEdge("fast", "downstream")
+	g.AddEdge("downstream", "finish")
+	g.AddEdge("slow", "finish")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	start := time.Now()
+	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	mu.Lock()
+	downstreamTime := execTime["downstream"]
+	slowTime := execTime["slow"]
+	mu.Unlock()
+
+	if downstreamTime.IsZero() || slowTime.IsZero() {
+		t.Fatalf("expected both downstream and slow nodes to execute, times=%v", execTime)
+	}
+
+	if !downstreamTime.Before(slowTime) {
+		t.Fatalf("expected downstream branch to execute before slow sibling finished; downstream=%v slow=%v elapsed=%v", downstreamTime, slowTime, slowTime.Sub(start))
+	}
+}
+
 func TestMiddlewareReceivesNodeName(t *testing.T) {
 	var mu sync.Mutex
 	var seen []string
