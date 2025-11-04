@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -28,6 +27,7 @@ func translate(from string) error {
 		blades.WithModel(model),
 		blades.WithProvider(provider),
 		blades.WithInstructions(`You are a professional technical translator.
+	Please translate the following Markdown document into **{{.target_language}}**.
 	Follow these strict rules:
 	1. **Preserve all Markdown formatting**, including headings, bold/italic text, lists, quotes, tables, code blocks, links, and images.
 	2. **Do not translate code in Markdown**, filenames, paths, variable names, commands, URLs, or HTML tags.
@@ -37,24 +37,23 @@ func translate(from string) error {
 	6. For mixed-language content, maintain logical consistency.
 	7. Output **only the translated Markdown document** — do not add explanations, comments, or extra text.`),
 	)
-
 	prompt := blades.NewPrompt(
-		blades.UserMessage(fmt.Sprintf("Please translate the following Markdown document into **%s**", to)),
 		blades.UserMessage(string(content)),
 	)
-
-	result, err := agent.Run(context.Background(), prompt)
+	session := blades.NewSession("translate", map[string]any{
+		"target_language": to,
+	})
+	ctx := blades.NewSessionContext(context.Background(), session)
+	result, err := agent.Run(ctx, prompt)
 	if err != nil {
 		return err
 	}
-
 	dir, _ := filepath.Split(translateOutput(from, output))
 	if _, err = os.Stat(dir); os.IsNotExist(err) && dir != "" {
 		if err = os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
 	}
-
 	return os.WriteFile(translateOutput(from, output), []byte(result.Text()), 0644)
 }
 

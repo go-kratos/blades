@@ -112,14 +112,18 @@ func (p *PromptTemplate) BuildContext(ctx context.Context) (*Prompt, error) {
 }
 
 // NewTemplateMessage creates a single Message by rendering the provided template string with the given variables.
-func NewTemplateMessage(role Role, tmpl string, vars any) (*Message, error) {
+func NewTemplateMessage(role Role, tmpl string, vars map[string]any) (*Message, error) {
 	var buf strings.Builder
-	t, err := template.New("message").Parse(tmpl)
-	if err != nil {
-		return nil, err
-	}
-	if err := t.Execute(&buf, vars); err != nil {
-		return nil, err
+	if len(vars) > 0 {
+		t, err := template.New("message").Option("missingkey=error").Parse(tmpl)
+		if err != nil {
+			return nil, err
+		}
+		if err := t.Execute(&buf, vars); err != nil {
+			return nil, err
+		}
+	} else {
+		buf.WriteString(tmpl)
 	}
 	switch role {
 	case RoleUser:

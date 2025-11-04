@@ -30,3 +30,15 @@ func TestTemplateMessageEmpty(t *testing.T) {
 		t.Errorf("TemplateMessage = %q; want %q", result, expected)
 	}
 }
+
+func TestTemplateMessageConflict(t *testing.T) {
+	tmpl := "Hello Alice {{.name}}"
+	expected := "Hello Alice {{.name}}"
+	result, err := NewPromptTemplate().System(tmpl).Build()
+	if err != nil {
+		t.Fatalf("TemplateMessage returned an error: %v", err)
+	}
+	if result.Latest().Text() != expected {
+		t.Errorf("TemplateMessage = %q; want %q", result, expected)
+	}
+}
