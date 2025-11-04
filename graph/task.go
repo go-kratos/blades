@@ -24,8 +24,6 @@ type Task struct {
 	remaining map[string]int
 	// Contributions: target -> parent -> state (for aggregation)
 	contributions map[string]map[string]State
-	// Skipped from: target -> set of parents that skipped it
-	skippedFrom map[string]map[string]bool
 	// In-flight: nodes currently executing
 	inFlight map[string]bool
 	// Visited: nodes that have completed
@@ -54,7 +52,6 @@ func newTask(e *Executor) *Task {
 		ready:         ready,
 		remaining:     remaining,
 		contributions: make(map[string]map[string]State),
-		skippedFrom:   make(map[string]map[string]bool),
 		inFlight:      make(map[string]bool, len(e.graph.nodes)),
 		visited:       make(map[string]bool, len(e.graph.nodes)),
 	}
@@ -229,12 +226,12 @@ func (t *Task) processOutgoing(ctx context.Context, node string, edges []conditi
 
 	// Register skips (this will trigger skip propagation)
 	for _, edge := range skipped {
-		t.registerSkip(node, edge.to)
+		t.satisfy(node, edge.to, nil)
 	}
 
 	// Propagate state along matched edges
 	for _, edge := range matched {
-		t.propagate(node, edge.to, state.Clone())
+		t.satisfy(node, edge.to, state.Clone())
 	}
 }
 
@@ -251,13 +248,31 @@ func (t *Task) evaluateEdges(ctx context.Context, edges []conditionalEdge, state
 	return matched, skipped
 }
 
-// propagate sends state contribution along an edge and schedules target if ready.
-func (t *Task) propagate(from, to string, state State) {
+// satisfy handles both state propagation and skip registration in a unified way.
+// When state is non-nil, it's a propagation (contribution); when nil, it's a skip.
+func (t *Task) satisfy(from, to string, state State) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 
-	// Add contribution
-	t.addContributionLocked(to, from, state)
+	// Early exit if already visited
+	if t.visited[to] {
+		if t.readyCond != nil {
+			t.readyCond.Signal()
+		}
+		t.mu.Unlock()
+		return
+	}
+
+	info := t.executor.nodeInfos[to]
+	if info.depCount == 0 {
+		// No predecessors, nothing to track
+		t.mu.Unlock()
+		return
+	}
+
+	// Add contribution if state provided
+	if state != nil {
+		t.addContributionLocked(to, from, state)
+	}
 
 	// Decrement remaining count
 	if t.remaining[to] > 0 {
@@ -266,77 +281,30 @@ func (t *Task) propagate(from, to string, state State) {
 
 	// Check if node is ready
 	if t.remaining[to] == 0 && !t.visited[to] && !t.inFlight[to] {
-		// Node is ready - add to queue
-		t.ready = append(t.ready, to)
-		if t.readyCond != nil {
-			t.readyCond.Signal()
-		}
-	}
-}
-
-// registerSkip marks that a parent skipped a target node and propagates skip if needed.
-// This implements automatic skip propagation like the original Blades design.
-func (t *Task) registerSkip(parent, target string) {
-	t.mu.Lock()
-
-	if t.visited[target] {
-		if t.readyCond != nil {
-			t.readyCond.Signal()
-		}
-		t.mu.Unlock()
-		return
-	}
-
-	// Use precomputed nodeInfo
-	info := t.executor.nodeInfos[target]
-	if info.depCount == 0 {
-		// No predecessors, nothing to track
-		t.mu.Unlock()
-		return
-	}
-
-	// Mark skip
-	if t.skippedFrom[target] == nil {
-		t.skippedFrom[target] = make(map[string]bool)
-	}
-	if t.skippedFrom[target][parent] {
-		// Already marked
-		t.mu.Unlock()
-		return
-	}
-	t.skippedFrom[target][parent] = true
-
-	// IMPORTANT: Decrement remaining for this skip
-	// This is the key insight - skips also decrease the remaining count
-	if t.remaining[target] > 0 {
-		t.remaining[target]--
-	}
-
-	// Check if node is now ready
-	if t.remaining[target] == 0 && !t.visited[target] && !t.inFlight[target] {
-		hasContributions := len(t.contributions[target]) > 0
+		hasContributions := len(t.contributions[to]) > 0
 		if !hasContributions {
-			// All predecessors skipped - mark as skipped and propagate
-			t.visited[target] = true
-			edges := info.outEdges // Use precomputed edges
+			// All predecessors skipped - mark as skipped and propagate skip
+			t.visited[to] = true
+			edges := info.outEdges
 			if t.readyCond != nil {
 				t.readyCond.Signal()
 			}
 			t.mu.Unlock()
 			// Propagate skip to all children
 			for _, edge := range edges {
-				t.registerSkip(target, edge.to)
+				t.satisfy(to, edge.to, nil)
 			}
 			return
 		}
 		// Has contributions - schedule for execution
-		t.ready = append(t.ready, target)
+		t.ready = append(t.ready, to)
 		if t.readyCond != nil {
 			t.readyCond.Signal()
 		}
-	}
-	if t.readyCond != nil {
-		t.readyCond.Signal()
+	} else {
+		if t.readyCond != nil {
+			t.readyCond.Signal()
+		}
 	}
 	t.mu.Unlock()
 }
