@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
@@ -55,16 +54,5 @@ Follow these strict rules:
 
 func translateOutput(from, to string) string {
 	base := filepath.Base(from)
-	dir := filepath.Dir(from)
-	ext := filepath.Ext(base)
-	name := strings.TrimSuffix(base, ext)
-	parts := strings.Split(name, "_")
-	if len(parts) > 1 {
-		parts = parts[:len(parts)-1]
-	}
-	newName := strings.Join(parts, "_")
-	if to != "en" {
-		newName = newName + "_" + to
-	}
-	return filepath.Join(dir, newName+ext)
+	return filepath.Join(to, base)
 }
