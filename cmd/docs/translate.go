@@ -26,20 +26,19 @@ func translate(from string) error {
 		"Document translator",
 		blades.WithModel(model),
 		blades.WithProvider(provider),
-	)
-	prompt, err := blades.NewPromptTemplate().
-		System(`You are a professional technical translator.
-	Please translate the following Markdown document into **{{.target_language}}**.
-	Follow these strict rules:
-	
+		blades.WithInstructions(`You are a professional technical translator.
+    Follow these strict rules:	
 	1. **Preserve all Markdown formatting**, including headings, bold/italic text, lists, quotes, tables, code blocks, links, and images.
 	2. **Do not translate code**, filenames, paths, variable names, commands, URLs, or HTML tags.
 	3. **Keep technical terms consistent** (e.g., API, SDK, Server, Client — keep them untranslated when appropriate).
 	4. The translation should be **natural, accurate, and professional**.
 	5. **Keep the same paragraph structure and line breaks** as in the original.
 	6. For mixed-language content, maintain logical consistency.
-	7. Output **only the translated Markdown document** — do not add explanations, comments, or extra text.
-	`, map[string]any{"target_language": to}).User(string(content)).Build()
+	7. Output **only the translated Markdown document** — do not add explanations, comments, or extra text.`),
+	)
+	prompt, err := blades.NewPromptTemplate().
+		User(`Please translate the following Markdown document into **{{.target_language}}**`,
+			map[string]any{"target_language": to}).User(string(content)).Build()
 	if err != nil {
 		return err
 	}
