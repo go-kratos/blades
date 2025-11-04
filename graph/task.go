@@ -279,7 +279,7 @@ func (t *Task) satisfy(from, to string, state State) {
 		if t.received[to] == 0 {
 			// All predecessors skipped - mark as skipped and propagate skip
 			t.visited[to] = true
-			delete(t.contributions, to)
+			// No need to delete contributions: received==0 means contributions[to] is empty
 			delete(t.received, to)
 			t.readyCond.Signal()
 			t.mu.Unlock()

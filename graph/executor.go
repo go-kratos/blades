@@ -28,10 +28,6 @@ func NewExecutor(g *Graph) *Executor {
 	predecessors := make(map[string][]string, len(g.nodes))
 	depCount := make(map[string]int)
 
-	for node := range g.nodes {
-		predecessors[node] = nil
-	}
-
 	for from, edges := range g.edges {
 		for _, edge := range edges {
 			predecessors[edge.to] = append(predecessors[edge.to], from)
