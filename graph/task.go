@@ -198,9 +198,7 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 	if info.isFinish && !t.finished {
 		t.finished = true
 		t.finishState = nextState.Clone()
-		if t.readyCond != nil {
-			t.readyCond.Broadcast()
-		}
+		t.readyCond.Broadcast()
 	}
 	edges := info.outEdges
 	t.mu.Unlock()
@@ -215,37 +213,21 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 }
 
 func (t *Task) processOutgoing(ctx context.Context, node string, edges []conditionalEdge, state State) {
-	// Evaluate edges: each edge is independent
-	matched, skipped := t.evaluateEdges(ctx, edges, state)
+	matched := false
 
-	// Validate: at least one edge must match
-	if len(matched) == 0 {
+	for _, edge := range edges {
+		if edge.condition == nil || edge.condition(ctx, state) {
+			matched = true
+			t.satisfy(node, edge.to, state.Clone())
+		} else {
+			t.satisfy(node, edge.to, nil)
+		}
+	}
+
+	if !matched {
 		t.fail(fmt.Errorf("graph: no condition matched for edges from node %s", node))
 		return
 	}
-
-	// Register skips (this will trigger skip propagation)
-	for _, edge := range skipped {
-		t.satisfy(node, edge.to, nil)
-	}
-
-	// Propagate state along matched edges
-	for _, edge := range matched {
-		t.satisfy(node, edge.to, state.Clone())
-	}
-}
-
-// evaluateEdges evaluates all edges and returns matched and skipped edges.
-// Each edge is evaluated independently based on its condition.
-func (t *Task) evaluateEdges(ctx context.Context, edges []conditionalEdge, state State) (matched, skipped []conditionalEdge) {
-	for _, edge := range edges {
-		if edge.condition == nil || edge.condition(ctx, state) {
-			matched = append(matched, edge)
-		} else {
-			skipped = append(skipped, edge)
-		}
-	}
-	return matched, skipped
 }
 
 // satisfy handles both state propagation and skip registration in a unified way.
@@ -283,9 +265,7 @@ func (t *Task) satisfy(from, to string, state State) {
 			// All predecessors skipped - mark as skipped and propagate skip
 			t.visited[to] = true
 			edges := info.outEdges
-			if t.readyCond != nil {
-				t.readyCond.Signal()
-			}
+			t.readyCond.Signal()
 			t.mu.Unlock()
 			// Propagate skip to all children
 			for _, edge := range edges {
@@ -295,9 +275,7 @@ func (t *Task) satisfy(from, to string, state State) {
 		}
 		// Has contributions - schedule for execution
 		t.ready = append(t.ready, to)
-		if t.readyCond != nil {
-			t.readyCond.Signal()
-		}
+		t.readyCond.Signal()
 	}
 	t.mu.Unlock()
 }
@@ -305,9 +283,7 @@ func (t *Task) satisfy(from, to string, state State) {
 func (t *Task) nodeDone(node string) {
 	t.mu.Lock()
 	delete(t.inFlight, node)
-	if t.readyCond != nil {
-		t.readyCond.Broadcast()
-	}
+	t.readyCond.Broadcast()
 	t.mu.Unlock()
 	t.wg.Done()
 }
@@ -319,9 +295,7 @@ func (t *Task) fail(err error) {
 		return
 	}
 	t.err = err
-	if t.readyCond != nil {
-		t.readyCond.Broadcast()
-	}
+	t.readyCond.Broadcast()
 }
 
 func (t *Task) buildAggregateLocked(node string) State {
