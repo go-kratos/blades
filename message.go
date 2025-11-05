@@ -126,7 +126,7 @@ func (m *Message) String() string {
 	for _, part := range m.Parts {
 		switch v := part.(type) {
 		case TextPart:
-			buf.WriteString("[Text: " + v.Text + ")]")
+			buf.WriteString("[Text: " + v.Text + "]")
 		case FilePart:
 			buf.WriteString("[File: " + v.Name + " (" + string(v.MIMEType) + ")]")
 		case DataPart:
