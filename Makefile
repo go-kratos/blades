@@ -1,25 +1,26 @@
-# 查找所有包含 go.mod 的目录
+# Find all directories that contain a go.mod file
 GO_MODULE_DIRS := $(shell find . -type f -name "go.mod" -exec dirname {} \;)
 
 .PHONY: all build test tidy
 
+# Default target: run tidy, build, and test
 all: tidy build test
 
-# 执行 go mod tidy
+# Run 'go mod tidy' in each Go module
 tidy:
 	@for dir in $(GO_MODULE_DIRS); do \
 		echo "[TIDY] $$dir"; \
 		(cd $$dir && go mod tidy); \
 	done
 
-# 执行 go build
+# Run 'go build' in each Go module
 build:
 	@for dir in $(GO_MODULE_DIRS); do \
 		echo "[BUILD] $$dir"; \
 		(cd $$dir && go build ./...); \
 	done
 
-# 执行 go test
+# Run 'go test' in each Go module
 test:
 	@for dir in $(GO_MODULE_DIRS); do \
 		echo "[TEST] $$dir"; \
