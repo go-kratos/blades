@@ -43,8 +43,10 @@ type Runner struct {
 // NewRunner creates a new Runner with the given agent and options.
 func NewRunner(agent Runnable, opts ...RunOption) *Runner {
 	runner := &Runner{
-		agent:   agent,
-		session: NewSession(uuid.NewString()),
+		agent:        agent,
+		resumable:    true,
+		invocationID: uuid.NewString(),
+		session:      NewSession(uuid.NewString()),
 	}
 	for _, opt := range opts {
 		opt(runner)
