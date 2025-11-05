@@ -245,7 +245,8 @@ func (a *Agent) findResumeMessage(ctx context.Context, invocation *InvocationCon
 		return nil, false
 	}
 	for _, m := range invocation.Session.History() {
-		if m.InvocationID == invocation.InvocationID && m.Author == a.name && m.Status == StatusCompleted {
+		if m.InvocationID == invocation.InvocationID &&
+			m.Author == a.name && m.Role == RoleAssistant && m.Status == StatusCompleted {
 			return m, true
 		}
 	}
@@ -265,14 +266,9 @@ func (a *Agent) storeSession(ctx context.Context, invocation *InvocationContext,
 		state[a.outputKey] = assistantMessage.Text()
 	}
 	stores := make([]*Message, len(userMessages)+len(toolMessages)+1)
-	stores = append(stores, userMessages...)
-	stores = append(stores, toolMessages...)
-	stores = append(stores, assistantMessage)
-	// Set author and invocation ID for all messages
-	for _, m := range stores {
-		m.Author = a.name
-		m.InvocationID = invocation.InvocationID
-	}
+	stores = append(stores, markMessageAuthor("user", invocation.InvocationID, userMessages...)...)
+	stores = append(stores, markMessageAuthor(a.name, invocation.InvocationID, toolMessages...)...)
+	stores = append(stores, markMessageAuthor(a.name, invocation.InvocationID, assistantMessage)...)
 	return invocation.Session.Append(ctx, state, stores)
 }
 
