@@ -31,9 +31,7 @@ func FromInvocationContext(ctx context.Context) (*InvocationContext, bool) {
 func EnsureInvocation(ctx context.Context) (*InvocationContext, context.Context) {
 	invocation, ok := FromInvocationContext(ctx)
 	if !ok {
-		ctx = NewInvocationContext(ctx, &InvocationContext{
-			Session: NewSession(uuid.NewString()),
-		})
+		invocation = &InvocationContext{Session: NewSession(uuid.NewString())}
 	}
 	return invocation, ctx
 }
