@@ -17,14 +17,14 @@ type InvocationContext struct {
 type ctxInvocationKey struct{}
 
 // NewInvocationContext returns a new Context that carries value.
-func NewInvocationContext(ctx context.Context, value *InvocationContext) context.Context {
-	return context.WithValue(ctx, ctxInvocationKey{}, value)
+func NewInvocationContext(ctx context.Context, invocation *InvocationContext) context.Context {
+	return context.WithValue(ctx, ctxInvocationKey{}, invocation)
 }
 
 // FromInvocationContext retrieves the InvocationContext from the context.
 func FromInvocationContext(ctx context.Context) (*InvocationContext, bool) {
-	value, ok := ctx.Value(ctxInvocationKey{}).(*InvocationContext)
-	return value, ok
+	invocation, ok := ctx.Value(ctxInvocationKey{}).(*InvocationContext)
+	return invocation, ok
 }
 
 // EnsureInvocation retrieves the InvocationContext from the context, or creates a new one if it doesn't exist.
@@ -32,6 +32,7 @@ func EnsureInvocation(ctx context.Context) (*InvocationContext, context.Context)
 	invocation, ok := FromInvocationContext(ctx)
 	if !ok {
 		invocation = &InvocationContext{Session: NewSession(uuid.NewString())}
+		ctx = NewInvocationContext(ctx, invocation)
 	}
 	return invocation, ctx
 }
