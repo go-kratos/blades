@@ -268,9 +268,9 @@ func (a *Agent) storeSession(ctx context.Context, invocation *InvocationContext,
 		}
 	}
 	stores := make([]*Message, 0, len(userMessages)+len(toolMessages)+1)
-	stores = append(stores, markMessageAuthor("user", invocation.InvocationID, userMessages...)...)
-	stores = append(stores, markMessageAuthor(a.name, invocation.InvocationID, toolMessages...)...)
-	stores = append(stores, markMessageAuthor(a.name, invocation.InvocationID, assistantMessage)...)
+	stores = append(stores, setMessageContext("user", invocation.InvocationID, userMessages...)...)
+	stores = append(stores, setMessageContext(a.name, invocation.InvocationID, toolMessages...)...)
+	stores = append(stores, setMessageContext(a.name, invocation.InvocationID, assistantMessage)...)
 	return invocation.Session.Append(ctx, state, stores)
 }
 

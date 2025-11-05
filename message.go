@@ -191,8 +191,8 @@ func NewMessageID() string {
 	return uuid.NewString()
 }
 
-// markMessageAuthor sets the author of the message.
-func markMessageAuthor(author, invocationID string, messages ...*Message) []*Message {
+// setMessageContext sets the author and invocation ID for the given messages.
+func setMessageContext(author, invocationID string, messages ...*Message) []*Message {
 	for _, message := range messages {
 		message.Author = author
 		message.InvocationID = invocationID
