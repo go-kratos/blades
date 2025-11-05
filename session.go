@@ -4,8 +4,6 @@ import (
 	"context"
 	"slices"
 	"sync"
-
-	"github.com/google/uuid"
 )
 
 // Session holds the state of a flow along with a unique session ID.
@@ -27,28 +25,18 @@ func NewSession(id string, states ...map[string]any) Session {
 	return session
 }
 
-// ctxSessionKey is an unexported type for keys defined in this package.
-type ctxSessionKey struct{}
-
 // NewSessionContext returns a new Context that carries value.
 func NewSessionContext(ctx context.Context, session Session) context.Context {
-	return context.WithValue(ctx, ctxSessionKey{}, session)
+	return NewInvocationContext(ctx, &InvocationContext{Session: session})
 }
 
 // FromSessionContext retrieves the SessionContext from the context.
 func FromSessionContext(ctx context.Context) (Session, bool) {
-	session, ok := ctx.Value(ctxSessionKey{}).(Session)
-	return session, ok
-}
-
-// EnsureSession retrieves the SessionContext from the context, or creates a new one if it doesn't exist.
-func EnsureSession(ctx context.Context) (Session, context.Context) {
-	session, ok := FromSessionContext(ctx)
+	value, ok := FromInvocationContext(ctx)
 	if !ok {
-		session = NewSession(uuid.NewString())
-		ctx = NewSessionContext(ctx, session)
+		return nil, false
 	}
-	return session, ctx
+	return value.Session, true
 }
 
 // sessionInMemory is an in-memory implementation of the Session interface.

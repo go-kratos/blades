@@ -78,14 +78,16 @@ type TokenUsage struct {
 
 // Message represents a single message in a conversation.
 type Message struct {
-	ID           string            `json:"id"`
-	Role         Role              `json:"role"`
-	Parts        []Part            `json:"parts"`
-	Status       Status            `json:"status"`
-	Refusal      string            `json:"refusal,omitempty"`
-	FinishReason string            `json:"finishReason,omitempty"`
-	TokenUsage   TokenUsage        `json:"tokenUsage,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
+	ID           string         `json:"id"`
+	Role         Role           `json:"role"`
+	Parts        []Part         `json:"parts"`
+	Author       string         `json:"author"`
+	InvocationID string         `json:"invocationId,omitempty"`
+	Status       Status         `json:"status"`
+	Refusal      string         `json:"refusal,omitempty"`
+	FinishReason string         `json:"finishReason,omitempty"`
+	TokenUsage   TokenUsage     `json:"tokenUsage,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
 // Text returns the first text part of the message, or an empty string if none exists.
