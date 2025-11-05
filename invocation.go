@@ -27,7 +27,7 @@ func FromInvocationContext(ctx context.Context) (*InvocationContext, bool) {
 	return value, ok
 }
 
-// EnsureInvocation retrieves the SessionContext from the context, or creates a new one if it doesn't exist.
+// EnsureInvocation retrieves the InvocationContext from the context, or creates a new one if it doesn't exist.
 func EnsureInvocation(ctx context.Context) (*InvocationContext, context.Context) {
 	invocation, ok := FromInvocationContext(ctx)
 	if !ok {
