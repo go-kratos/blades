@@ -338,7 +338,7 @@ func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams
 			CompletionTokens: cc.Usage.CompletionTokens,
 			TotalTokens:      cc.Usage.TotalTokens,
 		},
-		Metadata: map[string]string{},
+		Metadata: map[string]any{},
 	}
 	for _, choice := range cc.Choices {
 		if choice.Message.Content != "" {
@@ -375,17 +375,17 @@ func chunkChoiceToResponse(ctx context.Context, choices []openai.ChatCompletionC
 	msg := &blades.Message{
 		Role:     blades.RoleAssistant,
 		Status:   blades.StatusIncomplete,
-		Metadata: map[string]string{},
+		Metadata: map[string]any{},
 	}
 	for _, choice := range choices {
 		if choice.Delta.Content != "" {
 			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Delta.Content})
 		}
 		if choice.Delta.Refusal != "" {
-			msg.Metadata["refusal"] = choice.Delta.Refusal
+			msg.Refusal = choice.Delta.Refusal
 		}
 		if choice.FinishReason != "" {
-			msg.Metadata["finish_reason"] = choice.FinishReason
+			msg.FinishReason = choice.FinishReason
 		}
 		for _, call := range choice.Delta.ToolCalls {
 			msg.Role = blades.RoleTool

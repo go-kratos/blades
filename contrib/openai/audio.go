@@ -91,7 +91,7 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 	message := &blades.Message{
 		Role:     blades.RoleAssistant,
 		Status:   blades.StatusCompleted,
-		Metadata: map[string]string{},
+		Metadata: map[string]any{},
 		Parts: []blades.Part{
 			blades.DataPart{
 				Name:     name,
@@ -101,7 +101,7 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 		},
 	}
 	message.Metadata["content_type"] = resp.Header.Get("Content-Type")
-	message.Metadata["response_format"] = string(params.ResponseFormat)
+	message.Metadata["response_format"] = params.ResponseFormat
 	return &blades.ModelResponse{Message: message}, nil
 }
 

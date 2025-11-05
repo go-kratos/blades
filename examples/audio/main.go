@@ -39,18 +39,10 @@ func main() {
 		log.Fatalf("create output dir: %v", err)
 	}
 
-	saved := 0
-	for _, part := range res.Parts {
+	for n, part := range res.Parts {
 		switch audio := part.(type) {
 		case blades.DataPart:
-			saved++
-			ext := "bin"
-			if format := res.Metadata["response_format"]; format != "" {
-				ext = format
-			} else if mimeExt := audio.MIMEType.Format(); mimeExt != "" {
-				ext = mimeExt
-			}
-			path := filepath.Join(outputDir, fmt.Sprintf("speech-%d.%s", saved, ext))
+			path := filepath.Join(outputDir, fmt.Sprintf("speech-%d.mp3", n))
 			if err := os.WriteFile(path, audio.Bytes, 0o644); err != nil {
 				log.Fatalf("write file %s: %v", path, err)
 			}

@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"strconv"
 
 	"github.com/go-kratos/blades"
 	"github.com/openai/openai-go/v2"
@@ -136,13 +135,13 @@ func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) 
 	message := &blades.Message{
 		Role:     blades.RoleAssistant,
 		Status:   blades.StatusCompleted,
-		Metadata: map[string]string{},
+		Metadata: map[string]any{},
 	}
-	message.Metadata["size"] = string(res.Size)
-	message.Metadata["quality"] = string(res.Quality)
-	message.Metadata["background"] = string(res.Background)
-	message.Metadata["output_format"] = string(res.OutputFormat)
-	message.Metadata["created"] = strconv.FormatInt(res.Created, 10)
+	message.Metadata["size"] = res.Size
+	message.Metadata["quality"] = res.Quality
+	message.Metadata["background"] = res.Background
+	message.Metadata["output_format"] = res.OutputFormat
+	message.Metadata["created"] = res.Created
 	mimeType := imageMimeType(res.OutputFormat)
 	for i, img := range res.Data {
 		name := fmt.Sprintf("image-%d", i+1)
