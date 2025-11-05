@@ -164,7 +164,7 @@ func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) 
 			})
 		}
 		if img.RevisedPrompt != "" {
-			key := fmt.Sprintf("%s_revised_prompt_%d", name, i)
+			key := fmt.Sprintf("%s_revised_prompt", name)
 			message.Metadata[key] = img.RevisedPrompt
 		}
 	}
