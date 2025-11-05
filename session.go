@@ -32,11 +32,11 @@ func NewSessionContext(ctx context.Context, session Session) context.Context {
 
 // FromSessionContext retrieves the SessionContext from the context.
 func FromSessionContext(ctx context.Context) (Session, bool) {
-	value, ok := FromInvocationContext(ctx)
+	invocation, ok := FromInvocationContext(ctx)
 	if !ok {
 		return nil, false
 	}
-	return value.Session, true
+	return invocation.Session, true
 }
 
 // sessionInMemory is an in-memory implementation of the Session interface.
