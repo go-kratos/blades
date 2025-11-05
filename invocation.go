@@ -21,7 +21,7 @@ func NewInvocationContext(ctx context.Context, value *InvocationContext) context
 	return context.WithValue(ctx, ctxInvocationKey{}, value)
 }
 
-// FromInvocationContext retrieves the SessionContext from the context.
+// FromInvocationContext retrieves the InvocationContext from the context.
 func FromInvocationContext(ctx context.Context) (*InvocationContext, bool) {
 	value, ok := ctx.Value(ctxInvocationKey{}).(*InvocationContext)
 	return value, ok
