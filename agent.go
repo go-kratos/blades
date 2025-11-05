@@ -241,6 +241,9 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 }
 
 func (a *Agent) findResumeMessage(ctx context.Context, invocation *InvocationContext) (*Message, bool) {
+	if !invocation.Resumable {
+		return nil, false
+	}
 	for _, m := range invocation.Session.History() {
 		if m.InvocationID == invocation.InvocationID && m.Author == a.name && m.Status == StatusCompleted {
 			return m, true
