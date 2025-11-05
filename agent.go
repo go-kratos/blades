@@ -256,14 +256,16 @@ func (a *Agent) findResumeMessage(ctx context.Context, invocation *InvocationCon
 // storeOutputToState stores the output of the Agent to the session state if an output key is defined.
 func (a *Agent) storeSession(ctx context.Context, invocation *InvocationContext, userMessages, toolMessages []*Message, assistantMessage *Message) error {
 	state := State{}
-	if a.outputSchema != nil {
-		value, err := ParseMessageState(assistantMessage, a.outputSchema)
-		if err != nil {
-			return err
+	if a.outputKey != "" {
+		if a.outputSchema != nil {
+			value, err := ParseMessageState(assistantMessage, a.outputSchema)
+			if err != nil {
+				return err
+			}
+			state[a.outputKey] = value
+		} else {
+			state[a.outputKey] = assistantMessage.Text()
 		}
-		state[a.outputKey] = value
-	} else {
-		state[a.outputKey] = assistantMessage.Text()
 	}
 	stores := make([]*Message, 0, len(userMessages)+len(toolMessages)+1)
 	stores = append(stores, markMessageAuthor("user", invocation.InvocationID, userMessages...)...)
