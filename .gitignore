@@ -33,3 +33,4 @@ go.work.sum
 .gopath/
 .gocache/
 .DS_Store
+cmd/docs/docs
