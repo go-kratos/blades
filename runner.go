@@ -44,7 +44,6 @@ type Runner struct {
 func NewRunner(agent Runnable, opts ...RunOption) *Runner {
 	runner := &Runner{
 		agent:        agent,
-		resumable:    true,
 		invocationID: uuid.NewString(),
 		session:      NewSession(uuid.NewString()),
 	}
