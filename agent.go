@@ -265,7 +265,7 @@ func (a *Agent) storeSession(ctx context.Context, invocation *InvocationContext,
 	} else {
 		state[a.outputKey] = assistantMessage.Text()
 	}
-	stores := make([]*Message, len(userMessages)+len(toolMessages)+1)
+	stores := make([]*Message, 0, len(userMessages)+len(toolMessages)+1)
 	stores = append(stores, markMessageAuthor("user", invocation.InvocationID, userMessages...)...)
 	stores = append(stores, markMessageAuthor(a.name, invocation.InvocationID, toolMessages...)...)
 	stores = append(stores, markMessageAuthor(a.name, invocation.InvocationID, assistantMessage)...)
