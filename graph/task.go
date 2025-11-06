@@ -219,7 +219,11 @@ func (t *Task) processOutgoing(ctx context.Context, node string, info *nodeInfo,
 
 	matched := false
 	for _, edge := range info.outEdges {
-		if edge.condition == nil || edge.condition(ctx, state) {
+		if edge.condition == nil {
+			t.fail(fmt.Errorf("graph: conditional edge from node %s to %s missing condition", node, edge.to))
+			return
+		}
+		if edge.condition(ctx, state) {
 			matched = true
 			t.satisfy(node, edge.to, state.Clone())
 		} else {
@@ -314,7 +318,7 @@ func (t *Task) buildAggregateLocked(node string) State {
 	info := t.executor.nodeInfos[node]
 	order := info.predecessors
 
-	// Merge in predecessor order for determinism, including the synthetic entry parent
+	// Merge in predecessor order for determinism; the entry node's list already includes the synthetic parent
 	for _, parent := range order {
 		if contribution, exists := contribs[parent]; exists {
 			state = mergeStates(state, contribution)
