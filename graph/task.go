@@ -217,23 +217,36 @@ func (t *Task) processOutgoing(ctx context.Context, node string, info *nodeInfo,
 		return
 	}
 
-	matched := false
-	for _, edge := range info.outEdges {
+	// Exclusive matching: only the first matching edge is activated
+	var matchedEdge *conditionalEdge
+	for i := range info.outEdges {
+		edge := &info.outEdges[i]
 		if edge.condition == nil {
 			t.fail(fmt.Errorf("graph: conditional edge from node %s to %s missing condition", node, edge.to))
 			return
 		}
 		if edge.condition(ctx, state) {
-			matched = true
-			t.satisfy(node, edge.to, state.Clone())
-		} else {
-			t.satisfy(node, edge.to, nil)
+			matchedEdge = edge
+			break
 		}
 	}
 
-	if !matched {
+	if matchedEdge == nil {
 		t.fail(fmt.Errorf("graph: no condition matched for edges from node %s", node))
 		return
+	}
+
+	// Activate the matched edge
+	// Clone to ensure state isolation: prevents shared map mutations
+	// and converts nil to empty State{} (backward compatible)
+	t.satisfy(node, matchedEdge.to, state.Clone())
+
+	// Send skip to all other edges
+	for i := range info.outEdges {
+		edge := &info.outEdges[i]
+		if edge.to != matchedEdge.to {
+			t.satisfy(node, edge.to, nil)
+		}
 	}
 }
 

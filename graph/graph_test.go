@@ -322,12 +322,14 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 	g.AddNode("conditional", record("conditional", nil))
 	g.AddNode("join", record("join", nil))
 
+	// Exclusive matching: first matching edge wins
+	// Edge order matters: "always" is checked first
 	g.AddEdge("start", "always", WithEdgeCondition(func(_ context.Context, state State) bool {
-		return true // Always execute
+		return true // Always matches - will be selected
 	}))
 	g.AddEdge("start", "conditional", WithEdgeCondition(func(_ context.Context, state State) bool {
 		allow, _ := state["allow_conditional"].(bool)
-		return allow
+		return allow // Also true, but won't be selected (second edge)
 	}))
 	g.AddEdge("always", "join")
 	g.AddEdge("conditional", "join")
@@ -344,8 +346,15 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 		t.Fatalf("execution error: %v", err)
 	}
 
-	if executed["conditional"] == 0 {
-		t.Fatalf("expected conditional branch to execute when condition true, executed=%v", executed)
+	// With exclusive matching, only the first matching edge is taken
+	if executed["always"] != 1 {
+		t.Fatalf("expected always branch to execute, executed=%v", executed)
+	}
+	if executed["conditional"] != 0 {
+		t.Fatalf("expected conditional branch NOT to execute (exclusive matching), executed=%v", executed)
+	}
+	if executed["join"] != 1 {
+		t.Fatalf("expected join to execute, executed=%v", executed)
 	}
 }
 
@@ -2781,5 +2790,107 @@ func TestNodeNameWithMultipleMiddlewares(t *testing.T) {
 		if middleware2Calls[nodeName] != 1 {
 			t.Errorf("middleware2 expected to see node %s once, got %d", nodeName, middleware2Calls[nodeName])
 		}
+	}
+}
+
+// TestExclusiveMatchingStateIsolation verifies that state is properly cloned
+// in exclusive matching to prevent shared map mutations
+func TestExclusiveMatchingStateIsolation(t *testing.T) {
+	g := NewGraph(WithParallel(false))
+	
+	var capturedState State
+	
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		next := State{"key": "original"}
+		return next, nil
+	})
+	
+	g.AddNode("branch", func(ctx context.Context, state State) (State, error) {
+		// Capture the state we receive
+		capturedState = state
+		// Mutate it
+		state["key"] = "mutated"
+		state["new_key"] = "added"
+		return state, nil
+	})
+	
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		// Check if the mutation from branch affected us
+		// With proper cloning, we should see the mutations
+		if state["key"] != "mutated" {
+			t.Errorf("expected to see mutated value, got %v", state["key"])
+		}
+		return state, nil
+	})
+	
+	g.AddEdge("start", "branch", WithEdgeCondition(func(_ context.Context, state State) bool {
+		return true
+	}))
+	g.AddEdge("branch", "finish")
+	
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+	
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	
+	_, err = executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+	
+	// Verify state was cloned (not the same reference)
+	if capturedState["key"] != "mutated" {
+		t.Errorf("expected captured state to show mutation")
+	}
+}
+
+// TestHandlerReturnsNilState verifies that nil states are converted to empty State{}
+func TestHandlerReturnsNilState(t *testing.T) {
+	g := NewGraph()
+	
+	executed := make(map[string]bool)
+	var receivedState State
+	
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		executed["start"] = true
+		return nil, nil  // Return nil state
+	})
+	
+	g.AddNode("next", func(ctx context.Context, state State) (State, error) {
+		executed["next"] = true
+		receivedState = state
+		if state == nil {
+			t.Error("next received nil state - should have been converted to empty State{}")
+		}
+		return state, nil
+	})
+	
+	g.AddEdge("start", "next")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("next")
+	
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	
+	_, err = executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+	
+	if !executed["next"] {
+		t.Error("next should have executed")
+	}
+	
+	if receivedState == nil {
+		t.Error("received state should not be nil - Clone() should convert to empty State{}")
+	}
+	
+	if len(receivedState) != 0 {
+		t.Errorf("expected empty state, got %v", receivedState)
 	}
 }
