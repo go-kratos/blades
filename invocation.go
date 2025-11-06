@@ -2,6 +2,8 @@ package blades
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 // InvocationContext holds information about the current invocation.
@@ -25,11 +27,11 @@ func FromInvocationContext(ctx context.Context) (*InvocationContext, bool) {
 	return invocation, ok
 }
 
-// EnsureInvocation retrieves the InvocationContext from the context, or creates a new one if it doesn't exist.
-func EnsureInvocation(ctx context.Context) (*InvocationContext, context.Context) {
+// EnsureInvocationContext retrieves the InvocationContext from the context, or creates a new one if it doesn't exist.
+func EnsureInvocationContext(ctx context.Context) (*InvocationContext, context.Context) {
 	invocation, ok := FromInvocationContext(ctx)
 	if !ok {
-		invocation = &InvocationContext{Session: NewSession()}
+		invocation = &InvocationContext{Session: NewSession(), InvocationID: uuid.NewString()}
 		ctx = NewInvocationContext(ctx, invocation)
 	}
 	return invocation, ctx

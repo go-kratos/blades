@@ -158,7 +158,7 @@ func (a *Agent) Description() string {
 
 // buildInvocationContext builds the context for the Agent by embedding the AgentContext.
 func (a *Agent) buildInvocationContext(ctx context.Context) (context.Context, *InvocationContext) {
-	invocation, ctx := EnsureInvocation(ctx)
+	invocation, ctx := EnsureInvocationContext(ctx)
 	return NewContext(ctx, &AgentContext{
 		Name:         a.name,
 		Model:        a.model,
