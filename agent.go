@@ -156,8 +156,8 @@ func (a *Agent) Description() string {
 	return a.description
 }
 
-// buildContext builds the context for the Agent by embedding the AgentContext.
-func (a *Agent) buildContext(ctx context.Context) (context.Context, *InvocationContext) {
+// buildInvocationContext builds the context for the Agent by embedding the AgentContext.
+func (a *Agent) buildInvocationContext(ctx context.Context) (context.Context, *InvocationContext) {
 	invocation, ctx := EnsureInvocation(ctx)
 	return NewContext(ctx, &AgentContext{
 		Name:         a.name,
@@ -212,7 +212,7 @@ func (a *Agent) buildRequest(ctx context.Context, prompt *Prompt) (*ModelRequest
 
 // Run runs the agent with the given prompt and options, returning the response message.
 func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
-	ctx, invocation := a.buildContext(ctx)
+	ctx, invocation := a.buildInvocationContext(ctx)
 	input, err := a.inputHandler(ctx, prompt, invocation.Session.State())
 	if err != nil {
 		return nil, err
@@ -227,7 +227,7 @@ func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*
 
 // RunStream runs the agent with the given prompt and options, returning a streamable response.
 func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
-	ctx, invocation := a.buildContext(ctx)
+	ctx, invocation := a.buildInvocationContext(ctx)
 	input, err := a.inputHandler(ctx, prompt, invocation.Session.State())
 	if err != nil {
 		return nil, err
