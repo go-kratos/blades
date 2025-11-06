@@ -19,10 +19,10 @@ func main() {
 		blades.UserMessage("Can you tell me about the causes of World War II?"),
 	)
 	// Create a new session
-	session := blades.NewSession("conversation_123")
-	ctx := blades.NewSessionContext(context.Background(), session)
+	session := blades.NewSession()
 	// Run the agent
-	result, err := agent.Run(ctx, prompt)
+	runner := blades.NewRunner(agent, blades.WithSession(session))
+	result, err := runner.Run(context.Background(), prompt)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -19,12 +19,12 @@ func main() {
 		blades.UserMessage("Tell me a joke."),
 	)
 	// Create a new session
-	session := blades.NewSession("conversation_123", map[string]any{
+	session := blades.NewSession(map[string]any{
 		"style": "robot",
 	})
-	ctx := blades.NewSessionContext(context.Background(), session)
 	// Run the agent with the prompt and session context
-	message, err := agent.Run(ctx, prompt)
+	runner := blades.NewRunner(agent, blades.WithSession(session))
+	message, err := runner.Run(context.Background(), prompt)
 	if err != nil {
 		panic(err)
 	}

@@ -45,7 +45,7 @@ func NewRunner(agent Runnable, opts ...RunOption) *Runner {
 	runner := &Runner{
 		agent:        agent,
 		invocationID: uuid.NewString(),
-		session:      NewSession(uuid.NewString()),
+		session:      NewSession(),
 	}
 	for _, opt := range opts {
 		opt(runner)

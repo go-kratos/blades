@@ -4,6 +4,8 @@ import (
 	"context"
 	"slices"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 // Session holds the state of a flow along with a unique session ID.
@@ -15,19 +17,14 @@ type Session interface {
 }
 
 // NewSession creates a new Session instance with the provided ID.
-func NewSession(id string, states ...map[string]any) Session {
-	session := &sessionInMemory{id: id, state: State{}}
+func NewSession(states ...map[string]any) Session {
+	session := &sessionInMemory{id: uuid.NewString(), state: State{}}
 	for _, state := range states {
 		for k, v := range state {
 			session.state[k] = v
 		}
 	}
 	return session
-}
-
-// NewSessionContext returns a new Context that carries value.
-func NewSessionContext(ctx context.Context, session Session) context.Context {
-	return NewInvocationContext(ctx, &InvocationContext{Session: session})
 }
 
 // FromSessionContext retrieves the SessionContext from the context.
