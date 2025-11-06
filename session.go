@@ -16,7 +16,7 @@ type Session interface {
 	Append(context.Context, State, []*Message) error
 }
 
-// NewSession creates a new Session instance with the provided ID.
+// NewSession creates a new Session instance with an auto-generated UUID and optional initial state maps.
 func NewSession(states ...map[string]any) Session {
 	session := &sessionInMemory{id: uuid.NewString(), state: State{}}
 	for _, state := range states {
