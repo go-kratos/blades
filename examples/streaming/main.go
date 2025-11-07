@@ -26,6 +26,6 @@ func main() {
 		if err := m.Error(); err != nil {
 			log.Fatal(err)
 		}
-		log.Print(m.Text())
+		log.Println(m.Status, m.Text())
 	}
 }
