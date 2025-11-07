@@ -41,6 +41,10 @@ func main() {
 				return
 			}
 			for m := range stream {
+				if err := m.Error(); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
 				json.NewEncoder(w).Encode(m)
 				w.(http.Flusher).Flush() // Flush the response writer to send data immediately
 			}
