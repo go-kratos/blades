@@ -102,16 +102,20 @@ func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, 
 		for stream.Next() {
 			chunk := stream.Current()
 			acc.AddChunk(chunk)
-			res, err := chunkChoiceToResponse(ctx, chunk.Choices)
+			message, err := chunkChoiceToResponse(ctx, chunk.Choices)
 			if err != nil {
-				output <- &blades.ModelResponse{Message: blades.NewErrorMessage(err)}
+				output <- blades.NewErrorModelResponse(err)
 				return
 			}
-			output <- res
+			output <- message
+		}
+		if err := stream.Err(); err != nil {
+			output <- blades.NewErrorModelResponse(err)
+			return
 		}
 		finalResponse, err := choiceToResponse(ctx, params, &acc.ChatCompletion)
 		if err != nil {
-			output <- &blades.ModelResponse{Message: blades.NewErrorMessage(err)}
+			output <- blades.NewErrorModelResponse(err)
 			return
 		}
 		output <- finalResponse

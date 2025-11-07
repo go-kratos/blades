@@ -365,6 +365,10 @@ func (a *Agent) handler(invocation *InvocationContext, req *ModelRequest) Runnab
 					}
 					var finalResponse *ModelResponse
 					for chunk := range stream {
+						if err := chunk.Message.Error(); err != nil {
+							output <- NewErrorMessage(err)
+							return
+						}
 						if chunk.Message.Status == StatusCompleted {
 							finalResponse = chunk
 						} else {

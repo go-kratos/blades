@@ -113,16 +113,19 @@ func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...
 	}
 	return stream.Go[*blades.Message](func(output chan *blades.Message) {
 		var m *blades.Message
-		defer func() {
-			if m != nil && m.Error() != nil {
-				t.end(span, nil, err)
-			}
-		}()
-		// copy messages to output channel
 		for m = range events {
+			// copy messages to output channel
 			output <- m
 		}
-		t.end(span, m, nil)
+		if m == nil {
+			t.end(span, nil, fmt.Errorf("no messages received from stream"))
+			return
+		}
+		if err := m.Error(); err != nil {
+			t.end(span, nil, m.Error())
+		} else {
+			t.end(span, m, nil)
+		}
 	}), nil
 }
 
