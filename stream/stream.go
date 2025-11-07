@@ -19,7 +19,6 @@ func Go[T any](stream Streamable[T]) Streamable[T] {
 }
 
 // Just returns a Streamable that emits the provided values in order.
-//
 func Just[T any](values ...T) Streamable[T] {
 	return func(yield func(T, error) bool) {
 		for _, v := range values {
@@ -28,7 +27,7 @@ func Just[T any](values ...T) Streamable[T] {
 			}
 		}
 	}
-// Filter returns a Streamable that emits only the values from the input stream
+}
 
 // Filter returns a Streamable that emits only the values from the input stream
 // that satisfy the given predicate function.
@@ -62,8 +61,8 @@ func Observe[T any](stream Streamable[T], observer func(T) error) Streamable[T] 
 			return yield(v, nil)
 		})
 	}
-// Map returns a Streamable that emits the results of applying the given mapper
-// function to each value from the input Streamable.
+}
+
 // Map returns a Streamable that emits the results of applying the given mapper
 // function to each value from the input stream.
 func Map[T, R any](stream Streamable[T], mapper func(T) (R, error)) Streamable[R] {
@@ -85,8 +84,10 @@ func Map[T, R any](stream Streamable[T], mapper func(T) (R, error)) Streamable[R
 // output channel.
 func Merge[T any](streams ...Streamable[T]) Streamable[T] {
 	return func(yield func(T, error) bool) {
-		var wg sync.WaitGroup
-		var mu sync.Mutex
+		var (
+			mu sync.Mutex
+			wg sync.WaitGroup
+		)
 		wg.Add(len(streams))
 		for _, stream := range streams {
 			go func(next Streamable[T]) {
