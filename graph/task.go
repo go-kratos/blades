@@ -269,140 +269,54 @@ func (t *Task) processOutgoing(ctx context.Context, node string, info *nodeInfo,
 // When state is non-nil, it's a propagation (contribution); when nil, it's a skip.
 // For Loop edges, allows revisiting already-visited nodes.
 func (t *Task) satisfy(from, to string, state State) {
+	var (
+		propagateSkip bool
+		skipEdges     []conditionalEdge
+	)
+
 	t.mu.Lock()
 
-	fromInfo := t.executor.nodeInfos[from]
 	toInfo := t.executor.nodeInfos[to]
 	if toInfo == nil {
 		t.mu.Unlock()
 		return
 	}
 
-	// Check if this is a loop edge by looking at the edge type
-	var isLoopEdge bool
-	for i := range fromInfo.outEdges {
-		edge := &fromInfo.outEdges[i]
-		if edge.to == to && edge.edgeType == EdgeTypeLoop {
-			isLoopEdge = true
-			break
-		}
-	}
-
-	deferSchedule := false
-
-	// For loop edges, allow revisiting
-	if isLoopEdge {
-		if t.inFlight[to] {
-			deferSchedule = true
-		}
-		// If node was already visited, reset for re-execution
-		if t.visited[to] {
-			delete(t.visited, to)
-			// Clear previous contributions and skips
-			delete(t.contributions, to)
-			delete(t.skips, to)
-			t.received[to] = 0
-			loopDeps := toInfo.loopDependencies
-			if loopDeps <= 0 {
-				loopDeps = 1
-			}
-			t.remaining[to] = loopDeps
-		}
-		if state != nil {
-			t.looping[to] = true
-		}
-	} else {
-		// For non-loop edges, skip if already visited
-		if t.visited[to] {
-			if state != nil && (t.skipped[to] || t.looping[from]) {
-				delete(t.visited, to)
-				delete(t.contributions, to)
-				delete(t.skips, to)
-				t.received[to] = 0
-				t.remaining[to] = toInfo.dependencies
-				delete(t.skipped, to)
-				if t.looping[from] {
-					t.looping[to] = true
-				}
-			} else {
-				t.mu.Unlock()
-				return
-			}
-		} else if state != nil && t.looping[from] {
-			// Fresh node triggered by a looping parent; mark for loop propagation
-			t.looping[to] = true
-		}
-	}
-
-	if toInfo.dependencies == 0 && !isLoopEdge {
-		// No predecessors, nothing to track
+	isLoopEdge := toInfo.loopEdgeSources != nil && toInfo.loopEdgeSources[from]
+	deferSchedule, stop := t.prepareNodeLocked(from, to, state, toInfo, isLoopEdge)
+	if stop {
 		t.mu.Unlock()
 		return
 	}
 
-	// Add contribution if state provided
-	if state != nil {
-		if t.addContributionLocked(to, from, state) {
-			t.received[to]++
-			delete(t.skipped, to)
-		} else {
-			// Duplicate contribution, don't decrement remaining
-			t.mu.Unlock()
-			return
-		}
-	} else {
-		// Skip: also check for duplicates
-		t.skipped[to] = true
-		if !t.addSkipLocked(to, from) {
-			// Duplicate skip, don't decrement remaining
-			t.mu.Unlock()
-			return
-		}
+	if toInfo.dependencies == 0 && !isLoopEdge {
+		t.mu.Unlock()
+		return
 	}
 
-	// Decrement remaining count (only for first contribution/skip from this parent)
+	if !t.registerSignalLocked(to, from, state) {
+		t.mu.Unlock()
+		return
+	}
+
 	if t.remaining[to] > 0 {
 		t.remaining[to]--
 	}
 
-	ready := t.remaining[to] == 0 && !t.visited[to]
-	if ready {
-		if t.received[to] == 0 {
-			// All predecessors skipped - mark as skipped and propagate skip
-			if deferSchedule {
-				t.pendingSkips[to] = true
-				t.mu.Unlock()
-				return
-			}
-			t.visited[to] = true
-			// No need to delete contributions: received==0 means contributions[to] is empty
-			delete(t.received, to)
-			t.readyCond.Signal()
+	if t.remaining[to] == 0 && !t.visited[to] {
+		var handled bool
+		propagateSkip, skipEdges, handled = t.handleReadyLocked(to, toInfo, deferSchedule)
+		if handled {
 			t.mu.Unlock()
-			for _, edge := range toInfo.outEdges {
-				if edge.edgeType == EdgeTypeLoop {
-					continue
+			if propagateSkip {
+				for _, edge := range skipEdges {
+					t.satisfy(to, edge.to, nil)
 				}
-				t.satisfy(to, edge.to, nil)
 			}
 			return
 		}
-		if deferSchedule {
-			delete(t.skipped, to)
-			t.pendingRuns[to] = true
-			t.mu.Unlock()
-			return
-		}
-		if t.inFlight[to] {
-			// Should not happen for non-loop edges; guard against double scheduling.
-			t.mu.Unlock()
-			return
-		}
-		// Has contributions - schedule for execution
-		delete(t.skipped, to)
-		t.ready = append(t.ready, to)
-		t.readyCond.Signal()
 	}
+
 	t.mu.Unlock()
 }
 
@@ -416,9 +330,9 @@ func (t *Task) nodeDone(node string) {
 	delete(t.inFlight, node)
 	delete(t.looping, node)
 
-	if t.pendingSkips[node] {
+	switch {
+	case t.pendingSkips[node]:
 		delete(t.pendingSkips, node)
-		// Mark as visited (skip) and clear bookkeeping
 		if !t.visited[node] {
 			t.visited[node] = true
 		}
@@ -426,17 +340,11 @@ func (t *Task) nodeDone(node string) {
 		delete(t.received, node)
 		delete(t.contributions, node)
 		delete(t.skips, node)
-		info := t.executor.nodeInfos[node]
-		if info != nil {
-			for _, edge := range info.outEdges {
-				if edge.edgeType == EdgeTypeLoop {
-					continue
-				}
-				skipEdges = append(skipEdges, edge)
-			}
+		if info := t.executor.nodeInfos[node]; info != nil {
+			skipEdges = collectNonLoopEdges(info.outEdges)
 		}
 		propagateSkip = true
-	} else if t.pendingRuns[node] {
+	case t.pendingRuns[node]:
 		delete(t.pendingRuns, node)
 		if t.received[node] != 0 && !t.visited[node] {
 			delete(t.skipped, node)
@@ -514,6 +422,112 @@ func (t *Task) addSkipLocked(node, parent string) bool {
 	}
 	t.skips[node][parent] = true
 	return true
+}
+
+func (t *Task) prepareNodeLocked(from, to string, state State, info *nodeInfo, isLoopEdge bool) (bool, bool) {
+	if isLoopEdge {
+		return t.prepareLoopNodeLocked(to, state, info), false
+	}
+	return t.prepareNormalNodeLocked(from, to, state, info)
+}
+
+func (t *Task) prepareLoopNodeLocked(to string, state State, info *nodeInfo) bool {
+	deferSchedule := false
+	if t.inFlight[to] {
+		deferSchedule = true
+	}
+	if t.visited[to] {
+		loopDeps := info.loopDependencies
+		if loopDeps <= 0 {
+			loopDeps = 1
+		}
+		t.resetNodeStateLocked(to, loopDeps)
+	}
+	if state != nil {
+		t.looping[to] = true
+	}
+	return deferSchedule
+}
+
+func (t *Task) prepareNormalNodeLocked(from, to string, state State, info *nodeInfo) (bool, bool) {
+	if t.visited[to] {
+		if state != nil && (t.skipped[to] || t.looping[from]) {
+			t.resetNodeStateLocked(to, info.dependencies)
+			delete(t.skipped, to)
+			if t.looping[from] {
+				t.looping[to] = true
+			}
+			return false, false
+		}
+		return false, true
+	}
+	if state != nil && t.looping[from] {
+		t.looping[to] = true
+	}
+	return false, false
+}
+
+func (t *Task) registerSignalLocked(node, parent string, state State) bool {
+	if state != nil {
+		if !t.addContributionLocked(node, parent, state) {
+			return false
+		}
+		t.received[node]++
+		delete(t.skipped, node)
+		return true
+	}
+	t.skipped[node] = true
+	return t.addSkipLocked(node, parent)
+}
+
+func (t *Task) handleReadyLocked(node string, info *nodeInfo, deferSchedule bool) (bool, []conditionalEdge, bool) {
+	if t.received[node] == 0 {
+		if deferSchedule {
+			t.pendingSkips[node] = true
+			return false, nil, true
+		}
+		t.visited[node] = true
+		delete(t.received, node)
+		t.readyCond.Signal()
+		return true, collectNonLoopEdges(info.outEdges), true
+	}
+
+	if deferSchedule {
+		delete(t.skipped, node)
+		t.pendingRuns[node] = true
+		return false, nil, true
+	}
+
+	if t.inFlight[node] {
+		return false, nil, true
+	}
+
+	delete(t.skipped, node)
+	t.ready = append(t.ready, node)
+	t.readyCond.Signal()
+	return false, nil, true
+}
+
+func (t *Task) resetNodeStateLocked(node string, remaining int) {
+	delete(t.visited, node)
+	delete(t.contributions, node)
+	delete(t.skips, node)
+	t.received[node] = 0
+	t.remaining[node] = remaining
+}
+
+func collectNonLoopEdges(edges []conditionalEdge) []conditionalEdge {
+	if len(edges) == 0 {
+		return nil
+	}
+	out := make([]conditionalEdge, 0, len(edges))
+	for _, edge := range edges {
+		if edge.edgeType == EdgeTypeLoop {
+			continue
+		}
+		out = append(out, edge)
+	}
+	return out
 }
 
 func mergeStates(base State, updates ...State) State {

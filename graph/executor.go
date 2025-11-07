@@ -14,6 +14,7 @@ type nodeInfo struct {
 	isFinish           bool              // Whether this is the finish node
 	hasConditions      bool              // Whether outgoing edges carry conditions
 	loopDependencies   int               // Number of incoming loop edges
+	loopEdgeSources    map[string]bool   // Precomputed: which parents connect via loop edges
 }
 
 // Executor represents a compiled graph ready for execution. It is safe for
@@ -29,11 +30,18 @@ func NewExecutor(g *Graph) *Executor {
 	predecessors := make(map[string][]string, len(g.nodes))
 	dependencyCounts := make(map[string]int)
 	loopDependencyCounts := make(map[string]int)
+	loopEdgeSources := make(map[string]map[string]bool)
+
 	for from, edges := range g.edges {
 		for _, edge := range edges {
 			predecessors[edge.to] = append(predecessors[edge.to], from)
 			if edge.edgeType == EdgeTypeLoop {
 				loopDependencyCounts[edge.to]++
+				// Track which parents connect via loop edges
+				if loopEdgeSources[edge.to] == nil {
+					loopEdgeSources[edge.to] = make(map[string]bool)
+				}
+				loopEdgeSources[edge.to][from] = true
 				continue
 			}
 			dependencyCounts[edge.to]++
@@ -66,6 +74,7 @@ func NewExecutor(g *Graph) *Executor {
 			isFinish:           nodeName == g.finishPoint,
 			hasConditions:      hasConditions,
 			loopDependencies:   loopDependencyCounts[nodeName],
+			loopEdgeSources:    loopEdgeSources[nodeName],
 		}
 		nodeInfos[nodeName] = node
 	}
