@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/stream"
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/packages/param"
@@ -77,17 +78,12 @@ func (p *ImageProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 }
 
 // NewStream wraps Generate with a single-yield stream for API compatibility.
-func (p *ImageProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
-	pipe := blades.NewStreamPipe[*blades.ModelResponse]()
-	pipe.Go(func() error {
-		res, err := p.Generate(ctx, req, opts...)
-		if err != nil {
-			return err
-		}
-		pipe.Send(res)
-		return nil
-	})
-	return pipe, nil
+func (p *ImageProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan *blades.ModelResponse, error) {
+	res, err := p.Generate(ctx, req, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return stream.Just[*blades.ModelResponse](res), nil
 }
 
 // applyOptions applies image generation options to the OpenAI parameters.

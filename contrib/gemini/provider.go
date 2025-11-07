@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/stream"
 	"google.golang.org/genai"
 )
 
@@ -102,7 +103,7 @@ func (c *Provider) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOp
 }
 
 // NewStream is an alias for GenerateStream to implement the ModelProvider interface
-func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
+func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan *blades.ModelResponse, error) {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -117,19 +118,20 @@ func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts
 	}
 	config.SystemInstruction = system
 	// Create stream pipe like in openai
-	pipe := blades.NewStreamPipe[*blades.ModelResponse]()
-	pipe.Go(func() error {
+	return stream.Go(func(output chan *blades.ModelResponse) {
 		stream := c.client.Models.GenerateContentStream(ctx, req.Model, contents, config)
 		var accumulatedResponse *genai.GenerateContentResponse
 		for chunk, err := range stream {
 			if err != nil {
-				return err
+				output <- blades.NewErrorModelResponse(err)
+				return
 			}
 			response, err := convertGenAIToBlades(chunk)
 			if err != nil {
-				return err
+				output <- blades.NewErrorModelResponse(err)
+				return
 			}
-			pipe.Send(response)
+			output <- response
 			if accumulatedResponse == nil {
 				accumulatedResponse = chunk
 			} else {
@@ -154,12 +156,11 @@ func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts
 		if accumulatedResponse != nil {
 			finalResponse, err := convertGenAIToBlades(accumulatedResponse)
 			if err != nil {
-				return err
+				output <- blades.NewErrorModelResponse(err)
+				return
 			}
 			finalResponse.Message.Status = blades.StatusCompleted
-			pipe.Send(finalResponse)
+			output <- finalResponse
 		}
-		return nil
-	})
-	return pipe, nil
+	}), nil
 }

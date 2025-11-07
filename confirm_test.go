@@ -3,6 +3,8 @@ package blades
 import (
 	"context"
 	"testing"
+
+	"github.com/go-kratos/blades/stream"
 )
 
 func TestConfirmMiddleware_Run(t *testing.T) {
@@ -70,13 +72,8 @@ func TestConfirmMiddleware_RunStream(t *testing.T) {
 
 	next := &HandleFunc{
 		Handle: nil,
-		HandleStream: func(ctx context.Context, p *Prompt, _ ...ModelOption) (Streamable[*Message], error) {
-			pipe := NewStreamPipe[*Message]()
-			pipe.Go(func() error {
-				pipe.Send(AssistantMessage("STREAM-OK"))
-				return nil
-			})
-			return pipe, nil
+		HandleStream: func(ctx context.Context, p *Prompt, _ ...ModelOption) (<-chan *Message, error) {
+			return stream.Just(AssistantMessage("STREAM-OK")), nil
 		},
 	}
 
@@ -96,16 +93,13 @@ func TestConfirmMiddleware_RunStream(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		defer stream.Close()
-		if !stream.Next() {
-			t.Fatal("expected at least one stream item")
-		}
-		msg, err := stream.Current()
-		if err != nil {
-			t.Fatalf("unexpected current error: %v", err)
-		}
-		if msg.Text() != "STREAM-OK" {
-			t.Fatalf("unexpected text: want %q, got %q", "STREAM-OK", msg.Text())
+		for msg := range stream {
+			if err := msg.Error(); err != nil {
+				t.Fatalf("unexpected current error: %v", err)
+			}
+			if msg.Text() != "STREAM-OK" {
+				t.Fatalf("unexpected text: want %q, got %q", "STREAM-OK", msg.Text())
+			}
 		}
 	})
 }

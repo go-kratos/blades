@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
+	"github.com/go-kratos/blades/stream"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
@@ -63,15 +64,12 @@ func (o *OutputConverter[T]) Run(ctx context.Context, prompt *blades.Prompt, opt
 }
 
 // RunStream processes the given prompt using the wrapped runner and returns a Streamable that yields a single output of type T.
-func (o *OutputConverter[T]) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[T], error) {
+func (o *OutputConverter[T]) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (<-chan T, error) {
 	result, err := o.Run(ctx, prompt, opts...)
 	if err != nil {
 		return nil, err
 	}
-	stream := blades.NewStreamPipe[T]()
-	stream.Send(result)
-	stream.Close()
-	return stream, nil
+	return stream.Just(result), nil
 }
 
 func main() {

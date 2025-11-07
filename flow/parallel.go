@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/stream"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -69,15 +70,14 @@ func (p *Parallel) Run(ctx context.Context, input *blades.Prompt, opts ...blades
 
 // RunStream executes the runners sequentially, streaming each output as it is produced.
 // Note: Although this method belongs to the Parallel struct, it runs runners one after another, not in parallel.
-func (p *Parallel) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
-	pipe := blades.NewStreamPipe[*blades.Message]()
-	pipe.Go(func() error {
-		output, err := p.Run(ctx, input, opts...)
+func (p *Parallel) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (<-chan *blades.Message, error) {
+	return stream.Go(func(output chan *blades.Message) {
+		message, err := p.Run(ctx, input, opts...)
 		if err != nil {
-			return err
+			output <- blades.NewErrorMessage(err)
+			return
 		}
-		pipe.Send(output)
-		return nil
-	})
-	return pipe, nil
+		output <- message
+		return
+	}), nil
 }

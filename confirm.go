@@ -35,7 +35,7 @@ func (m *confirmMiddleware) Run(ctx context.Context, p *Prompt, opts ...ModelOpt
 	return m.next.Run(ctx, p, opts...)
 }
 
-func (m *confirmMiddleware) RunStream(ctx context.Context, p *Prompt, opts ...ModelOption) (Streamable[*Message], error) {
+func (m *confirmMiddleware) RunStream(ctx context.Context, p *Prompt, opts ...ModelOption) (<-chan *Message, error) {
 	ok, err := m.confirm(ctx, p)
 	if err != nil {
 		return nil, err

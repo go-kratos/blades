@@ -22,11 +22,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for stream.Next() {
-		chunk, err := stream.Current()
-		if err != nil {
-			log.Fatalf("stream recv error: %v", err)
+	for m := range stream {
+		if err := m.Error(); err != nil {
+			log.Fatal(err)
 		}
-		log.Print(chunk.Text())
+		log.Print(m.Text())
 	}
 }

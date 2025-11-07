@@ -8,6 +8,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/stream"
 )
 
 var (
@@ -72,7 +73,7 @@ func (c *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts 
 }
 
 // NewStream executes the request and returns a stream of assistant responses
-func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
+func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan *blades.ModelResponse, error) {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -81,37 +82,37 @@ func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts
 	if err != nil {
 		return nil, fmt.Errorf("converting request: %w", err)
 	}
-	pipe := blades.NewStreamPipe[*blades.ModelResponse]()
-	pipe.Go(func() error {
+	return stream.Go[*blades.ModelResponse](func(output chan *blades.ModelResponse) {
 		stream := c.client.Messages.NewStreaming(ctx, *params)
 		defer stream.Close()
 		message := &anthropic.Message{}
 		for stream.Next() {
 			event := stream.Current()
 			if err := message.Accumulate(event); err != nil {
-				return err
+				output <- blades.NewErrorModelResponse(err)
+				return
 			}
 			if ev, ok := event.AsAny().(anthropic.ContentBlockDeltaEvent); ok {
 				response, err := convertStreamDeltaToBlades(ev)
 				if err != nil {
-					return err
+					output <- blades.NewErrorModelResponse(err)
+					return
 				}
-				if response != nil {
-					pipe.Send(response)
-				}
+				output <- response
 			}
 		}
 		if err := stream.Err(); err != nil {
-			return err
+			output <- blades.NewErrorModelResponse(err)
+			return
 		}
 		finalResponse, err := convertClaudeToBlades(message)
 		if err != nil {
-			return err
+			output <- blades.NewErrorModelResponse(err)
+			return
 		}
-		pipe.Send(finalResponse)
-		return nil
-	})
-	return pipe, nil
+		output <- finalResponse
+		return
+	}), nil
 }
 
 // toClaudeParams converts Blades ModelRequest and ModelOptions to Claude MessageNewParams.

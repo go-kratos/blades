@@ -52,7 +52,7 @@ func (r *RoutingWorkflow) Run(ctx context.Context, prompt *blades.Prompt, opts .
 }
 
 // RunStream selects a route using the prompt content and streams from the chosen runner.
-func (r *RoutingWorkflow) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (blades.Streamable[*blades.Message], error) {
+func (r *RoutingWorkflow) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (<-chan *blades.Message, error) {
 	runner, err := r.selectRoute(ctx, prompt)
 	if err != nil {
 		return nil, err

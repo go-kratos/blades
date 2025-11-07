@@ -40,13 +40,8 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			for stream.Next() {
-				chunk, err := stream.Current()
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				json.NewEncoder(w).Encode(chunk)
+			for m := range stream {
+				json.NewEncoder(w).Encode(m)
 				w.(http.Flusher).Flush() // Flush the response writer to send data immediately
 			}
 		} else {

@@ -35,15 +35,8 @@ func (p *Prompt) String() string {
 	return strings.TrimSuffix(buf.String(), "\n")
 }
 
-// Streamable yields a sequence of assistant responses until completion.
-type Streamable[T any] interface {
-	Next() bool
-	Current() (T, error)
-	Close() error
-}
-
 // Runnable represents an entity that can process prompts and generate responses.
 type Runnable interface {
 	Run(context.Context, *Prompt, ...ModelOption) (*Message, error)
-	RunStream(context.Context, *Prompt, ...ModelOption) (Streamable[*Message], error)
+	RunStream(context.Context, *Prompt, ...ModelOption) (<-chan *Message, error)
 }

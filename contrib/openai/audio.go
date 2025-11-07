@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/stream"
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/packages/param"
@@ -106,17 +107,16 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 }
 
 // NewStream wraps Generate with a single-yield stream for API compatibility.
-func (p *AudioProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (blades.Streamable[*blades.ModelResponse], error) {
-	pipe := blades.NewStreamPipe[*blades.ModelResponse]()
-	pipe.Go(func() error {
+func (p *AudioProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan *blades.ModelResponse, error) {
+	return stream.Go(func(output chan *blades.ModelResponse) {
 		res, err := p.Generate(ctx, req, opts...)
 		if err != nil {
-			return err
+			output <- &blades.ModelResponse{Message: blades.NewErrorMessage(err)}
+			return
 		}
-		pipe.Send(res)
-		return nil
-	})
-	return pipe, nil
+		output <- res
+		return
+	}), nil
 }
 
 func (p *AudioProvider) applyOptions(params *openai.AudioSpeechNewParams, opt blades.AudioOptions) error {
