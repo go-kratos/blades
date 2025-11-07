@@ -13,6 +13,7 @@ type nodeInfo struct {
 	dependencies       int               // Number of dependencies (predecessor count)
 	isFinish           bool              // Whether this is the finish node
 	hasConditions      bool              // Whether outgoing edges carry conditions
+	loopDependencies   int               // Number of incoming loop edges
 }
 
 // Executor represents a compiled graph ready for execution. It is safe for
@@ -27,9 +28,14 @@ func NewExecutor(g *Graph) *Executor {
 	// Build predecessors map for deterministic state aggregation
 	predecessors := make(map[string][]string, len(g.nodes))
 	dependencyCounts := make(map[string]int)
+	loopDependencyCounts := make(map[string]int)
 	for from, edges := range g.edges {
 		for _, edge := range edges {
 			predecessors[edge.to] = append(predecessors[edge.to], from)
+			if edge.edgeType == EdgeTypeLoop {
+				loopDependencyCounts[edge.to]++
+				continue
+			}
 			dependencyCounts[edge.to]++
 		}
 	}
@@ -59,6 +65,7 @@ func NewExecutor(g *Graph) *Executor {
 			dependencies:       dependencyCounts[nodeName],
 			isFinish:           nodeName == g.finishPoint,
 			hasConditions:      hasConditions,
+			loopDependencies:   loopDependencyCounts[nodeName],
 		}
 		nodeInfos[nodeName] = node
 	}

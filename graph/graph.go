@@ -26,6 +26,18 @@ func WithMiddleware(ms ...Middleware) Option {
 // EdgeCondition is a function that determines if an edge should be followed based on the current state.
 type EdgeCondition func(ctx context.Context, state State) bool
 
+// EdgeType defines the type of an edge in the graph.
+type EdgeType int
+
+const (
+	// EdgeTypeNormal is a regular edge (default).
+	EdgeTypeNormal EdgeType = iota
+	// EdgeTypeLoop is a back edge that forms a loop - allows revisiting nodes.
+	EdgeTypeLoop
+	// EdgeTypeExit is an exit edge from a loop - required for loop nodes.
+	EdgeTypeExit
+)
+
 // EdgeOption configures an edge before it is added to the graph.
 type EdgeOption func(*conditionalEdge)
 
@@ -36,10 +48,18 @@ func WithEdgeCondition(condition EdgeCondition) EdgeOption {
 	}
 }
 
-// conditionalEdge represents an edge with an optional condition.
+// WithEdgeType sets the type of the edge (Normal, Loop, or Exit).
+func WithEdgeType(edgeType EdgeType) EdgeOption {
+	return func(edge *conditionalEdge) {
+		edge.edgeType = edgeType
+	}
+}
+
+// conditionalEdge represents an edge with an optional condition and type.
 type conditionalEdge struct {
 	to        string
 	condition EdgeCondition // nil means always follow this edge
+	edgeType  EdgeType      // type of edge (normal, loop, or exit)
 }
 
 // Graph represents a directed graph of processing nodes. Cycles are allowed.
@@ -161,10 +181,53 @@ func (g *Graph) validateStructure() error {
 			return fmt.Errorf("graph: node '%s' has mixed conditional and unconditional edges", from)
 		}
 	}
+
+	// Validate loop/exit edge rules
+	if err := g.validateLoopEdges(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateLoopEdges ensures that nodes with loop edges also have exit edges,
+// and that loop/exit edges have proper conditions.
+func (g *Graph) validateLoopEdges() error {
+	for from, edges := range g.edges {
+		var loopEdges []conditionalEdge
+		var exitEdges []conditionalEdge
+
+		for _, edge := range edges {
+			switch edge.edgeType {
+			case EdgeTypeLoop:
+				loopEdges = append(loopEdges, edge)
+			case EdgeTypeExit:
+				exitEdges = append(exitEdges, edge)
+			}
+		}
+
+		// If node has loop edges, it must have exit edges
+		if len(loopEdges) > 0 && len(exitEdges) == 0 {
+			return fmt.Errorf("graph: node '%s' has loop edges but no exit edges", from)
+		}
+
+		// All loop and exit edges must have conditions
+		for _, edge := range loopEdges {
+			if edge.condition == nil {
+				return fmt.Errorf("graph: loop edge from '%s' to '%s' must have a condition", from, edge.to)
+			}
+		}
+		for _, edge := range exitEdges {
+			if edge.condition == nil {
+				return fmt.Errorf("graph: exit edge from '%s' to '%s' must have a condition", from, edge.to)
+			}
+		}
+	}
 	return nil
 }
 
 // ensureReachable verifies that the finish node can be reached from the entry node.
+// Loop edges are skipped during reachability check since they don't advance toward the finish.
 func (g *Graph) ensureReachable() error {
 	if g.entryPoint == g.finishPoint {
 		return nil
@@ -182,13 +245,18 @@ func (g *Graph) ensureReachable() error {
 			return nil
 		}
 		for _, edge := range g.edges[node] {
+			// Skip loop edges during reachability check
+			if edge.edgeType == EdgeTypeLoop {
+				continue
+			}
 			queue = append(queue, edge.to)
 		}
 	}
 	return fmt.Errorf("graph: finish node not reachable: %s", g.finishPoint)
 }
 
-// ensureAcyclic verifies that the graph does not contain directed cycles.
+// ensureAcyclic verifies that the graph does not contain directed cycles,
+// unless the cycle includes at least one edge marked as EdgeTypeLoop.
 func (g *Graph) ensureAcyclic() error {
 	const (
 		stateUnvisited = iota
@@ -198,26 +266,32 @@ func (g *Graph) ensureAcyclic() error {
 	states := make(map[string]int, len(g.nodes))
 	stack := make([]string, 0, len(g.nodes))
 
-	var visit func(string) error
-	visit = func(node string) error {
+	var visit func(string, bool) error
+	visit = func(node string, hasLoopEdge bool) error {
 		states[node] = stateVisiting
 		stack = append(stack, node)
 
 		for _, edge := range g.edges[node] {
 			next := edge.to
+			nextHasLoop := hasLoopEdge || edge.edgeType == EdgeTypeLoop
 			switch states[next] {
 			case stateVisiting:
-				cycleStart := 0
-				for i, name := range stack {
-					if name == next {
-						cycleStart = i
-						break
+				// Found a back edge (cycle)
+				// Allow it only if the cycle includes a loop edge
+				if !nextHasLoop {
+					cycleStart := 0
+					for i, name := range stack {
+						if name == next {
+							cycleStart = i
+							break
+						}
 					}
+					cycle := append(append([]string{}, stack[cycleStart:]...), next)
+					return fmt.Errorf("graph: cycle detected but edge not marked as EdgeTypeLoop (cycle: %s)", strings.Join(cycle, " -> "))
 				}
-				cycle := append(append([]string{}, stack[cycleStart:]...), next)
-				return fmt.Errorf("graph: cycles are not supported (cycle: %s)", strings.Join(cycle, " -> "))
+				// Loop edge is allowed - continue checking other edges
 			case stateUnvisited:
-				if err := visit(next); err != nil {
+				if err := visit(next, nextHasLoop); err != nil {
 					return err
 				}
 			}
@@ -230,7 +304,7 @@ func (g *Graph) ensureAcyclic() error {
 
 	for name := range g.nodes {
 		if states[name] == stateUnvisited {
-			if err := visit(name); err != nil {
+			if err := visit(name, false); err != nil {
 				return err
 			}
 		}
@@ -250,12 +324,12 @@ func (g *Graph) Compile() (*Executor, error) {
 	if err := g.ensureAcyclic(); err != nil {
 		return nil, err
 	}
-	// Check reachability
-	if err := g.ensureReachable(); err != nil {
-		return nil, err
-	}
 	// Final structural validations
 	if err := g.validateStructure(); err != nil {
+		return nil, err
+	}
+	// Check reachability once structure is validated
+	if err := g.ensureReachable(); err != nil {
 		return nil, err
 	}
 	return NewExecutor(g), nil
