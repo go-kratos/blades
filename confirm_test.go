@@ -72,7 +72,7 @@ func TestConfirmMiddleware_RunStream(t *testing.T) {
 
 	next := &HandleFunc{
 		Handle: nil,
-		HandleStream: func(ctx context.Context, p *Prompt, _ ...ModelOption) (<-chan *Message, error) {
+		HandleStream: func(ctx context.Context, p *Prompt, _ ...ModelOption) (stream.Streamable[*Message], error) {
 			return stream.Just(AssistantMessage("STREAM-OK")), nil
 		},
 	}
@@ -93,8 +93,8 @@ func TestConfirmMiddleware_RunStream(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		for msg := range stream {
-			if err := msg.Error(); err != nil {
+		for msg, err := range stream {
+			if err != nil {
 				t.Fatalf("unexpected current error: %v", err)
 			}
 			if msg.Text() != "STREAM-OK" {
