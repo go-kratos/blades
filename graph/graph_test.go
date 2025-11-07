@@ -83,7 +83,7 @@ func TestGraphCompileRejectsCycles(t *testing.T) {
 	_ = g.SetEntryPoint("A")
 	_ = g.SetFinishPoint("B")
 
-	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "cycles are not supported") {
+	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "cycle detected but edge not marked as EdgeTypeLoop") {
 		t.Fatalf("expected cycle detection error, got %v", err)
 	}
 }
@@ -105,7 +105,7 @@ func TestGraphCompileRejectsCyclesInDisconnectedComponent(t *testing.T) {
 	_ = g.AddEdge("Y", "Z")
 	_ = g.AddEdge("Z", "X")
 
-	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "cycles are not supported") {
+	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "cycle detected but edge not marked as EdgeTypeLoop") {
 		t.Fatalf("expected cycle detection error from disconnected component, got %v", err)
 	}
 }
@@ -322,12 +322,14 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 	g.AddNode("conditional", record("conditional", nil))
 	g.AddNode("join", record("join", nil))
 
+	// Exclusive matching: first matching edge wins
+	// Edge order matters: "always" is checked first
 	g.AddEdge("start", "always", WithEdgeCondition(func(_ context.Context, state State) bool {
-		return true // Always execute
+		return true // Always matches - will be selected
 	}))
 	g.AddEdge("start", "conditional", WithEdgeCondition(func(_ context.Context, state State) bool {
 		allow, _ := state["allow_conditional"].(bool)
-		return allow
+		return allow // Also true, but won't be selected (second edge)
 	}))
 	g.AddEdge("always", "join")
 	g.AddEdge("conditional", "join")
@@ -344,8 +346,15 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 		t.Fatalf("execution error: %v", err)
 	}
 
-	if executed["conditional"] == 0 {
-		t.Fatalf("expected conditional branch to execute when condition true, executed=%v", executed)
+	// With exclusive matching, only the first matching edge is taken
+	if executed["always"] != 1 {
+		t.Fatalf("expected always branch to execute, executed=%v", executed)
+	}
+	if executed["conditional"] != 0 {
+		t.Fatalf("expected conditional branch NOT to execute (exclusive matching), executed=%v", executed)
+	}
+	if executed["join"] != 1 {
+		t.Fatalf("expected join to execute, executed=%v", executed)
 	}
 }
 
@@ -1484,14 +1493,14 @@ func TestGraphLoopFlow(t *testing.T) {
 
 	g.AddEdge("outline", "review")
 	g.AddEdge("review", "revise")
-	g.AddEdge("revise", "review") // introduces a cycle
+	g.AddEdge("revise", "review") // introduces a cycle - but not marked as Loop
 	g.AddEdge("revise", "publish")
 
 	g.SetEntryPoint("outline")
 	g.SetFinishPoint("publish")
 
-	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "cycles are not supported") {
-		t.Fatalf("expected compile error for cyclic graph, got %v", err)
+	if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "cycle detected but edge not marked as EdgeTypeLoop") {
+		t.Fatalf("expected compile error for unmarked cyclic edge, got %v", err)
 	}
 }
 func TestGraphSerialFanOutStateIsolation(t *testing.T) {
@@ -2781,5 +2790,415 @@ func TestNodeNameWithMultipleMiddlewares(t *testing.T) {
 		if middleware2Calls[nodeName] != 1 {
 			t.Errorf("middleware2 expected to see node %s once, got %d", nodeName, middleware2Calls[nodeName])
 		}
+	}
+}
+
+// TestExclusiveMatchingStateIsolation verifies that state is properly cloned
+// in exclusive matching to prevent shared map mutations
+func TestExclusiveMatchingStateIsolation(t *testing.T) {
+	g := NewGraph(WithParallel(false))
+
+	var capturedState State
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		next := State{"key": "original"}
+		return next, nil
+	})
+
+	g.AddNode("branch", func(ctx context.Context, state State) (State, error) {
+		// Capture the state we receive
+		capturedState = state
+		// Mutate it
+		state["key"] = "mutated"
+		state["new_key"] = "added"
+		return state, nil
+	})
+
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		// Check if the mutation from branch affected us
+		// With proper cloning, we should see the mutations
+		if state["key"] != "mutated" {
+			t.Errorf("expected to see mutated value, got %v", state["key"])
+		}
+		return state, nil
+	})
+
+	g.AddEdge("start", "branch", WithEdgeCondition(func(_ context.Context, state State) bool {
+		return true
+	}))
+	g.AddEdge("branch", "finish")
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	_, err = executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	// Verify state was cloned (not the same reference)
+	if capturedState["key"] != "mutated" {
+		t.Errorf("expected captured state to show mutation")
+	}
+}
+
+// TestHandlerReturnsNilState verifies that nil states are converted to empty State{}
+func TestHandlerReturnsNilState(t *testing.T) {
+	g := NewGraph()
+
+	executed := make(map[string]bool)
+	var receivedState State
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		executed["start"] = true
+		return nil, nil // Return nil state
+	})
+
+	g.AddNode("next", func(ctx context.Context, state State) (State, error) {
+		executed["next"] = true
+		receivedState = state
+		if state == nil {
+			t.Error("next received nil state - should have been converted to empty State{}")
+		}
+		return state, nil
+	})
+
+	g.AddEdge("start", "next")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("next")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	_, err = executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	if !executed["next"] {
+		t.Error("next should have executed")
+	}
+
+	if receivedState == nil {
+		t.Error("received state should not be nil - Clone() should convert to empty State{}")
+	}
+
+	if len(receivedState) != 0 {
+		t.Errorf("expected empty state, got %v", receivedState)
+	}
+}
+
+// TestGraphLoopWithRetry tests a simple retry loop with max iterations
+func TestGraphLoopWithRetry(t *testing.T) {
+	g := NewGraph(WithParallel(false))
+
+	executionCount := make(map[string]int)
+	var mu sync.Mutex
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		mu.Lock()
+		executionCount["start"]++
+		mu.Unlock()
+		next := state.Clone()
+		next["retries"] = 0
+		next["success"] = false
+		return next, nil
+	})
+
+	g.AddNode("try_operation", func(ctx context.Context, state State) (State, error) {
+		mu.Lock()
+		executionCount["try_operation"]++
+		mu.Unlock()
+		next := state.Clone()
+		retries := next["retries"].(int)
+		// Succeed on the 3rd attempt
+		if retries >= 2 {
+			next["success"] = true
+		}
+		next["retries"] = retries + 1
+		return next, nil
+	})
+
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		mu.Lock()
+		executionCount["finish"]++
+		mu.Unlock()
+		return state, nil
+	})
+
+	// Edges
+	g.AddEdge("start", "try_operation")
+
+	// Loop edge: retry if not successful and retries < 5
+	g.AddEdge("try_operation", "try_operation",
+		WithEdgeCondition(func(_ context.Context, state State) bool {
+			success := state["success"].(bool)
+			retries := state["retries"].(int)
+			return !success && retries < 5
+		}),
+		WithEdgeType(EdgeTypeLoop))
+
+	// Exit edge: finish if successful or max retries reached
+	g.AddEdge("try_operation", "finish",
+		WithEdgeCondition(func(_ context.Context, state State) bool {
+			success := state["success"].(bool)
+			retries := state["retries"].(int)
+			return success || retries >= 5
+		}),
+		WithEdgeType(EdgeTypeExit))
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	result, err := executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	// Should execute try_operation 3 times (retries 0, 1, 2)
+	if executionCount["try_operation"] != 3 {
+		t.Errorf("expected try_operation to execute 3 times, got %d", executionCount["try_operation"])
+	}
+
+	if !result["success"].(bool) {
+		t.Error("expected operation to succeed")
+	}
+
+	if executionCount["finish"] != 1 {
+		t.Errorf("expected finish to execute once, got %d", executionCount["finish"])
+	}
+
+	t.Logf("Execution counts: %v", executionCount)
+}
+
+// TestGraphLoopValidation tests that loop edges must have exit edges
+func TestGraphLoopValidation(t *testing.T) {
+	g := NewGraph()
+
+	g.AddNode("start", stepHandler("start"))
+	g.AddNode("loop", stepHandler("loop"))
+	g.AddNode("finish", stepHandler("finish"))
+
+	g.AddEdge("start", "loop")
+	// Loop edge without exit edge - should fail validation
+	g.AddEdge("loop", "loop",
+		WithEdgeCondition(func(_ context.Context, state State) bool {
+			return true
+		}),
+		WithEdgeType(EdgeTypeLoop))
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	_, err := g.Compile()
+	if err == nil {
+		t.Fatal("expected validation error for loop edge without exit edge")
+	}
+	if !strings.Contains(err.Error(), "loop edges but no exit edges") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestGraphLoopMustHaveCondition tests that loop/exit edges must have conditions
+func TestGraphLoopMustHaveCondition(t *testing.T) {
+	g := NewGraph()
+
+	g.AddNode("start", stepHandler("start"))
+	g.AddNode("loop", stepHandler("loop"))
+	g.AddNode("finish", stepHandler("finish"))
+
+	g.AddEdge("start", "loop")
+	// Loop edge without condition - should fail validation
+	g.AddEdge("loop", "loop", WithEdgeType(EdgeTypeLoop))
+	g.AddEdge("loop", "finish", WithEdgeType(EdgeTypeExit))
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	_, err := g.Compile()
+	if err == nil {
+		t.Fatal("expected validation error for loop edge without condition")
+	}
+	if !strings.Contains(err.Error(), "must have a condition") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestGraphLoopParallelConditionalIntegration exercises a graph that combines loop edges,
+// parallel fan-out, and conditional branches to ensure the scheduler handles re-entry correctly.
+func TestGraphLoopParallelConditionalIntegration(t *testing.T) {
+	g := NewGraph(WithParallel(true))
+
+	var (
+		mu            sync.Mutex
+		executionLog  = make(map[string][]int)
+		recordAttempt = func(node string, attempt int) {
+			mu.Lock()
+			executionLog[node] = append(executionLog[node], attempt)
+			mu.Unlock()
+		}
+	)
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		recordAttempt("start", 0)
+		return State{
+			"attempt":      0,
+			"max_attempts": 3,
+			"all_success":  false,
+		}, nil
+	})
+
+	g.AddNode("dispatch", func(ctx context.Context, state State) (State, error) {
+		prev := state["attempt"].(int)
+		maxAttempts := state["max_attempts"].(int)
+		current := prev + 1
+		recordAttempt("dispatch", current)
+		return State{
+			"attempt":      current,
+			"max_attempts": maxAttempts,
+		}, nil
+	})
+
+	g.AddNode("workerA", func(ctx context.Context, state State) (State, error) {
+		attempt := state["attempt"].(int)
+		maxAttempts := state["max_attempts"].(int)
+		success := attempt >= 2
+		recordAttempt("workerA", attempt)
+		return State{
+			"attempt":      attempt,
+			"max_attempts": maxAttempts,
+			"a_success":    success,
+		}, nil
+	})
+
+	g.AddNode("workerB", func(ctx context.Context, state State) (State, error) {
+		attempt := state["attempt"].(int)
+		maxAttempts := state["max_attempts"].(int)
+		success := attempt >= 3
+		recordAttempt("workerB", attempt)
+		return State{
+			"attempt":      attempt,
+			"max_attempts": maxAttempts,
+			"b_success":    success,
+		}, nil
+	})
+
+	g.AddNode("collect", func(ctx context.Context, state State) (State, error) {
+		attempt := state["attempt"].(int)
+		maxAttempts := state["max_attempts"].(int)
+		aSuccess, _ := state["a_success"].(bool)
+		bSuccess, _ := state["b_success"].(bool)
+		recordAttempt("collect", attempt)
+		return State{
+			"attempt":      attempt,
+			"max_attempts": maxAttempts,
+			"a_success":    aSuccess,
+			"b_success":    bSuccess,
+		}, nil
+	})
+
+	g.AddNode("decide", func(ctx context.Context, state State) (State, error) {
+		attempt := state["attempt"].(int)
+		maxAttempts := state["max_attempts"].(int)
+		aSuccess, _ := state["a_success"].(bool)
+		bSuccess, _ := state["b_success"].(bool)
+		allSuccess := aSuccess && bSuccess
+		recordAttempt("decide", attempt)
+		return State{
+			"attempt":      attempt,
+			"max_attempts": maxAttempts,
+			"a_success":    aSuccess,
+			"b_success":    bSuccess,
+			"all_success":  allSuccess,
+		}, nil
+	})
+
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		attempt := state["attempt"].(int)
+		recordAttempt("finish", attempt)
+		return state, nil
+	})
+
+	g.AddEdge("start", "dispatch")
+	g.AddEdge("dispatch", "workerA")
+	g.AddEdge("dispatch", "workerB")
+	g.AddEdge("workerA", "collect")
+	g.AddEdge("workerB", "collect")
+	g.AddEdge("collect", "decide")
+
+	// Loop back to dispatch while retries remain and success not achieved.
+	g.AddEdge("decide", "dispatch",
+		WithEdgeCondition(func(_ context.Context, state State) bool {
+			attempt := state["attempt"].(int)
+			maxAttempts := state["max_attempts"].(int)
+			allSuccess, _ := state["all_success"].(bool)
+			return !allSuccess && attempt < maxAttempts
+		}),
+		WithEdgeType(EdgeTypeLoop),
+	)
+	// Exit to finish once success achieved or retries exhausted.
+	g.AddEdge("decide", "finish",
+		WithEdgeCondition(func(_ context.Context, state State) bool {
+			attempt := state["attempt"].(int)
+			maxAttempts := state["max_attempts"].(int)
+			allSuccess, _ := state["all_success"].(bool)
+			return allSuccess || attempt >= maxAttempts
+		}),
+		WithEdgeType(EdgeTypeExit),
+	)
+
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	result, err := executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Logf("execution log: %v", executionLog)
+		t.Fatalf("execution error: %v", err)
+	}
+
+	expectedSequence := []int{1, 2, 3}
+	if !reflect.DeepEqual(executionLog["dispatch"], expectedSequence) {
+		t.Fatalf("dispatch attempts mismatch: got %v, want %v", executionLog["dispatch"], expectedSequence)
+	}
+	if !reflect.DeepEqual(executionLog["workerA"], expectedSequence) {
+		t.Fatalf("workerA attempts mismatch: got %v, want %v", executionLog["workerA"], expectedSequence)
+	}
+	if !reflect.DeepEqual(executionLog["workerB"], expectedSequence) {
+		t.Fatalf("workerB attempts mismatch: got %v, want %v", executionLog["workerB"], expectedSequence)
+	}
+	if !reflect.DeepEqual(executionLog["collect"], expectedSequence) {
+		t.Fatalf("collect attempts mismatch: got %v, want %v", executionLog["collect"], expectedSequence)
+	}
+	if !reflect.DeepEqual(executionLog["decide"], expectedSequence) {
+		t.Fatalf("decide attempts mismatch: got %v, want %v", executionLog["decide"], expectedSequence)
+	}
+
+	if len(executionLog["finish"]) != 1 || executionLog["finish"][0] != 3 {
+		t.Fatalf("finish should run once at attempt 3, got %v", executionLog["finish"])
+	}
+
+	if attempt := result["attempt"].(int); attempt != 3 {
+		t.Fatalf("expected final attempt to be 3, got %d", attempt)
+	}
+	allSuccess, ok := result["all_success"].(bool)
+	if !ok || !allSuccess {
+		t.Fatalf("expected loop to exit with success, result=%v", result)
 	}
 }
