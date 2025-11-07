@@ -30,7 +30,7 @@ func Just[T any](values ...T) Streamable[T] {
 	}
 }
 
-// Filter returns a channel that emits only the values from the input channel
+// Filter returns a Streamable that emits only the values from the input stream
 // that satisfy the given predicate function.
 func Filter[T any](stream Streamable[T], predicate func(T) bool) Streamable[T] {
 	return func(yield func(T, error) bool) {
