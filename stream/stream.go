@@ -18,8 +18,8 @@ func Go[T any](stream Streamable[T]) Streamable[T] {
 	}
 }
 
-// Just returns a channel that emits the provided values in order and then
-// closes the channel.
+// Just returns a Streamable that emits the provided values in order.
+//
 func Just[T any](values ...T) Streamable[T] {
 	return func(yield func(T, error) bool) {
 		for _, v := range values {
