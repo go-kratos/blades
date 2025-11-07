@@ -12,19 +12,9 @@ type RetryOption = kitretry.Option
 // Retryable determines whether an error should trigger another attempt.
 type Retryable = kitretry.Retryable
 
-var (
-	// Re-export common retry options for convenience.
-	WithRetryable  = kitretry.WithRetryable
-	WithBaseDelay  = kitretry.WithBaseDelay
-	WithMaxDelay   = kitretry.WithMaxDelay
-	WithMultiplier = kitretry.WithMultiplier
-	WithJitter     = kitretry.WithJitter
-)
-
 // Retry returns a middleware that retries node handlers with exponential backoff.
 func Retry(attempts int, opts ...RetryOption) Middleware {
 	r := kitretry.New(attempts, opts...)
-
 	return func(next Handler) Handler {
 		return func(ctx context.Context, state State) (State, error) {
 			var nextState State

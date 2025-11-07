@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	kitretry "github.com/go-kratos/kit/retry"
 )
 
 const stepsKey = "steps"
@@ -2827,7 +2829,7 @@ func TestRetryMiddlewareRetriesFailures(t *testing.T) {
 func TestRetryMiddlewareRespectsRetryablePredicate(t *testing.T) {
 	errPermanent := errors.New("permanent failure")
 	g := NewGraph(WithMiddleware(Retry(5,
-		WithRetryable(func(err error) bool {
+		kitretry.WithRetryable(func(err error) bool {
 			return !errors.Is(err, errPermanent)
 		}),
 	)))
