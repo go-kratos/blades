@@ -17,6 +17,7 @@ require (
 	github.com/go-kratos/blades/contrib/mcp v0.0.0-00010101000000-000000000000
 	github.com/go-kratos/blades/contrib/openai v0.0.0-00010101000000-000000000000
 	github.com/go-kratos/blades/contrib/otel v0.0.0-00010101000000-000000000000
+	github.com/go-kratos/exp v0.0.0-20220317152229-5e75af531490
 	github.com/google/jsonschema-go v0.3.0
 	go.opentelemetry.io/otel v1.38.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.38.0

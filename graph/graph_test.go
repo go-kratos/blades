@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -2781,5 +2782,82 @@ func TestNodeNameWithMultipleMiddlewares(t *testing.T) {
 		if middleware2Calls[nodeName] != 1 {
 			t.Errorf("middleware2 expected to see node %s once, got %d", nodeName, middleware2Calls[nodeName])
 		}
+	}
+}
+
+func TestRetryMiddlewareRetriesFailures(t *testing.T) {
+	g := NewGraph(WithMiddleware(Retry(WithAttempts(3))))
+
+	attempts := 0
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, fmt.Errorf("attempt %d failed", attempts)
+		}
+		next := state.Clone()
+		next["attempts"] = attempts
+		return next, nil
+	})
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		return state.Clone(), nil
+	})
+	g.AddEdge("start", "finish")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	result, err := executor.Execute(context.Background(), State{})
+	if err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+	got, _ := result["attempts"].(int)
+	if got != 3 {
+		t.Fatalf("expected final attempts to be 3, got %d", got)
+	}
+}
+
+func TestRetryMiddlewareRespectsRetryablePredicate(t *testing.T) {
+	errPermanent := errors.New("permanent failure")
+	g := NewGraph(WithMiddleware(Retry(
+		WithAttempts(5),
+		WithRetryable(func(err error) bool {
+			return !errors.Is(err, errPermanent)
+		}),
+	)))
+
+	attempts := 0
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		attempts++
+		return nil, errPermanent
+	})
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		return state.Clone(), nil
+	})
+	g.AddEdge("start", "finish")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	_, err = executor.Execute(context.Background(), State{})
+	if err == nil {
+		t.Fatalf("expected execution to fail")
+	}
+	if !errors.Is(err, errPermanent) {
+		t.Fatalf("expected permanent error, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected single attempt for non-retryable error, got %d", attempts)
 	}
 }
