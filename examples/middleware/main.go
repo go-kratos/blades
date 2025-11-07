@@ -22,17 +22,17 @@ func (m *Guardrails) Run(ctx context.Context, prompt *blades.Prompt, opts ...bla
 }
 
 // RunStream processes the prompt in a streaming manner and adds guardrails before passing it to the next runnable.
-func (m *Guardrails) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (<-chan *blades.Message, error) {
+func (m *Guardrails) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (<-chan stream.Event[*blades.Message], error) {
 	// Pre-processing: Add guardrails to the prompt
 	log.Println("Applying guardrails to the prompt (streaming)")
 	output, err := m.next.RunStream(ctx, prompt, opts...)
 	if err != nil {
 		return nil, err
 	}
-	return stream.Observe(output, func(msg *blades.Message) (*blades.Message, bool) {
+	return stream.Observe(output, func(event stream.Event[*blades.Message]) error {
 		// Post-processing: Filter messages if necessary
-		log.Println("Processing streamed message:", msg.String())
-		return msg, true // Return (msg, false) to stop processing, or (blades.NewErrorMessage(err), true) to send an error
+		log.Println("Processing streamed message:", event)
+		return nil
 	}), nil
 }
 

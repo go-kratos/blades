@@ -73,7 +73,7 @@ func (c *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts 
 }
 
 // NewStream executes the request and returns a stream of assistant responses
-func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan *blades.ModelResponse, error) {
+func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan stream.Event[*blades.ModelResponse], error) {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -82,36 +82,32 @@ func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts
 	if err != nil {
 		return nil, fmt.Errorf("converting request: %w", err)
 	}
-	return stream.Go[*blades.ModelResponse](func(output chan *blades.ModelResponse) {
-		stream := c.client.Messages.NewStreaming(ctx, *params)
-		defer stream.Close()
+	return stream.Go(func(output chan stream.Event[*blades.ModelResponse]) error {
+		streaming := c.client.Messages.NewStreaming(ctx, *params)
+		defer streaming.Close()
 		message := &anthropic.Message{}
-		for stream.Next() {
-			event := stream.Current()
+		for streaming.Next() {
+			event := streaming.Current()
 			if err := message.Accumulate(event); err != nil {
-				output <- blades.NewErrorModelResponse(err)
-				return
+				return err
 			}
 			if ev, ok := event.AsAny().(anthropic.ContentBlockDeltaEvent); ok {
 				response, err := convertStreamDeltaToBlades(ev)
 				if err != nil {
-					output <- blades.NewErrorModelResponse(err)
-					return
+					return err
 				}
-				output <- response
+				output <- stream.NewEvent(response)
 			}
 		}
-		if err := stream.Err(); err != nil {
-			output <- blades.NewErrorModelResponse(err)
-			return
+		if err := streaming.Err(); err != nil {
+			return err
 		}
 		finalResponse, err := convertClaudeToBlades(message)
 		if err != nil {
-			output <- blades.NewErrorModelResponse(err)
-			return
+			return err
 		}
-		output <- finalResponse
-		return
+		output <- stream.NewEvent(finalResponse)
+		return nil
 	}), nil
 }
 

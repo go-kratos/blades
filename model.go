@@ -3,6 +3,7 @@ package blades
 import (
 	"context"
 
+	"github.com/go-kratos/blades/stream"
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -62,15 +63,10 @@ type ModelResponse struct {
 	Message *Message `json:"message"`
 }
 
-// NewErrorModelResponse creates a ModelResponse containing an error message.
-func NewErrorModelResponse(err error) *ModelResponse {
-	return &ModelResponse{Message: NewErrorMessage(err)}
-}
-
 // ModelProvider is an interface for multimodal chat-style models.
 type ModelProvider interface {
 	// Generate Generate executes the request and returns a single assistant response.
 	Generate(context.Context, *ModelRequest, ...ModelOption) (*ModelResponse, error)
 	// NewStream executes the request and returns a stream of assistant responses.
-	NewStream(context.Context, *ModelRequest, ...ModelOption) (<-chan *ModelResponse, error)
+	NewStream(context.Context, *ModelRequest, ...ModelOption) (<-chan stream.Event[*ModelResponse], error)
 }

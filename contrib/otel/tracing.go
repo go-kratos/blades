@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/stream"
 )
 
 const (
@@ -99,32 +100,25 @@ func (t *tracing) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades
 }
 
 // RunStream processes the prompt in a streaming manner and adds OpenTelemetry tracing to the invocation before passing it to the next runnable.
-func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (<-chan *blades.Message, error) {
+func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (<-chan stream.Event[*blades.Message], error) {
 	ac, ok := blades.FromContext(ctx)
 	if !ok {
 		return t.next.RunStream(ctx, prompt, opts...)
 	}
 	ctx, span := t.start(ctx, ac, opts...)
-	stream, err := t.next.RunStream(ctx, prompt, opts...)
+	streaming, err := t.next.RunStream(ctx, prompt, opts...)
 	if err != nil {
 		t.end(span, nil, err)
 		return nil, err
 	}
-	return stream.Go[*blades.Message](func(output chan *blades.Message) {
-		var m *blades.Message
-		for m = range stream {
+	return stream.Go(func(output chan stream.Event[*blades.Message]) error {
+		var event stream.Event[*blades.Message]
+		for event = range streaming {
 			// copy messages to output channel
-			output <- m
+			output <- event
 		}
-		if m == nil {
-			t.end(span, nil, fmt.Errorf("no messages received from stream"))
-			return
-		}
-		if err := m.Error(); err != nil {
-			t.end(span, nil, m.Error())
-		} else {
-			t.end(span, m, nil)
-		}
+		t.end(span, event.Value, event.Err)
+		return nil
 	}), nil
 }
 
@@ -135,6 +129,9 @@ func (t *tracing) end(span trace.Span, msg *blades.Message, err error) {
 		span.SetStatus(codes.Error, err.Error())
 	} else {
 		span.SetStatus(codes.Ok, codes.Ok.String())
+	}
+	if msg == nil {
+		return
 	}
 	if msg.FinishReason != "" {
 		span.SetAttributes(semconv.GenAIResponseFinishReasons(msg.FinishReason))

@@ -50,10 +50,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for m := range stream {
-		if err := m.Error(); err != nil {
+	for event := range stream {
+		if err := event.Err; err != nil {
 			log.Fatal(err)
 		}
-		log.Println(m.Text())
+		log.Println(event.Value.Text())
 	}
 }

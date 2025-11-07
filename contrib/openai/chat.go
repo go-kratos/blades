@@ -86,7 +86,7 @@ func (p *ChatProvider) Generate(ctx context.Context, req *blades.ModelRequest, o
 
 // NewStream streams chat completion chunks and converts each choice delta
 // into a ModelResponse for incremental consumption.
-func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan *blades.ModelResponse, error) {
+func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan stream.Event[*blades.ModelResponse], error) {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -95,31 +95,28 @@ func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, 
 	if err != nil {
 		return nil, err
 	}
-	return stream.Go(func(output chan *blades.ModelResponse) {
-		stream := p.client.Chat.Completions.NewStreaming(ctx, params)
-		defer stream.Close()
+	return stream.Go(func(output chan stream.Event[*blades.ModelResponse]) error {
+		streaming := p.client.Chat.Completions.NewStreaming(ctx, params)
+		defer streaming.Close()
 		acc := openai.ChatCompletionAccumulator{}
-		for stream.Next() {
-			chunk := stream.Current()
+		for streaming.Next() {
+			chunk := streaming.Current()
 			acc.AddChunk(chunk)
 			message, err := chunkChoiceToResponse(ctx, chunk.Choices)
 			if err != nil {
-				output <- blades.NewErrorModelResponse(err)
-				return
+				return err
 			}
-			output <- message
+			output <- stream.NewEvent(message)
 		}
-		if err := stream.Err(); err != nil {
-			output <- blades.NewErrorModelResponse(err)
-			return
+		if err := streaming.Err(); err != nil {
+			return err
 		}
 		finalResponse, err := choiceToResponse(ctx, params, &acc.ChatCompletion)
 		if err != nil {
-			output <- blades.NewErrorModelResponse(err)
-			return
+			return err
 		}
-		output <- finalResponse
-		return
+		output <- stream.NewEvent(finalResponse)
+		return nil
 	}), nil
 }
 
@@ -357,7 +354,7 @@ func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams
 			msg.Parts = append(msg.Parts, blades.DataPart{Bytes: bytes})
 		}
 		if choice.Message.Refusal != "" {
-			msg.Parts = append(msg.Parts, blades.ErrorPart{Error: errors.New(choice.Message.Refusal)})
+			// TODO: map refusal codes to specific error types
 		}
 		if choice.FinishReason != "" {
 			msg.FinishReason = choice.FinishReason
@@ -387,7 +384,7 @@ func chunkChoiceToResponse(ctx context.Context, choices []openai.ChatCompletionC
 			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Delta.Content})
 		}
 		if choice.Delta.Refusal != "" {
-			msg.Parts = append(msg.Parts, blades.ErrorPart{Error: errors.New(choice.Delta.Refusal)})
+			// TODO: map refusal codes to specific error types
 		}
 		if choice.FinishReason != "" {
 			msg.FinishReason = choice.FinishReason

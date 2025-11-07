@@ -107,15 +107,14 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 }
 
 // NewStream wraps Generate with a single-yield stream for API compatibility.
-func (p *AudioProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan *blades.ModelResponse, error) {
-	return stream.Go(func(output chan *blades.ModelResponse) {
+func (p *AudioProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan stream.Event[*blades.ModelResponse], error) {
+	return stream.Go(func(output chan stream.Event[*blades.ModelResponse]) error {
 		m, err := p.Generate(ctx, req, opts...)
 		if err != nil {
-			output <- blades.NewErrorModelResponse(err)
-			return
+			return err
 		}
-		output <- m
-		return
+		output <- stream.NewEvent(m)
+		return nil
 	}), nil
 }
 

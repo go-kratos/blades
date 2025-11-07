@@ -227,7 +227,7 @@ func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*
 }
 
 // RunStream runs the agent with the given prompt and options, returning a streamable response.
-func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (<-chan *Message, error) {
+func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (<-chan stream.Event[*Message], error) {
 	ctx, invocation := a.buildInvocationContext(ctx)
 	input, err := a.inputHandler(ctx, prompt, invocation.Session.State())
 	if err != nil {
@@ -349,41 +349,37 @@ func (a *Agent) handler(invocation *InvocationContext, req *ModelRequest) Runnab
 			}
 			return nil, ErrMaxIterationsExceeded
 		},
-		HandleStream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (<-chan *Message, error) {
-			return stream.Go[*Message](func(output chan *Message) {
+		HandleStream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (<-chan stream.Event[*Message], error) {
+			return stream.Go(func(output chan stream.Event[*Message]) error {
 				// find resume message
 				if message, ok := a.findResumeMessage(ctx, invocation); ok {
-					output <- message
-					return
+					output <- stream.NewEvent(message)
+					return nil
 				}
 				var toolMessages []*Message
 				for i := 0; i < a.maxIterations; i++ {
-					stream, err := a.provider.NewStream(ctx, req, opts...)
+					events, err := a.provider.NewStream(ctx, req, opts...)
 					if err != nil {
-						output <- NewErrorMessage(err)
-						return
+						return err
 					}
 					var finalResponse *ModelResponse
-					for chunk := range stream {
-						if err := chunk.Message.Error(); err != nil {
-							output <- chunk.Message
-							return
+					for event := range events {
+						if err := event.Err; err != nil {
+							return err
 						}
-						if chunk.Message.Status == StatusCompleted {
-							finalResponse = chunk
+						if event.Value.Message.Status == StatusCompleted {
+							finalResponse = event.Value
 						} else {
-							output <- chunk.Message
+							output <- stream.NewEvent(event.Value.Message)
 						}
 					}
 					if finalResponse == nil {
-						output <- NewErrorMessage(ErrMissingFinalResponse)
-						return
+						return ErrMissingFinalResponse
 					}
 					if finalResponse.Message.Role == RoleTool {
 						toolMessage, err := a.executeTools(ctx, finalResponse.Message)
 						if err != nil {
-							output <- NewErrorMessage(err)
-							return
+							return err
 						}
 						req.Messages = append(req.Messages, toolMessage)
 						toolMessages = append(toolMessages, toolMessage)
@@ -392,17 +388,15 @@ func (a *Agent) handler(invocation *InvocationContext, req *ModelRequest) Runnab
 					// handle the final response before sending
 					finalResponse.Message, err = a.outputHandler(ctx, finalResponse.Message, invocation.Session.State())
 					if err != nil {
-						output <- NewErrorMessage(err)
-						return
+						return err
 					}
 					if err := a.storeSession(ctx, invocation, prompt.Messages, toolMessages, finalResponse.Message); err != nil {
-						output <- NewErrorMessage(err)
-						return
+						return err
 					}
-					output <- finalResponse.Message
-					return
+					output <- stream.NewEvent(finalResponse.Message)
+					return nil
 				}
-				output <- NewErrorMessage(ErrMaxIterationsExceeded)
+				return ErrMaxIterationsExceeded
 			}), nil
 		},
 	})

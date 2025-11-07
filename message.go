@@ -60,21 +60,15 @@ type ToolPart struct {
 	Response string `json:"result,omitempty"`
 }
 
-// ErrorPart is a message part that contains an error.
-type ErrorPart struct {
-	Error error `json:"-"`
-}
-
 // Part is a part of a message, which can be text or a file.
 type Part interface {
 	isPart()
 }
 
-func (TextPart) isPart()  {}
-func (FilePart) isPart()  {}
-func (DataPart) isPart()  {}
-func (ToolPart) isPart()  {}
-func (ErrorPart) isPart() {}
+func (TextPart) isPart() {}
+func (FilePart) isPart() {}
+func (DataPart) isPart() {}
+func (ToolPart) isPart() {}
 
 // TokenUsage tracks token consumption for a message.
 type TokenUsage struct {
@@ -129,16 +123,6 @@ func (m *Message) Data() *DataPart {
 	return nil
 }
 
-// Error returns the first error part of the message, or nil if none exists.
-func (m *Message) Error() error {
-	for _, part := range m.Parts {
-		if errPart, ok := part.(ErrorPart); ok {
-			return errPart.Error
-		}
-	}
-	return nil
-}
-
 func (m *Message) String() string {
 	var buf strings.Builder
 	for _, part := range m.Parts {
@@ -158,7 +142,7 @@ func (m *Message) String() string {
 
 // contentPart is a type constraint for valid content inputs.
 type contentPart interface {
-	string | TextPart | FilePart | DataPart | ToolPart | ErrorPart
+	string | TextPart | FilePart | DataPart | ToolPart
 }
 
 // UserMessage creates a user-authored message from parts.
@@ -192,8 +176,6 @@ func Parts[T contentPart](inputs ...T) []Part {
 			parts = append(parts, v)
 		case ToolPart:
 			parts = append(parts, v)
-		case ErrorPart:
-			parts = append(parts, v)
 		}
 	}
 	return parts
@@ -202,11 +184,6 @@ func Parts[T contentPart](inputs ...T) []Part {
 // NewMessage creates a new empty message with a unique ID.
 func NewMessage(role Role) *Message {
 	return &Message{ID: NewMessageID(), Role: role}
-}
-
-// NewErrorMessage creates a new message containing an error.
-func NewErrorMessage(err error) *Message {
-	return AssistantMessage(ErrorPart{Error: err})
 }
 
 // NewMessageID generates a new random message identifier.

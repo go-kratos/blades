@@ -41,7 +41,7 @@ func main() {
 				return
 			}
 			for m := range stream {
-				if err := m.Error(); err != nil {
+				if err := m.Err; err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
