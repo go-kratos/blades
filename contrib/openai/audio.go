@@ -115,7 +115,6 @@ func (p *AudioProvider) NewStream(ctx context.Context, req *blades.ModelRequest,
 			return
 		}
 		yield(m, nil)
-		return
 	}), nil
 }
 
