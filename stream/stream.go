@@ -86,11 +86,14 @@ func Map[T, R any](stream Streamable[T], mapper func(T) (R, error)) Streamable[R
 func Merge[T any](streams ...Streamable[T]) Streamable[T] {
 	return func(yield func(T, error) bool) {
 		var wg sync.WaitGroup
+		var mu sync.Mutex
 		wg.Add(len(streams))
 		for _, stream := range streams {
 			go func(next Streamable[T]) {
 				defer wg.Done()
 				next(func(v T, err error) bool {
+					mu.Lock()
+					defer mu.Unlock()
 					return yield(v, err)
 				})
 			}(stream)
