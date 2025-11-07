@@ -3,7 +3,7 @@ package stream
 // Go runs the given function f in a new goroutine and returns a channel that
 // emits values sent by f. The channel is automatically closed when f returns.
 func Go[T any](f func(chan T)) <-chan T {
-	ch := make(chan T)
+	ch := make(chan T, 8)
 	go func() {
 		defer close(ch)
 		f(ch)
@@ -11,10 +11,13 @@ func Go[T any](f func(chan T)) <-chan T {
 	return ch
 }
 
-// Just creates a channel that emits a single value and then closes.
-func Just[T any](v T) <-chan T {
-	ch := make(chan T, 1)
-	ch <- v
+// Just returns a channel that emits the provided values in order and then
+// closes the channel.
+func Just[T any](values ...T) <-chan T {
+	ch := make(chan T, len(values))
+	for _, v := range values {
+		ch <- v
+	}
 	close(ch)
 	return ch
 }

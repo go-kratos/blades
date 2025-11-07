@@ -100,10 +100,6 @@ func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, 
 		defer stream.Close()
 		acc := openai.ChatCompletionAccumulator{}
 		for stream.Next() {
-			if err := stream.Err(); err != nil {
-				output <- blades.NewErrorModelResponse(err)
-				return
-			}
 			chunk := stream.Current()
 			acc.AddChunk(chunk)
 			message, err := chunkChoiceToResponse(ctx, chunk.Choices)
@@ -112,6 +108,10 @@ func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, 
 				return
 			}
 			output <- message
+		}
+		if err := stream.Err(); err != nil {
+			output <- blades.NewErrorModelResponse(err)
+			return
 		}
 		finalResponse, err := choiceToResponse(ctx, params, &acc.ChatCompletion)
 		if err != nil {
