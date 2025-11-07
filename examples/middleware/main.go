@@ -32,7 +32,7 @@ func (m *Guardrails) RunStream(ctx context.Context, prompt *blades.Prompt, opts 
 	return stream.Observe(output, func(msg *blades.Message) (*blades.Message, bool) {
 		// Post-processing: Filter messages if necessary
 		log.Println("Processing streamed message:", msg.String())
-		return msg, true // false to exit the stream and blades.NewErrorMessage(err) to send an error message
+		return msg, true // Return (msg, false) to stop processing, or (blades.NewErrorMessage(err), true) to send an error
 	}), nil
 }
 
