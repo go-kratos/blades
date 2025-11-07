@@ -64,8 +64,8 @@ func Observe[T any](stream Streamable[T], observer func(T) error) Streamable[T] 
 	}
 // Map returns a Streamable that emits the results of applying the given mapper
 // function to each value from the input Streamable.
-// Map returns a channel that emits the results of applying the given mapper
-// function to each value from the input channel.
+// Map returns a Streamable that emits the results of applying the given mapper
+// function to each value from the input stream.
 func Map[T, R any](stream Streamable[T], mapper func(T) (R, error)) Streamable[R] {
 	return func(yield func(R, error) bool) {
 		stream(func(v T, err error) bool {
