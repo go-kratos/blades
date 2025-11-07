@@ -117,6 +117,10 @@ func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...
 			message *blades.Message
 		)
 		for message, err = range streaming {
+			if err != nil {
+				yield(nil, err)
+				break
+			}
 			if !yield(message, nil) {
 				break
 			}
