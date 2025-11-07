@@ -65,7 +65,7 @@ type ModelResponse struct {
 
 // ModelProvider is an interface for multimodal chat-style models.
 type ModelProvider interface {
-	// Generate Generate executes the request and returns a single assistant response.
+	// Generate executes the request and returns a single assistant response.
 	Generate(context.Context, *ModelRequest, ...ModelOption) (*ModelResponse, error)
 	// NewStream executes the request and returns a stream of assistant responses.
 	NewStream(context.Context, *ModelRequest, ...ModelOption) (<-chan stream.Event[*ModelResponse], error)
