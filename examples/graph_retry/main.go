@@ -28,7 +28,7 @@ func flakyProcessor(maxFailures int) graph.Handler {
 
 func main() {
 	retry := graph.Retry(
-		graph.WithAttempts(5),
+		graph.WithAttempts(3),
 		graph.WithBackoff(backoff.New(
 			backoff.WithBaseDelay(200*time.Millisecond),
 			backoff.WithMaxDelay(2*time.Second),

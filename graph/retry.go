@@ -82,7 +82,7 @@ func Retry(opts ...RetryOption) Middleware {
 					return nil, err
 				}
 
-				delay := cfg.backoff.Backoff(retries)
+				delay := cfg.backoff.Backoff(retries - 1)
 				if delay <= 0 {
 					continue
 				}
