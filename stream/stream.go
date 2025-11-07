@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-// Streamable indicates whether any message in the prompt is marked as streamable.
+// Streamable represents an iterator sequence that yields values of type T along with potential errors.
 type Streamable[T any] = iter.Seq2[T, error]
 
 // Go runs the given function f in a new goroutine and returns a channel that
