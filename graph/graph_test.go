@@ -2786,7 +2786,7 @@ func TestNodeNameWithMultipleMiddlewares(t *testing.T) {
 }
 
 func TestRetryMiddlewareRetriesFailures(t *testing.T) {
-	g := NewGraph(WithMiddleware(Retry(WithAttempts(3))))
+	g := NewGraph(WithMiddleware(Retry(3)))
 
 	attempts := 0
 	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
@@ -2826,8 +2826,7 @@ func TestRetryMiddlewareRetriesFailures(t *testing.T) {
 
 func TestRetryMiddlewareRespectsRetryablePredicate(t *testing.T) {
 	errPermanent := errors.New("permanent failure")
-	g := NewGraph(WithMiddleware(Retry(
-		WithAttempts(5),
+	g := NewGraph(WithMiddleware(Retry(5,
 		WithRetryable(func(err error) bool {
 			return !errors.Is(err, errPermanent)
 		}),

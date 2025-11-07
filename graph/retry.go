@@ -14,7 +14,6 @@ type Retryable = kitretry.Retryable
 
 var (
 	// Re-export common retry options for convenience.
-	WithAttempts   = kitretry.WithAttempts
 	WithRetryable  = kitretry.WithRetryable
 	WithBaseDelay  = kitretry.WithBaseDelay
 	WithMaxDelay   = kitretry.WithMaxDelay
@@ -23,8 +22,8 @@ var (
 )
 
 // Retry returns a middleware that retries node handlers with exponential backoff.
-func Retry(opts ...RetryOption) Middleware {
-	r := kitretry.New(opts...)
+func Retry(attempts int, opts ...RetryOption) Middleware {
+	r := kitretry.New(attempts, opts...)
 
 	return func(next Handler) Handler {
 		return func(ctx context.Context, state State) (State, error) {
