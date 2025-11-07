@@ -48,8 +48,8 @@ func Filter[T any](stream Streamable[T], predicate func(T) bool) Streamable[T] {
 
 // Observe returns a channel that emits the results of applying the given
 // observer function to each value from the input channel. The observer function
-// can modify the value and return a boolean indicating whether to continue
-// observing.
+// is called for each value and returns an error; if a non-nil error is returned,
+// observation stops and the error is emitted.
 func Observe[T any](stream Streamable[T], observer func(T) error) Streamable[T] {
 	return func(yield func(T, error) bool) {
 		stream(func(v T, err error) bool {
