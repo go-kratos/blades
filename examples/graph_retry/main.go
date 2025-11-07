@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/go-kratos/blades/graph"
-	"github.com/go-kratos/exp/backoff"
 )
 
 func flakyProcessor(maxFailures int) graph.Handler {
@@ -29,10 +28,8 @@ func flakyProcessor(maxFailures int) graph.Handler {
 func main() {
 	retry := graph.Retry(
 		graph.WithAttempts(3),
-		graph.WithBackoff(backoff.New(
-			backoff.WithBaseDelay(200*time.Millisecond),
-			backoff.WithMaxDelay(2*time.Second),
-		)),
+		graph.WithBaseDelay(200*time.Millisecond),
+		graph.WithMaxDelay(2*time.Second),
 	)
 
 	g := graph.NewGraph(graph.WithMiddleware(retry))
