@@ -61,7 +61,7 @@ func (l *Loop) Run(ctx context.Context, input *blades.Prompt, opts ...blades.Mod
 	return output, nil
 }
 
-// RunStream executes the Loop in a streaming manner, returning a Streamable that emits the final output.
+// RunStream executes the Loop in a streaming manner, returning a channel that emits the final output.
 func (l *Loop) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (stream.Streamable[*blades.Message], error) {
 	return stream.Go(func(yield func(*blades.Message, error) bool) {
 		message, err := l.Run(ctx, input, opts...)
