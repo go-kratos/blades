@@ -10,7 +10,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/stream"
 )
 
 const (
@@ -106,14 +105,14 @@ func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...
 		return t.next.RunStream(ctx, prompt, opts...)
 	}
 	ctx, span := t.start(ctx, ac, opts...)
-	events, err := t.next.RunStream(ctx, prompt, opts...)
+	stream, err := t.next.RunStream(ctx, prompt, opts...)
 	if err != nil {
 		t.end(span, nil, err)
 		return nil, err
 	}
 	return stream.Go[*blades.Message](func(output chan *blades.Message) {
 		var m *blades.Message
-		for m = range events {
+		for m = range stream {
 			// copy messages to output channel
 			output <- m
 		}
