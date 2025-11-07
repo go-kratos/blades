@@ -2,8 +2,7 @@ package blades
 
 import (
 	"context"
-
-	"github.com/go-kratos/blades/stream"
+	"iter"
 )
 
 // ConfirmFunc is a callback used by the confirmation middleware
@@ -37,7 +36,7 @@ func (m *confirmMiddleware) Run(ctx context.Context, p *Prompt, opts ...ModelOpt
 	return m.next.Run(ctx, p, opts...)
 }
 
-func (m *confirmMiddleware) RunStream(ctx context.Context, p *Prompt, opts ...ModelOption) (<-chan stream.Event[*Message], error) {
+func (m *confirmMiddleware) RunStream(ctx context.Context, p *Prompt, opts ...ModelOption) (iter.Seq2[*Message, error], error) {
 	ok, err := m.confirm(ctx, p)
 	if err != nil {
 		return nil, err

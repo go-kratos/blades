@@ -78,7 +78,7 @@ func (p *ImageProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 }
 
 // NewStream wraps Generate with a single-yield stream for API compatibility.
-func (p *ImageProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan stream.Event[*blades.ModelResponse], error) {
+func (p *ImageProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (stream.Streamable[*blades.ModelResponse], error) {
 	res, err := p.Generate(ctx, req, opts...)
 	if err != nil {
 		return nil, err

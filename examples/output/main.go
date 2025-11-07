@@ -63,8 +63,8 @@ func (o *OutputConverter[T]) Run(ctx context.Context, prompt *blades.Prompt, opt
 	return result, nil
 }
 
-// RunStream processes the given prompt using the wrapped runner and returns a channel that yields a single output of type T.
-func (o *OutputConverter[T]) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (<-chan stream.Event[T], error) {
+// RunStream processes the given prompt using the wrapped runner and returns a Streamable that yields a single output of type T.
+func (o *OutputConverter[T]) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (stream.Streamable[T], error) {
 	result, err := o.Run(ctx, prompt, opts...)
 	if err != nil {
 		return nil, err

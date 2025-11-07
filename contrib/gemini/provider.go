@@ -103,7 +103,7 @@ func (c *Provider) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOp
 }
 
 // NewStream is an alias for GenerateStream to implement the ModelProvider interface
-func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan stream.Event[*blades.ModelResponse], error) {
+func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (stream.Streamable[*blades.ModelResponse], error) {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -117,18 +117,23 @@ func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts
 		return nil, err
 	}
 	config.SystemInstruction = system
-	return stream.Go(func(output chan stream.Event[*blades.ModelResponse]) error {
+	return stream.Go(func(yield func(*blades.ModelResponse, error) bool) {
 		streaming := c.client.Models.GenerateContentStream(ctx, req.Model, contents, config)
 		var accumulatedResponse *genai.GenerateContentResponse
 		for chunk, err := range streaming {
 			if err != nil {
-				return err
+				yield(nil, err)
+				return
 			}
 			response, err := convertGenAIToBlades(chunk)
 			if err != nil {
-				return err
+				yield(nil, err)
+				return
 			}
-			output <- stream.NewEvent(response)
+			if !yield(response, nil) {
+				return
+			}
+			// Accumulate chunks
 			if accumulatedResponse == nil {
 				accumulatedResponse = chunk
 			} else {
@@ -153,11 +158,11 @@ func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts
 		if accumulatedResponse != nil {
 			finalResponse, err := convertGenAIToBlades(accumulatedResponse)
 			if err != nil {
-				return err
+				yield(nil, err)
+				return
 			}
 			finalResponse.Message.Status = blades.StatusCompleted
-			output <- stream.NewEvent(finalResponse)
+			yield(finalResponse, nil)
 		}
-		return nil
 	}), nil
 }

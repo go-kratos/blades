@@ -86,7 +86,7 @@ func (p *ChatProvider) Generate(ctx context.Context, req *blades.ModelRequest, o
 
 // NewStream streams chat completion chunks and converts each choice delta
 // into a ModelResponse for incremental consumption.
-func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan stream.Event[*blades.ModelResponse], error) {
+func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (stream.Streamable[*blades.ModelResponse], error) {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -95,7 +95,7 @@ func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, 
 	if err != nil {
 		return nil, err
 	}
-	return stream.Go(func(output chan stream.Event[*blades.ModelResponse]) error {
+	return stream.Go(func(yield func(*blades.ModelResponse, error) bool) {
 		streaming := p.client.Chat.Completions.NewStreaming(ctx, params)
 		defer streaming.Close()
 		acc := openai.ChatCompletionAccumulator{}
@@ -104,19 +104,23 @@ func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, 
 			acc.AddChunk(chunk)
 			message, err := chunkChoiceToResponse(ctx, chunk.Choices)
 			if err != nil {
-				return err
+				yield(nil, err)
+				return
 			}
-			output <- stream.NewEvent(message)
+			if !yield(message, nil) {
+				return
+			}
 		}
 		if err := streaming.Err(); err != nil {
-			return err
+			yield(nil, err)
+			return
 		}
 		finalResponse, err := choiceToResponse(ctx, params, &acc.ChatCompletion)
 		if err != nil {
-			return err
+			yield(nil, err)
+			return
 		}
-		output <- stream.NewEvent(finalResponse)
-		return nil
+		yield(finalResponse, nil)
 	}), nil
 }
 

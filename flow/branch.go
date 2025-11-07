@@ -43,13 +43,13 @@ func (c *Branch) Run(ctx context.Context, input *blades.Prompt, opts ...blades.M
 }
 
 // RunStream executes the selected runner based on the selector function and streams its output.
-func (c *Branch) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (<-chan stream.Event[*blades.Message], error) {
-	return stream.Go(func(output chan stream.Event[*blades.Message]) error {
+func (c *Branch) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (stream.Streamable[*blades.Message], error) {
+	return stream.Go(func(yield func(*blades.Message, error) bool) {
 		message, err := c.Run(ctx, input, opts...)
 		if err != nil {
-			return err
+			yield(nil, err)
+			return
 		}
-		output <- stream.NewEvent(message)
-		return nil
+		yield(message, nil)
 	}), nil
 }

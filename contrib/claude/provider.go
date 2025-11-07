@@ -73,7 +73,7 @@ func (c *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts 
 }
 
 // NewStream executes the request and returns a stream of assistant responses
-func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (<-chan stream.Event[*blades.ModelResponse], error) {
+func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (stream.Streamable[*blades.ModelResponse], error) {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -82,32 +82,37 @@ func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts
 	if err != nil {
 		return nil, fmt.Errorf("converting request: %w", err)
 	}
-	return stream.Go(func(output chan stream.Event[*blades.ModelResponse]) error {
+	return stream.Go(func(yield func(*blades.ModelResponse, error) bool) {
 		streaming := c.client.Messages.NewStreaming(ctx, *params)
 		defer streaming.Close()
 		message := &anthropic.Message{}
 		for streaming.Next() {
 			event := streaming.Current()
 			if err := message.Accumulate(event); err != nil {
-				return err
+				yield(nil, err)
+				return
 			}
 			if ev, ok := event.AsAny().(anthropic.ContentBlockDeltaEvent); ok {
 				response, err := convertStreamDeltaToBlades(ev)
 				if err != nil {
-					return err
+					yield(nil, err)
+					return
 				}
-				output <- stream.NewEvent(response)
+				if !yield(response, nil) {
+					return
+				}
 			}
 		}
 		if err := streaming.Err(); err != nil {
-			return err
+			yield(nil, err)
+			return
 		}
 		finalResponse, err := convertClaudeToBlades(message)
 		if err != nil {
-			return err
+			yield(nil, err)
+			return
 		}
-		output <- stream.NewEvent(finalResponse)
-		return nil
+		yield(finalResponse, nil)
 	}), nil
 }
 

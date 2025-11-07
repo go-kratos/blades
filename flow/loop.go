@@ -62,13 +62,13 @@ func (l *Loop) Run(ctx context.Context, input *blades.Prompt, opts ...blades.Mod
 }
 
 // RunStream executes the Loop in a streaming manner, returning a Streamable that emits the final output.
-func (l *Loop) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (<-chan stream.Event[*blades.Message], error) {
-	return stream.Go(func(output chan stream.Event[*blades.Message]) error {
+func (l *Loop) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (stream.Streamable[*blades.Message], error) {
+	return stream.Go(func(yield func(*blades.Message, error) bool) {
 		message, err := l.Run(ctx, input, opts...)
 		if err != nil {
-			return err
+			yield(nil, err)
+			return
 		}
-		output <- stream.NewEvent(message)
-		return nil
+		yield(message, nil)
 	}), nil
 }

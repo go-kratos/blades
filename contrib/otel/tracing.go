@@ -100,7 +100,7 @@ func (t *tracing) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades
 }
 
 // RunStream processes the prompt in a streaming manner and adds OpenTelemetry tracing to the invocation before passing it to the next runnable.
-func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (<-chan stream.Event[*blades.Message], error) {
+func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (stream.Streamable[*blades.Message], error) {
 	ac, ok := blades.FromContext(ctx)
 	if !ok {
 		return t.next.RunStream(ctx, prompt, opts...)
@@ -111,14 +111,17 @@ func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...
 		t.end(span, nil, err)
 		return nil, err
 	}
-	return stream.Go(func(output chan stream.Event[*blades.Message]) error {
-		var event stream.Event[*blades.Message]
-		for event = range streaming {
-			// copy messages to output channel
-			output <- event
+	return stream.Go(func(yield func(*blades.Message, error) bool) {
+		var (
+			err     error
+			message *blades.Message
+		)
+		for message, err = range streaming {
+			if !yield(message, nil) {
+				break
+			}
 		}
-		t.end(span, event.Value, event.Err)
-		return nil
+		t.end(span, message, err)
 	}), nil
 }
 

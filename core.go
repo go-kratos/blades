@@ -40,5 +40,5 @@ func (p *Prompt) String() string {
 // Runnable represents an entity that can process prompts and generate responses.
 type Runnable interface {
 	Run(context.Context, *Prompt, ...ModelOption) (*Message, error)
-	RunStream(context.Context, *Prompt, ...ModelOption) (<-chan stream.Event[*Message], error)
+	RunStream(context.Context, *Prompt, ...ModelOption) (stream.Streamable[*Message], error)
 }

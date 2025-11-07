@@ -40,8 +40,8 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			for m := range stream {
-				if err := m.Err; err != nil {
+			for m, err := range stream {
+				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}

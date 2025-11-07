@@ -2,6 +2,7 @@ package blades
 
 import (
 	"context"
+	"iter"
 
 	"github.com/go-kratos/blades/stream"
 )
@@ -26,7 +27,7 @@ func ChainMiddlewares(mws ...Middleware) Middleware {
 // It is especially useful for testing, lightweight adapters, or wrapping logic with middleware.
 type HandleFunc struct {
 	Handle       func(context.Context, *Prompt, ...ModelOption) (*Message, error)
-	HandleStream func(context.Context, *Prompt, ...ModelOption) (<-chan stream.Event[*Message], error)
+	HandleStream func(context.Context, *Prompt, ...ModelOption) (iter.Seq2[*Message, error], error)
 }
 
 // Run executes the runner with the given context, prompt, and options.
@@ -35,6 +36,6 @@ func (f *HandleFunc) Run(ctx context.Context, p *Prompt, opts ...ModelOption) (*
 }
 
 // RunStream executes the runner in streaming mode with the given context, prompt, and options.
-func (f *HandleFunc) RunStream(ctx context.Context, p *Prompt, opts ...ModelOption) (<-chan stream.Event[*Message], error) {
+func (f *HandleFunc) RunStream(ctx context.Context, p *Prompt, opts ...ModelOption) (stream.Streamable[*Message], error) {
 	return f.HandleStream(ctx, p, opts...)
 }
