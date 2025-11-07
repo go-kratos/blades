@@ -48,7 +48,7 @@ func getStringSlice(value any) []string {
 
 func TestGraphCompileValidation(t *testing.T) {
 	t.Run("missing entry", func(t *testing.T) {
-		g := NewGraph()
+		g := New()
 		_ = g.AddNode("A", stepHandler("A"))
 		_ = g.SetFinishPoint("A")
 		if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "entry point not set") {
@@ -57,7 +57,7 @@ func TestGraphCompileValidation(t *testing.T) {
 	})
 
 	t.Run("missing finish", func(t *testing.T) {
-		g := NewGraph()
+		g := New()
 		_ = g.AddNode("A", stepHandler("A"))
 		_ = g.SetEntryPoint("A")
 		if _, err := g.Compile(); err == nil || !strings.Contains(err.Error(), "finish point not set") {
@@ -66,7 +66,7 @@ func TestGraphCompileValidation(t *testing.T) {
 	})
 
 	t.Run("edge validations", func(t *testing.T) {
-		g := NewGraph()
+		g := New()
 		_ = g.AddNode("A", stepHandler("A"))
 		_ = g.AddEdge("X", "A")
 		_ = g.SetEntryPoint("A")
@@ -78,7 +78,7 @@ func TestGraphCompileValidation(t *testing.T) {
 }
 
 func TestGraphCompileRejectsCycles(t *testing.T) {
-	g := NewGraph()
+	g := New()
 	_ = g.AddNode("A", stepHandler("A"))
 	_ = g.AddNode("B", stepHandler("B"))
 	_ = g.AddEdge("A", "B")
@@ -92,7 +92,7 @@ func TestGraphCompileRejectsCycles(t *testing.T) {
 }
 
 func TestGraphCompileRejectsCyclesInDisconnectedComponent(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	_ = g.AddNode("start", stepHandler("start"))
 	_ = g.AddNode("end", stepHandler("end"))
@@ -114,7 +114,7 @@ func TestGraphCompileRejectsCyclesInDisconnectedComponent(t *testing.T) {
 }
 
 func TestGraphCompileRejectsDanglingNode(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	_ = g.AddNode("start", stepHandler("start"))
 	_ = g.AddNode("mid", stepHandler("mid"))
@@ -133,7 +133,7 @@ func TestGraphCompileRejectsDanglingNode(t *testing.T) {
 }
 
 func TestGraphSequentialOrder(t *testing.T) {
-	g := NewGraph(WithParallel(false))
+	g := New(WithParallel(false))
 	execOrder := make([]string, 0, 4)
 	handlerFor := func(name string) Handler {
 		return func(ctx context.Context, state State) (State, error) {
@@ -174,7 +174,7 @@ func TestGraphSequentialOrder(t *testing.T) {
 }
 
 func TestGraphErrorPropagation(t *testing.T) {
-	g := NewGraph()
+	g := New()
 	_ = g.AddNode("A", stepHandler("A"))
 	_ = g.AddNode("B", func(ctx context.Context, state State) (State, error) {
 		return state, fmt.Errorf("boom")
@@ -195,7 +195,7 @@ func TestGraphErrorPropagation(t *testing.T) {
 }
 
 func TestGraphConditionalRouting(t *testing.T) {
-	g := NewGraph()
+	g := New()
 	_ = g.AddNode("A", stepHandler("A"))
 	_ = g.AddNode("B", stepHandler("B"))
 	_ = g.AddNode("C", stepHandler("C"))
@@ -232,7 +232,7 @@ func TestGraphConditionalRouting(t *testing.T) {
 }
 
 func TestGraphConditionalMixedPrecedence(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	visited := make(map[string]int)
 	record := func(name string, allow bool) Handler {
@@ -300,7 +300,7 @@ func TestGraphConditionalMixedPrecedence(t *testing.T) {
 }
 
 func TestGraphConditionalUnconditionalOrder(t *testing.T) {
-	g := NewGraph(WithParallel(false))
+	g := New(WithParallel(false))
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -353,7 +353,7 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 }
 
 func TestGraphParallelDoesNotStallIndependentBranches(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	execTime := make(map[string]time.Time)
@@ -427,7 +427,7 @@ func TestMiddlewareReceivesNodeName(t *testing.T) {
 		}
 	}
 
-	g := NewGraph(WithMiddleware(mw))
+	g := New(WithMiddleware(mw))
 	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		next := state.Clone()
 		next[stepsKey] = append(getStringSlice(state[stepsKey]), "start")
@@ -457,7 +457,7 @@ func TestMiddlewareReceivesNodeName(t *testing.T) {
 
 func TestGraphSerialVsParallel(t *testing.T) {
 	build := func(parallel bool) *Graph {
-		g := NewGraph(WithParallel(parallel))
+		g := New(WithParallel(parallel))
 		_ = g.AddNode("A", incrementHandler(1))
 		_ = g.AddNode("B", incrementHandler(10))
 		_ = g.AddNode("C", incrementHandler(100))
@@ -500,7 +500,7 @@ func TestGraphSerialVsParallel(t *testing.T) {
 }
 
 func TestGraphParallelContextTimeout(t *testing.T) {
-	g := NewGraph(WithParallel(true))
+	g := New(WithParallel(true))
 
 	g.AddNode("slow", func(ctx context.Context, state State) (State, error) {
 		select {
@@ -533,7 +533,7 @@ func TestGraphParallelContextTimeout(t *testing.T) {
 }
 
 func TestGraphParallelFanOutBranches(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	called := make(map[string]int)
@@ -576,7 +576,7 @@ func TestGraphParallelFanOutBranches(t *testing.T) {
 }
 
 func TestGraphParallelNestedFanOutConcurrency(t *testing.T) {
-	g := NewGraph(WithParallel(true))
+	g := New(WithParallel(true))
 
 	var mu sync.Mutex
 	started := make(map[string]bool, 2)
@@ -690,7 +690,7 @@ func TestGraphParallelNestedFanOutConcurrency(t *testing.T) {
 }
 
 func TestGraphParallelPropagatesBranchError(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	record := func(name string) Handler {
 		return func(ctx context.Context, state State) (State, error) {
@@ -724,7 +724,7 @@ func TestGraphParallelPropagatesBranchError(t *testing.T) {
 }
 
 func TestGraphParallelMergeByKey(t *testing.T) {
-	g := NewGraph()
+	g := New()
 	_ = g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		next := state.Clone()
 		next["start"] = true
@@ -770,7 +770,7 @@ func TestGraphParallelMergeByKey(t *testing.T) {
 }
 
 func TestExecutorInitialStatePropagates(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		if got, ok := state["seed"].(string); !ok || got != "value" {
@@ -817,7 +817,7 @@ func TestExecutorInitialStatePropagates(t *testing.T) {
 }
 
 func TestExecutorResetBetweenRuns(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		runID, ok := state["run"].(int)
@@ -891,7 +891,7 @@ func TestMergeStatesKeepsKeys(t *testing.T) {
 }
 
 func TestGraphParallelJoinIgnoresInactiveBranches(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -948,7 +948,7 @@ func TestGraphParallelJoinIgnoresInactiveBranches(t *testing.T) {
 }
 
 func TestGraphParallelJoinSkipsUnselectedEdges(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -1010,7 +1010,7 @@ func TestGraphParallelJoinSkipsUnselectedEdges(t *testing.T) {
 }
 
 func TestGraphJoinRequiresAllInputs(t *testing.T) {
-	g := NewGraph(WithParallel(false))
+	g := New(WithParallel(false))
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -1104,7 +1104,7 @@ func TestGraphDifferentPathLengths(t *testing.T) {
 	// Path 2: A → C → C2 → D (length 3)
 	// D should wait for both B and C2 to complete
 
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -1199,7 +1199,7 @@ func TestGraphDifferentPathLengthsMultipleBranches(t *testing.T) {
 	// start → branch_mid → branch_mid2 → finish
 	// start → branch_long1 → branch_long2 → branch_long3 → finish
 
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -1304,7 +1304,7 @@ func TestGraphDifferentPathLengthsConditionalBranches(t *testing.T) {
 	//             └─(cond true) ──► branch_mid2 ──► finish
 	// start → branch_long1 → branch_long2 → branch_long3 ──► finish
 
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -1425,7 +1425,7 @@ func TestGraphDifferentPathLengthsConditionalBranches(t *testing.T) {
 }
 
 func TestGraphSerialFanOutOrder(t *testing.T) {
-	g := NewGraph(WithParallel(false))
+	g := New(WithParallel(false))
 
 	var mu sync.Mutex
 	executed := make([]string, 0, 6)
@@ -1478,7 +1478,7 @@ func TestGraphSerialFanOutOrder(t *testing.T) {
 }
 
 func TestGraphLoopFlow(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	g.AddNode("outline", stepHandler("outline"))
 	g.AddNode("review", stepHandler("review"))
@@ -1498,7 +1498,7 @@ func TestGraphLoopFlow(t *testing.T) {
 	}
 }
 func TestGraphSerialFanOutStateIsolation(t *testing.T) {
-	g := NewGraph(WithParallel(false))
+	g := New(WithParallel(false))
 
 	var (
 		mu               sync.Mutex
@@ -1578,7 +1578,7 @@ func TestGraphSerialFanOutStateIsolation(t *testing.T) {
 }
 
 func TestGraphSingleEdgeWaitPropagation(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	executionOrder := make([]string, 0)
@@ -1649,7 +1649,7 @@ func TestGraphSingleEdgeWaitPropagation(t *testing.T) {
 }
 
 func TestExecutorConcurrentRuns(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		next := state.Clone()
@@ -1729,7 +1729,7 @@ func TestGraphAsymmetricConvergence(t *testing.T) {
 	// - asr is reached through chunk
 	// - merge must wait for both xid and asr
 
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -1825,7 +1825,7 @@ func TestGraphComplexMixedOrchestration(t *testing.T) {
 	// - Multiple convergence (join1 waits for transform_a, process_b, process_c)
 	// - Conditional branch after convergence
 
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -1967,7 +1967,7 @@ func TestGraphNestedParallelBranches(t *testing.T) {
 	//        → fanout2 ──→ worker2b ─→ join2 ↗
 	//                   → worker2c ↗
 
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -2098,7 +2098,7 @@ func TestGraphComplexConditionalRouting(t *testing.T) {
 	//
 	// Routes based on priority level in state
 
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -2216,7 +2216,7 @@ func TestGraphComplexConditionalRouting(t *testing.T) {
 		mu.Unlock()
 
 		// Create a new graph for low priority test
-		g2 := NewGraph()
+		g2 := New()
 		g2.AddNode("start", record("start", func(s State) State {
 			s["priority"] = "low"
 			s["retry_enabled"] = true
@@ -2303,7 +2303,7 @@ func TestGraphLargeScaleDAG(t *testing.T) {
 	// Stage 4: Model inference (conditional routing)
 	// Stage 5: Post-processing and aggregation
 
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
@@ -2419,7 +2419,7 @@ func TestGraphSerialWithConditionalRouting(t *testing.T) {
 	// Tests serial mode with conditional branches that converge
 	// Graph topology:
 	// start → check → [priority_high (cond) OR priority_low (cond: !useHigh)] → process → final
-	g := NewGraph(WithParallel(false))
+	g := New(WithParallel(false))
 
 	var mu sync.Mutex
 	executionOrder := make([]string, 0)
@@ -2518,7 +2518,7 @@ func TestGraphSerialWithConditionalRouting(t *testing.T) {
 
 // TestNodeNameInContext tests that the node name is correctly propagated via context
 func TestNodeNameInContext(t *testing.T) {
-	g := NewGraph()
+	g := New()
 
 	var mu sync.Mutex
 	nodeNames := make(map[string]string) // maps expected node name to actual node name from context
@@ -2604,7 +2604,7 @@ func TestNodeNameInMiddleware(t *testing.T) {
 		}
 	}
 
-	g := NewGraph(WithMiddleware(loggingMiddleware))
+	g := New(WithMiddleware(loggingMiddleware))
 
 	g.AddNode("node_a", recordHandler("node_a"))
 	g.AddNode("node_b", recordHandler("node_b"))
@@ -2659,7 +2659,7 @@ func TestNodeNameInMiddleware(t *testing.T) {
 
 // TestNodeNameInParallelExecution tests node name propagation in parallel execution mode
 func TestNodeNameInParallelExecution(t *testing.T) {
-	g := NewGraph(WithParallel(true))
+	g := New(WithParallel(true))
 
 	var mu sync.Mutex
 	nodeNames := make(map[string]bool)
@@ -2754,7 +2754,7 @@ func TestNodeNameWithMultipleMiddlewares(t *testing.T) {
 		}
 	}
 
-	g := NewGraph(WithMiddleware(middleware1, middleware2))
+	g := New(WithMiddleware(middleware1, middleware2))
 
 	g.AddNode("alpha", stepHandler("alpha"))
 	g.AddNode("beta", stepHandler("beta"))
@@ -2788,7 +2788,7 @@ func TestNodeNameWithMultipleMiddlewares(t *testing.T) {
 }
 
 func TestRetryMiddlewareRetriesFailures(t *testing.T) {
-	g := NewGraph(WithMiddleware(Retry(3)))
+	g := New(WithMiddleware(Retry(3)))
 
 	attempts := 0
 	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
@@ -2828,7 +2828,7 @@ func TestRetryMiddlewareRetriesFailures(t *testing.T) {
 
 func TestRetryMiddlewareRespectsRetryablePredicate(t *testing.T) {
 	errPermanent := errors.New("permanent failure")
-	g := NewGraph(WithMiddleware(Retry(5,
+	g := New(WithMiddleware(Retry(5,
 		kitretry.WithRetryable(func(err error) bool {
 			return !errors.Is(err, errPermanent)
 		}),

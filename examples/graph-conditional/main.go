@@ -15,7 +15,7 @@ func logger(name string) graph.Handler {
 }
 
 func main() {
-	g := graph.NewGraph()
+	g := graph.New()
 
 	// Define node handlers using the helper function
 	g.AddNode("start", logger("start"))

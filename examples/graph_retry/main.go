@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/go-kratos/blades/graph"
-	kit "github.com/go-kratos/kit/retry"
 )
 
 func flakyProcessor(maxFailures int) graph.Handler {
@@ -27,12 +26,7 @@ func flakyProcessor(maxFailures int) graph.Handler {
 }
 
 func main() {
-	retry := graph.Retry(3,
-		kit.WithBaseDelay(200*time.Millisecond),
-		kit.WithMaxDelay(2*time.Second),
-	)
-
-	g := graph.NewGraph(graph.WithMiddleware(retry))
+	g := graph.New(graph.WithMiddleware(graph.Retry(3)))
 
 	g.AddNode("start", func(ctx context.Context, state graph.State) (graph.State, error) {
 		log.Println("[start] preparing work item")

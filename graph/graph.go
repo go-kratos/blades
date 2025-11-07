@@ -52,8 +52,8 @@ type Graph struct {
 	middlewares []Middleware
 }
 
-// NewGraph creates a new empty Graph.
-func NewGraph(opts ...Option) *Graph {
+// New creates a new Graph instance with the provided options.
+func New(opts ...Option) *Graph {
 	g := &Graph{
 		nodes:    make(map[string]Handler),
 		edges:    make(map[string][]conditionalEdge),

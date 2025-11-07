@@ -18,7 +18,7 @@ func logger(name string) graph.Handler {
 }
 
 func main() {
-	g := graph.NewGraph()
+	g := graph.New()
 
 	g.AddNode("start", logger("start"))
 	g.AddNode("branch_a", logger("branch_a"))
