@@ -1,6 +1,7 @@
 package stream
 
-// Go runs the given function f in a new goroutine and returns a channel
+// Go runs the given function f in a new goroutine and returns a channel that
+// emits values sent by f. The channel is automatically closed when f returns.
 func Go[T any](f func(chan T)) <-chan T {
 	ch := make(chan T)
 	go func() {
