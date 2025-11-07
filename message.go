@@ -62,7 +62,7 @@ type ToolPart struct {
 
 // ErrorPart is a message part that contains an error.
 type ErrorPart struct {
-	Error error
+	Error error `json:"-"`
 }
 
 // Part is a part of a message, which can be text or a file.
