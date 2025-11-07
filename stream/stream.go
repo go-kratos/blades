@@ -45,6 +45,11 @@ func Observe[T any](ch <-chan T, observer func(T) (T, bool)) <-chan T {
 		for v := range ch {
 			r, ok := observer(v)
 			if !ok {
+				go func() {
+					for range ch {
+						// drain remaining values
+					}
+				}()
 				return
 			}
 			out <- r
