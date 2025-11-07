@@ -1,5 +1,7 @@
 package stream
 
+import "sync"
+
 // Go runs the given function f in a new goroutine and returns a channel that
 // emits values sent by f. The channel is automatically closed when f returns.
 func Go[T any](f func(chan T)) <-chan T {
@@ -25,7 +27,7 @@ func Just[T any](values ...T) <-chan T {
 // Filter returns a channel that emits only the values from the input channel
 // that satisfy the given predicate function.
 func Filter[T any](ch <-chan T, predicate func(T) bool) <-chan T {
-	out := make(chan T)
+	out := make(chan T, 8)
 	go func() {
 		defer close(out)
 		for v := range ch {
@@ -42,7 +44,7 @@ func Filter[T any](ch <-chan T, predicate func(T) bool) <-chan T {
 // can modify the value and return a boolean indicating whether to continue
 // observing.
 func Observe[T any](ch <-chan T, observer func(T) (T, bool)) <-chan T {
-	out := make(chan T)
+	out := make(chan T, 8)
 	go func() {
 		defer close(out)
 		for v := range ch {
@@ -64,7 +66,7 @@ func Observe[T any](ch <-chan T, observer func(T) (T, bool)) <-chan T {
 // Map returns a channel that emits the results of applying the given mapper
 // function to each value from the input channel.
 func Map[T, R any](ch <-chan T, mapper func(T) R) <-chan R {
-	out := make(chan R)
+	out := make(chan R, 8)
 	go func() {
 		defer close(out)
 		for v := range ch {
@@ -77,14 +79,22 @@ func Map[T, R any](ch <-chan T, mapper func(T) R) <-chan R {
 // Merge takes multiple input channels and merges their outputs into a single
 // output channel.
 func Merge[T any](chs ...<-chan T) <-chan T {
-	out := make(chan T)
-	go func() {
-		defer close(out)
-		for _, ch := range chs {
-			for v := range ch {
+	var (
+		wg  sync.WaitGroup
+		out = make(chan T, len(chs))
+	)
+	for _, ch := range chs {
+		wg.Add(1)
+		go func(c <-chan T) {
+			defer wg.Done()
+			for v := range c {
 				out <- v
 			}
-		}
+		}(ch)
+	}
+	go func() {
+		wg.Wait()
+		close(out)
 	}()
 	return out
 }
