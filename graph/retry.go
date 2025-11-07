@@ -12,12 +12,12 @@ import (
 //
 //	attempts: The total number of attempts to execute the handler, including the initial attempt.
 //	          For example, attempts=3 means up to 3 tries (1 initial + 2 retries).
-//	opts:     Optional configuration for retry behavior. See RetryOption for details.
+//	opts:     Optional configuration for retry behavior. See retry.Option (from github.com/go-kratos/kit/retry) for details.
 //
 // Behavior:
 //   - The same `state` value is passed to the handler on each attempt. Handlers must not mutate `state`.
 //   - If all attempts are exhausted and the handler continues to return an error, the last error is returned and no further retries are performed.
-//   - Retry behavior (e.g., backoff, which errors are retryable) can be customized via RetryOption.
+//   - Retry behavior (e.g., backoff, which errors are retryable) can be customized via retry.Option.
 //
 // Example usage:
 //
