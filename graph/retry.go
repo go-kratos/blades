@@ -36,7 +36,7 @@ func Retry(attempts int, opts ...retry.Option) Middleware {
 				err    error
 				output State
 			)
-			if err := r.Do(ctx, func(ctx context.Context) error {
+			if err = r.Do(ctx, func(ctx context.Context) error {
 				if output, err = next(ctx, input); err != nil {
 					return err
 				}
