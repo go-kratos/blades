@@ -9,7 +9,7 @@ import (
 
 func main() {
 	// Disable parallel fan-out to keep the output ordered.
-	g := graph.NewGraph(graph.WithParallel(false))
+	g := graph.NewGraph()
 
 	g.AddNode("start", func(ctx context.Context, _ graph.State) (graph.State, error) {
 		return graph.State{
@@ -19,7 +19,7 @@ func main() {
 		}, nil
 	})
 
-	g.AddNode("try_operation", func(ctx context.Context, state graph.State) (graph.State, error) {
+	g.AddNode("do_something", func(ctx context.Context, state graph.State) (graph.State, error) {
 		next := state.Clone()
 		attempt := next["attempt"].(int) + 1
 		maxAttempts := next["max_attempts"].(int)
@@ -31,15 +31,20 @@ func main() {
 		return next, nil
 	})
 
+	g.AddNode("decide", func(ctx context.Context, state graph.State) (graph.State, error) {
+		return state, nil
+	})
+
 	g.AddNode("finish", func(ctx context.Context, state graph.State) (graph.State, error) {
 		log.Printf("finished after %d attempts (success=%v)", state["attempt"], state["success"])
 		return state, nil
 	})
 
-	g.AddEdge("start", "try_operation")
+	g.AddEdge("start", "do_something")
+	g.AddEdge("do_something", "decide")
 
-	// Retry loop: re-enter try_operation while it keeps failing and attempts remain.
-	g.AddEdge("try_operation", "try_operation",
+	// Decide whether to retry or exit.
+	g.AddEdge("decide", "do_something",
 		graph.WithEdgeCondition(func(_ context.Context, state graph.State) bool {
 			success := state["success"].(bool)
 			attempt := state["attempt"].(int)
@@ -50,7 +55,7 @@ func main() {
 	)
 
 	// Exit edge: break the loop once we succeed or hit the attempt limit.
-	g.AddEdge("try_operation", "finish",
+	g.AddEdge("decide", "finish",
 		graph.WithEdgeCondition(func(_ context.Context, state graph.State) bool {
 			success := state["success"].(bool)
 			attempt := state["attempt"].(int)
