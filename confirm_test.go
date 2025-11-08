@@ -72,27 +72,26 @@ func TestConfirmMiddleware_RunStream(t *testing.T) {
 
 	next := &HandleFunc{
 		Handle: nil,
-		HandleStream: func(ctx context.Context, p *Prompt, _ ...ModelOption) (stream.Streamable[*Message], error) {
-			return stream.Just(AssistantMessage("STREAM-OK")), nil
+		HandleStream: func(ctx context.Context, p *Prompt, _ ...ModelOption) stream.Streamable[*Message] {
+			return stream.Just(AssistantMessage("STREAM-OK"))
 		},
 	}
 
 	t.Run("denied", func(t *testing.T) {
 		mw := Confirm(func(context.Context, *Prompt) (bool, error) { return false, nil })
 		h := mw(next)
-		_, err := h.RunStream(context.Background(), NewPrompt(UserMessage("test")))
-		if err == nil || err.Error() != ErrConfirmDenied.Error() {
-			t.Fatalf("expected ErrConfirmationDenied, got %v", err)
+		stream := h.RunStream(context.Background(), NewPrompt(UserMessage("test")))
+		for _, err := range stream {
+			if err == nil || err.Error() != ErrConfirmDenied.Error() {
+				t.Fatalf("expected ErrConfirmationDenied, got %v", err)
+			}
 		}
 	})
 
 	t.Run("allowed", func(t *testing.T) {
 		mw := Confirm(func(context.Context, *Prompt) (bool, error) { return true, nil })
 		h := mw(next)
-		stream, err := h.RunStream(context.Background(), NewPrompt(UserMessage("test")))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		stream := h.RunStream(context.Background(), NewPrompt(UserMessage("test")))
 		for msg, err := range stream {
 			if err != nil {
 				t.Fatalf("unexpected current error: %v", err)
