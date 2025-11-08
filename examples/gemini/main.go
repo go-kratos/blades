@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/contrib/gemini"
+	"github.com/go-kratos/blades/contrib/google"
 	"google.golang.org/genai"
 )
 
@@ -17,11 +17,11 @@ func main() {
 		log.Fatal("Please set GOOGLE_API_KEY environment variable")
 	}
 	// Create Gemini client with basic configuration
+	ctx := context.Background()
 	config := &genai.ClientConfig{
 		APIKey: apiKey,
 	}
-	ctx := context.Background()
-	client, err := gemini.NewProvider(ctx, config)
+	client, err := google.NewProvider(ctx, config)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}

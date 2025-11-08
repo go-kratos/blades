@@ -1,4 +1,4 @@
-module github.com/go-kratos/blades/contrib/claude
+module github.com/go-kratos/blades/contrib/anthropic
 
 go 1.24.0
 

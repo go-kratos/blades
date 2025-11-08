@@ -1,4 +1,4 @@
-package gemini
+package google
 
 import (
 	"context"

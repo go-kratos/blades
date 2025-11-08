@@ -1,4 +1,4 @@
-module github.com/go-kratos/blades/contrib/gemini
+module github.com/go-kratos/blades/contrib/google
 
 go 1.24.0
 

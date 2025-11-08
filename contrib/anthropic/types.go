@@ -1,4 +1,4 @@
-package claude
+package anthropic
 
 import (
 	"encoding/json"
