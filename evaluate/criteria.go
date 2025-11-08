@@ -14,7 +14,7 @@ type Criteria struct {
 }
 
 // NewCriteria creates a new Criteria evaluator.
-func NewCriteria(name string, opts ...blades.Option) (*Criteria, error) {
+func NewCriteria(name string, opts ...blades.AgentOption) (*Criteria, error) {
 	schema, err := jsonschema.For[Evaluation](nil)
 	if err != nil {
 		return nil, err

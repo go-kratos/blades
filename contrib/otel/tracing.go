@@ -56,20 +56,18 @@ func Tracing(opts ...TraceOption) blades.Middleware {
 	}
 }
 
-func (t *tracing) start(ctx context.Context, ac *blades.AgentContext, opts ...blades.ModelOption) (context.Context, trace.Span) {
-	ctx, span := t.tracer.Start(ctx, fmt.Sprintf("invoke_agent %s", ac.Name))
-
+func (t *tracing) Start(ctx context.Context, agent blades.AgentContext, opts ...blades.ModelOption) (context.Context, trace.Span) {
+	ctx, span := t.tracer.Start(ctx, fmt.Sprintf("invoke_agent %s", agent.Name()))
 	mo := &blades.ModelOptions{}
 	for _, opt := range opts {
 		opt(mo)
 	}
-
 	span.SetAttributes(
 		semconv.GenAIOperationNameInvokeAgent,
 		semconv.GenAISystemKey.String(t.system),
-		semconv.GenAIAgentName(ac.Name),
-		semconv.GenAIAgentDescription(ac.Description),
-		semconv.GenAIRequestModel(ac.Model),
+		semconv.GenAIAgentName(agent.Name()),
+		semconv.GenAIAgentDescription(agent.Description()),
+		semconv.GenAIRequestModel(agent.Model()),
 		semconv.GenAIRequestSeed(int(mo.Seed)),
 		semconv.GenAIRequestFrequencyPenalty(mo.FrequencyPenalty),
 		semconv.GenAIRequestPresencePenalty(mo.PresencePenalty),
@@ -77,7 +75,6 @@ func (t *tracing) start(ctx context.Context, ac *blades.AgentContext, opts ...bl
 		semconv.GenAIRequestTemperature(mo.Temperature),
 		semconv.GenAIRequestTopP(mo.TopP),
 	)
-
 	// if a session is present, add the conversation ID attribute
 	if s, ok := blades.FromSessionContext(ctx); ok {
 		span.SetAttributes(
@@ -89,19 +86,19 @@ func (t *tracing) start(ctx context.Context, ac *blades.AgentContext, opts ...bl
 
 // Run processes the prompt and adds OpenTelemetry tracing to the invocation before passing it to the next runnable.
 func (t *tracing) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
-	ac, ok := blades.FromContext(ctx)
+	ac, ok := blades.FromAgentContext(ctx)
 	if !ok {
 		return t.next.Run(ctx, prompt, opts...)
 	}
-	ctx, span := t.start(ctx, ac, opts...)
+	ctx, span := t.Start(ctx, ac, opts...)
 	msg, err := t.next.Run(ctx, prompt, opts...)
-	t.end(span, msg, err)
+	t.End(span, msg, err)
 	return msg, err
 }
 
 // RunStream processes the prompt in a streaming manner and adds OpenTelemetry tracing to the invocation before passing it to the next runnable.
 func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) stream.Streamable[*blades.Message] {
-	ac, ok := blades.FromContext(ctx)
+	ac, ok := blades.FromAgentContext(ctx)
 	if !ok {
 		return t.next.RunStream(ctx, prompt, opts...)
 	}
@@ -110,7 +107,7 @@ func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...
 			err     error
 			message *blades.Message
 		)
-		ctx, span := t.start(ctx, ac, opts...)
+		ctx, span := t.Start(ctx, ac, opts...)
 		streaming := t.next.RunStream(ctx, prompt, opts...)
 		for message, err = range streaming {
 			if err != nil {
@@ -121,11 +118,11 @@ func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...
 				break
 			}
 		}
-		t.end(span, message, err)
+		t.End(span, message, err)
 	}
 }
 
-func (t *tracing) end(span trace.Span, msg *blades.Message, err error) {
+func (t *tracing) End(span trace.Span, msg *blades.Message, err error) {
 	defer span.End()
 	if err != nil {
 		span.RecordError(err)

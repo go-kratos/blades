@@ -54,12 +54,23 @@ func NewRunner(agent Runnable, opts ...RunOption) *Runner {
 	return runner
 }
 
+// Session returns the current session of the Runner.
+func (r *Runner) Session() Session {
+	return r.session
+}
+
+// Resumable indicates whether the Runner supports resumable sessions.
+func (r *Runner) Resumable() bool {
+	return r.resumable
+}
+
+// InvocationID returns the unique invocation ID of the Runner.
+func (r *Runner) InvocationID() string {
+	return r.invocationID
+}
+
 func (r *Runner) buildInvocationContext(ctx context.Context) context.Context {
-	return NewInvocationContext(ctx, &InvocationContext{
-		Session:      r.session,
-		Resumable:    r.resumable,
-		InvocationID: r.invocationID,
-	})
+	return NewInvocationContext(ctx, r)
 }
 
 // Run executes the agent with the provided prompt and options within the session context.

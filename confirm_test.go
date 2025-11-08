@@ -33,9 +33,9 @@ func TestConfirmMiddleware_Run(t *testing.T) {
 		{
 			name: "error",
 			confirm: func(context.Context, *Prompt) (bool, error) {
-				return false, ErrMissingFinalResponse
+				return false, ErrNoFinalResponse
 			},
-			wantErr: ErrMissingFinalResponse,
+			wantErr: ErrNoFinalResponse,
 		},
 	}
 

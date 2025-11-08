@@ -33,7 +33,7 @@ func FromSessionContext(ctx context.Context) (Session, bool) {
 	if !ok {
 		return nil, false
 	}
-	return invocation.Session, true
+	return invocation.Session(), true
 }
 
 // sessionInMemory is an in-memory implementation of the Session interface.
