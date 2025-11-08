@@ -81,7 +81,6 @@ func (p *ImageProvider) NewStreaming(ctx context.Context, req *blades.ModelReque
 		}
 		yield(m, nil)
 	}
-
 }
 
 // applyOptions applies image generation options to the OpenAI parameters.
