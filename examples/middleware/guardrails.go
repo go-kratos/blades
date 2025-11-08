@@ -29,7 +29,11 @@ func (m *Guardrails) Run(ctx context.Context, prompt *blades.Prompt, opts ...bla
 func (m *Guardrails) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) stream.Streamable[*blades.Message] {
 	// Pre-processing: Add guardrails to the prompt
 	log.Println("Applying guardrails to the prompt (streaming)")
-	return stream.Observe(m.next.RunStream(ctx, prompt, opts...), func(msg *blades.Message) error {
+	return stream.Observe(m.next.RunStream(ctx, prompt, opts...), func(msg *blades.Message, err error) error {
+		if err != nil {
+			log.Println("Error during streaming:", err)
+			return err
+		}
 		log.Println("Streaming with guardrails applied:", msg.Text())
 		return nil
 	})

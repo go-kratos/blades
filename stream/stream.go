@@ -39,16 +39,13 @@ func Filter[T any](stream Streamable[T], predicate func(T) bool) Streamable[T] {
 // observer function to each value from the input channel. The observer function
 // is called for each value and returns an error; if a non-nil error is returned,
 // observation stops and the error is emitted.
-func Observe[T any](stream Streamable[T], observer func(T) error) Streamable[T] {
+func Observe[T any](stream Streamable[T], observer func(T, error) error) Streamable[T] {
 	return func(yield func(T, error) bool) {
 		stream(func(v T, err error) bool {
-			if err != nil {
-				return yield(*new(T), err)
+			if err := observer(v, err); err != nil {
+				return yield(v, err)
 			}
-			if err := observer(v); err != nil {
-				return yield(*new(T), err)
-			}
-			return yield(v, nil)
+			return yield(v, err)
 		})
 	}
 }

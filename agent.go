@@ -242,7 +242,9 @@ func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOpti
 		}
 		handler := a.handler(invocation, req)
 		for m, err := range handler.RunStream(ctx, prompt, opts...) {
-			yield(m, err)
+			if !yield(m, err) {
+				break
+			}
 		}
 	}
 }
@@ -376,7 +378,9 @@ func (a *Agent) handler(invocation *InvocationContext, req *ModelRequest) Runnab
 						if res.Message.Status == StatusCompleted {
 							finalResponse = res
 						} else {
-							yield(res.Message, nil)
+							if !yield(res.Message, nil) {
+								return // early termination
+							}
 						}
 					}
 					if finalResponse == nil {
