@@ -6,7 +6,7 @@ import (
 )
 
 // Streamable represents an iterator sequence that yields values of type T along with potential errors.
-type Streamable[T any] = iter.Seq2[T, error]
+type Streamable[T any] iter.Seq2[T, error]
 
 // Just returns a Streamable that emits the provided values in order.
 func Just[T any](values ...T) Streamable[T] {
