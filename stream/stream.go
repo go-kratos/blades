@@ -8,16 +8,6 @@ import (
 // Streamable represents an iterator sequence that yields values of type T along with potential errors.
 type Streamable[T any] = iter.Seq2[T, error]
 
-// Go runs the given function f in a new goroutine and returns a channel that
-// emits values sent by f. The channel is automatically closed when f returns.
-func Go[T any](stream Streamable[T]) Streamable[T] {
-	return func(yield func(T, error) bool) {
-		stream(func(v T, err error) bool {
-			return yield(v, err)
-		})
-	}
-}
-
 // Just returns a Streamable that emits the provided values in order.
 func Just[T any](values ...T) Streamable[T] {
 	return func(yield func(T, error) bool) {

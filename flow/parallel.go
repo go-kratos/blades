@@ -70,13 +70,13 @@ func (p *Parallel) Run(ctx context.Context, input *blades.Prompt, opts ...blades
 
 // RunStream executes the runners sequentially, streaming each output as it is produced.
 // Note: Although this method belongs to the Parallel struct, it runs runners one after another, not in parallel.
-func (p *Parallel) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (stream.Streamable[*blades.Message], error) {
-	return stream.Go(func(yield func(*blades.Message, error) bool) {
+func (p *Parallel) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) stream.Streamable[*blades.Message] {
+	return func(yield func(*blades.Message, error) bool) {
 		message, err := p.Run(ctx, input, opts...)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
 		yield(message, nil)
-	}), nil
+	}
 }

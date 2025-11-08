@@ -46,10 +46,7 @@ func main() {
 	}
 	log.Println(result.Text())
 	// Run the agent in streaming mode
-	stream, err := agent.RunStream(context.Background(), prompt)
-	if err != nil {
-		log.Fatal(err)
-	}
+	stream := agent.RunStream(context.Background(), prompt)
 	for m, err := range stream {
 		if err != nil {
 			log.Fatal(err)

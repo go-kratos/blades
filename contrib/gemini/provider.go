@@ -2,7 +2,6 @@ package gemini
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/go-kratos/blades"
@@ -10,14 +9,7 @@ import (
 	"google.golang.org/genai"
 )
 
-var (
-	// ErrEmptyResponse indicates the provider returned no choices.
-	ErrEmptyResponse = errors.New("empty completion response")
-	// ErrToolNotFound indicates a tool call was made to an unknown tool.
-	ErrToolNotFound = errors.New("tool not found")
-	// ErrTooManyIterations indicates the max iterations option is less than 1.
-	ErrTooManyIterations = errors.New("too many iterations requested")
-)
+var _ blades.ModelProvider = (*Provider)(nil)
 
 // Option defines a configuration option for the Provider.
 type Option func(*Options)
@@ -102,22 +94,24 @@ func (c *Provider) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOp
 	return &config, nil
 }
 
-// NewStream is an alias for GenerateStream to implement the ModelProvider interface
-func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (stream.Streamable[*blades.ModelResponse], error) {
+// NewStreaming is an alias for GenerateStream to implement the ModelProvider interface.
+func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) stream.Streamable[*blades.ModelResponse] {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
 	}
-	system, contents, err := convertMessageToGenAI(req)
-	if err != nil {
-		return nil, err
-	}
-	config, err := c.toGenerateConfig(req, opt)
-	if err != nil {
-		return nil, err
-	}
-	config.SystemInstruction = system
-	return stream.Go(func(yield func(*blades.ModelResponse, error) bool) {
+	return func(yield func(*blades.ModelResponse, error) bool) {
+		system, contents, err := convertMessageToGenAI(req)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		config, err := c.toGenerateConfig(req, opt)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		config.SystemInstruction = system
 		streaming := c.client.Models.GenerateContentStream(ctx, req.Model, contents, config)
 		var accumulatedResponse *genai.GenerateContentResponse
 		for chunk, err := range streaming {
@@ -164,5 +158,5 @@ func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts
 			finalResponse.Message.Status = blades.StatusCompleted
 			yield(finalResponse, nil)
 		}
-	}), nil
+	}
 }

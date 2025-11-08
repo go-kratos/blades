@@ -18,10 +18,7 @@ func main() {
 	prompt := blades.NewPrompt(
 		blades.UserMessage("What is the capital of France?"),
 	)
-	stream, err := agent.RunStream(context.Background(), prompt)
-	if err != nil {
-		log.Fatal(err)
-	}
+	stream := agent.RunStream(context.Background(), prompt)
 	for m, err := range stream {
 		if err != nil {
 			log.Fatal(err)

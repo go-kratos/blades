@@ -24,6 +24,8 @@ var (
 	ErrAudioVoiceRequired = errors.New("openai/audio: voice is required")
 )
 
+var _ blades.ModelProvider = (*AudioProvider)(nil)
+
 // AudioOption defines functional options for configuring the AudioProvider.
 type AudioOption func(*AudioOptions)
 
@@ -106,16 +108,16 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 	return &blades.ModelResponse{Message: message}, nil
 }
 
-// NewStream wraps Generate with a single-yield stream for API compatibility.
-func (p *AudioProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (stream.Streamable[*blades.ModelResponse], error) {
-	return stream.Go(func(yield func(*blades.ModelResponse, error) bool) {
+// NewStreaming wraps Generate with a single-yield stream for API compatibility.
+func (p *AudioProvider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) stream.Streamable[*blades.ModelResponse] {
+	return func(yield func(*blades.ModelResponse, error) bool) {
 		m, err := p.Generate(ctx, req, opts...)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
 		yield(m, nil)
-	}), nil
+	}
 }
 
 func (p *AudioProvider) applyOptions(params *openai.AudioSpeechNewParams, opt blades.AudioOptions) error {

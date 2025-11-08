@@ -3,7 +3,6 @@ package openai
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 
 	"github.com/go-kratos/blades"
@@ -13,12 +12,7 @@ import (
 	"github.com/openai/openai-go/v2/packages/param"
 )
 
-var (
-	// ErrPromptRequired is returned when no prompt is provided.
-	ErrPromptRequired = errors.New("openai: text prompt is required")
-	// ErrImageGenerationEmpty is returned when no images are generated.
-	ErrImageGenerationEmpty = errors.New("openai/image: provider returned no images")
-)
+var _ blades.ModelProvider = (*ImageProvider)(nil)
 
 // ImageOption defines functional options for configuring the ImageProvider.
 type ImageOption func(*ImageOptions)
@@ -77,13 +71,17 @@ func (p *ImageProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 	return toImageResponse(res)
 }
 
-// NewStream wraps Generate with a single-yield stream for API compatibility.
-func (p *ImageProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (stream.Streamable[*blades.ModelResponse], error) {
-	res, err := p.Generate(ctx, req, opts...)
-	if err != nil {
-		return nil, err
+// NewStreaming wraps Generate with a single-yield stream for API compatibility.
+func (p *ImageProvider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) stream.Streamable[*blades.ModelResponse] {
+	return func(yield func(*blades.ModelResponse, error) bool) {
+		m, err := p.Generate(ctx, req, opts...)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		yield(m, nil)
 	}
-	return stream.Just[*blades.ModelResponse](res), nil
+
 }
 
 // applyOptions applies image generation options to the OpenAI parameters.
@@ -125,9 +123,6 @@ func (p *ImageProvider) applyOptions(params *openai.ImageGenerateParams, opts bl
 }
 
 func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) {
-	if res == nil || len(res.Data) == 0 {
-		return nil, ErrImageGenerationEmpty
-	}
 	message := &blades.Message{
 		Role:     blades.RoleAssistant,
 		Status:   blades.StatusCompleted,
@@ -163,9 +158,6 @@ func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) 
 			key := fmt.Sprintf("%s_revised_prompt_%d", name, i+1)
 			message.Metadata[key] = img.RevisedPrompt
 		}
-	}
-	if len(message.Parts) == 0 {
-		return nil, ErrImageGenerationEmpty
 	}
 	return &blades.ModelResponse{Message: message}, nil
 }

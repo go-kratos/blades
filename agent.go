@@ -227,18 +227,24 @@ func (a *Agent) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*
 }
 
 // RunStream runs the agent with the given prompt and options, returning a streamable response.
-func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (stream.Streamable[*Message], error) {
-	ctx, invocation := a.buildInvocationContext(ctx)
-	input, err := a.inputHandler(ctx, prompt, invocation.Session.State())
-	if err != nil {
-		return nil, err
+func (a *Agent) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) stream.Streamable[*Message] {
+	return func(yield func(*Message, error) bool) {
+		ctx, invocation := a.buildInvocationContext(ctx)
+		input, err := a.inputHandler(ctx, prompt, invocation.Session.State())
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		req, err := a.buildRequest(ctx, input)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		handler := a.handler(invocation, req)
+		for m, err := range handler.RunStream(ctx, prompt, opts...) {
+			yield(m, err)
+		}
 	}
-	req, err := a.buildRequest(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	handler := a.handler(invocation, req)
-	return handler.RunStream(ctx, prompt, opts...)
 }
 
 func (a *Agent) findResumeMessage(ctx context.Context, invocation *InvocationContext) (*Message, bool) {
@@ -280,7 +286,6 @@ func (a *Agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error
 	if err != nil {
 		return part, err
 	}
-
 	// Search through all available tools (static + resolved)
 	for _, tool := range tools {
 		if tool.Name == part.Name {
@@ -349,22 +354,21 @@ func (a *Agent) handler(invocation *InvocationContext, req *ModelRequest) Runnab
 			}
 			return nil, ErrMaxIterationsExceeded
 		},
-		HandleStream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) (stream.Streamable[*Message], error) {
-			return stream.Go(func(yield func(*Message, error) bool) {
+		HandleStream: func(ctx context.Context, prompt *Prompt, opts ...ModelOption) stream.Streamable[*Message] {
+			return func(yield func(*Message, error) bool) {
 				// find resume message
 				if message, ok := a.findResumeMessage(ctx, invocation); ok {
 					yield(message, nil)
 					return
 				}
-				var toolMessages []*Message
+				var (
+					err          error
+					toolMessages []*Message
+				)
 				for i := 0; i < a.maxIterations; i++ {
-					events, err := a.provider.NewStream(ctx, req, opts...)
-					if err != nil {
-						yield(nil, err)
-						return
-					}
+					streaming := a.provider.NewStreaming(ctx, req, opts...)
 					var finalResponse *ModelResponse
-					for res, err := range events {
+					for res, err := range streaming {
 						if err != nil {
 							yield(nil, err)
 							return
@@ -403,7 +407,7 @@ func (a *Agent) handler(invocation *InvocationContext, req *ModelRequest) Runnab
 					return
 				}
 				yield(nil, ErrMaxIterationsExceeded)
-			}), nil
+			}
 		},
 	})
 	if len(a.middlewares) > 0 {

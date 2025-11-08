@@ -11,8 +11,5 @@ func promptFromMessages(messages []*blades.Message) (string, error) {
 	for _, msg := range messages {
 		sections = append(sections, msg.Text())
 	}
-	if len(sections) == 0 {
-		return "", ErrPromptRequired
-	}
 	return strings.Join(sections, "\n"), nil
 }

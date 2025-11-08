@@ -2,7 +2,6 @@ package claude
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -11,10 +10,7 @@ import (
 	"github.com/go-kratos/blades/stream"
 )
 
-var (
-	// ErrEmptyResponse indicates the provider returned no content.
-	ErrEmptyResponse = errors.New("empty completion response")
-)
+var _ blades.ModelProvider = (*Provider)(nil)
 
 // Option is a functional option for configuring the Claude client.
 type Option func(*Options)
@@ -72,17 +68,18 @@ func (c *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts 
 	return convertClaudeToBlades(message)
 }
 
-// NewStream executes the request and returns a stream of assistant responses
-func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (stream.Streamable[*blades.ModelResponse], error) {
+// NewStreaming executes the request and returns a stream of assistant responses
+func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) stream.Streamable[*blades.ModelResponse] {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
 	}
-	params, err := c.toClaudeParams(req, opt)
-	if err != nil {
-		return nil, fmt.Errorf("converting request: %w", err)
-	}
-	return stream.Go(func(yield func(*blades.ModelResponse, error) bool) {
+	return func(yield func(*blades.ModelResponse, error) bool) {
+		params, err := c.toClaudeParams(req, opt)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
 		streaming := c.client.Messages.NewStreaming(ctx, *params)
 		defer streaming.Close()
 		message := &anthropic.Message{}
@@ -113,7 +110,7 @@ func (c *Provider) NewStream(ctx context.Context, req *blades.ModelRequest, opts
 			return
 		}
 		yield(finalResponse, nil)
-	}), nil
+	}
 }
 
 // toClaudeParams converts Blades ModelRequest and ModelOptions to Claude MessageNewParams.

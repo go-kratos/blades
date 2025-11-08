@@ -35,11 +35,7 @@ func main() {
 		}
 		if stream, _ := input["stream"].(bool); stream {
 			w.Header().Set("Content-Type", "text/event-stream")
-			stream, err := agent.RunStream(r.Context(), prompt)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
+			stream := agent.RunStream(r.Context(), prompt)
 			for m, err := range stream {
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)

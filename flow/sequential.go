@@ -35,13 +35,13 @@ func (c *Sequential) Run(ctx context.Context, input *blades.Prompt, opts ...blad
 }
 
 // RunStream executes the chain of runners sequentially, streaming the output of the last runner.
-func (c *Sequential) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (stream.Streamable[*blades.Message], error) {
-	return stream.Go(func(yield func(*blades.Message, error) bool) {
+func (c *Sequential) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) stream.Streamable[*blades.Message] {
+	return func(yield func(*blades.Message, error) bool) {
 		message, err := c.Run(ctx, input, opts...)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
 		yield(message, nil)
-	}), nil
+	}
 }

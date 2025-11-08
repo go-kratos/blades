@@ -68,6 +68,6 @@ func (r *Runner) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (
 }
 
 // RunStream executes the agent in a streaming manner with the provided prompt and options within the session context.
-func (r *Runner) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) (stream.Streamable[*Message], error) {
+func (r *Runner) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) stream.Streamable[*Message] {
 	return r.agent.RunStream(r.buildInvocationContext(ctx), prompt, opts...)
 }

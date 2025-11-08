@@ -53,12 +53,20 @@ func (r *RoutingWorkflow) Run(ctx context.Context, prompt *blades.Prompt, opts .
 }
 
 // RunStream selects a route using the prompt content and streams from the chosen runner.
-func (r *RoutingWorkflow) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (stream.Streamable[*blades.Message], error) {
-	runner, err := r.selectRoute(ctx, prompt)
-	if err != nil {
-		return nil, err
+func (r *RoutingWorkflow) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) stream.Streamable[*blades.Message] {
+	return func(yield func(*blades.Message, error) bool) {
+		runner, err := r.selectRoute(ctx, prompt)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		stream := runner.RunStream(ctx, prompt, opts...)
+		for msg, err := range stream {
+			if !yield(msg, err) {
+				break
+			}
+		}
 	}
-	return runner.RunStream(ctx, prompt, opts...)
 }
 
 // selectRoute determines the best route key and runner for the given prompt.

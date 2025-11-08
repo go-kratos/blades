@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"log"
 
 	"github.com/go-kratos/blades"
@@ -16,10 +15,7 @@ import (
 	"github.com/openai/openai-go/v2/shared"
 )
 
-var (
-	// ErrEmptyResponse indicates the provider returned no choices.
-	ErrEmptyResponse = errors.New("empty completion response")
-)
+var _ blades.ModelProvider = (*ChatProvider)(nil)
 
 // ChatOption defines options for chat providers.
 type ChatOption func(*ChatOptions)
@@ -84,18 +80,19 @@ func (p *ChatProvider) Generate(ctx context.Context, req *blades.ModelRequest, o
 	return res, nil
 }
 
-// NewStream streams chat completion chunks and converts each choice delta
+// NewStreaming streams chat completion chunks and converts each choice delta
 // into a ModelResponse for incremental consumption.
-func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (stream.Streamable[*blades.ModelResponse], error) {
+func (p *ChatProvider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) stream.Streamable[*blades.ModelResponse] {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
 	}
-	params, err := p.toChatCompletionParams(req, opt)
-	if err != nil {
-		return nil, err
-	}
-	return stream.Go(func(yield func(*blades.ModelResponse, error) bool) {
+	return func(yield func(*blades.ModelResponse, error) bool) {
+		params, err := p.toChatCompletionParams(req, opt)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
 		streaming := p.client.Chat.Completions.NewStreaming(ctx, params)
 		defer streaming.Close()
 		acc := openai.ChatCompletionAccumulator{}
@@ -121,7 +118,7 @@ func (p *ChatProvider) NewStream(ctx context.Context, req *blades.ModelRequest, 
 			return
 		}
 		yield(finalResponse, nil)
-	}), nil
+	}
 }
 
 // toChatCompletionParams converts a generic model request into OpenAI params.
