@@ -152,11 +152,6 @@ func (g *Graph) validate() error {
 
 // validateStructure performs structural validations that should run after cycle detection.
 func (g *Graph) validateStructure() error {
-	// Validate that finish node has no outgoing edges
-	if len(g.edges[g.finishPoint]) > 0 {
-		return fmt.Errorf("graph: finish node '%s' cannot have outgoing edges", g.finishPoint)
-	}
-
 	for nodeName := range g.nodes {
 		if nodeName == g.finishPoint {
 			continue
@@ -179,6 +174,13 @@ func (g *Graph) validateStructure() error {
 		}
 		if hasConditional && hasUnconditional {
 			return fmt.Errorf("graph: node '%s' has mixed conditional and unconditional edges", from)
+		}
+		if hasConditional {
+			for _, edge := range edges {
+				if edge.condition == nil {
+					return fmt.Errorf("graph: conditional edge from node '%s' to '%s' missing condition", from, edge.to)
+				}
+			}
 		}
 	}
 

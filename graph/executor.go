@@ -7,14 +7,14 @@ import (
 
 // nodeInfo contains precomputed information for a node to avoid runtime lookups.
 type nodeInfo struct {
-	outEdges           []conditionalEdge // Precomputed outgoing edges
-	unconditionalDests []string          // Target names for unconditional edges
-	predecessors       []string          // Ordered list of predecessors
-	dependencies       int               // Number of dependencies (predecessor count)
-	isFinish           bool              // Whether this is the finish node
-	hasConditions      bool              // Whether outgoing edges carry conditions
-	loopDependencies   int               // Number of incoming loop edges
-	loopEdgeSources    map[string]bool   // Precomputed: which parents connect via loop edges
+	outEdges         []conditionalEdge // Precomputed outgoing edges
+	nonLoopEdges     []conditionalEdge // Outgoing edges that are not loops
+	predecessors     []string          // Ordered list of predecessors
+	parentIndex      map[string]int    // Deterministic index for each predecessor
+	dependencies     int               // Number of dependencies (predecessor count)
+	isFinish         bool              // Whether this is the finish node
+	hasConditions    bool              // Whether outgoing edges carry conditions
+	loopDependencies int               // Number of incoming loop edges
 }
 
 // Executor represents a compiled graph ready for execution. It is safe for
@@ -30,18 +30,12 @@ func NewExecutor(g *Graph) *Executor {
 	predecessors := make(map[string][]string, len(g.nodes))
 	dependencyCounts := make(map[string]int)
 	loopDependencyCounts := make(map[string]int)
-	loopEdgeSources := make(map[string]map[string]bool)
 
 	for from, edges := range g.edges {
 		for _, edge := range edges {
 			predecessors[edge.to] = append(predecessors[edge.to], from)
 			if edge.edgeType == EdgeTypeLoop {
 				loopDependencyCounts[edge.to]++
-				// Track which parents connect via loop edges
-				if loopEdgeSources[edge.to] == nil {
-					loopEdgeSources[edge.to] = make(map[string]bool)
-				}
-				loopEdgeSources[edge.to][from] = true
 				continue
 			}
 			dependencyCounts[edge.to]++
@@ -58,23 +52,24 @@ func NewExecutor(g *Graph) *Executor {
 	for nodeName := range g.nodes {
 		rawEdges := cloneEdges(g.edges[nodeName])
 		hasConditions := false
-		unconditionalDests := make([]string, 0, len(rawEdges))
+		nonLoopEdges := make([]conditionalEdge, 0, len(rawEdges))
 		for _, edge := range rawEdges {
 			if edge.condition != nil {
 				hasConditions = true
-			} else {
-				unconditionalDests = append(unconditionalDests, edge.to)
+			}
+			if edge.edgeType != EdgeTypeLoop {
+				nonLoopEdges = append(nonLoopEdges, edge)
 			}
 		}
 		node := &nodeInfo{
-			outEdges:           rawEdges,
-			unconditionalDests: unconditionalDests,
-			predecessors:       predecessors[nodeName],
-			dependencies:       dependencyCounts[nodeName],
-			isFinish:           nodeName == g.finishPoint,
-			hasConditions:      hasConditions,
-			loopDependencies:   loopDependencyCounts[nodeName],
-			loopEdgeSources:    loopEdgeSources[nodeName],
+			outEdges:         rawEdges,
+			nonLoopEdges:     nonLoopEdges,
+			predecessors:     predecessors[nodeName],
+			parentIndex:      buildParentIndex(predecessors[nodeName]),
+			dependencies:     dependencyCounts[nodeName],
+			isFinish:         nodeName == g.finishPoint,
+			hasConditions:    hasConditions,
+			loopDependencies: loopDependencyCounts[nodeName],
 		}
 		nodeInfos[nodeName] = node
 	}
@@ -98,4 +93,15 @@ func cloneEdges(edges []conditionalEdge) []conditionalEdge {
 	out := make([]conditionalEdge, len(edges))
 	copy(out, edges)
 	return out
+}
+
+func buildParentIndex(parents []string) map[string]int {
+	if len(parents) == 0 {
+		return nil
+	}
+	index := make(map[string]int, len(parents))
+	for i, parent := range parents {
+		index[parent] = i
+	}
+	return index
 }

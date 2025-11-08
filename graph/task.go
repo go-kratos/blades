@@ -22,53 +22,42 @@ type Task struct {
 
 	// Ready queue: nodes that are ready to execute (all dependencies satisfied)
 	ready []string
-	// Remaining dependencies: target -> count of unsatisfied predecessors
-	remaining map[string]int
-	// Contributions: target -> parent -> state (for aggregation)
-	contributions map[string]map[string]State
-	// Skips: target -> parent -> true (tracks which parents sent skip)
-	skips map[string]map[string]bool
-	// Pending re-execution for loop edges while node still in-flight
-	pendingRuns map[string]bool
-	// Pending skip propagation when deferred for loops
-	pendingSkips map[string]bool
-	// Tracks nodes that were skipped (so they can be reactivated later)
-	skipped map[string]bool
-	// Tracks nodes currently executing as part of a loop iteration
-	looping map[string]bool
-	// Number of contributions observed per node
-	received map[string]int
-	// In-flight: nodes currently executing
-	inFlight map[string]bool
-	// Visited: nodes that have completed
-	visited map[string]bool
+	// Runtime state per node (remaining deps, visit flags, etc.)
+	nodes map[string]*nodeRuntime
+	// Count of nodes currently in flight
+	inFlightCount int
 
 	finished    bool
 	finishState State
 	err         error
 }
 
+type edgePrepAction int
+
+const (
+	prepContinue edgePrepAction = iota
+	prepDefer
+	prepStop
+)
+
 func newTask(e *Executor) *Task {
-	// Initialize remaining dependencies count for each node from precomputed nodeInfo
-	remaining := make(map[string]int, len(e.graph.nodes))
+	nodes := make(map[string]*nodeRuntime, len(e.graph.nodes))
 	for nodeName, info := range e.nodeInfos {
-		if info.dependencies > 0 {
-			remaining[nodeName] = info.dependencies
+		state := &nodeRuntime{
+			remaining: info.dependencies,
+			info:      info,
 		}
+		size := len(info.predecessors)
+		if size > 0 {
+			state.contributions = make([]State, size)
+			state.skipMarks = make([]bool, size)
+		}
+		nodes[nodeName] = state
 	}
 	task := &Task{
-		executor:      e,
-		ready:         make([]string, 0, 4),
-		remaining:     remaining,
-		contributions: make(map[string]map[string]State),
-		skips:         make(map[string]map[string]bool),
-		pendingRuns:   make(map[string]bool),
-		pendingSkips:  make(map[string]bool),
-		skipped:       make(map[string]bool),
-		looping:       make(map[string]bool),
-		received:      make(map[string]int),
-		inFlight:      make(map[string]bool, len(e.graph.nodes)),
-		visited:       make(map[string]bool, len(e.graph.nodes)),
+		executor: e,
+		ready:    make([]string, 0, 4),
+		nodes:    nodes,
 	}
 	task.readyCond = sync.NewCond(&task.mu)
 	return task
@@ -101,10 +90,11 @@ type terminationResult struct {
 func (t *Task) addInitialContribution(initial State) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.addContributionLocked(t.executor.graph.entryPoint, entryContributionParent, initial) {
-		t.received[t.executor.graph.entryPoint]++
+	entry := t.executor.graph.entryPoint
+	if t.addContributionLocked(entry, entryContributionParent, initial) {
+		t.nodeState(entry).received++
 	}
-	t.ready = append(t.ready, t.executor.graph.entryPoint)
+	t.enqueueReadyLocked(entry)
 }
 
 // checkTermination checks if execution should terminate and returns the result
@@ -138,7 +128,8 @@ func (t *Task) scheduleNext(ctx context.Context) bool {
 			t.mu.Unlock()
 			return false
 		}
-		if len(t.inFlight) == 0 {
+		// No ready work and nothing in-flight means we're stuck before reaching finish.
+		if t.inFlightCount == 0 {
 			t.mu.Unlock()
 			t.fail(fmt.Errorf("graph: finish node not reachable: %s", t.executor.graph.finishPoint))
 			return false
@@ -151,14 +142,16 @@ func (t *Task) scheduleNext(ctx context.Context) bool {
 	t.ready = t.ready[1:]
 
 	// Skip if already visited
-	if t.visited[node] {
+	if t.nodeState(node).visited {
 		t.mu.Unlock()
 		return true
 	}
 
 	// Build aggregated state and mark as in-flight
 	state := t.buildAggregateLocked(node)
-	t.inFlight[node] = true
+	nodeState := t.nodeState(node)
+	nodeState.inFlight = true
+	t.inFlightCount++
 	t.wg.Add(1)
 	parallel := t.executor.graph.parallel
 	t.mu.Unlock()
@@ -206,8 +199,9 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 
 	// Mark as visited and get precomputed node info
 	t.mu.Lock()
-	t.visited[node] = true
-	info := t.executor.nodeInfos[node]
+	nodeState := t.nodeState(node)
+	nodeState.visited = true
+	info := nodeState.info
 	if info.isFinish && !t.finished {
 		t.finished = true
 		t.finishState = nextState
@@ -215,7 +209,7 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 	}
 	t.mu.Unlock()
 
-	// If this is the finish node, we're done (no outgoing edges guaranteed by compile-time validation)
+	// Finish nodes may declare edges, but we short-circuit after recording the result.
 	if info.isFinish {
 		return
 	}
@@ -226,8 +220,9 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 
 func (t *Task) processOutgoing(ctx context.Context, node string, info *nodeInfo, state State) {
 	if !info.hasConditions {
-		for _, dest := range info.unconditionalDests {
-			t.satisfy(node, dest, state.Clone())
+		for i := range info.outEdges {
+			edge := &info.outEdges[i]
+			t.satisfy(node, edge, state.Clone())
 		}
 		return
 	}
@@ -236,10 +231,6 @@ func (t *Task) processOutgoing(ctx context.Context, node string, info *nodeInfo,
 	var matchedEdge *conditionalEdge
 	for i := range info.outEdges {
 		edge := &info.outEdges[i]
-		if edge.condition == nil {
-			t.fail(fmt.Errorf("graph: conditional edge from node %s to %s missing condition", node, edge.to))
-			return
-		}
 		if edge.condition(ctx, state) {
 			matchedEdge = edge
 			break
@@ -254,21 +245,22 @@ func (t *Task) processOutgoing(ctx context.Context, node string, info *nodeInfo,
 	// Activate the matched edge
 	// Clone to ensure state isolation: prevents shared map mutations
 	// and converts nil to empty State{} (backward compatible)
-	t.satisfy(node, matchedEdge.to, state.Clone())
+	t.satisfy(node, matchedEdge, state.Clone())
 
 	// Send skip to all other edges
 	for i := range info.outEdges {
 		edge := &info.outEdges[i]
-		if edge.to != matchedEdge.to {
-			t.satisfy(node, edge.to, nil)
+		if edge == matchedEdge {
+			continue
 		}
+		t.satisfy(node, edge, nil)
 	}
 }
 
 // satisfy handles both state propagation and skip registration in a unified way.
 // When state is non-nil, it's a propagation (contribution); when nil, it's a skip.
 // For Loop edges, allows revisiting already-visited nodes.
-func (t *Task) satisfy(from, to string, state State) {
+func (t *Task) satisfy(from string, edge *conditionalEdge, state State) {
 	var (
 		propagateSkip bool
 		skipEdges     []conditionalEdge
@@ -276,45 +268,38 @@ func (t *Task) satisfy(from, to string, state State) {
 
 	t.mu.Lock()
 
+	to := edge.to
 	toInfo := t.executor.nodeInfos[to]
 	if toInfo == nil {
 		t.mu.Unlock()
 		return
 	}
 
-	isLoopEdge := toInfo.loopEdgeSources != nil && toInfo.loopEdgeSources[from]
-	deferSchedule, stop := t.prepareNodeLocked(from, to, state, toInfo, isLoopEdge)
-	if stop {
+	isLoopEdge := edge.edgeType == EdgeTypeLoop
+	action := t.prepareNodeLocked(from, to, state, toInfo, isLoopEdge)
+	if action == prepStop {
 		t.mu.Unlock()
 		return
 	}
-
-	if toInfo.dependencies == 0 && !isLoopEdge {
-		t.mu.Unlock()
-		return
-	}
+	deferSchedule := action == prepDefer
 
 	if !t.registerSignalLocked(to, from, state) {
 		t.mu.Unlock()
 		return
 	}
 
-	if t.remaining[to] > 0 {
-		t.remaining[to]--
+	toState := t.nodeState(to)
+	if toState.remaining > 0 {
+		toState.remaining--
 	}
 
-	if t.remaining[to] == 0 && !t.visited[to] {
-		var handled bool
-		propagateSkip, skipEdges, handled = t.handleReadyLocked(to, toInfo, deferSchedule)
-		if handled {
-			t.mu.Unlock()
-			if propagateSkip {
-				for _, edge := range skipEdges {
-					t.satisfy(to, edge.to, nil)
-				}
-			}
-			return
+	if toState.remaining == 0 && !toState.visited {
+		propagateSkip, skipEdges = t.handleReadyLocked(to, toInfo, deferSchedule)
+		t.mu.Unlock()
+		if propagateSkip {
+			t.propagateSkipEdges(to, skipEdges)
 		}
+		return
 	}
 
 	t.mu.Unlock()
@@ -327,29 +312,34 @@ func (t *Task) nodeDone(node string) {
 	)
 
 	t.mu.Lock()
-	delete(t.inFlight, node)
-	delete(t.looping, node)
+	state := t.nodeState(node)
+	if state.inFlight {
+		state.inFlight = false
+		if t.inFlightCount > 0 {
+			t.inFlightCount--
+		}
+	}
+	state.looping = false
 
 	switch {
-	case t.pendingSkips[node]:
-		delete(t.pendingSkips, node)
-		if !t.visited[node] {
-			t.visited[node] = true
+	case state.pendingSkip:
+		state.pendingSkip = false
+		if !state.visited {
+			state.visited = true
 		}
-		t.skipped[node] = true
-		delete(t.received, node)
-		delete(t.contributions, node)
-		delete(t.skips, node)
-		if info := t.executor.nodeInfos[node]; info != nil {
-			skipEdges = collectNonLoopEdges(info.outEdges)
+		state.skipped = true
+		state.received = 0
+		clearStateSlice(state.contributions)
+		clearBoolSlice(state.skipMarks)
+		if info := state.info; info != nil {
+			skipEdges = info.nonLoopEdges
 		}
 		propagateSkip = true
-	case t.pendingRuns[node]:
-		delete(t.pendingRuns, node)
-		if t.received[node] != 0 && !t.visited[node] {
-			delete(t.skipped, node)
-			t.ready = append(t.ready, node)
-			t.readyCond.Signal()
+	case state.pendingRun:
+		state.pendingRun = false
+		if state.received != 0 && !state.visited {
+			state.skipped = false
+			t.enqueueReadyLocked(node)
 		}
 	}
 
@@ -357,9 +347,7 @@ func (t *Task) nodeDone(node string) {
 	t.mu.Unlock()
 
 	if propagateSkip {
-		for _, edge := range skipEdges {
-			t.satisfy(node, edge.to, nil)
-		}
+		t.propagateSkipEdges(node, skipEdges)
 	}
 
 	t.wg.Done()
@@ -377,66 +365,83 @@ func (t *Task) fail(err error) {
 
 func (t *Task) buildAggregateLocked(node string) State {
 	state := State{}
-	contribs, ok := t.contributions[node]
-	if !ok || len(contribs) == 0 {
-		delete(t.received, node)
+	nodeState := t.nodeState(node)
+	if nodeState.received == 0 {
 		return state
 	}
+	contribs := nodeState.contributions
 
 	// Use precomputed predecessors order from nodeInfo
-	info := t.executor.nodeInfos[node]
-	order := info.predecessors
-
-	// Merge in predecessor order for determinism; the entry node's list already includes the synthetic parent
-	for _, parent := range order {
-		if contribution, exists := contribs[parent]; exists {
+	info := nodeState.info
+	for idx := range info.predecessors {
+		if idx >= len(contribs) {
+			break
+		}
+		if contribution := contribs[idx]; contribution != nil {
 			state = mergeStates(state, contribution)
 		}
 	}
 
 	// Clean up contributions
-	delete(t.contributions, node)
-	delete(t.received, node)
+	clearStateSlice(contribs)
+	nodeState.received = 0
 	return state
 }
 
 func (t *Task) addContributionLocked(node, parent string, state State) bool {
-	if t.contributions[node] == nil {
-		t.contributions[node] = make(map[string]State)
-	}
-	if _, exists := t.contributions[node][parent]; exists {
-		// Ignore duplicate contribution
+	nodeState := t.nodeState(node)
+	info := nodeState.info
+	if info == nil {
 		return false
 	}
-	t.contributions[node][parent] = state
+	idx, ok := info.parentIndex[parent]
+	if !ok {
+		return false
+	}
+	if nodeState.contributions == nil {
+		nodeState.contributions = make([]State, len(info.predecessors))
+	}
+	if nodeState.contributions[idx] != nil {
+		return false
+	}
+	nodeState.contributions[idx] = state
 	return true
 }
 
 func (t *Task) addSkipLocked(node, parent string) bool {
-	if t.skips[node] == nil {
-		t.skips[node] = make(map[string]bool)
-	}
-	if t.skips[node][parent] {
-		// Duplicate skip
+	nodeState := t.nodeState(node)
+	info := nodeState.info
+	if info == nil {
 		return false
 	}
-	t.skips[node][parent] = true
+	idx, ok := info.parentIndex[parent]
+	if !ok {
+		return false
+	}
+	if nodeState.skipMarks == nil {
+		nodeState.skipMarks = make([]bool, len(info.predecessors))
+	}
+	if nodeState.skipMarks[idx] {
+		return false
+	}
+	nodeState.skipMarks[idx] = true
 	return true
 }
 
-func (t *Task) prepareNodeLocked(from, to string, state State, info *nodeInfo, isLoopEdge bool) (bool, bool) {
+func (t *Task) prepareNodeLocked(from, to string, state State, info *nodeInfo, isLoopEdge bool) edgePrepAction {
 	if isLoopEdge {
-		return t.prepareLoopNodeLocked(to, state, info), false
+		return t.prepareLoopNodeLocked(to, state, info)
 	}
 	return t.prepareNormalNodeLocked(from, to, state, info)
 }
 
-func (t *Task) prepareLoopNodeLocked(to string, state State, info *nodeInfo) bool {
+func (t *Task) prepareLoopNodeLocked(to string, state State, info *nodeInfo) edgePrepAction {
 	deferSchedule := false
-	if t.inFlight[to] {
+	toState := t.nodeState(to)
+	if toState.inFlight {
 		deferSchedule = true
 	}
-	if t.visited[to] {
+	if toState.visited {
 		loopDeps := info.loopDependencies
 		if loopDeps <= 0 {
 			loopDeps = 1
@@ -444,90 +449,145 @@ func (t *Task) prepareLoopNodeLocked(to string, state State, info *nodeInfo) boo
 		t.resetNodeStateLocked(to, loopDeps)
 	}
 	if state != nil {
-		t.looping[to] = true
+		toState.looping = true
 	}
-	return deferSchedule
+	if deferSchedule {
+		return prepDefer
+	}
+	return prepContinue
 }
 
-func (t *Task) prepareNormalNodeLocked(from, to string, state State, info *nodeInfo) (bool, bool) {
-	if t.visited[to] {
-		if state != nil && (t.skipped[to] || t.looping[from]) {
+func (t *Task) prepareNormalNodeLocked(from, to string, state State, info *nodeInfo) edgePrepAction {
+	toState := t.nodeState(to)
+	fromState := t.nodeState(from)
+	if toState.visited {
+		if state != nil && (toState.skipped || fromState.looping) {
 			t.resetNodeStateLocked(to, info.dependencies)
-			delete(t.skipped, to)
-			if t.looping[from] {
-				t.looping[to] = true
+			toState.skipped = false
+			if fromState.looping {
+				toState.looping = true
 			}
-			return false, false
+			return prepContinue
 		}
-		return false, true
+		return prepStop
 	}
-	if state != nil && t.looping[from] {
-		t.looping[to] = true
+	if state != nil && fromState.looping {
+		toState.looping = true
 	}
-	return false, false
+	return prepContinue
 }
 
 func (t *Task) registerSignalLocked(node, parent string, state State) bool {
+	nodeState := t.nodeState(node)
 	if state != nil {
 		if !t.addContributionLocked(node, parent, state) {
 			return false
 		}
-		t.received[node]++
-		delete(t.skipped, node)
+		nodeState.received++
+		nodeState.skipped = false
 		return true
 	}
-	t.skipped[node] = true
+	nodeState.skipped = true
 	return t.addSkipLocked(node, parent)
 }
 
-func (t *Task) handleReadyLocked(node string, info *nodeInfo, deferSchedule bool) (bool, []conditionalEdge, bool) {
-	if t.received[node] == 0 {
+func (t *Task) handleReadyLocked(node string, info *nodeInfo, deferSchedule bool) (bool, []conditionalEdge) {
+	state := t.nodeState(node)
+	if state.received == 0 {
 		if deferSchedule {
-			t.pendingSkips[node] = true
-			return false, nil, true
+			state.pendingSkip = true
+			return false, nil
 		}
-		t.visited[node] = true
-		delete(t.received, node)
+		state.visited = true
+		state.received = 0
 		t.readyCond.Signal()
-		return true, collectNonLoopEdges(info.outEdges), true
+		return true, info.nonLoopEdges
 	}
 
 	if deferSchedule {
-		delete(t.skipped, node)
-		t.pendingRuns[node] = true
-		return false, nil, true
+		state.skipped = false
+		state.pendingRun = true
+		return false, nil
 	}
 
-	if t.inFlight[node] {
-		return false, nil, true
+	if state.inFlight {
+		return false, nil
 	}
 
-	delete(t.skipped, node)
-	t.ready = append(t.ready, node)
-	t.readyCond.Signal()
-	return false, nil, true
+	state.skipped = false
+	t.enqueueReadyLocked(node)
+	return false, nil
 }
 
 func (t *Task) resetNodeStateLocked(node string, remaining int) {
-	delete(t.visited, node)
-	delete(t.contributions, node)
-	delete(t.skips, node)
-	t.received[node] = 0
-	t.remaining[node] = remaining
+	state := t.nodeState(node)
+	state.visited = false
+	state.inFlight = false
+	state.skipped = false
+	state.looping = false
+	state.pendingRun = false
+	state.pendingSkip = false
+	state.received = 0
+	state.remaining = remaining
+	clearStateSlice(state.contributions)
+	clearBoolSlice(state.skipMarks)
 }
 
-func collectNonLoopEdges(edges []conditionalEdge) []conditionalEdge {
-	if len(edges) == 0 {
-		return nil
+// nodeRuntime houses all mutable per-node scheduling state.
+type nodeRuntime struct {
+	remaining     int       // outstanding non-loop dependencies before the node becomes ready
+	received      int       // number of contributions accumulated for this execution
+	inFlight      bool      // node is currently executing
+	visited       bool      // node has completed its current execution
+	skipped       bool      // node was skipped in the current iteration
+	looping       bool      // node participates in an active loop iteration
+	pendingRun    bool      // node should be re-enqueued once current execution finishes
+	pendingSkip   bool      // node should propagate skips once current execution finishes
+	contributions []State   // ordered contributions indexed by parentIndex
+	skipMarks     []bool    // per-parent skip markers aligned with parentIndex
+	info          *nodeInfo // immutable metadata for the node
+}
+
+func (t *Task) nodeState(name string) *nodeRuntime {
+	if state, ok := t.nodes[name]; ok {
+		return state
 	}
-	out := make([]conditionalEdge, 0, len(edges))
-	for _, edge := range edges {
-		if edge.edgeType == EdgeTypeLoop {
-			continue
+	state := &nodeRuntime{
+		info: t.executor.nodeInfos[name],
+	}
+	if info := state.info; info != nil {
+		size := len(info.predecessors)
+		if size > 0 {
+			state.contributions = make([]State, size)
+			state.skipMarks = make([]bool, size)
 		}
-		out = append(out, edge)
 	}
-	return out
+	t.nodes[name] = state
+	return state
+}
+
+func (t *Task) enqueueReadyLocked(node string) {
+	t.ready = append(t.ready, node)
+	t.readyCond.Signal()
+}
+
+func (t *Task) propagateSkipEdges(from string, edges []conditionalEdge) {
+	for i := range edges {
+		edge := &edges[i]
+		t.satisfy(from, edge, nil)
+	}
+}
+
+func clearStateSlice(states []State) {
+	for i := range states {
+		states[i] = nil
+	}
+}
+
+func clearBoolSlice(flags []bool) {
+	for i := range flags {
+		flags[i] = false
+	}
 }
 
 func mergeStates(base State, updates ...State) State {
