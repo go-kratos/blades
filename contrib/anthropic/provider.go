@@ -7,7 +7,6 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/stream"
 )
 
 var _ blades.ModelProvider = (*Provider)(nil)
@@ -69,7 +68,7 @@ func (c *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts 
 }
 
 // NewStreaming executes the request and returns a stream of assistant responses
-func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) stream.Streamable[*blades.ModelResponse] {
+func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Sequence[*blades.ModelResponse] {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)

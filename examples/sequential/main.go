@@ -31,12 +31,11 @@ func main() {
 	)
 	seq := flow.NewSequential(storyOutline, storyChecker, storyAgent)
 	// Input prompt
-	prompt := blades.NewPrompt(
-		blades.UserMessage("A brave knight embarks on a quest to find a hidden treasure."),
-	)
-	result, err := seq.Run(context.Background(), prompt)
+	input := blades.UserMessage("A brave knight embarks on a quest to find a hidden treasure.")
+	runner := blades.NewRunner(seq)
+	output, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(result.Text())
+	log.Println(output.Text())
 }

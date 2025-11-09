@@ -37,17 +37,16 @@ func main() {
 	)
 
 	// Ask the agent about time
-	prompt := blades.NewPrompt(
-		blades.UserMessage("What time is it right now?"),
-	)
+	input := blades.UserMessage("What time is it right now?")
 
 	fmt.Println("Asking agent: What time is it right now?")
 	fmt.Println("--------------------------------------------------")
 
 	ctx := context.Background()
-	result, err := agent.Run(ctx, prompt)
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(ctx, input)
 	if err != nil {
 		log.Fatalf("Agent run failed: %v", err)
 	}
-	fmt.Printf("Agent: %s\n", result.Text())
+	fmt.Printf("Agent: %s\n", output.Text())
 }

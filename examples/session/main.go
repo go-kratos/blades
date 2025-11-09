@@ -15,16 +15,14 @@ func main() {
 		blades.WithInstructions("You are a knowledgeable history tutor. Provide detailed and accurate information on historical events."),
 		blades.WithProvider(openai.NewChatProvider()),
 	)
-	prompt := blades.NewPrompt(
-		blades.UserMessage("Can you tell me about the causes of World War II?"),
-	)
+	input := blades.UserMessage("Can you tell me about the causes of World War II?")
 	// Create a new session
 	session := blades.NewSession()
 	// Run the agent
 	runner := blades.NewRunner(agent, blades.WithSession(session))
-	result, err := runner.Run(context.Background(), prompt)
+	output, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(result.Text())
+	log.Println(output.Text())
 }

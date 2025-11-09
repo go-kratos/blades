@@ -15,10 +15,9 @@ func main() {
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithInstructions("You are a helpful assistant that provides detailed answers."),
 	)
-	prompt := blades.NewPrompt(
-		blades.UserMessage("What is the capital of France?"),
-	)
-	stream := agent.RunStream(context.Background(), prompt)
+	input := blades.UserMessage("What is the capital of France?")
+	runner := blades.NewRunner(agent)
+	stream := runner.RunStream(context.Background(), input)
 	for m, err := range stream {
 		if err != nil {
 			log.Fatal(err)

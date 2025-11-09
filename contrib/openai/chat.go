@@ -7,7 +7,6 @@ import (
 	"log"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/stream"
 	"github.com/go-kratos/blades/tools"
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
@@ -82,7 +81,7 @@ func (p *ChatProvider) Generate(ctx context.Context, req *blades.ModelRequest, o
 
 // NewStreaming streams chat completion chunks and converts each choice delta
 // into a ModelResponse for incremental consumption.
-func (p *ChatProvider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) stream.Streamable[*blades.ModelResponse] {
+func (p *ChatProvider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Sequence[*blades.ModelResponse] {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)

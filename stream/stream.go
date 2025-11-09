@@ -5,11 +5,8 @@ import (
 	"sync"
 )
 
-// Streamable represents an iterator sequence that yields values of type T along with potential errors.
-type Streamable[T any] iter.Seq2[T, error]
-
-// Just returns a Streamable that emits the provided values in order.
-func Just[T any](values ...T) Streamable[T] {
+// Just returns a iter.Seq2 that emits the provided values in order.
+func Just[T any](values ...T) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		for _, v := range values {
 			if !yield(v, nil) {
@@ -19,9 +16,9 @@ func Just[T any](values ...T) Streamable[T] {
 	}
 }
 
-// Filter returns a Streamable that emits only the values from the input stream
+// Filter returns a iter.Seq2 that emits only the values from the input stream
 // that satisfy the given predicate function.
-func Filter[T any](stream Streamable[T], predicate func(T) bool) Streamable[T] {
+func Filter[T any](stream iter.Seq2[T, error], predicate func(T) bool) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		stream(func(v T, err error) bool {
 			if err != nil {
@@ -39,7 +36,7 @@ func Filter[T any](stream Streamable[T], predicate func(T) bool) Streamable[T] {
 // observer function to each value from the input channel. The observer function
 // is called for each value and returns an error; if a non-nil error is returned,
 // observation stops and the error is emitted.
-func Observe[T any](stream Streamable[T], observer func(T, error) error) Streamable[T] {
+func Observe[T any](stream iter.Seq2[T, error], observer func(T, error) error) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		stream(func(v T, err error) bool {
 			if err := observer(v, err); err != nil {
@@ -50,9 +47,9 @@ func Observe[T any](stream Streamable[T], observer func(T, error) error) Streama
 	}
 }
 
-// Map returns a Streamable that emits the results of applying the given mapper
+// Map returns a iter.Seq2 that emits the results of applying the given mapper
 // function to each value from the input stream.
-func Map[T, R any](stream Streamable[T], mapper func(T) (R, error)) Streamable[R] {
+func Map[T, R any](stream iter.Seq2[T, error], mapper func(T) (R, error)) iter.Seq2[R, error] {
 	return func(yield func(R, error) bool) {
 		stream(func(v T, err error) bool {
 			if err != nil {
@@ -69,7 +66,7 @@ func Map[T, R any](stream Streamable[T], mapper func(T) (R, error)) Streamable[R
 
 // Merge takes multiple input channels and merges their outputs into a single
 // output channel.
-func Merge[T any](streams ...Streamable[T]) Streamable[T] {
+func Merge[T any](streams ...iter.Seq2[T, error]) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var (
 			mu sync.Mutex
@@ -77,7 +74,7 @@ func Merge[T any](streams ...Streamable[T]) Streamable[T] {
 		)
 		wg.Add(len(streams))
 		for _, stream := range streams {
-			go func(next Streamable[T]) {
+			go func(next iter.Seq2[T, error]) {
 				defer wg.Done()
 				next(func(v T, err error) bool {
 					mu.Lock()

@@ -26,10 +26,9 @@ func main() {
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithOutputSchema(schema),
 	)
-	prompt := blades.NewPrompt(
-		blades.UserMessage("Generate the filmography of 5 movies for Tom Hanks"),
-	)
-	actorsFilms, err := agent.Run(context.Background(), prompt)
+	input := blades.UserMessage("Generate the filmography of 5 movies for Tom Hanks")
+	runner := blades.NewRunner(agent)
+	actorsFilms, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}

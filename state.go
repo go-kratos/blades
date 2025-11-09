@@ -20,15 +20,15 @@ func (s State) Clone() State {
 }
 
 // StateInputHandler is a function type that processes input prompts with access to the current state.
-type StateInputHandler func(ctx context.Context, input *Prompt, state State) (*Prompt, error)
+type StateInputHandler func(ctx context.Context, input *Message, state State) (*Message, error)
 
 // StateOutputHandler is a function type that processes output messages with access to the current state.
 type StateOutputHandler func(ctx context.Context, output *Message, state State) (*Message, error)
 
 // StateInputEmpty returns a StateInputHandler that returns an empty Prompt.
 func StateInputEmpty() StateInputHandler {
-	return func(ctx context.Context, input *Prompt, state State) (*Prompt, error) {
-		return NewPrompt(), nil
+	return func(ctx context.Context, input *Message, state State) (*Message, error) {
+		return UserMessage(""), nil
 	}
 }
 

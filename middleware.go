@@ -2,39 +2,33 @@ package blades
 
 import (
 	"context"
-
-	"github.com/go-kratos/blades/stream"
 )
+
+// Handler defines a function that processes an Invocation and returns a Sequence of Messages.
+type Handler interface {
+	Handle(context.Context, *Invocation) Sequence[*Message]
+}
+
+// HandleFunc is an adapter to allow the use of ordinary functions as Handlers.
+type HandleFunc func(context.Context, *Invocation) Sequence[*Message]
+
+// Handler calls f(ctx, invocation).
+func (f HandleFunc) Handle(ctx context.Context, invocation *Invocation) Sequence[*Message] {
+	return f(ctx, invocation)
+}
 
 // Middleware wraps a Handler and returns a new Handler with additional behavior.
 // It is applied in a chain (outermost first) using ChainMiddlewares.
-type Middleware func(Runnable) Runnable
+type Middleware func(Handler) Handler
 
 // ChainMiddlewares composes middlewares into one, applying them in order.
 // The first middleware becomes the outermost wrapper.
 func ChainMiddlewares(mws ...Middleware) Middleware {
-	return func(next Runnable) Runnable {
+	return func(next Handler) Handler {
 		h := next
 		for i := len(mws) - 1; i >= 0; i-- { // apply in reverse to make mws[0] outermost
 			h = mws[i](h)
 		}
 		return h
 	}
-}
-
-// HandleFunc is a helper to easily create Runner instances from functions.
-// It is especially useful for testing, lightweight adapters, or wrapping logic with middleware.
-type HandleFunc struct {
-	Handle       func(context.Context, *Prompt, ...ModelOption) (*Message, error)
-	HandleStream func(context.Context, *Prompt, ...ModelOption) stream.Streamable[*Message]
-}
-
-// Run executes the runner with the given context, prompt, and options.
-func (f *HandleFunc) Run(ctx context.Context, p *Prompt, opts ...ModelOption) (*Message, error) {
-	return f.Handle(ctx, p, opts...)
-}
-
-// RunStream executes the runner in streaming mode with the given context, prompt, and options.
-func (f *HandleFunc) RunStream(ctx context.Context, p *Prompt, opts ...ModelOption) stream.Streamable[*Message] {
-	return f.HandleStream(ctx, p, opts...)
 }

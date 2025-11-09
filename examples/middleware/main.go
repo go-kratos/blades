@@ -19,20 +19,12 @@ func main() {
 			NewGuardrails,
 		),
 	)
-	prompt := blades.NewPrompt(
-		blades.UserMessage("What is the capital of France?"),
-	)
+	input := blades.UserMessage("What is the capital of France?")
 	// Run example
-	result, err := agent.Run(context.Background(), prompt)
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("run:", result.Text())
-	// RunStream example
-	for message, err := range agent.RunStream(context.Background(), prompt) {
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Print("runStream:", message.Text())
-	}
+	log.Println(output.Text())
 }

@@ -42,10 +42,9 @@ func main() {
 		blades.WithModel("qwen-max"),
 		blades.WithProvider(openai.NewChatProvider()),
 	)
-	prompt := blades.NewPrompt(
-		blades.UserMessage("Write a diary about spring, within 100 words"),
-	)
-	msg, err := agent.Run(context.Background(), prompt)
+	input := blades.UserMessage("Write a diary about spring, within 100 words")
+	runner := blades.NewRunner(agent)
+	msg, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -10,7 +10,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/stream"
 )
 
 const (
@@ -24,7 +23,7 @@ type TraceOption func(*tracing)
 type tracing struct {
 	system string // e.g., "openai", "claude", "gemini"
 	tracer trace.Tracer
-	next   blades.Runnable
+	next   blades.Handler
 }
 
 // WithSystem sets the AI system name for tracing, e.g., "openai", "claude", "gemini"
@@ -50,16 +49,16 @@ func Tracing(opts ...TraceOption) blades.Middleware {
 	for _, o := range opts {
 		o(t)
 	}
-	return func(next blades.Runnable) blades.Runnable {
+	return func(next blades.Handler) blades.Handler {
 		t.next = next
 		return t
 	}
 }
 
-func (t *tracing) Start(ctx context.Context, agent blades.AgentContext, opts ...blades.ModelOption) (context.Context, trace.Span) {
+func (t *tracing) Start(ctx context.Context, agent blades.AgentContext, invocation *blades.Invocation) (context.Context, trace.Span) {
 	ctx, span := t.tracer.Start(ctx, fmt.Sprintf("invoke_agent %s", agent.Name()))
 	mo := &blades.ModelOptions{}
-	for _, opt := range opts {
+	for _, opt := range invocation.ModelOptions {
 		opt(mo)
 	}
 	span.SetAttributes(
@@ -68,47 +67,30 @@ func (t *tracing) Start(ctx context.Context, agent blades.AgentContext, opts ...
 		semconv.GenAIAgentName(agent.Name()),
 		semconv.GenAIAgentDescription(agent.Description()),
 		semconv.GenAIRequestModel(agent.Model()),
-		semconv.GenAIRequestSeed(int(mo.Seed)),
-		semconv.GenAIRequestFrequencyPenalty(mo.FrequencyPenalty),
-		semconv.GenAIRequestPresencePenalty(mo.PresencePenalty),
-		semconv.GenAIRequestStopSequences(mo.StopSequences...),
-		semconv.GenAIRequestTemperature(mo.Temperature),
 		semconv.GenAIRequestTopP(mo.TopP),
+		semconv.GenAIRequestSeed(int(mo.Seed)),
+		semconv.GenAIRequestTemperature(mo.Temperature),
+		semconv.GenAIRequestStopSequences(mo.StopSequences...),
+		semconv.GenAIRequestPresencePenalty(mo.PresencePenalty),
+		semconv.GenAIRequestFrequencyPenalty(mo.FrequencyPenalty),
+		semconv.GenAIConversationID(invocation.Session.ID()),
 	)
-	// if a session is present, add the conversation ID attribute
-	if s, ok := blades.FromSessionContext(ctx); ok {
-		span.SetAttributes(
-			semconv.GenAIConversationID(s.ID()),
-		)
-	}
 	return ctx, span
 }
 
-// Run processes the prompt and adds OpenTelemetry tracing to the invocation before passing it to the next runnable.
-func (t *tracing) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
-	ac, ok := blades.FromAgentContext(ctx)
+// Handle processes the prompt in a streaming manner and adds OpenTelemetry tracing to the invocation before passing it to the next runnable.
+func (t *tracing) Handle(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message] {
+	agent, ok := blades.FromAgentContext(ctx)
 	if !ok {
-		return t.next.Run(ctx, prompt, opts...)
-	}
-	ctx, span := t.Start(ctx, ac, opts...)
-	msg, err := t.next.Run(ctx, prompt, opts...)
-	t.End(span, msg, err)
-	return msg, err
-}
-
-// RunStream processes the prompt in a streaming manner and adds OpenTelemetry tracing to the invocation before passing it to the next runnable.
-func (t *tracing) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) stream.Streamable[*blades.Message] {
-	ac, ok := blades.FromAgentContext(ctx)
-	if !ok {
-		return t.next.RunStream(ctx, prompt, opts...)
+		return t.next.Handle(ctx, invocation)
 	}
 	return func(yield func(*blades.Message, error) bool) {
 		var (
 			err     error
 			message *blades.Message
 		)
-		ctx, span := t.Start(ctx, ac, opts...)
-		streaming := t.next.RunStream(ctx, prompt, opts...)
+		ctx, span := t.Start(ctx, agent, invocation)
+		streaming := t.next.Handle(ctx, invocation)
 		for message, err = range streaming {
 			if err != nil {
 				yield(nil, err)

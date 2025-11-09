@@ -39,34 +39,31 @@ func main() {
 	)
 
 	// 4. Ask the agent about time
-	prompt := blades.NewPrompt(
-		blades.UserMessage("What time is it right now?"),
-	)
+	input := blades.UserMessage("What time is it right now?")
 
 	fmt.Println("Asking agent: What time is it right now?")
 	fmt.Println("--------------------------------------------------")
 
 	ctx := context.Background()
-	result, err := agent.Run(ctx, prompt)
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(ctx, input)
 	if err != nil {
 		log.Fatalf("Agent run failed: %v", err)
 	}
 
-	fmt.Printf("Agent: %s\n", result.Text())
+	fmt.Printf("Agent: %s\n", output.Text())
 
 	// 5. Ask about a specific timezone
-	prompt2 := blades.NewPrompt(
-		blades.UserMessage("What time is it in Tokyo right now?"),
-	)
+	input2 := blades.UserMessage("What time is it in Tokyo right now?")
 
 	fmt.Println("\n--------------------------------------------------")
 	fmt.Println("Asking agent: What time is it in Tokyo right now?")
 	fmt.Println("--------------------------------------------------")
 
-	result2, err := agent.Run(ctx, prompt2)
+	runner2 := blades.NewRunner(agent)
+	output2, err := runner2.Run(ctx, input2)
 	if err != nil {
 		log.Fatalf("Agent run failed: %v", err)
 	}
-
-	fmt.Printf("Agent: %s\n", result2.Text())
+	fmt.Printf("Agent: %s\n", output2.Text())
 }

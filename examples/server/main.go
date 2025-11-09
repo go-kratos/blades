@@ -13,29 +13,26 @@ func main() {
 		"Server Agent",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(openai.NewChatProvider()),
+		blades.WithInstructions("Please summarize {{.topic}} in three key points."),
 	)
-	// Define templates and params
-	systemTemplate := "Please summarize {{.topic}} in three key points."
+	runner := blades.NewRunner(agent)
 	userTemplate := "Respond concisely and accurately for a {{.audience}} audience."
 	// Set up HTTP handler
 	mux := http.NewServeMux()
 	mux.HandleFunc("/generate", func(w http.ResponseWriter, r *http.Request) {
-		input := make(map[string]any)
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		params := make(map[string]any)
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		prompt, err := blades.NewPromptTemplate().
-			System(systemTemplate, input).
-			User(userTemplate, input).
-			Build()
+		input, err := blades.NewTemplateMessage(blades.RoleUser, userTemplate, params)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if stream, _ := input["stream"].(bool); stream {
+		if stream, _ := params["stream"].(bool); stream {
 			w.Header().Set("Content-Type", "text/event-stream")
-			stream := agent.RunStream(r.Context(), prompt)
+			stream := runner.RunStream(r.Context(), input)
 			for m, err := range stream {
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -46,12 +43,12 @@ func main() {
 			}
 		} else {
 			w.Header().Set("Content-Type", "application/json")
-			result, err := agent.Run(r.Context(), prompt)
+			output, err := runner.Run(r.Context(), input)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			json.NewEncoder(w).Encode(result)
+			json.NewEncoder(w).Encode(output)
 		}
 	})
 	// Start HTTP server

@@ -36,21 +36,12 @@ func main() {
 		blades.WithTools(weatherTool),
 	)
 	// Create a prompt asking for the weather in New York City
-	prompt := blades.NewPrompt(
-		blades.UserMessage("What is the weather in New York City?"),
-	)
+	input := blades.UserMessage("What is the weather in New York City?")
 	// Run the agent with the prompt
-	result, err := agent.Run(context.Background(), prompt)
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(result.Text())
-	// Run the agent in streaming mode
-	stream := agent.RunStream(context.Background(), prompt)
-	for m, err := range stream {
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Println(m.Text())
-	}
+	log.Println(output.Text())
 }

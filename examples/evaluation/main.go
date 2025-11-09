@@ -38,21 +38,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	for q, a := range qa {
-		prompt, err := blades.NewPromptTemplate().
-			System(evaluationTmpl, map[string]any{
-				"Input":  q,
-				"Output": a,
-			}).
-			Build()
+		input, err := blades.NewTemplateMessage(blades.RoleUser, evaluationTmpl, map[string]any{
+			"Input":  q,
+			"Output": a,
+		})
 		if err != nil {
 			log.Fatal(err)
 		}
-		result, err := r.Evaluate(context.Background(), prompt)
+		output, err := r.Evaluate(context.Background(), input)
 		if err != nil {
 			log.Fatal(err)
 		}
-		log.Printf("Pass: %t Score: %f Feedback: %+v", result.Pass, result.Score, result.Feedback)
+		log.Printf("Pass: %t Score: %f Feedback: %+v", output.Pass, output.Score, output.Feedback)
 	}
 }

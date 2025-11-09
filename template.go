@@ -1,9 +1,7 @@
 package blades
 
 import (
-	"context"
 	"fmt"
-	"maps"
 	"strings"
 	"text/template"
 )
@@ -82,27 +80,6 @@ func (p *PromptTemplate) Build() (*Prompt, error) {
 	messages := make([]*Message, 0, len(p.tmpls))
 	for _, tmpl := range p.tmpls {
 		message, err := NewTemplateMessage(tmpl.role, tmpl.template, tmpl.vars)
-		if err != nil {
-			return nil, err
-		}
-		messages = append(messages, message)
-	}
-	return NewPrompt(messages...), nil
-}
-
-// BuildContext finalizes and returns the constructed Prompt using the provided context to fill in session state variables.
-func (p *PromptTemplate) BuildContext(ctx context.Context) (*Prompt, error) {
-	session, ok := FromSessionContext(ctx)
-	if !ok {
-		return nil, fmt.Errorf("no session found in context")
-	}
-	messages := make([]*Message, 0, len(p.tmpls))
-	for _, tmpl := range p.tmpls {
-		state := maps.Clone(map[string]any(session.State()))
-		for k, v := range tmpl.vars {
-			state[k] = v
-		}
-		message, err := NewTemplateMessage(tmpl.role, tmpl.template, state)
 		if err != nil {
 			return nil, err
 		}

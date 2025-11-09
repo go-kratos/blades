@@ -3,19 +3,19 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
-	"github.com/go-kratos/blades/stream"
 )
 
 // RoutingWorkflow is a workflow that routes requests to different agents based on the content of the prompt.
 type RoutingWorkflow struct {
-	router blades.Runnable
+	blades.Agent
 	routes map[string]string
-	agents map[string]blades.Runnable
+	agents map[string]blades.Agent
 }
 
 // NewRoutingWorkflow creates a new RoutingWorkflow with the given model provider and routes.
@@ -27,7 +27,7 @@ func NewRoutingWorkflow(routes map[string]string) *RoutingWorkflow {
 		blades.WithProvider(provider),
 		blades.WithInstructions("You determine which agent to use based on the user's homework question"),
 	)
-	agents := make(map[string]blades.Runnable, len(routes))
+	agents := make(map[string]blades.Agent, len(routes))
 	for name, instructions := range routes {
 		agents[name] = blades.NewAgent(
 			name,
@@ -37,30 +37,21 @@ func NewRoutingWorkflow(routes map[string]string) *RoutingWorkflow {
 		)
 	}
 	return &RoutingWorkflow{
-		router: router,
+		Agent:  router,
 		routes: routes,
 		agents: agents,
 	}
 }
 
-// Run selects a route using the prompt content and executes the chosen runner.
-func (r *RoutingWorkflow) Run(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
-	runner, err := r.selectRoute(ctx, prompt)
-	if err != nil {
-		return nil, err
-	}
-	return runner.Run(ctx, prompt, opts...)
-}
-
-// RunStream selects a route using the prompt content and streams from the chosen runner.
-func (r *RoutingWorkflow) RunStream(ctx context.Context, prompt *blades.Prompt, opts ...blades.ModelOption) stream.Streamable[*blades.Message] {
+// Run selects a route using the prompt content and streams from the chosen runner.
+func (r *RoutingWorkflow) Run(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message] {
 	return func(yield func(*blades.Message, error) bool) {
-		runner, err := r.selectRoute(ctx, prompt)
+		agent, err := r.selectRoute(ctx, invocation)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		stream := runner.RunStream(ctx, prompt, opts...)
+		stream := agent.Run(ctx, invocation)
 		for msg, err := range stream {
 			if !yield(msg, err) {
 				break
@@ -70,25 +61,27 @@ func (r *RoutingWorkflow) RunStream(ctx context.Context, prompt *blades.Prompt, 
 }
 
 // selectRoute determines the best route key and runner for the given prompt.
-func (r *RoutingWorkflow) selectRoute(ctx context.Context, prompt *blades.Prompt) (blades.Runnable, error) {
+func (r *RoutingWorkflow) selectRoute(ctx context.Context, invocation *blades.Invocation) (blades.Agent, error) {
 	var buf strings.Builder
 	buf.WriteString("You are a routing agent.\n")
 	buf.WriteString("Choose the single best route key for handling the user's request.\n")
-	buf.WriteString("User message: " + prompt.String() + "\n")
+	buf.WriteString("User message: " + invocation.Message.Text() + "\n")
 	buf.WriteString("Available route keys (choose exactly one):\n")
 	routes, err := json.Marshal(r.routes)
 	if err != nil {
 		return nil, err
 	}
 	buf.WriteString(string(routes))
-	res, err := r.router.Run(ctx, blades.NewPrompt(
-		blades.UserMessage(buf.String()),
-	))
-	if err != nil {
-		return nil, err
+	invocation = invocation.Clone()
+	invocation.Message = blades.UserMessage(buf.String())
+	for res, err := range r.Agent.Run(ctx, invocation) {
+		if err != nil {
+			return nil, err
+		}
+		choice := strings.TrimSpace(res.Text())
+		return r.agents[choice], nil
 	}
-	choice := strings.TrimSpace(res.Text())
-	return r.agents[choice], nil
+	return nil, fmt.Errorf("no route selected")
 }
 
 func main() {
@@ -100,10 +93,9 @@ func main() {
 	)
 	routing := NewRoutingWorkflow(routes)
 	// Example prompt that will be routed to the history_agent
-	prompt := blades.NewPrompt(
-		blades.UserMessage("What is the capital of France?"),
-	)
-	res, err := routing.Run(context.Background(), prompt)
+	input := blades.UserMessage("What is the capital of France?")
+	runner := blades.NewRunner(routing)
+	res, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}

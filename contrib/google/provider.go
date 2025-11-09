@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/stream"
 	"google.golang.org/genai"
 )
 
@@ -95,7 +94,7 @@ func (c *Provider) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOp
 }
 
 // NewStreaming is an alias for GenerateStream to implement the ModelProvider interface.
-func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) stream.Streamable[*blades.ModelResponse] {
+func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Sequence[*blades.ModelResponse] {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)

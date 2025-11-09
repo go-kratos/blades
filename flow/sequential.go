@@ -4,44 +4,45 @@ import (
 	"context"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/stream"
 )
 
 // Sequential represents a sequence of Runnable runners that process input sequentially.
 type Sequential struct {
-	runners []blades.Runnable
+	agents []blades.Agent
 }
 
 // NewSequential creates a new Sequential with the given runners.
-func NewSequential(runners ...blades.Runnable) *Sequential {
+func NewSequential(agents ...blades.Agent) *Sequential {
 	return &Sequential{
-		runners: runners,
+		agents: agents,
 	}
+}
+
+func (c *Sequential) Name() string {
+	return "sequential"
+}
+
+func (c *Sequential) Description() string {
+	return "A chain of runners that execute sequentially."
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.
-func (c *Sequential) Run(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) (*blades.Message, error) {
-	var (
-		err    error
-		output *blades.Message
-	)
-	for _, runner := range c.runners {
-		if output, err = runner.Run(ctx, input, opts...); err != nil {
-			return output, err
-		}
-		input = blades.NewPrompt(output)
-	}
-	return output, nil
-}
-
-// RunStream executes the chain of runners sequentially, streaming the output of the last runner.
-func (c *Sequential) RunStream(ctx context.Context, input *blades.Prompt, opts ...blades.ModelOption) stream.Streamable[*blades.Message] {
+func (c *Sequential) Run(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message] {
 	return func(yield func(*blades.Message, error) bool) {
-		message, err := c.Run(ctx, input, opts...)
-		if err != nil {
-			yield(nil, err)
-			return
+		var (
+			err    error
+			output *blades.Message
+		)
+		for _, agent := range c.agents {
+			for output, err = range agent.Run(ctx, invocation) {
+				if err != nil {
+					yield(nil, err)
+					return
+				}
+			}
+			invocation = invocation.Clone()
+			invocation.Message = output
 		}
-		yield(message, nil)
+		yield(output, nil)
 	}
 }

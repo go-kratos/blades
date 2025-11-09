@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/stream"
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
 	"github.com/openai/openai-go/v2/packages/param"
@@ -72,7 +71,7 @@ func (p *ImageProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 }
 
 // NewStreaming wraps Generate with a single-yield stream for API compatibility.
-func (p *ImageProvider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) stream.Streamable[*blades.ModelResponse] {
+func (p *ImageProvider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Sequence[*blades.ModelResponse] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
 		m, err := p.Generate(ctx, req, opts...)
 		if err != nil {

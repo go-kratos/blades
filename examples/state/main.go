@@ -71,16 +71,14 @@ Do not add any other text before or after the code block.`),
 	)
 	seq := flow.NewSequential(codeWriterAgent, codeReviewerAgent, codeRefactorerAgent)
 	// Run the sequence with an initial user prompt
-	prompt := blades.NewPrompt(
-		blades.UserMessage("Write a Python function that takes a list of integers and returns a new list containing only the even integers from the original list."),
-	)
+	input := blades.UserMessage("Write a Python function that takes a list of integers and returns a new list containing only the even integers from the original list.")
 	// Create a session to track state across the flow
 	session := blades.NewSession()
 	runner := blades.NewRunner(seq, blades.WithSession(session))
-	result, err := runner.Run(context.Background(), prompt)
+	output, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Println(session.State())
-	log.Println(result.Text())
+	log.Println(output.Text())
 }

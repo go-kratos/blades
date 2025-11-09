@@ -2,13 +2,6 @@ package blades
 
 import (
 	"context"
-
-	"github.com/go-kratos/blades/stream"
-)
-
-var (
-	_ Runnable          = (*Runner)(nil)
-	_ InvocationContext = (*Runner)(nil)
 )
 
 // RunOption defines options for configuring the Runner.
@@ -37,16 +30,16 @@ func WithInvocationID(invocationID string) RunOption {
 
 // Runner is responsible for executing a Runnable agent within a session context.
 type Runner struct {
-	rootAgent    Runnable
+	Agent
 	session      Session
 	resumable    bool
 	invocationID string
 }
 
 // NewRunner creates a new Runner with the given agent and options.
-func NewRunner(rootAgent Runnable, opts ...RunOption) *Runner {
+func NewRunner(agent Agent, opts ...RunOption) *Runner {
 	runner := &Runner{
-		rootAgent:    rootAgent,
+		Agent:        agent,
 		session:      NewSession(),
 		invocationID: NewInvocationID(),
 	}
@@ -56,27 +49,11 @@ func NewRunner(rootAgent Runnable, opts ...RunOption) *Runner {
 	return runner
 }
 
-// Session returns the current session of the Runner.
-func (r *Runner) Session() Session {
-	return r.session
-}
-
-// Resumable indicates whether the Runner supports resumable sessions.
-func (r *Runner) Resumable() bool {
-	return r.resumable
-}
-
-// InvocationID returns the unique invocation ID of the Runner.
-func (r *Runner) InvocationID() string {
-	return r.invocationID
-}
-
 // Run executes the agent with the provided prompt and options within the session context.
-func (r *Runner) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
-	return r.rootAgent.Run(NewInvocationContext(ctx, r), prompt, opts...)
+func (r *Runner) Run(ctx context.Context, message *Message, opts ...ModelOption) (*Message, error) {
+	return nil, nil
 }
 
-// RunStream executes the agent in a streaming manner with the provided prompt and options within the session context.
-func (r *Runner) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) stream.Streamable[*Message] {
-	return r.rootAgent.RunStream(NewInvocationContext(ctx, r), prompt, opts...)
+func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...ModelOption) Sequence[*Message] {
+	return nil
 }

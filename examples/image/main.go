@@ -12,35 +12,27 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
-
 	agent := blades.NewAgent(
 		"Image Agent",
 		blades.WithModel("gpt-image-1"),
 		blades.WithProvider(openai.NewImageProvider()),
 	)
-
-	prompt := blades.NewPrompt(
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(
+		context.Background(),
 		blades.UserMessage("A watercolor illustration of a mountain cabin at sunrise"),
-	)
-
-	res, err := agent.Run(
-		ctx,
-		prompt,
 		blades.ImageSize("1024x1024"),
 		blades.ImageOutputFormat("png"),
 	)
 	if err != nil {
 		log.Fatalf("generate image: %v", err)
 	}
-
 	outputDir := "generated"
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		log.Fatalf("create output dir: %v", err)
 	}
-
 	saved := 0
-	for _, part := range res.Parts {
+	for _, part := range output.Parts {
 		switch img := part.(type) {
 		case blades.DataPart:
 			saved++

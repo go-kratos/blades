@@ -2,9 +2,8 @@ package blades
 
 import (
 	"context"
+	"iter"
 	"strings"
-
-	"github.com/go-kratos/blades/stream"
 )
 
 // Prompt represents a sequence of messages exchanged between a user and an assistant.
@@ -37,8 +36,12 @@ func (p *Prompt) String() string {
 	return strings.TrimSuffix(buf.String(), "\n")
 }
 
-// Runnable represents an entity that can process prompts and generate responses.
-type Runnable interface {
-	Run(context.Context, *Prompt, ...ModelOption) (*Message, error)
-	RunStream(context.Context, *Prompt, ...ModelOption) stream.Streamable[*Message]
+// Sequence returns an iterator over the messages in the prompt.
+type Sequence[T any] = iter.Seq2[T, error]
+
+// Agent represents an autonomous agent that can perform tasks based on invocations.
+type Agent interface {
+	Name() string
+	Description() string
+	Run(context.Context, *Invocation) Sequence[*Message]
 }

@@ -15,8 +15,8 @@ import (
 
 // confirmPrompt is a simple interactive confirmer that asks the user
 // to approve the incoming prompt before allowing the agent to run.
-func confirmPrompt(ctx context.Context, p *blades.Prompt) (bool, error) {
-	preview := strings.TrimSpace(p.Latest().Text())
+func confirmPrompt(ctx context.Context, message *blades.Message) (bool, error) {
+	preview := strings.TrimSpace(message.Text())
 	fmt.Println("Request preview:")
 	fmt.Println(preview)
 	fmt.Print("Proceed? [y/N]: ")
@@ -41,12 +41,11 @@ func main() {
 	)
 
 	// Example user request
-	prompt := blades.NewPrompt(
-		blades.UserMessage("Summarize the key ideas of the Agile Manifesto in 3 bullet points."),
-	)
+	input := blades.UserMessage("Summarize the key ideas of the Agile Manifesto in 3 bullet points.")
 
 	// Run the agent; if the confirmation is denied, handle gracefully.
-	res, err := agent.Run(context.Background(), prompt)
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(context.Background(), input)
 	if err != nil {
 		if errors.Is(err, blades.ErrConfirmDenied) {
 			log.Println("Confirmation denied. Aborting.")
@@ -54,5 +53,5 @@ func main() {
 		}
 		log.Fatal(err)
 	}
-	log.Println(res.Text())
+	log.Println(output.Text())
 }

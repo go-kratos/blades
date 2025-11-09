@@ -3,7 +3,6 @@ package blades
 import (
 	"context"
 
-	"github.com/go-kratos/blades/stream"
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -68,5 +67,5 @@ type ModelProvider interface {
 	// Generate executes the request and returns a single assistant response.
 	Generate(context.Context, *ModelRequest, ...ModelOption) (*ModelResponse, error)
 	// NewStreaming executes the request and returns a stream of assistant responses.
-	NewStreaming(context.Context, *ModelRequest, ...ModelOption) stream.Streamable[*ModelResponse]
+	NewStreaming(context.Context, *ModelRequest, ...ModelOption) Sequence[*ModelResponse]
 }

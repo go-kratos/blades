@@ -27,15 +27,6 @@ func NewSession(states ...map[string]any) Session {
 	return session
 }
 
-// FromSessionContext retrieves the SessionContext from the context.
-func FromSessionContext(ctx context.Context) (Session, bool) {
-	invocation, ok := FromInvocationContext(ctx)
-	if !ok {
-		return nil, false
-	}
-	return invocation.Session(), true
-}
-
 // sessionInMemory is an in-memory implementation of the Session interface.
 type sessionInMemory struct {
 	id      string

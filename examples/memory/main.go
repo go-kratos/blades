@@ -27,12 +27,11 @@ func main() {
 		blades.WithTools(memoryTool),
 	)
 	// Example conversation in memory
-	prompt := blades.NewPrompt(
-		blades.UserMessage("What is my favorite project?"),
-	)
-	result, err := agent.Run(ctx, prompt)
+	input := blades.UserMessage("What is my favorite project?")
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(ctx, input)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(result.Text())
+	log.Println(output.Text())
 }
