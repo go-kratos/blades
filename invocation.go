@@ -9,7 +9,7 @@ type Invocation struct {
 	ID           string
 	Session      Session
 	Resumable    bool
-	Stream       bool
+	Streamable   bool
 	Message      *Message
 	ModelOptions []ModelOption
 }

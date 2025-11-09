@@ -50,12 +50,12 @@ func NewRunner(agent Agent, opts ...RunOption) *Runner {
 }
 
 // buildInvocation constructs an Invocation object for the given message and options.
-func (r *Runner) buildInvocation(ctx context.Context, message *Message, stream bool, opts ...ModelOption) *Invocation {
+func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamable bool, opts ...ModelOption) *Invocation {
 	return &Invocation{
 		ID:           r.invocationID,
 		Resumable:    r.resumable,
 		Session:      r.session,
-		Stream:       stream,
+		Streamable:   streamable,
 		Message:      message,
 		ModelOptions: opts,
 	}

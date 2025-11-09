@@ -298,7 +298,7 @@ func (a *LLMAgent) handle(ctx context.Context, invocation *Invocation, req *Mode
 			finalResponse *ModelResponse
 		)
 		for i := 0; i < a.maxIterations; i++ {
-			if !invocation.Stream {
+			if !invocation.Streamable {
 				finalResponse, err = a.provider.Generate(ctx, req, invocation.ModelOptions...)
 				if err != nil {
 					yield(nil, err)
