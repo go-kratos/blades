@@ -29,7 +29,7 @@ Blades 框架通过一系列精心设计的核心组件，实现了其强大的�
 // Runnable represents an entity that can process prompts and generate responses.
 type Runnable interface {
     Run(context.Context, *Prompt, ...ModelOption) (*Message, error)
-    RunStream(context.Context, *Prompt, ...ModelOption) (Streamable[*Message], error)
+    RunStream(context.Context, *Prompt, ...ModelOption) (stream.Streamable[*Message])
 }
 ```
 ![runnable](docs/images/runnable.png)
@@ -42,8 +42,8 @@ type Runnable interface {
 type ModelProvider interface {
     // Generate 执行一个完整的生成请求，并一次性返回结果。适用于不需要实时反馈的场景。
     Generate(context.Context, *ModelRequest, ...ModelOption) (*ModelResponse, error)
-    // NewStream 发起一个流式请求。该方法会立即返回一个 Streamable 对象，调用者可以通过这个对象逐步接收模型生成的内容，适用于构建实时的、打字机效果的对话应用。
-    NewStream(context.Context, *ModelRequest, ...ModelOption) (Streamable[*ModelResponse], error)
+    // NewStreaming 发起一个流式请求。该方法会立即返回一个 Streamable 对象，调用者可以通过这个对象逐步接收模型生成的内容，适用于构建实时的、打字机效果的对话应用。
+    NewStreaming(context.Context, *ModelRequest, ...ModelOption) (stream.Streamable[*ModelResponse])
 }
 ```
 ![ModelProvider](./docs/images/model.png)
@@ -89,38 +89,26 @@ import (
 )
 
 func main() {
-	agent := blades.NewAgent(
-		"Template Agent",
-		blades.WithModel("gpt-5"),
-		blades.WithProvider(openai.NewChatProvider()),
-	)
-
-	// Define templates and params
-	params := map[string]any{
-		"topic":    "The Future of Artificial Intelligence",
-		"audience": "General reader",
-	}
-
-	// Build prompt using the template builder
-	// Note: Use exported methods when calling from another package.
-	prompt, err := blades.NewPromptTemplate().
-		System("Please summarize {{.topic}} in three key points.", params).
-		User("Respond concisely and accurately for a {{.audience}} audience.", params).
-		Build()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	log.Println("Generated Prompt:", prompt.String())
-
-	// Run the agent with the templated prompt
-	result, err := agent.Run(context.Background(), prompt)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println(result.Text())
+    // Set up the OpenAI API key and base URL as environment variables
+    // - export OPENAI_API_KEY="YOUR_API_KEY"
+    // - export OPENAI_API_BASE="YOUR_BASE_URL"
+    agent := blades.NewAgent(
+        "Blades Agent",
+        blades.WithModel("gpt-5"),  // or deepseek-chat, qwen3-max, etc.
+        blades.WithProvider(openai.NewChatProvider()),
+        blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
+    )
+    // Create a Prompt with user message
+    prompt := blades.NewPrompt(
+        blades.UserMessage("What is the capital of France?"),
+    )
+    // Run the Agent with the Prompt
+    output, err := agent.Run(context.Background(), prompt)
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Println(output.Text())
 }
-
 ```
 更多示例请参见 [examples](./examples) 目录。
 

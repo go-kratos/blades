@@ -29,7 +29,7 @@ The Blades framework realizes its powerful functionality and flexibility through
 // Runnable represents an entity that can process prompts and generate responses.
 type Runnable interface {
     Run(context.Context, *Prompt, ...ModelOption) (*Message, error)
-    RunStream(context.Context, *Prompt, ...ModelOption) (Streamable[*Message], error)
+    RunStream(context.Context, *Prompt, ...ModelOption) (stream.Streamable[*Message])
 }
 ```
 ![runnable](docs/images/runnable.png)
@@ -42,8 +42,8 @@ type Runnable interface {
 type ModelProvider interface {
     // Generate executes a complete generation request and returns the result all at once. Suitable for scenarios that do not require real-time feedback.
     Generate(context.Context, *ModelRequest, ...ModelOption) (*ModelResponse, error)
-    // NewStream initiates a streaming request. This method immediately returns a Streamable object, allowing the caller to receive the model's generated content step by step. Suitable for building real-time, typewriter-effect conversation applications.
-    NewStream(context.Context, *ModelRequest, ...ModelOption) (Streamable[*ModelResponse], error)
+    // NewStreaming initiates a streaming request. This method immediately returns a Streamable object, allowing the caller to receive the model's generated content step by step. Suitable for building real-time, typewriter-effect conversation applications.
+    NewStreaming(context.Context, *ModelRequest, ...ModelOption) (stream.Streamable[*ModelResponse])
 }
 ```
 ![ModelProvider](./docs/images/model.png)
@@ -89,36 +89,25 @@ import (
 )
 
 func main() {
-	agent := blades.NewAgent(
-		"Template Agent",
-		blades.WithModel("gpt-5"),
-		blades.WithProvider(openai.NewChatProvider()),
-	)
-
-	// Define templates and params
-	params := map[string]any{
-		"topic":    "The Future of Artificial Intelligence",
-		"audience": "General reader",
-	}
-
-	// Build prompt using the template builder
-	// Note: Use exported methods when calling from another package.
-	prompt, err := blades.NewPromptTemplate().
-		System("Please summarize <no value> in three key points.", params).
-		User("Respond concisely and accurately for a <no value> audience.", params).
-		Build()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	log.Println("Generated Prompt:", prompt.String())
-
-	// Run the agent with the templated prompt
-	result, err := agent.Run(context.Background(), prompt)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println(result.Text())
+    // Set up the OpenAI API key and base URL as environment variables
+    // - export OPENAI_API_KEY="YOUR_API_KEY"
+    // - export OPENAI_API_BASE="YOUR_BASE_URL"
+    agent := blades.NewAgent(
+        "Blades Agent",
+        blades.WithModel("gpt-5"),  // or deepseek-chat, qwen3-max, etc.
+        blades.WithProvider(openai.NewChatProvider()),
+        blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
+    )
+    // Create a Prompt with user message
+    prompt := blades.NewPrompt(
+        blades.UserMessage("What is the capital of France?"),
+    )
+    // Run the Agent with the Prompt
+    output, err := agent.Run(context.Background(), prompt)
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Println(output.Text())
 }
 
 ```
