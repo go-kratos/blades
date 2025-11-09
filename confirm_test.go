@@ -3,8 +3,6 @@ package blades
 import (
 	"context"
 	"testing"
-
-	"github.com/go-kratos/blades/stream"
 )
 
 func TestConfirmMiddleware_Run(t *testing.T) {
@@ -40,7 +38,9 @@ func TestConfirmMiddleware_Run(t *testing.T) {
 	}
 
 	next := HandleFunc(func(ctx context.Context, invocation *Invocation) Sequence[*Message, error] {
-		return stream.Just(AssistantMessage("OK"))
+		return func(yield func(*Message, error) bool) {
+			yield(AssistantMessage("OK"), nil)
+		}
 	})
 
 	for _, tt := range tests {
