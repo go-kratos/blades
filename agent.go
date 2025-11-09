@@ -10,65 +10,65 @@ import (
 )
 
 var (
-	_ Agent        = (*LLMAgent)(nil)
-	_ AgentContext = (*LLMAgent)(nil)
+	_ Agent        = (*agent)(nil)
+	_ AgentContext = (*agent)(nil)
 )
 
 // AgentOption is an option for configuring the Agent.
-type AgentOption func(*LLMAgent)
+type AgentOption func(*agent)
 
 // WithModel sets the model for the Agent.
 func WithModel(model string) AgentOption {
-	return func(a *LLMAgent) {
+	return func(a *agent) {
 		a.model = model
 	}
 }
 
 // WithDescription sets the description for the Agent.
 func WithDescription(description string) AgentOption {
-	return func(a *LLMAgent) {
+	return func(a *agent) {
 		a.description = description
 	}
 }
 
 // WithInstructions sets the instructions for the Agent.
 func WithInstructions(instructions string) AgentOption {
-	return func(a *LLMAgent) {
+	return func(a *agent) {
 		a.instructions = instructions
 	}
 }
 
 // WithInputSchema sets the input schema for the Agent.
 func WithInputSchema(schema *jsonschema.Schema) AgentOption {
-	return func(a *LLMAgent) {
+	return func(a *agent) {
 		a.inputSchema = schema
 	}
 }
 
 // WithOutputSchema sets the output schema for the Agent.
 func WithOutputSchema(schema *jsonschema.Schema) AgentOption {
-	return func(a *LLMAgent) {
+	return func(a *agent) {
 		a.outputSchema = schema
 	}
 }
 
 // WithOutputKey sets the output key for storing the Agent's output in the session state.
 func WithOutputKey(key string) AgentOption {
-	return func(a *LLMAgent) {
+	return func(a *agent) {
 		a.outputKey = key
 	}
 }
 
 // WithProvider sets the model provider for the Agent.
 func WithProvider(provider ModelProvider) AgentOption {
-	return func(a *LLMAgent) {
+	return func(a *agent) {
 		a.provider = provider
 	}
 }
 
 // WithTools sets the tools for the Agent.
 func WithTools(tools ...*tools.Tool) AgentOption {
-	return func(a *LLMAgent) {
+	return func(a *agent) {
 		a.tools = tools
 	}
 }
@@ -77,14 +77,14 @@ func WithTools(tools ...*tools.Tool) AgentOption {
 // The resolver can dynamically provide tools from various sources (e.g., MCP servers, plugins).
 // Tools are resolved lazily on first use.
 func WithToolsResolver(r tools.Resolver) AgentOption {
-	return func(a *LLMAgent) {
+	return func(a *agent) {
 		a.toolsResolver = r
 	}
 }
 
 // WithMiddleware sets the middleware for the Agent.
 func WithMiddleware(ms ...Middleware) AgentOption {
-	return func(a *LLMAgent) {
+	return func(a *agent) {
 		a.middlewares = ms
 	}
 }
@@ -92,13 +92,13 @@ func WithMiddleware(ms ...Middleware) AgentOption {
 // WithMaxIterations sets the maximum number of iterations for the Agent.
 // By default, it is set to 10.
 func WithMaxIterations(n int) AgentOption {
-	return func(a *LLMAgent) {
+	return func(a *agent) {
 		a.maxIterations = n
 	}
 }
 
-// LLMAgent is a struct that represents an AI agent.
-type LLMAgent struct {
+// agent is a struct that represents an AI agent.
+type agent struct {
 	name          string
 	model         string
 	description   string
@@ -114,8 +114,8 @@ type LLMAgent struct {
 }
 
 // NewAgent creates a new Agent with the given name and options.
-func NewAgent(name string, opts ...AgentOption) *LLMAgent {
-	a := &LLMAgent{
+func NewAgent(name string, opts ...AgentOption) Agent {
+	a := &agent{
 		name:          name,
 		maxIterations: 10,
 	}
@@ -126,27 +126,27 @@ func NewAgent(name string, opts ...AgentOption) *LLMAgent {
 }
 
 // Name returns the name of the Agent.
-func (a *LLMAgent) Name() string {
+func (a *agent) Name() string {
 	return a.name
 }
 
 // Model returns the model of the Agent.
-func (a *LLMAgent) Model() string {
+func (a *agent) Model() string {
 	return a.model
 }
 
 // Description returns the description of the Agent.
-func (a *LLMAgent) Description() string {
+func (a *agent) Description() string {
 	return a.description
 }
 
 // Instructions returns the instructions of the Agent.
-func (a *LLMAgent) Instructions() string {
+func (a *agent) Instructions() string {
 	return a.instructions
 }
 
 // resolveTools combines static tools with dynamically resolved tools.
-func (a *LLMAgent) resolveTools(ctx context.Context) ([]*tools.Tool, error) {
+func (a *agent) resolveTools(ctx context.Context) ([]*tools.Tool, error) {
 	tools := make([]*tools.Tool, 0, len(a.tools))
 	if len(a.tools) > 0 {
 		tools = append(tools, a.tools...)
@@ -162,7 +162,7 @@ func (a *LLMAgent) resolveTools(ctx context.Context) ([]*tools.Tool, error) {
 }
 
 // buildRequest builds the request for the Agent by combining system instructions and user messages.
-func (a *LLMAgent) buildRequest(ctx context.Context, invocation *Invocation) (*ModelRequest, error) {
+func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*ModelRequest, error) {
 	tools, err := a.resolveTools(ctx)
 	if err != nil {
 		return nil, err
@@ -189,7 +189,7 @@ func (a *LLMAgent) buildRequest(ctx context.Context, invocation *Invocation) (*M
 }
 
 // Run runs the agent with the given prompt and options, returning a streamable response.
-func (a *LLMAgent) Run(ctx context.Context, invocation *Invocation) Sequence[*Message, error] {
+func (a *agent) Run(ctx context.Context, invocation *Invocation) Sequence[*Message, error] {
 	return func(yield func(*Message, error) bool) {
 		ctx := NewAgentContext(ctx, a)
 		// find resume message
@@ -217,7 +217,7 @@ func (a *LLMAgent) Run(ctx context.Context, invocation *Invocation) Sequence[*Me
 	}
 }
 
-func (a *LLMAgent) findResumeMessage(ctx context.Context, invocation *Invocation) (*Message, bool) {
+func (a *agent) findResumeMessage(ctx context.Context, invocation *Invocation) (*Message, bool) {
 	if !invocation.Resumable {
 		return nil, false
 	}
@@ -231,7 +231,7 @@ func (a *LLMAgent) findResumeMessage(ctx context.Context, invocation *Invocation
 }
 
 // storeSession stores the agent's output to session state (if outputKey is defined) and appends messages to session history.
-func (a *LLMAgent) storeSession(ctx context.Context, invocation *Invocation, toolMessages []*Message, assistantMessage *Message) error {
+func (a *agent) storeSession(ctx context.Context, invocation *Invocation, toolMessages []*Message, assistantMessage *Message) error {
 	if a.outputKey != "" {
 		if a.outputSchema != nil {
 			value, err := ParseMessageState(assistantMessage, a.outputSchema)
@@ -250,7 +250,7 @@ func (a *LLMAgent) storeSession(ctx context.Context, invocation *Invocation, too
 	return invocation.Session.Append(ctx, stores)
 }
 
-func (a *LLMAgent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error) {
+func (a *agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error) {
 	tools, err := a.resolveTools(ctx)
 	if err != nil {
 		return part, err
@@ -270,7 +270,7 @@ func (a *LLMAgent) handleTools(ctx context.Context, part ToolPart) (ToolPart, er
 }
 
 // executeTools executes the tools specified in the tool parts.
-func (a *LLMAgent) executeTools(ctx context.Context, message *Message) (*Message, error) {
+func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, error) {
 	toolMessage := &Message{ID: message.ID, Role: message.Role, Parts: message.Parts}
 	eg, ctx := errgroup.WithContext(ctx)
 	for i, part := range message.Parts {
@@ -290,7 +290,7 @@ func (a *LLMAgent) executeTools(ctx context.Context, message *Message) (*Message
 }
 
 // handle constructs the default handlers for Run and Stream using the provider.
-func (a *LLMAgent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Sequence[*Message, error] {
+func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Sequence[*Message, error] {
 	return func(yield func(*Message, error) bool) {
 		var (
 			err           error
