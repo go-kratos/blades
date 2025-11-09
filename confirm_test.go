@@ -47,7 +47,13 @@ func TestConfirmMiddleware_Run(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mw := Confirm(tt.confirm)
 			h := mw(next)
-			for got, err := range h.Handle(context.Background(), &Invocation{Message: UserMessage("test")}) {
+			for got, err := range h.Handle(context.Background(), &Invocation{
+				Message:      UserMessage("test"),
+				Session:      &Session{}, // or a suitable mock/empty session
+				Resumable:    false,
+				InvocationID: "test-invocation-id",
+				ModelOptions: &ModelOptions{}, // or a suitable mock/empty options
+			}) {
 				if tt.wantErr != nil {
 					if err == nil || err.Error() != tt.wantErr.Error() {
 						t.Fatalf("expected error %v, got %v", tt.wantErr, err)
