@@ -173,6 +173,7 @@ func (a *Agent) buildInvocationContext(ctx context.Context) (context.Context, In
 	invocation, ok := FromInvocationContext(ctx)
 	if !ok {
 		invocation = NewRunner(a)
+		ctx = NewInvocationContext(ctx, invocation)
 	}
 	return NewAgentContext(ctx, a), invocation
 }
