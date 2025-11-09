@@ -48,11 +48,10 @@ func TestConfirmMiddleware_Run(t *testing.T) {
 			mw := Confirm(tt.confirm)
 			h := mw(next)
 			for got, err := range h.Handle(context.Background(), &Invocation{
-				Message:      UserMessage("test"),
-				Session:      &Session{}, // or a suitable mock/empty session
-				Resumable:    false,
-				InvocationID: "test-invocation-id",
-				ModelOptions: &ModelOptions{}, // or a suitable mock/empty options
+				ID:        "test-invocation-id",
+				Message:   UserMessage("test"),
+				Session:   NewSession(),
+				Resumable: false,
 			}) {
 				if tt.wantErr != nil {
 					if err == nil || err.Error() != tt.wantErr.Error() {
