@@ -1,7 +1,6 @@
 package blades
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -17,19 +16,6 @@ type State map[string]any
 // Clone creates a deep copy of the State.
 func (s State) Clone() State {
 	return State(maps.Clone(map[string]any(s)))
-}
-
-// StateInputHandler is a function type that processes input prompts with access to the current state.
-type StateInputHandler func(ctx context.Context, input *Message, state State) (*Message, error)
-
-// StateOutputHandler is a function type that processes output messages with access to the current state.
-type StateOutputHandler func(ctx context.Context, output *Message, state State) (*Message, error)
-
-// StateInputEmpty returns a StateInputHandler that returns an empty Prompt.
-func StateInputEmpty() StateInputHandler {
-	return func(ctx context.Context, input *Message, state State) (*Message, error) {
-		return UserMessage(""), nil
-	}
 }
 
 // ParseMessageState parses the content of a Message according to the provided JSON schema.

@@ -89,20 +89,6 @@ func WithMiddleware(ms ...Middleware) AgentOption {
 	}
 }
 
-// WithStateInputHandler sets the state input handler for the Agent.
-func WithStateInputHandler(h StateInputHandler) AgentOption {
-	return func(a *LLMAgent) {
-		a.inputHandler = h
-	}
-}
-
-// WithStateOutputHandler sets the state output handler for the Agent.
-func WithStateOutputHandler(h StateOutputHandler) AgentOption {
-	return func(a *LLMAgent) {
-		a.outputHandler = h
-	}
-}
-
 // WithMaxIterations sets the maximum number of iterations for the Agent.
 // By default, it is set to 10.
 func WithMaxIterations(n int) AgentOption {
@@ -121,8 +107,6 @@ type LLMAgent struct {
 	maxIterations int
 	inputSchema   *jsonschema.Schema
 	outputSchema  *jsonschema.Schema
-	inputHandler  StateInputHandler
-	outputHandler StateOutputHandler
 	middlewares   []Middleware
 	provider      ModelProvider
 	tools         []*tools.Tool
@@ -134,12 +118,6 @@ func NewAgent(name string, opts ...AgentOption) *LLMAgent {
 	a := &LLMAgent{
 		name:          name,
 		maxIterations: 10,
-		inputHandler: func(ctx context.Context, input *Message, state State) (*Message, error) {
-			return input, nil
-		},
-		outputHandler: func(ctx context.Context, output *Message, state State) (*Message, error) {
-			return output, nil
-		},
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -184,7 +162,7 @@ func (a *LLMAgent) resolveTools(ctx context.Context) ([]*tools.Tool, error) {
 }
 
 // buildRequest builds the request for the Agent by combining system instructions and user messages.
-func (a *LLMAgent) buildRequest(ctx context.Context, invocation *Invocation, input *Message) (*ModelRequest, error) {
+func (a *LLMAgent) buildRequest(ctx context.Context, invocation *Invocation) (*ModelRequest, error) {
 	tools, err := a.resolveTools(ctx)
 	if err != nil {
 		return nil, err
@@ -204,7 +182,9 @@ func (a *LLMAgent) buildRequest(ctx context.Context, invocation *Invocation, inp
 		req.Messages = append(req.Messages, systemMessage)
 	}
 	// user messages
-	req.Messages = append(req.Messages, input)
+	if invocation.Message != nil {
+		req.Messages = append(req.Messages, invocation.Message)
+	}
 	return &req, nil
 }
 
@@ -217,12 +197,7 @@ func (a *LLMAgent) Run(ctx context.Context, invocation *Invocation) Sequence[*Me
 			yield(message, nil)
 			return
 		}
-		input, err := a.inputHandler(ctx, invocation.Message, invocation.Session.State())
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		req, err := a.buildRequest(ctx, invocation, input)
+		req, err := a.buildRequest(ctx, invocation)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -251,23 +226,22 @@ func (a *LLMAgent) findResumeMessage(ctx context.Context, invocation *Invocation
 
 // storeSession stores the agent's output to session state (if outputKey is defined) and appends messages to session history.
 func (a *LLMAgent) storeSession(ctx context.Context, invocation *Invocation, toolMessages []*Message, assistantMessage *Message) error {
-	state := State{}
 	if a.outputKey != "" {
 		if a.outputSchema != nil {
 			value, err := ParseMessageState(assistantMessage, a.outputSchema)
 			if err != nil {
 				return err
 			}
-			state[a.outputKey] = value
+			invocation.Session.PutState(a.outputKey, value)
 		} else {
-			state[a.outputKey] = assistantMessage.Text()
+			invocation.Session.PutState(a.outputKey, assistantMessage.Text())
 		}
 	}
 	stores := make([]*Message, 0, len(toolMessages)+2)
 	stores = append(stores, setMessageContext("user", invocation.ID, invocation.Message)...)
 	stores = append(stores, setMessageContext(a.name, invocation.ID, toolMessages...)...)
 	stores = append(stores, setMessageContext(a.name, invocation.ID, assistantMessage)...)
-	return invocation.Session.Append(ctx, state, stores)
+	return invocation.Session.Append(ctx, stores)
 }
 
 func (a *LLMAgent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error) {
@@ -353,12 +327,6 @@ func (a *LLMAgent) handle(ctx context.Context, invocation *Invocation, req *Mode
 				req.Messages = append(req.Messages, toolMessage)
 				toolMessages = append(toolMessages, toolMessage)
 				continue // continue to the next iteration
-			}
-			// handle the final response before sending
-			finalResponse.Message, err = a.outputHandler(ctx, finalResponse.Message, invocation.Session.State())
-			if err != nil {
-				yield(nil, err)
-				return
 			}
 			if err := a.storeSession(ctx, invocation, toolMessages, finalResponse.Message); err != nil {
 				yield(nil, err)
