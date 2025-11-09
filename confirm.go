@@ -10,7 +10,7 @@ import (
 type ConfirmFunc func(context.Context, *Message) (bool, error)
 
 // Confirm returns a Middleware that invokes the provided confirmation
-// callback before delegating to the next Runnable. If confirmation is
+// callback before delegating to the next Handler. If confirmation is
 // denied, it returns ErrConfirmDenied. If the callback returns an
 // error, that error is propagated.
 func Confirm(confirm ConfirmFunc) Middleware {
