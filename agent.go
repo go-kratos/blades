@@ -202,7 +202,13 @@ func (a *LLMAgent) Run(ctx context.Context, invocation *Invocation) Sequence[*Me
 			yield(nil, err)
 			return
 		}
-		stream := a.handle(ctx, invocation, req)
+		handler := Handler(HandleFunc(func(context.Context, *Invocation) Sequence[*Message, error] {
+			return a.handle(ctx, invocation, req)
+		}))
+		if len(a.middlewares) > 0 {
+			handler = ChainMiddlewares(a.middlewares...)(handler)
+		}
+		stream := handler.Handle(ctx, invocation)
 		for m, err := range stream {
 			if !yield(m, err) {
 				break
@@ -292,7 +298,7 @@ func (a *LLMAgent) handle(ctx context.Context, invocation *Invocation, req *Mode
 			finalResponse *ModelResponse
 		)
 		for i := 0; i < a.maxIterations; i++ {
-			if invocation.Stream {
+			if !invocation.Stream {
 				finalResponse, err = a.provider.Generate(ctx, req, invocation.ModelOptions...)
 				if err != nil {
 					yield(nil, err)
