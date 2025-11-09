@@ -152,14 +152,14 @@ func (a *LLMAgent) Name() string {
 	return a.name
 }
 
-// Description returns the description of the Agent.
-func (a *LLMAgent) Description() string {
-	return a.description
-}
-
 // Model returns the model of the Agent.
 func (a *LLMAgent) Model() string {
 	return a.model
+}
+
+// Description returns the description of the Agent.
+func (a *LLMAgent) Description() string {
+	return a.description
 }
 
 // Instructions returns the instructions of the Agent.
@@ -241,7 +241,7 @@ func (a *LLMAgent) findResumeMessage(ctx context.Context, invocation *Invocation
 		return nil, false
 	}
 	for _, m := range invocation.Session.History() {
-		if m.InvocationID == invocation.InvocationID &&
+		if m.InvocationID == invocation.ID &&
 			m.Author == a.name && m.Role == RoleAssistant && m.Status == StatusCompleted {
 			return m, true
 		}
@@ -264,9 +264,9 @@ func (a *LLMAgent) storeSession(ctx context.Context, invocation *Invocation, too
 		}
 	}
 	stores := make([]*Message, 0, len(toolMessages)+2)
-	stores = append(stores, setMessageContext("user", invocation.InvocationID, invocation.Message)...)
-	stores = append(stores, setMessageContext(a.name, invocation.InvocationID, toolMessages...)...)
-	stores = append(stores, setMessageContext(a.name, invocation.InvocationID, assistantMessage)...)
+	stores = append(stores, setMessageContext("user", invocation.ID, invocation.Message)...)
+	stores = append(stores, setMessageContext(a.name, invocation.ID, toolMessages...)...)
+	stores = append(stores, setMessageContext(a.name, invocation.ID, assistantMessage)...)
 	return invocation.Session.Append(ctx, state, stores)
 }
 
@@ -313,22 +313,30 @@ func (a *LLMAgent) executeTools(ctx context.Context, message *Message) (*Message
 func (a *LLMAgent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Sequence[*Message] {
 	return func(yield func(*Message, error) bool) {
 		var (
-			err          error
-			toolMessages []*Message
+			err           error
+			toolMessages  []*Message
+			finalResponse *ModelResponse
 		)
 		for i := 0; i < a.maxIterations; i++ {
-			streaming := a.provider.NewStreaming(ctx, req, invocation.ModelOptions...)
-			var finalResponse *ModelResponse
-			for res, err := range streaming {
+			if invocation.Stream {
+				finalResponse, err = a.provider.Generate(ctx, req, invocation.ModelOptions...)
 				if err != nil {
 					yield(nil, err)
 					return
 				}
-				if res.Message.Status == StatusCompleted {
-					finalResponse = res
-				} else {
-					if !yield(res.Message, nil) {
-						return // early termination
+			} else {
+				streaming := a.provider.NewStreaming(ctx, req, invocation.ModelOptions...)
+				for res, err := range streaming {
+					if err != nil {
+						yield(nil, err)
+						return
+					}
+					if res.Message.Status == StatusCompleted {
+						finalResponse = res
+					} else {
+						if !yield(res.Message, nil) {
+							return // early termination
+						}
 					}
 				}
 			}

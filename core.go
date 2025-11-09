@@ -14,3 +14,11 @@ type Agent interface {
 	Description() string
 	Run(context.Context, *Invocation) Sequence[*Message]
 }
+
+// AgentContext holds information about the agent handling the request.
+type AgentContext interface {
+	Name() string
+	Model() string
+	Description() string
+	Instructions() string
+}

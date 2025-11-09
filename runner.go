@@ -49,11 +49,29 @@ func NewRunner(agent Agent, opts ...RunOption) *Runner {
 	return runner
 }
 
+// buildInvocation constructs an Invocation object for the given message and options.
+func (r *Runner) buildInvocation(ctx context.Context, message *Message, stream bool, opts ...ModelOption) *Invocation {
+	return &Invocation{
+		ID:           r.invocationID,
+		Resumable:    r.resumable,
+		Session:      r.session,
+		Stream:       stream,
+		Message:      message,
+		ModelOptions: opts,
+	}
+}
+
 // Run executes the agent with the provided prompt and options within the session context.
 func (r *Runner) Run(ctx context.Context, message *Message, opts ...ModelOption) (*Message, error) {
-	return nil, nil
+	for output, err := range r.Agent.Run(ctx, r.buildInvocation(ctx, message, false, opts...)) {
+		if err != nil {
+			return nil, err
+		}
+		return output, nil
+	}
+	return nil, ErrNoFinalResponse
 }
 
 func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...ModelOption) Sequence[*Message] {
-	return nil
+	return r.Agent.Run(ctx, r.buildInvocation(ctx, message, true, opts...))
 }
