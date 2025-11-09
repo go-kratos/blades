@@ -10,7 +10,6 @@ import (
 )
 
 var (
-	_ Agent        = (*agent)(nil)
 	_ AgentContext = (*agent)(nil)
 )
 
