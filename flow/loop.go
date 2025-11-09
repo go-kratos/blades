@@ -40,7 +40,7 @@ func NewLoop(condition LoopCondition, agent blades.Agent, opts ...LoopOption) *L
 }
 
 // Run executes the Loop, repeatedly running the runner until the condition is met or an error occurs.
-func (l *Loop) Run(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message] {
+func (l *Loop) Run(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		for i := 0; i < l.maxIterations; i++ {
 			for output, err := range l.agent.Run(ctx, invocation) {

@@ -29,7 +29,7 @@ func NewBranch(condition BranchCondition, agents ...blades.Agent) *Branch {
 }
 
 // Run executes the selected runner based on the selector function.
-func (c *Branch) Run(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message] {
+func (c *Branch) Run(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		name, err := c.condition(ctx, invocation.Message)
 		if err != nil {

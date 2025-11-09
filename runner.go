@@ -72,6 +72,6 @@ func (r *Runner) Run(ctx context.Context, message *Message, opts ...ModelOption)
 	return nil, ErrNoFinalResponse
 }
 
-func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...ModelOption) Sequence[*Message] {
+func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...ModelOption) Sequence[*Message, error] {
 	return r.Agent.Run(ctx, r.buildInvocation(ctx, message, true, opts...))
 }

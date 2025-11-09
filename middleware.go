@@ -6,14 +6,14 @@ import (
 
 // Handler defines a function that processes an Invocation and returns a Sequence of Messages.
 type Handler interface {
-	Handle(context.Context, *Invocation) Sequence[*Message]
+	Handle(context.Context, *Invocation) Sequence[*Message, error]
 }
 
 // HandleFunc is an adapter to allow the use of ordinary functions as Handlers.
-type HandleFunc func(context.Context, *Invocation) Sequence[*Message]
+type HandleFunc func(context.Context, *Invocation) Sequence[*Message, error]
 
 // Handler calls f(ctx, invocation).
-func (f HandleFunc) Handle(ctx context.Context, invocation *Invocation) Sequence[*Message] {
+func (f HandleFunc) Handle(ctx context.Context, invocation *Invocation) Sequence[*Message, error] {
 	return f(ctx, invocation)
 }
 

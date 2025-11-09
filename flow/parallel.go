@@ -20,7 +20,7 @@ func NewParallel(agents ...blades.Agent) *Parallel {
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.
-func (p *Parallel) Run(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message] {
+func (p *Parallel) Run(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		eg, ctx := errgroup.WithContext(ctx)
 		for _, agent := range p.agents {

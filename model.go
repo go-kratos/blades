@@ -67,5 +67,5 @@ type ModelProvider interface {
 	// Generate executes the request and returns a single assistant response.
 	Generate(context.Context, *ModelRequest, ...ModelOption) (*ModelResponse, error)
 	// NewStreaming executes the request and returns a stream of assistant responses.
-	NewStreaming(context.Context, *ModelRequest, ...ModelOption) Sequence[*ModelResponse]
+	NewStreaming(context.Context, *ModelRequest, ...ModelOption) Sequence[*ModelResponse, error]
 }

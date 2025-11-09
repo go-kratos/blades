@@ -209,7 +209,7 @@ func (a *LLMAgent) buildRequest(ctx context.Context, invocation *Invocation, inp
 }
 
 // Run runs the agent with the given prompt and options, returning a streamable response.
-func (a *LLMAgent) Run(ctx context.Context, invocation *Invocation) Sequence[*Message] {
+func (a *LLMAgent) Run(ctx context.Context, invocation *Invocation) Sequence[*Message, error] {
 	return func(yield func(*Message, error) bool) {
 		ctx := NewAgentContext(ctx, a)
 		// find resume message
@@ -310,7 +310,7 @@ func (a *LLMAgent) executeTools(ctx context.Context, message *Message) (*Message
 }
 
 // handle constructs the default handlers for Run and Stream using the provider.
-func (a *LLMAgent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Sequence[*Message] {
+func (a *LLMAgent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Sequence[*Message, error] {
 	return func(yield func(*Message, error) bool) {
 		var (
 			err           error
