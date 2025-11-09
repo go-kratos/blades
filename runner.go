@@ -71,16 +71,12 @@ func (r *Runner) InvocationID() string {
 	return r.invocationID
 }
 
-func (r *Runner) buildInvocationContext(ctx context.Context) context.Context {
-	return NewInvocationContext(ctx, r)
-}
-
 // Run executes the agent with the provided prompt and options within the session context.
 func (r *Runner) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
-	return r.rootAgent.Run(r.buildInvocationContext(ctx), prompt, opts...)
+	return r.rootAgent.Run(NewInvocationContext(ctx, r), prompt, opts...)
 }
 
 // RunStream executes the agent in a streaming manner with the provided prompt and options within the session context.
 func (r *Runner) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) stream.Streamable[*Message] {
-	return r.rootAgent.RunStream(r.buildInvocationContext(ctx), prompt, opts...)
+	return r.rootAgent.RunStream(NewInvocationContext(ctx, r), prompt, opts...)
 }
