@@ -4,10 +4,12 @@ import (
 	"context"
 
 	"github.com/go-kratos/blades/stream"
-	"github.com/google/uuid"
 )
 
-var _ Runnable = (*Runner)(nil)
+var (
+	_ Runnable          = (*Runner)(nil)
+	_ InvocationContext = (*Runner)(nil)
+)
 
 // RunOption defines options for configuring the Runner.
 type RunOption func(*Runner)
@@ -35,18 +37,18 @@ func WithInvocationID(invocationID string) RunOption {
 
 // Runner is responsible for executing a Runnable agent within a session context.
 type Runner struct {
-	agent        Runnable
+	rootAgent    Runnable
 	session      Session
 	resumable    bool
 	invocationID string
 }
 
 // NewRunner creates a new Runner with the given agent and options.
-func NewRunner(agent Runnable, opts ...RunOption) *Runner {
+func NewRunner(rootAgent Runnable, opts ...RunOption) *Runner {
 	runner := &Runner{
-		agent:        agent,
-		invocationID: uuid.NewString(),
+		rootAgent:    rootAgent,
 		session:      NewSession(),
+		invocationID: NewInvocationID(),
 	}
 	for _, opt := range opts {
 		opt(runner)
@@ -75,10 +77,10 @@ func (r *Runner) buildInvocationContext(ctx context.Context) context.Context {
 
 // Run executes the agent with the provided prompt and options within the session context.
 func (r *Runner) Run(ctx context.Context, prompt *Prompt, opts ...ModelOption) (*Message, error) {
-	return r.agent.Run(r.buildInvocationContext(ctx), prompt, opts...)
+	return r.rootAgent.Run(r.buildInvocationContext(ctx), prompt, opts...)
 }
 
 // RunStream executes the agent in a streaming manner with the provided prompt and options within the session context.
 func (r *Runner) RunStream(ctx context.Context, prompt *Prompt, opts ...ModelOption) stream.Streamable[*Message] {
-	return r.agent.RunStream(r.buildInvocationContext(ctx), prompt, opts...)
+	return r.rootAgent.RunStream(r.buildInvocationContext(ctx), prompt, opts...)
 }

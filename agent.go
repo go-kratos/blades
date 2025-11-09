@@ -11,7 +11,8 @@ import (
 )
 
 var (
-	_ Runnable = (*Agent)(nil)
+	_ Runnable     = (*Agent)(nil)
+	_ AgentContext = (*Agent)(nil)
 )
 
 // AgentOption is an option for configuring the Agent.
@@ -169,7 +170,10 @@ func (a *Agent) Instructions() string {
 
 // buildInvocationContext builds the context for the Agent by embedding the AgentContext.
 func (a *Agent) buildInvocationContext(ctx context.Context) (context.Context, InvocationContext) {
-	invocation, ctx := EnsureInvocationContext(ctx)
+	invocation, ok := FromInvocationContext(ctx)
+	if !ok {
+		invocation = NewRunner(a)
+	}
 	return NewAgentContext(ctx, a), invocation
 }
 

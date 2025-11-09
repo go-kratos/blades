@@ -16,6 +16,11 @@ type InvocationContext interface {
 // ctxInvocationKey is an unexported type for keys defined in this package.
 type ctxInvocationKey struct{}
 
+// NewInvocationID generates a new unique invocation ID.
+func NewInvocationID() string {
+	return uuid.NewString()
+}
+
 // NewInvocationContext returns a new Context that carries value.
 func NewInvocationContext(ctx context.Context, invocation InvocationContext) context.Context {
 	return context.WithValue(ctx, ctxInvocationKey{}, invocation)
@@ -25,14 +30,4 @@ func NewInvocationContext(ctx context.Context, invocation InvocationContext) con
 func FromInvocationContext(ctx context.Context) (InvocationContext, bool) {
 	invocation, ok := ctx.Value(ctxInvocationKey{}).(InvocationContext)
 	return invocation, ok
-}
-
-// EnsureInvocationContext retrieves the InvocationContext from the context, or creates a new one if it doesn't exist.
-func EnsureInvocationContext(ctx context.Context) (InvocationContext, context.Context) {
-	invocation, ok := FromInvocationContext(ctx)
-	if !ok {
-		invocation = &Runner{session: NewSession(), invocationID: uuid.NewString()}
-		ctx = NewInvocationContext(ctx, invocation)
-	}
-	return invocation, ctx
 }
