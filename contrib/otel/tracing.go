@@ -79,7 +79,7 @@ func (t *tracing) Start(ctx context.Context, agent blades.AgentContext, invocati
 }
 
 // Handle processes the prompt in a streaming manner and adds OpenTelemetry tracing to the invocation before passing it to the next runnable.
-func (t *tracing) Handle(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message] {
+func (t *tracing) Handle(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message, error] {
 	agent, ok := blades.FromAgentContext(ctx)
 	if !ok {
 		return t.next.Handle(ctx, invocation)

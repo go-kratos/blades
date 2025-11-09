@@ -39,7 +39,7 @@ func TestConfirmMiddleware_Run(t *testing.T) {
 		},
 	}
 
-	next := HandleFunc(func(ctx context.Context, invocation *Invocation) Sequence[*Message] {
+	next := HandleFunc(func(ctx context.Context, invocation *Invocation) Sequence[*Message, error] {
 		return stream.Just(AssistantMessage("OK"))
 	})
 

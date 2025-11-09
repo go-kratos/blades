@@ -18,7 +18,7 @@ func NewGuardrails(next blades.Handler) blades.Handler {
 	return &Guardrails{next}
 }
 
-func (m *Guardrails) Handle(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message] {
+func (m *Guardrails) Handle(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message, error] {
 	// Pre-processing: Add guardrails to the prompt
 	log.Println("Applying guardrails to the prompt (streaming)")
 	return stream.Observe(m.next.Handle(ctx, invocation), func(msg *blades.Message, err error) error {

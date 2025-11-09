@@ -44,7 +44,7 @@ func NewRoutingWorkflow(routes map[string]string) *RoutingWorkflow {
 }
 
 // Run selects a route using the prompt content and streams from the chosen runner.
-func (r *RoutingWorkflow) Run(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message] {
+func (r *RoutingWorkflow) Run(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		agent, err := r.selectRoute(ctx, invocation)
 		if err != nil {
