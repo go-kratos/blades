@@ -1,12 +1,13 @@
 package stream
 
 import (
-	"iter"
 	"sync"
+
+	"github.com/go-kratos/blades"
 )
 
-// Just returns a iter.Seq2 that emits the provided values in order.
-func Just[T any](values ...T) iter.Seq2[T, error] {
+// Just returns a blades.Sequence that emits the provided values in order.
+func Just[T any](values ...T) blades.Sequence[T, error] {
 	return func(yield func(T, error) bool) {
 		for _, v := range values {
 			if !yield(v, nil) {
@@ -16,9 +17,9 @@ func Just[T any](values ...T) iter.Seq2[T, error] {
 	}
 }
 
-// Filter returns a iter.Seq2 that emits only the values from the input stream
+// Filter returns a blades.Sequence that emits only the values from the input stream
 // that satisfy the given predicate function.
-func Filter[T any](stream iter.Seq2[T, error], predicate func(T) bool) iter.Seq2[T, error] {
+func Filter[T any](stream blades.Sequence[T, error], predicate func(T) bool) blades.Sequence[T, error] {
 	return func(yield func(T, error) bool) {
 		stream(func(v T, err error) bool {
 			if err != nil {
@@ -36,7 +37,7 @@ func Filter[T any](stream iter.Seq2[T, error], predicate func(T) bool) iter.Seq2
 // observer function to each value from the input channel. The observer function
 // is called for each value and returns an error; if a non-nil error is returned,
 // observation stops and the error is emitted.
-func Observe[T any](stream iter.Seq2[T, error], observer func(T, error) error) iter.Seq2[T, error] {
+func Observe[T any](stream blades.Sequence[T, error], observer func(T, error) error) blades.Sequence[T, error] {
 	return func(yield func(T, error) bool) {
 		stream(func(v T, err error) bool {
 			if err := observer(v, err); err != nil {
@@ -47,9 +48,9 @@ func Observe[T any](stream iter.Seq2[T, error], observer func(T, error) error) i
 	}
 }
 
-// Map returns a iter.Seq2 that emits the results of applying the given mapper
+// Map returns a blades.Sequence that emits the results of applying the given mapper
 // function to each value from the input stream.
-func Map[T, R any](stream iter.Seq2[T, error], mapper func(T) (R, error)) iter.Seq2[R, error] {
+func Map[T, R any](stream blades.Sequence[T, error], mapper func(T) (R, error)) blades.Sequence[R, error] {
 	return func(yield func(R, error) bool) {
 		stream(func(v T, err error) bool {
 			if err != nil {
@@ -66,7 +67,7 @@ func Map[T, R any](stream iter.Seq2[T, error], mapper func(T) (R, error)) iter.S
 
 // Merge takes multiple input channels and merges their outputs into a single
 // output channel.
-func Merge[T any](streams ...iter.Seq2[T, error]) iter.Seq2[T, error] {
+func Merge[T any](streams ...blades.Sequence[T, error]) blades.Sequence[T, error] {
 	return func(yield func(T, error) bool) {
 		var (
 			mu sync.Mutex
@@ -74,7 +75,7 @@ func Merge[T any](streams ...iter.Seq2[T, error]) iter.Seq2[T, error] {
 		)
 		wg.Add(len(streams))
 		for _, stream := range streams {
-			go func(next iter.Seq2[T, error]) {
+			go func(next blades.Sequence[T, error]) {
 				defer wg.Done()
 				next(func(v T, err error) bool {
 					mu.Lock()

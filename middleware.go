@@ -12,7 +12,7 @@ type Handler interface {
 // HandleFunc is an adapter to allow the use of ordinary functions as Handlers.
 type HandleFunc func(context.Context, *Invocation) Sequence[*Message, error]
 
-// Handler calls f(ctx, invocation).
+// Handle implements the Handler interface for HandleFunc.
 func (f HandleFunc) Handle(ctx context.Context, invocation *Invocation) Sequence[*Message, error] {
 	return f(ctx, invocation)
 }
