@@ -40,7 +40,8 @@ func (c *Sequential) Run(ctx context.Context, invocation *blades.Invocation) bla
 					return
 				}
 			}
-			invocation = invocation.CloneWithMessage(output)
+			invocation = invocation.Clone()
+			invocation.Message = output
 		}
 		yield(output, nil)
 	}

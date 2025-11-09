@@ -15,9 +15,8 @@ type Invocation struct {
 }
 
 // Clone creates a deep copy of the Invocation.
-func (i *Invocation) CloneWithMessage(message *Message) *Invocation {
+func (i *Invocation) Clone() *Invocation {
 	clone := *i
-	clone.Message = message
 	return &clone
 }
 
