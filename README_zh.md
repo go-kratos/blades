@@ -89,9 +89,9 @@ import (
 )
 
 func main() {
-    // Set up the OpenAI API key and base URL as environment variables
-    // - export OPENAI_API_KEY="YOUR_API_KEY"
-    // - export OPENAI_API_BASE="YOUR_BASE_URL"
+    // Configure OpenAI API key and base URL using environment variables:
+    // export OPENAI_API_KEY="YOUR_API_KEY"
+    // export OPENAI_API_BASE="YOUR_BASE_URL"
     agent := blades.NewAgent(
         "Blades Agent",
         blades.WithModel("gpt-5"),  // or deepseek-chat, qwen3-max, etc.
@@ -107,6 +107,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
+    // Print the agent's response
     log.Println(output.Text())
 }
 ```
