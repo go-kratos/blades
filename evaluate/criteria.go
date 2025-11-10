@@ -10,7 +10,7 @@ import (
 
 // Criteria evaluates the relevancy of LLM responses.
 type Criteria struct {
-	runner *blades.Runner
+	agent blades.Agent
 }
 
 // NewCriteria creates a new Criteria evaluator.
@@ -23,19 +23,21 @@ func NewCriteria(name string, opts ...blades.AgentOption) (*Criteria, error) {
 		name,
 		append(opts, blades.WithOutputSchema(schema))...,
 	)
-	runner := blades.NewRunner(agent)
-	return &Criteria{runner: runner}, nil
+	return &Criteria{agent: agent}, nil
 }
 
 // Evaluate evaluates the relevancy of the LLM response.
 func (r *Criteria) Evaluate(ctx context.Context, message *blades.Message, opts ...blades.ModelOption) (*Evaluation, error) {
-	output, err := r.runner.Run(ctx, message, opts...)
-	if err != nil {
-		return nil, err
+	generator := r.agent.Run(ctx, &blades.Invocation{Message: message, ModelOptions: opts})
+	for msg, err := range generator {
+		if err != nil {
+			return nil, err
+		}
+		var evaluation Evaluation
+		if err := json.Unmarshal([]byte(msg.Text()), &evaluation); err != nil {
+			return nil, err
+		}
+		return &evaluation, nil
 	}
-	var evaluation Evaluation
-	if err := json.Unmarshal([]byte(output.Text()), &evaluation); err != nil {
-		return nil, err
-	}
-	return &evaluation, nil
+	return nil, blades.ErrNoFinalResponse
 }
