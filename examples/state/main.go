@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
-	"github.com/go-kratos/blades/flow"
 )
 
 func main() {
@@ -69,15 +68,21 @@ Output *only* the final, refactored Python code block, enclosed in triple backti
 Do not add any other text before or after the code block.`),
 		blades.WithDescription("Refactors code based on review comments."),
 	)
-	seq := flow.NewSequential(codeWriterAgent, codeReviewerAgent, codeRefactorerAgent)
+	var (
+		err    error
+		output *blades.Message
+	)
 	// Run the sequence with an initial user prompt
 	input := blades.UserMessage("Write a Python function that takes a list of integers and returns a new list containing only the even integers from the original list.")
 	// Create a session to track state across the flow
 	session := blades.NewSession()
-	runner := blades.NewRunner(seq, blades.WithSession(session))
-	output, err := runner.Run(context.Background(), input)
-	if err != nil {
-		log.Fatal(err)
+	for _, agent := range []blades.Agent{codeWriterAgent, codeReviewerAgent, codeRefactorerAgent} {
+		runner := blades.NewRunner(agent, blades.WithSession(session))
+		output, err = runner.Run(context.Background(), input)
+		if err != nil {
+			log.Fatal(err)
+		}
+		input = output
 	}
 	log.Println(session.State())
 	log.Println(output.Text())

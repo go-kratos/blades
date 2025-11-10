@@ -3,13 +3,17 @@ package main
 import (
 	"context"
 	"log"
+	"strings"
+	"text/template"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
 	"github.com/go-kratos/blades/evaluate"
 )
 
-const evaluationTmpl = `You are an expert evaluator. Your task is to assess the relevancy of the LLM's response to the given input prompt.
+func buildPrompt(params map[string]any) (string, error) {
+	var (
+		tmpl = `You are an expert evaluator. Your task is to assess the relevancy of the LLM's response to the given input prompt.
 Please follow these guidelines:
 1. Understand the Input Prompt: Carefully read and comprehend the input prompt to grasp what is being asked.
 2. Analyze the LLM's Response: Evaluate the response provided by the LLM in relation to the input prompt.
@@ -24,6 +28,17 @@ Below are the inputs:
   "User prompt": {{ .Input }},
   "Agent response": {{ .Output }},
 }`
+		buf strings.Builder
+	)
+	t, err := template.New("message").Parse(tmpl)
+	if err != nil {
+		return "", err
+	}
+	if err := t.Execute(&buf, params); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
 
 func main() {
 	qa := map[string]string{
@@ -39,13 +54,14 @@ func main() {
 		log.Fatal(err)
 	}
 	for q, a := range qa {
-		input, err := blades.NewTemplateMessage(blades.RoleUser, evaluationTmpl, map[string]any{
+		prompt, err := buildPrompt(map[string]any{
 			"Input":  q,
 			"Output": a,
 		})
 		if err != nil {
 			log.Fatal(err)
 		}
+		input := blades.UserMessage(prompt)
 		output, err := r.Evaluate(context.Background(), input)
 		if err != nil {
 			log.Fatal(err)

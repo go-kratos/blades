@@ -3,6 +3,8 @@ package blades
 import (
 	"context"
 	"fmt"
+	"html/template"
+	"strings"
 
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -174,11 +176,15 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*Mode
 	}
 	// system messages
 	if a.instructions != "" {
-		systemMessage, err := NewTemplateMessage(RoleSystem, a.instructions, map[string]any(invocation.Session.State()))
+		var buf strings.Builder
+		t, err := template.New("instructions").Parse(a.instructions)
 		if err != nil {
 			return nil, err
 		}
-		req.Messages = append(req.Messages, systemMessage)
+		if err := t.Execute(&buf, invocation.Session.State()); err != nil {
+			return nil, err
+		}
+		req.Messages = append(req.Messages, SystemMessage(buf.String()))
 	}
 	// user messages
 	if invocation.Message != nil {

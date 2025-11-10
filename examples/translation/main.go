@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
-	"github.com/go-kratos/blades/flow"
 )
 
 var (
@@ -39,11 +38,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	input := blades.UserMessage(string(content))
-	runner := blades.NewRunner(flow.NewSequential(tr, refine))
-	output, err := runner.Run(context.Background(), input)
-	if err != nil {
-		log.Fatal(err)
+	var (
+		input  = blades.UserMessage(string(content))
+		output *blades.Message
+	)
+	for _, agent := range []blades.Agent{tr, refine} {
+		runner := blades.NewRunner(agent)
+		output, err = runner.Run(context.Background(), input)
+		if err != nil {
+			log.Fatal(err)
+		}
+		input = output
 	}
 	if err := os.WriteFile(output.Text(), []byte(output.Text()), 0644); err != nil {
 		log.Fatal(err)

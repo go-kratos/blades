@@ -1,0 +1,40 @@
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/contrib/openai"
+)
+
+func main() {
+	agent := blades.NewAgent(
+		"Server Agent",
+		blades.WithModel("gpt-5"),
+		blades.WithProvider(openai.NewChatProvider()),
+		blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
+	)
+	// Set up HTTP handler
+	mux := http.NewServeMux()
+	mux.HandleFunc("/streaming", func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		runner := blades.NewRunner(agent)
+		input := blades.UserMessage(r.FormValue("input"))
+		for output, err := range runner.RunStream(r.Context(), input) {
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			if err := json.NewEncoder(w).Encode(output); err != nil {
+				return
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	})
+	// Start HTTP server
+	http.ListenAndServe(":8000", mux)
+}
