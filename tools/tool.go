@@ -6,6 +6,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
+// Tool defines the interface for a tool that can be used in a system.
 type Tool interface {
 	Name() string
 	Description() string
@@ -17,11 +18,9 @@ type Tool interface {
 // NewTool creates a new Tool with the given name, description, and handler.
 func NewTool(name string, description string, handler Handler[string, string], opts ...Option) Tool {
 	t := &baseTool{
-		name:         name,
-		description:  description,
-		inputSchema:  nil,
-		outputSchema: nil,
-		handler:      handler,
+		name:        name,
+		description: description,
+		handler:     handler,
 	}
 	for _, opt := range opts {
 		opt(t)
