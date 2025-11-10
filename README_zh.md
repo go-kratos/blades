@@ -98,7 +98,7 @@ func main() {
         blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
     )
     // Create a Prompt with user message
-    input := blades.UserMessage("What is the capital of France?"),
+    input := blades.UserMessage("What is the capital of France?")
     // Run the Agent with the Prompt
     runner := blades.NewRunner(agent)
     output, err := runner.Run(context.Background(), input)
