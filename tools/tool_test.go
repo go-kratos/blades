@@ -46,15 +46,15 @@ func TestHandleFuncToolCall(t *testing.T) {
 		return string(encoded), nil
 	})
 
-	tool := &Tool{
-		Name:        "get_weather",
-		Description: "Get current weather",
-		InputSchema: &jsonschema.Schema{Type: "object"},
-		Handler:     handler,
-	}
+	tool := NewTool(
+		"get_weather",
+		"Get current weather",
+		handler,
+		WithInputSchema(&jsonschema.Schema{Type: "object"}),
+	)
 
 	llmArgs := `{"location":"Paris"}`
-	result, err := tool.Handler.Handle(context.Background(), llmArgs)
+	result, err := tool.Handle(context.Background(), llmArgs)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -99,14 +99,14 @@ func TestCustomHandler(t *testing.T) {
 		return handler.prefix + input, nil
 	})
 
-	tool := &Tool{
-		Name:        "custom_tool",
-		Description: "A custom tool",
-		InputSchema: &jsonschema.Schema{Type: "object"},
-		Handler:     handler,
-	}
+	tool := NewTool(
+		"custom_tool",
+		"A custom tool",
+		handler,
+		WithInputSchema(&jsonschema.Schema{Type: "object"}),
+	)
 
-	result, err := tool.Handler.Handle(context.Background(), "test")
+	result, err := tool.Handle(context.Background(), "test")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

@@ -28,8 +28,8 @@ func NewTool(name string, description string, handler Handler[string, string], o
 	return t
 }
 
-// NewToolFunc creates a new Tool with the given name, description, input and output types, and handler.
-func NewToolFunc[I, O any](name string, description string, handler Handler[I, O]) (Tool, error) {
+// NewFunc creates a new Tool with the given name, description, input and output types, and handler.
+func NewFunc[I, O any](name string, description string, handler Handler[I, O]) (Tool, error) {
 	inputSchema, err := jsonschema.For[I](nil)
 	if err != nil {
 		return nil, err
