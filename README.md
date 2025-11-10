@@ -33,8 +33,6 @@ type Agent interface {
     Run(context.Context, *Invocation) Generator[*Message, error]
 }
 ```
-![runnable](docs/images/runnable.png)
-
 
 ### ModelProvider
 `ModelProvider` is the core abstraction layer in the `Blades` framework for interacting with underlying large language models (LLMs). Its design goal is to achieve **decoupling and extensibility** through a unified interface, separating the framework's core logic from the implementation details of specific models (such as OpenAI, DeepSeek, Gemini, etc.). It acts as an adapter, responsible for converting the framework's internal standardized requests into the format required by the model's native API and converting the model's responses back into the framework's standard format, thus enabling developers to easily switch and integrate different LLMs.

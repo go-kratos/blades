@@ -33,8 +33,6 @@ type Agent interface {
     Run(context.Context, *Invocation) Generator[*Message, error]
 }
 ```
-![Agent](docs/images/runnable.png)
-
 
 ### ModelProvider
 `ModelProvider` 是 `Blades` 框架与底层大语言模型（LLM）进行交互的核心抽象层。其设计目标在于通过统一的接口实现**解耦和扩展性**，使得框架核心逻辑与特定模型（如 OpenAI, DeepSeek, Gemini 等）的实现细节分离。它扮演着适配器角色，负责将框架内部的标准化请求转换为模型原生 API 所需的格式，并将模型响应转换回框架标准格式，从而支持开发者轻松切换和集成不同的 LLM。
