@@ -31,7 +31,7 @@ func NewSession(states ...map[string]any) Session {
 // ctxSessionKey is an unexported type for keys defined in this package.
 type ctxSessionKey struct{}
 
-// NewSessionContext returns a new Context that carries value.
+// NewSessionContext returns a new Context that carries the session value.
 func NewSessionContext(ctx context.Context, session Session) context.Context {
 	return context.WithValue(ctx, ctxSessionKey{}, session)
 }
