@@ -28,8 +28,7 @@ func NewCriteria(name string, opts ...blades.AgentOption) (*Criteria, error) {
 
 // Evaluate evaluates the relevancy of the LLM response.
 func (r *Criteria) Evaluate(ctx context.Context, message *blades.Message, opts ...blades.ModelOption) (*Evaluation, error) {
-	generator := r.agent.Run(ctx, &blades.Invocation{Message: message, ModelOptions: opts})
-	for msg, err := range generator {
+	for msg, err := range r.agent.Run(ctx, blades.NewInvocation(message, opts...)) {
 		if err != nil {
 			return nil, err
 		}
