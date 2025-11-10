@@ -146,6 +146,16 @@ func (a *agent) Instructions() string {
 	return a.instructions
 }
 
+// InputSchema returns the input schema of the Agent.
+func (a *agent) InputSchema() *jsonschema.Schema {
+	return a.inputSchema
+}
+
+// OutputSchema returns the output schema of the Agent.
+func (a *agent) OutputSchema() *jsonschema.Schema {
+	return a.outputSchema
+}
+
 // resolveTools combines static tools with dynamically resolved tools.
 func (a *agent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
 	tools := make([]tools.Tool, 0, len(a.tools))
