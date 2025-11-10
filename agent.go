@@ -202,7 +202,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			invocation.Session = NewSession()
 			ctx = NewSessionContext(ctx, invocation.Session)
 		}
-		ctx := NewAgentContext(ctx, a)
+		ctx = NewAgentContext(ctx, a)
 		if message, ok := a.findResumeMessage(ctx, invocation); ok {
 			yield(message, nil)
 			return
