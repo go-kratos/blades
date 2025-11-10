@@ -28,6 +28,20 @@ func NewSession(states ...map[string]any) Session {
 	return session
 }
 
+// ctxSessionKey is an unexported type for keys defined in this package.
+type ctxSessionKey struct{}
+
+// NewSessionContext returns a new Context that carries value.
+func NewSessionContext(ctx context.Context, session Session) context.Context {
+	return context.WithValue(ctx, ctxSessionKey{}, session)
+}
+
+// FromSessionContext retrieves the SessionContext from the context.
+func FromSessionContext(ctx context.Context) (Session, bool) {
+	session, ok := ctx.Value(ctxSessionKey{}).(Session)
+	return session, ok
+}
+
 // sessionInMemory is an in-memory implementation of the Session interface.
 type sessionInMemory struct {
 	id      string

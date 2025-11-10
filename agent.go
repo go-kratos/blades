@@ -196,11 +196,13 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*Mode
 // Run runs the agent with the given prompt and options, returning a streamable response.
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
-		ctx := NewAgentContext(ctx, a)
-		// initialize session if not present
+		// Create a new session if none exists
+		// This ensures that each invocation has its own session context.
 		if invocation.Session == nil {
 			invocation.Session = NewSession()
+			ctx = NewSessionContext(ctx, invocation.Session)
 		}
+		ctx := NewAgentContext(ctx, a)
 		if message, ok := a.findResumeMessage(ctx, invocation); ok {
 			yield(message, nil)
 			return
