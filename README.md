@@ -23,7 +23,7 @@ The Blades framework realizes its powerful functionality and flexibility through
 * Middleware: Similar to middleware in web frameworks, it enables cross-cutting control over the Agent.
 
 ### Agent
-`Agent` is the most core interface in the Blades framework, defining the basic behavior of all executable components. Its design aims to provide a unified execution paradigm. Through the `Run` and `RunStream` methods, it achieves **decoupling, standardization, and high composability** for various functional modules within the framework. Components like `Agent`, `Chain`, and `ModelProvider` all implement this interface, thereby unifying their execution logic and allowing different components to be flexibly combined like Lego bricks to build complex AI Agents.
+`Agent` is the most core interface in the Blades framework, defining the basic behavior of all executable components. Its design aims to provide a unified execution paradigm. Through the `Run` method, it achieves **decoupling, standardization, and high composability** for various functional modules within the framework. Components like `Agent`, `Chain`, and `ModelProvider` all implement this interface, thereby unifying their execution logic and allowing different components to be flexibly combined like Lego bricks to build complex AI Agents.
 
 ```go
 // Agent represents an autonomous agent that can process invocations and produce a sequence of messages.
