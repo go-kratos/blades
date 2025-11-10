@@ -173,13 +173,9 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 			return nil, err
 		}
 	}
-	argsJSON, err := json.Marshal(arguments)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal arguments: %w", err)
-	}
 	result, err := c.session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      name,
-		Arguments: argsJSON,
+		Arguments: arguments,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mcp [%s] call_tool: %w", c.config.Name, err)
