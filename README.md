@@ -22,14 +22,15 @@ The Blades framework realizes its powerful functionality and flexibility through
 * Memory: Provides short-term or long-term memory capabilities for the Agent, enabling continuous conversation with context.
 * Middleware: Similar to middleware in web frameworks, it enables cross-cutting control over the Agent.
 
-### Runnable
-`Runnable` is the most core interface in the Blades framework, defining the basic behavior of all executable components. Its design aims to provide a unified execution paradigm. Through the `Run` and `RunStream` methods, it achieves **decoupling, standardization, and high composability** for various functional modules within the framework. Components like `Agent`, `Chain`, and `ModelProvider` all implement this interface, thereby unifying their execution logic and allowing different components to be flexibly combined like Lego bricks to build complex AI Agents.
+### Agent
+`Agent` is the most core interface in the Blades framework, defining the basic behavior of all executable components. Its design aims to provide a unified execution paradigm. Through the `Run` and `RunStream` methods, it achieves **decoupling, standardization, and high composability** for various functional modules within the framework. Components like `Agent`, `Chain`, and `ModelProvider` all implement this interface, thereby unifying their execution logic and allowing different components to be flexibly combined like Lego bricks to build complex AI Agents.
 
 ```go
-// Runnable represents an entity that can process prompts and generate responses.
-type Runnable interface {
-    Run(context.Context, *Prompt, ...ModelOption) (*Message, error)
-    RunStream(context.Context, *Prompt, ...ModelOption) (stream.Streamable[*Message])
+// Agent represents an autonomous agent that can process invocations and produce a sequence of messages.
+type Agent interface {
+    Name() string
+    Description() string
+    Run(context.Context, *Invocation) Generator[*Message, error]
 }
 ```
 ![runnable](docs/images/runnable.png)
@@ -42,17 +43,17 @@ type Runnable interface {
 type ModelProvider interface {
     // Generate executes a complete generation request and returns the result all at once. Suitable for scenarios that do not require real-time feedback.
     Generate(context.Context, *ModelRequest, ...ModelOption) (*ModelResponse, error)
-    // NewStreaming initiates a streaming request. This method immediately returns a Streamable object, allowing the caller to receive the model's generated content step by step. Suitable for building real-time, typewriter-effect conversation applications.
-    NewStreaming(context.Context, *ModelRequest, ...ModelOption) (stream.Streamable[*ModelResponse])
+    // NewStreaming initiates a streaming request. This method immediately returns a Generator object, allowing the caller to receive the model's generated content step by step. Suitable for building real-time, typewriter-effect conversation applications.
+    NewStreaming(context.Context, *ModelRequest, ...ModelOption) (Generator[*ModelResponse])
 }
 ```
 ![ModelProvider](./docs/images/model.png)
 
 ### Agent
-`Agent` is the core coordinator in the `Blades` framework. As the top-level `Runnable`, it integrates and orchestrates components such as `ModelProvider`, `Tool`, `Memory`, and `Middleware` to understand user intent and execute complex tasks. Its design allows configuration via flexible `Option` functions, thereby driving the behavior and capabilities of intelligent applications and fulfilling core responsibilities like task orchestration, context management, and instruction following.
+`Agent` is the core coordinator in the `Blades` framework. As the top-level `Agent`, it integrates and orchestrates components such as `ModelProvider`, `Tool`, `Memory`, and `Middleware` to understand user intent and execute complex tasks. Its design allows configuration via flexible `Option` functions, thereby driving the behavior and capabilities of intelligent applications and fulfilling core responsibilities like task orchestration, context management, and instruction following.
 
 ### Flow
-`flow` is used to build complex workflows and multi-step reasoning. Its design philosophy involves orchestrating multiple `Runnable` components to achieve data and control flow transfer, where the output of one `Runnable` can serve as the input for the next. This mechanism enables developers to flexibly combine components to build highly customized AI workflows, realizing multi-step reasoning and complex data processing. It is key to implementing complex decision-making processes for Agents.
+`flow` is used to build complex workflows and multi-step reasoning. Its design philosophy involves orchestrating multiple `Agent` components to achieve data and control flow transfer, where the output of one `Agent` can serve as the input for the next. This mechanism enables developers to flexibly combine components to build highly customized AI workflows, realizing multi-step reasoning and complex data processing. It is key to implementing complex decision-making processes for Agents.
 
 ### Tool
 `Tool` is a key component for extending AI Agent capabilities, representing external functions or services that an Agent can invoke. Its design aims to empower the Agent to interact with the real world, performing specific actions or obtaining external information. Through a clear `InputSchema`, it guides the LLM to generate correct invocation parameters, and executes the actual logic via its internal `Handle` function, thereby encapsulating various external APIs, database queries, etc., into a form that the Agent can understand and invoke.
@@ -99,11 +100,10 @@ func main() {
         blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
     )
     // Create a Prompt with user message
-    prompt := blades.NewPrompt(
-        blades.UserMessage("What is the capital of France?"),
-    )
+    input := blades.UserMessage("What is the capital of France?"),
     // Run the Agent with the Prompt
-    output, err := agent.Run(context.Background(), prompt)
+    runner := blades.NewRunner(agent)
+    output, err := runner.Run(context.Background(), input)
     if err != nil {
         log.Fatal(err)
     }
