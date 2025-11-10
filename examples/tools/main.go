@@ -20,11 +20,16 @@ type WeatherRes struct {
 }
 
 func main() {
-	weatherTool, err := tools.NewFunc[WeatherReq, WeatherRes](
+	weatherTool, err := tools.NewFunc(
 		"get_weather",
 		"Get the current weather for a given city",
 		tools.HandleFunc[WeatherReq, WeatherRes](func(ctx context.Context, req WeatherReq) (WeatherRes, error) {
 			log.Println("Fetching weather for:", req.Location)
+			session, ok := blades.FromSessionContext(ctx)
+			if !ok {
+				return WeatherRes{}, blades.ErrNoSessionContext
+			}
+			session.PutState("location", req.Location)
 			return WeatherRes{Forecast: "Sunny, 25°C"}, nil
 		}),
 	)
@@ -38,10 +43,12 @@ func main() {
 	// Create a prompt asking for the weather in New York City
 	input := blades.UserMessage("What is the weather in New York City?")
 	// Run the agent with the prompt
-	runner := blades.NewRunner(agent)
+	session := blades.NewSession()
+	runner := blades.NewRunner(agent, blades.WithSession(session))
 	output, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(output.Text())
+	log.Println("state:", session.State())
+	log.Println("output:", output.Text())
 }

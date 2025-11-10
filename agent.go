@@ -203,6 +203,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			ctx = NewSessionContext(ctx, invocation.Session)
 		}
 		ctx = NewAgentContext(ctx, a)
+		// If resumable and a completed message exists, return it directly.
 		if message, ok := a.findResumeMessage(ctx, invocation); ok {
 			yield(message, nil)
 			return
@@ -212,7 +213,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			yield(nil, err)
 			return
 		}
-		handler := Handler(HandleFunc(func(context.Context, *Invocation) Generator[*Message, error] {
+		handler := Handler(HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 			return a.handle(ctx, invocation, req)
 		}))
 		if len(a.middlewares) > 0 {
