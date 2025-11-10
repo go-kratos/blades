@@ -47,5 +47,5 @@ func (a *agentTool) Handle(ctx context.Context, input string) (string, error) {
 		}
 		return output.Text(), nil
 	}
-	return "", nil
+	return "", ErrNoFinalResponse
 }
