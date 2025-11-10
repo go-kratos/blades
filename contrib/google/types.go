@@ -67,12 +67,12 @@ func convertMessagePartsToGenAI(parts []blades.Part) []*genai.Part {
 	return res
 }
 
-func convertBladesToolsToGenAI(tools []*tools.Tool) ([]*genai.Tool, error) {
+func convertBladesToolsToGenAI(tools []tools.Tool) ([]*genai.Tool, error) {
 	genaiTools := make([]*genai.Tool, 0, len(tools))
 	for _, tool := range tools {
 		genaiTool, err := convertBladesToolToGenAI(tool)
 		if err != nil {
-			return nil, fmt.Errorf("converting tool %s: %w", tool.Name, err)
+			return nil, fmt.Errorf("converting tool %s: %w", tool.Name(), err)
 		}
 		if genaiTool != nil {
 			genaiTools = append(genaiTools, genaiTool)
@@ -81,13 +81,14 @@ func convertBladesToolsToGenAI(tools []*tools.Tool) ([]*genai.Tool, error) {
 	return genaiTools, nil
 }
 
-func convertBladesToolToGenAI(tool *tools.Tool) (*genai.Tool, error) {
+func convertBladesToolToGenAI(tool tools.Tool) (*genai.Tool, error) {
 	return &genai.Tool{
 		FunctionDeclarations: []*genai.FunctionDeclaration{
 			&genai.FunctionDeclaration{
-				Name:                 tool.Name,
-				Description:          tool.Description,
-				ParametersJsonSchema: tool.InputSchema,
+				Name:                 tool.Name(),
+				Description:          tool.Description(),
+				ParametersJsonSchema: tool.InputSchema(),
+				ResponseJsonSchema:   tool.OutputSchema(),
 			},
 		},
 	}, nil

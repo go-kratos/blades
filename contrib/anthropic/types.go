@@ -22,7 +22,7 @@ func convertPartsToContent(parts []blades.Part) []anthropic.ContentBlockParamUni
 }
 
 // convertBladesToolsToClaude converts Blades Tools to Claude ToolParams.
-func convertBladesToolsToClaude(tools []*tools.Tool) ([]anthropic.ToolUnionParam, error) {
+func convertBladesToolsToClaude(tools []tools.Tool) ([]anthropic.ToolUnionParam, error) {
 	var claudeTools []anthropic.ToolUnionParam
 	for _, tool := range tools {
 		var inputSchema anthropic.ToolInputSchemaParam
@@ -34,11 +34,11 @@ func convertBladesToolsToClaude(tools []*tools.Tool) ([]anthropic.ToolUnionParam
 			return nil, fmt.Errorf("unmarshaling tool schema: %w", err)
 		}
 		toolParam := anthropic.ToolParam{
-			Name:        tool.Name,
+			Name:        tool.Name(),
 			InputSchema: inputSchema,
 		}
-		if tool.Description != "" {
-			toolParam.Description = anthropic.String(tool.Description)
+		if tool.Description() != "" {
+			toolParam.Description = anthropic.String(tool.Description())
 		}
 		claudeTools = append(claudeTools, anthropic.ToolUnionParam{
 			OfTool: &toolParam,

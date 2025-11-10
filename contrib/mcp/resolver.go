@@ -12,7 +12,7 @@ import (
 type ToolsResolver struct {
 	mu      sync.RWMutex
 	clients []*Client
-	tools   []*tools.Tool
+	tools   []tools.Tool
 	loaded  bool
 }
 
@@ -36,7 +36,7 @@ func NewToolsResolver(configs ...ClientConfig) (*ToolsResolver, error) {
 
 // Resolve implements the tools.Resolver interface.
 // Returns all tools from all configured MCP servers using lazy loading.
-func (r *ToolsResolver) Resolve(ctx context.Context) ([]*tools.Tool, error) {
+func (r *ToolsResolver) Resolve(ctx context.Context) ([]tools.Tool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Return cached tools if already loaded
@@ -45,7 +45,7 @@ func (r *ToolsResolver) Resolve(ctx context.Context) ([]*tools.Tool, error) {
 	}
 	var (
 		errors   []error
-		allTools []*tools.Tool
+		allTools []tools.Tool
 	)
 	for _, client := range r.clients {
 		if err := client.Connect(ctx); err != nil {

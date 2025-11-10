@@ -11,13 +11,12 @@ import (
 
 // toBladesTool converts an MCP tool to a Blades tool.
 // This method is used by Provider to convert tools without creating separate Adapter instances.
-func toBladesTool(mcpTool *mcp.Tool, handler tools.HandleFunc[string, string]) (*tools.Tool, error) {
+func toBladesTool(mcpTool *mcp.Tool, handler tools.HandleFunc[string, string]) (tools.Tool, error) {
 	// Convert the input schema
 	inputSchema, err := convertSchema(mcpTool.InputSchema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert input schema: %w", err)
 	}
-
 	// Convert the output schema if present
 	var outputSchema *jsonschema.Schema
 	if mcpTool.OutputSchema != nil {
@@ -26,13 +25,13 @@ func toBladesTool(mcpTool *mcp.Tool, handler tools.HandleFunc[string, string]) (
 			return nil, fmt.Errorf("failed to convert output schema: %w", err)
 		}
 	}
-	return &tools.Tool{
-		Name:         mcpTool.Name,
-		Description:  mcpTool.Description,
-		InputSchema:  inputSchema,
-		OutputSchema: outputSchema,
-		Handler:      handler,
-	}, nil
+	return tools.NewTool(
+		mcpTool.Name,
+		mcpTool.Description,
+		handler,
+		tools.WithInputSchema(inputSchema),
+		tools.WithOutputSchema(outputSchema),
+	), nil
 }
 
 // convertSchema converts an MCP schema to a Blades jsonschema.Schema.

@@ -214,20 +214,20 @@ func toToolCallMessage(msg *blades.Message) openai.ChatCompletionMessageParamUni
 	}
 }
 
-func toTools(tools []*tools.Tool) ([]openai.ChatCompletionToolUnionParam, error) {
+func toTools(tools []tools.Tool) ([]openai.ChatCompletionToolUnionParam, error) {
 	if len(tools) == 0 {
 		return nil, nil
 	}
 	params := make([]openai.ChatCompletionToolUnionParam, 0, len(tools))
 	for _, tool := range tools {
 		fn := openai.FunctionDefinitionParam{
-			Name: tool.Name,
+			Name: tool.Name(),
 		}
-		if tool.Description != "" {
-			fn.Description = openai.String(tool.Description)
+		if tool.Description() != "" {
+			fn.Description = openai.String(tool.Description())
 		}
-		if tool.InputSchema != nil {
-			b, err := json.Marshal(tool.InputSchema)
+		if tool.InputSchema() != nil {
+			b, err := json.Marshal(tool.InputSchema())
 			if err != nil {
 				return nil, err
 			}

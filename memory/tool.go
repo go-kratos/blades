@@ -17,8 +17,8 @@ type Response struct {
 }
 
 // NewMemoryTool creates a new memory tool with the given memory store.
-func NewMemoryTool(store MemoryStore) (*tools.Tool, error) {
-	return tools.NewTool[Request, Response](
+func NewMemoryTool(store MemoryStore) (tools.Tool, error) {
+	return tools.NewToolFunc[Request, Response](
 		"Memory",
 		"You have memory. You can use it to answer questions. If any questions need you to look up the memory.",
 		tools.HandleFunc[Request, Response](func(ctx context.Context, req Request) (Response, error) {

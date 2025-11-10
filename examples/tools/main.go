@@ -20,7 +20,7 @@ type WeatherRes struct {
 }
 
 func main() {
-	weatherTool, err := tools.NewTool[WeatherReq, WeatherRes](
+	weatherTool, err := tools.NewToolFunc[WeatherReq, WeatherRes](
 		"get_weather",
 		"Get the current weather for a given city",
 		tools.HandleFunc[WeatherReq, WeatherRes](func(ctx context.Context, req WeatherReq) (WeatherRes, error) {

@@ -6,5 +6,5 @@ import "context"
 // Implementations can provide tools from MCP servers, plugins, remote services, etc.
 type Resolver interface {
 	// Resolve returns a list of tools available from this resolver.
-	Resolve(ctx context.Context) ([]*Tool, error)
+	Resolve(ctx context.Context) ([]Tool, error)
 }

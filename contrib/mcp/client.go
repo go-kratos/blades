@@ -126,14 +126,14 @@ func (c *Client) ListTools(ctx context.Context) ([]*mcp.Tool, error) {
 }
 
 // Resolve implements the tools.Resolver interface.
-func (c *Client) Resolve(ctx context.Context) ([]*tools.Tool, error) {
+func (c *Client) Resolve(ctx context.Context) ([]tools.Tool, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.Timeout)
 	defer cancel()
 	mcpTools, err := c.ListTools(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var res []*tools.Tool
+	var res []tools.Tool
 	for _, mcpTool := range mcpTools {
 		handler := c.handler(mcpTool.Name)
 		tool, err := toBladesTool(mcpTool, handler)

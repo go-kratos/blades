@@ -68,7 +68,7 @@ func WithProvider(provider ModelProvider) AgentOption {
 }
 
 // WithTools sets the tools for the Agent.
-func WithTools(tools ...*tools.Tool) AgentOption {
+func WithTools(tools ...tools.Tool) AgentOption {
 	return func(a *agent) {
 		a.tools = tools
 	}
@@ -108,9 +108,9 @@ type agent struct {
 	maxIterations int
 	inputSchema   *jsonschema.Schema
 	outputSchema  *jsonschema.Schema
-	middlewares   []Middleware
 	provider      ModelProvider
-	tools         []*tools.Tool
+	middlewares   []Middleware
+	tools         []tools.Tool
 	toolsResolver tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
 }
 
@@ -147,8 +147,8 @@ func (a *agent) Instructions() string {
 }
 
 // resolveTools combines static tools with dynamically resolved tools.
-func (a *agent) resolveTools(ctx context.Context) ([]*tools.Tool, error) {
-	tools := make([]*tools.Tool, 0, len(a.tools))
+func (a *agent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
+	tools := make([]tools.Tool, 0, len(a.tools))
 	if len(a.tools) > 0 {
 		tools = append(tools, a.tools...)
 	}
@@ -269,8 +269,8 @@ func (a *agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error
 	}
 	// Search through all available tools (static + resolved)
 	for _, tool := range tools {
-		if tool.Name == part.Name {
-			response, err := tool.Handler.Handle(ctx, part.Request)
+		if tool.Name() == part.Name {
+			response, err := tool.Handle(ctx, part.Request)
 			if err != nil {
 				return part, err
 			}
