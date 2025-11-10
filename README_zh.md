@@ -23,7 +23,7 @@ Blades 框架通过一系列精心设计的核心组件，实现了其强大的�
 * Middleware (中间件)：类似于 Web 框架中的中间件，可以实现对 Agent 的横切面控制。
 
 ### Agent 
-`Agent` 是 Blades 框架中最核心的接口，它定义了所有可执行组件的基本行为。其设计旨在提供一个统一的执行范式，通过 `Run` 和 `RunStream` 方法，实现了框架内各种功能模块的**解耦、标准化和高度可组合性**。`Agent`、`Chain`、`ModelProvider` 等组件都实现了此接口，从而统一了它们的执行逻辑，使得不同组件能够像乐高积木一样灵活组合，构建复杂的 AI Agent。
+`Agent` 是 Blades 框架中最核心的接口，它定义了所有可执行组件的基本行为。其设计旨在提供一个统一的执行范式，通过 `Run` 方法，实现了框架内各种功能模块的**解耦、标准化和高度可组合性**。`Agent`、`Chain`、`ModelProvider` 等组件都实现了此接口，从而统一了它们的执行逻辑，使得不同组件能够像乐高积木一样灵活组合，构建复杂的 AI Agent。
 
 ```go
 // Agent represents an autonomous agent that can process invocations and produce a sequence of messages.
