@@ -37,7 +37,7 @@ func TestConfirmMiddleware_Run(t *testing.T) {
 		},
 	}
 
-	next := HandleFunc(func(ctx context.Context, invocation *Invocation) Sequence[*Message, error] {
+	next := HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 		return func(yield func(*Message, error) bool) {
 			yield(AssistantMessage("OK"), nil)
 		}

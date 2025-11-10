@@ -68,7 +68,7 @@ func (c *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts 
 }
 
 // NewStreaming executes the request and returns a stream of assistant responses
-func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Sequence[*blades.ModelResponse, error] {
+func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)

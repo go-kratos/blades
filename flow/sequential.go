@@ -27,7 +27,7 @@ func (c *Sequential) Description() string {
 }
 
 // Run executes the chain of runners sequentially, passing the output of one as the input to the next.
-func (c *Sequential) Run(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message, error] {
+func (c *Sequential) Run(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		var (
 			err    error

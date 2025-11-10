@@ -188,10 +188,13 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*Mode
 }
 
 // Run runs the agent with the given prompt and options, returning a streamable response.
-func (a *agent) Run(ctx context.Context, invocation *Invocation) Sequence[*Message, error] {
+func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
 		ctx := NewAgentContext(ctx, a)
-		// find resume message
+		// initialize session if not present
+		if invocation.Session == nil {
+			invocation.Session = NewSession()
+		}
 		if message, ok := a.findResumeMessage(ctx, invocation); ok {
 			yield(message, nil)
 			return
@@ -201,7 +204,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Sequence[*Messa
 			yield(nil, err)
 			return
 		}
-		handler := Handler(HandleFunc(func(context.Context, *Invocation) Sequence[*Message, error] {
+		handler := Handler(HandleFunc(func(context.Context, *Invocation) Generator[*Message, error] {
 			return a.handle(ctx, invocation, req)
 		}))
 		if len(a.middlewares) > 0 {
@@ -289,7 +292,7 @@ func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, e
 }
 
 // handle constructs the default handlers for Run and Stream using the provider.
-func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Sequence[*Message, error] {
+func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
 		var (
 			err           error

@@ -15,7 +15,7 @@ type ConfirmFunc func(context.Context, *Message) (bool, error)
 // error, that error is propagated.
 func Confirm(confirm ConfirmFunc) Middleware {
 	return func(next Handler) Handler {
-		return HandleFunc(func(ctx context.Context, invocation *Invocation) Sequence[*Message, error] {
+		return HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 			return func(yield func(*Message, error) bool) {
 				ok, err := confirm(ctx, invocation.Message)
 				if err != nil {

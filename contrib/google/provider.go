@@ -94,7 +94,7 @@ func (c *Provider) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOp
 }
 
 // NewStreaming is an alias for GenerateStream to implement the ModelProvider interface.
-func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Sequence[*blades.ModelResponse, error] {
+func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)

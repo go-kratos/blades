@@ -25,7 +25,7 @@ func (m *Logging) onSuccess(start time.Time, agent blades.AgentContext, invocati
 	log.Printf("logging: model(%s) prompt(%s) succeeded after %s: %s", agent.Model(), invocation.Message.String(), time.Since(start), output.String())
 }
 
-func (m *Logging) Handle(ctx context.Context, invocation *blades.Invocation) blades.Sequence[*blades.Message, error] {
+func (m *Logging) Handle(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		start := time.Now()
 		agent, ok := blades.FromAgentContext(ctx)
