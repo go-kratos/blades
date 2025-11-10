@@ -246,9 +246,13 @@ func (a *agent) storeSession(ctx context.Context, invocation *Invocation, toolMe
 			if err != nil {
 				return err
 			}
-			invocation.Session.PutState(a.outputKey, value)
+			if err := invocation.Session.PutState(a.outputKey, value); err != nil {
+				return err
+			}
 		} else {
-			invocation.Session.PutState(a.outputKey, assistantMessage.Text())
+			if err := invocation.Session.PutState(a.outputKey, assistantMessage.Text()); err != nil {
+				return err
+			}
 		}
 	}
 	stores := make([]*Message, 0, len(toolMessages)+2)
