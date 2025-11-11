@@ -20,6 +20,7 @@ type WeatherRes struct {
 }
 
 func main() {
+	// Define a tool to get the weather
 	weatherTool, err := tools.NewFunc(
 		"get_weather",
 		"Get the current weather for a given city",
@@ -33,6 +34,10 @@ func main() {
 			return WeatherRes{Forecast: "Sunny, 25°C"}, nil
 		}),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Create an agent with the weather tool
 	agent, err := blades.NewAgent(
 		"Weather Agent",
 		blades.WithModel("gpt-5"),
@@ -54,4 +59,11 @@ func main() {
 	}
 	log.Println("state:", session.State())
 	log.Println("output:", output.Text())
+	// Stream the response
+	for output, err := range runner.RunStream(context.Background(), input) {
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("stream status: %s output: %s", output.Status, output.Text())
+	}
 }
