@@ -52,6 +52,7 @@ type AudioOptions struct {
 type ModelRequest struct {
 	Model        string             `json:"model"`
 	Tools        []tools.Tool       `json:"tools,omitempty"`
+	Instruction  *Message           `json:"instruction,omitempty"`
 	Messages     []*Message         `json:"messages"`
 	InputSchema  *jsonschema.Schema `json:"inputSchema,omitempty"`
 	OutputSchema *jsonschema.Schema `json:"outputSchema,omitempty"`

@@ -129,6 +129,9 @@ func (c *Provider) toClaudeParams(req *blades.ModelRequest, opt blades.ModelOpti
 	if c.opts.Thinking != nil {
 		params.Thinking = *c.opts.Thinking
 	}
+	if req.Instruction != nil {
+		params.System = []anthropic.TextBlockParam{{Text: req.Instruction.Text()}}
+	}
 	for _, msg := range req.Messages {
 		switch msg.Role {
 		case blades.RoleSystem:

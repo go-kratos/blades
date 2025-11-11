@@ -197,7 +197,7 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*Mode
 		} else {
 			buf.WriteString(a.instructions)
 		}
-		req.Messages = append(req.Messages, SystemMessage(buf.String()))
+		req.Instruction = SystemMessage(buf.String())
 	}
 	// user messages
 	if invocation.Message != nil {

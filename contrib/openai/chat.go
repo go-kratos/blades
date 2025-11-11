@@ -169,6 +169,9 @@ func (p *ChatProvider) toChatCompletionParams(req *blades.ModelRequest, opt blad
 			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{JSONSchema: schemaParam},
 		}
 	}
+	if req.Instruction != nil {
+		params.Messages = append(params.Messages, openai.SystemMessage(toTextParts(req.Instruction)))
+	}
 	for _, msg := range req.Messages {
 		switch msg.Role {
 		case blades.RoleUser:

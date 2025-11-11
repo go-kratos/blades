@@ -73,6 +73,9 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 		Model: openai.SpeechModel(req.Model),
 		Voice: openai.AudioSpeechNewParamsVoice(modelOpts.Audio.Voice),
 	}
+	if req.Instruction != nil {
+		params.Instructions = param.NewOpt(req.Instruction.Text())
+	}
 	if err := p.applyOptions(&params, modelOpts.Audio); err != nil {
 		return nil, err
 	}

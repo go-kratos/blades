@@ -14,6 +14,9 @@ func convertMessageToGenAI(req *blades.ModelRequest) (*genai.Content, []*genai.C
 		system   *genai.Content
 		contents []*genai.Content
 	)
+	if req.Instruction != nil {
+		system = &genai.Content{Parts: convertMessagePartsToGenAI(req.Instruction.Parts)}
+	}
 	for _, msg := range req.Messages {
 		switch msg.Role {
 		case blades.RoleSystem:
