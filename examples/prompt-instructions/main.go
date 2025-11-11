@@ -9,12 +9,15 @@ import (
 )
 
 func main() {
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"Instructions Agent",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithInstructions("Respond as a {{.style}}."),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	// Create a new session
 	session := blades.NewSession(map[string]any{
 		"style": "robot",

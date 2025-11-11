@@ -32,17 +32,18 @@ func confirmPrompt(ctx context.Context, message *blades.Message) (bool, error) {
 
 func main() {
 	// Create an agent and wrap it with the confirmation middleware.
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"ConfirmAgent",
 		blades.WithModel("gpt-5"),
 		blades.WithInstructions("Answer clearly and concisely."),
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithMiddleware(blades.Confirm(confirmPrompt)),
 	)
-
+	if err != nil {
+		log.Fatal(err)
+	}
 	// Example user request
 	input := blades.UserMessage("Summarize the key ideas of the Agile Manifesto in 3 bullet points.")
-
 	// Run the agent; if the confirmation is denied, handle gracefully.
 	runner := blades.NewRunner(agent)
 	output, err := runner.Run(context.Background(), input)

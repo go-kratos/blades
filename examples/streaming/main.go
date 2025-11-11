@@ -9,12 +9,15 @@ import (
 )
 
 func main() {
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"Stream Agent",
 		blades.WithModel("deepseek-chat"),
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithInstructions("You are a helpful assistant that provides detailed answers."),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	input := blades.UserMessage("What is the capital of France?")
 	runner := blades.NewRunner(agent)
 	stream := runner.RunStream(context.Background(), input)

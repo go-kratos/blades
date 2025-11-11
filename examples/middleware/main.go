@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"History Tutor",
 		blades.WithModel("deepseek-chat"),
 		blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
@@ -19,6 +19,9 @@ func main() {
 			NewGuardrails,
 		),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	input := blades.UserMessage("What is the capital of France?")
 	// Run example
 	runner := blades.NewRunner(agent)

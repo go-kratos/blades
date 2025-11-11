@@ -29,13 +29,15 @@ func main() {
 
 	// Create Agent with MCP tools resolver
 	// The resolver will dynamically provide tools from the MCP server
-	agent := blades.NewAgent("time-assistant",
+	agent, err := blades.NewAgent("time-assistant",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(openaiProvider),
 		blades.WithInstructions("You are a helpful assistant that can tell time in different timezones."),
 		blades.WithToolsResolver(mcpResolver),
 	)
-
+	if err != nil {
+		log.Fatal(err)
+	}
 	// Ask the agent about time
 	input := blades.UserMessage("What time is it right now?")
 

@@ -12,11 +12,14 @@ import (
 )
 
 func main() {
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"Image Agent",
 		blades.WithModel("gpt-image-1"),
 		blades.WithProvider(openai.NewImageProvider()),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	runner := blades.NewRunner(agent)
 	output, err := runner.Run(
 		context.Background(),

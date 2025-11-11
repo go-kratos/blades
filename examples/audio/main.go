@@ -12,11 +12,14 @@ import (
 )
 
 func main() {
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"Audio Agent",
 		blades.WithModel("gpt-4o-mini-tts"),
 		blades.WithProvider(openai.NewAudioProvider()),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	runner := blades.NewRunner(agent)
 	output, err := runner.Run(
 		context.Background(),

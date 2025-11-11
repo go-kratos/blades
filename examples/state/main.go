@@ -10,7 +10,7 @@ import (
 
 func main() {
 	provider := openai.NewChatProvider()
-	codeWriterAgent := blades.NewAgent(
+	codeWriterAgent, err := blades.NewAgent(
 		"CodeWriterAgent",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(provider),
@@ -21,7 +21,10 @@ Do not add any other text before or after the code block.`),
 		blades.WithDescription("Writes initial Python code based on a specification."),
 		blades.WithOutputKey("generated_code"),
 	)
-	codeReviewerAgent := blades.NewAgent(
+	if err != nil {
+		log.Fatal(err)
+	}
+	codeReviewerAgent, err := blades.NewAgent(
 		"CodeReviewerAgent",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(provider),
@@ -45,7 +48,10 @@ Output *only* the review comments or the "No major issues" statement.`),
 		blades.WithDescription("Reviews code and provides feedback."),
 		blades.WithOutputKey("review_comments"),
 	)
-	codeRefactorerAgent := blades.NewAgent(
+	if err != nil {
+		log.Fatal(err)
+	}
+	codeRefactorerAgent, err := blades.NewAgent(
 		"CodeRefactorerAgent",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(provider),
@@ -68,10 +74,10 @@ Output *only* the final, refactored Python code block, enclosed in triple backti
 Do not add any other text before or after the code block.`),
 		blades.WithDescription("Refactors code based on review comments."),
 	)
-	var (
-		err    error
-		output *blades.Message
-	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var output *blades.Message
 	// Run the sequence with an initial user prompt
 	input := blades.UserMessage("Write a Python function that takes a list of integers and returns a new list containing only the even integers from the original list.")
 	// Create a session to track state across the flow

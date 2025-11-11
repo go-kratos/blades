@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/go-kratos/blades"
@@ -9,12 +10,15 @@ import (
 )
 
 func main() {
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"Server Agent",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	// Set up HTTP handler
 	mux := http.NewServeMux()
 	mux.HandleFunc("/streaming", func(w http.ResponseWriter, r *http.Request) {

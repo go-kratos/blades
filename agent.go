@@ -115,7 +115,7 @@ type agent struct {
 }
 
 // NewAgent creates a new Agent with the given name and options.
-func NewAgent(name string, opts ...AgentOption) Agent {
+func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 	a := &agent{
 		name:          name,
 		maxIterations: 10,
@@ -123,7 +123,10 @@ func NewAgent(name string, opts ...AgentOption) Agent {
 	for _, opt := range opts {
 		opt(a)
 	}
-	return a
+	if a.provider == nil {
+		return nil, ErrModelProvderRequired
+	}
+	return a, nil
 }
 
 // Name returns the name of the Agent.

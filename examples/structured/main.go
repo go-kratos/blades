@@ -20,12 +20,16 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"filmography",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithOutputSchema(schema),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	input := blades.UserMessage("Generate the filmography of 5 movies for Tom Hanks")
 	runner := blades.NewRunner(agent)
 	actorsFilms, err := runner.Run(context.Background(), input)

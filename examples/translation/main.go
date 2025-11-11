@@ -22,18 +22,24 @@ func init() {
 
 func main() {
 	flag.Parse()
-	tr := blades.NewAgent(
+	tr, err := blades.NewAgent(
 		"Document translator",
 		blades.WithModel("gpt-5"),
 		blades.WithInstructions("Translate the Chinese text within the given Markdown content to fluent, publication-quality English, perfectly preserving all Markdown syntax and structure, and outputting only the raw translated Markdown content."),
 		blades.WithProvider(openai.NewChatProvider()),
 	)
-	refine := blades.NewAgent(
+	if err != nil {
+		log.Fatal(err)
+	}
+	refine, err := blades.NewAgent(
 		"Refine Agent",
 		blades.WithModel("gpt-5"),
 		blades.WithInstructions("Polish the following translated Markdown text by refining its sentence structure and correcting grammatical errors to improve fluency and readability, while ensuring the original meaning and all Markdown \n  syntax remain unchanged"),
 		blades.WithProvider(openai.NewChatProvider()),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	content, err := os.ReadFile(input)
 	if err != nil {
 		log.Fatal(err)

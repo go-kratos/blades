@@ -9,12 +9,15 @@ import (
 )
 
 func main() {
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"History Tutor",
 		blades.WithModel("qwen-plus"),
 		blades.WithInstructions("You are a knowledgeable history tutor. Provide detailed and accurate information on historical events."),
 		blades.WithProvider(openai.NewChatProvider()),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	input := blades.UserMessage("Can you tell me about the causes of World War II?")
 	// Create a new session
 	session := blades.NewSession()

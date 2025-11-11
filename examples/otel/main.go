@@ -36,12 +36,15 @@ func main() {
 		),
 	)
 	// Create a blades agent with OpenTelemetry middleware
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"OpenTelemetry Agent",
 		blades.WithMiddleware(middleware.Tracing()),
 		blades.WithModel("qwen-max"),
 		blades.WithProvider(openai.NewChatProvider()),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	input := blades.UserMessage("Write a diary about spring, within 100 words")
 	runner := blades.NewRunner(agent)
 	msg, err := runner.Run(context.Background(), input)

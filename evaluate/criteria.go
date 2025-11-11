@@ -19,10 +19,13 @@ func NewCriteria(name string, opts ...blades.AgentOption) (*Criteria, error) {
 	if err != nil {
 		return nil, err
 	}
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		name,
 		append(opts, blades.WithOutputSchema(schema))...,
 	)
+	if err != nil {
+		return nil, err
+	}
 	return &Criteria{agent: agent}, nil
 }
 

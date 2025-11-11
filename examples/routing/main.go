@@ -19,28 +19,35 @@ type RoutingWorkflow struct {
 }
 
 // NewRoutingWorkflow creates a new RoutingWorkflow with the given model provider and routes.
-func NewRoutingWorkflow(routes map[string]string) *RoutingWorkflow {
+func NewRoutingWorkflow(routes map[string]string) (*RoutingWorkflow, error) {
 	provider := openai.NewChatProvider()
-	router := blades.NewAgent(
+	router, err := blades.NewAgent(
 		"triage_agent",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(provider),
 		blades.WithInstructions("You determine which agent to use based on the user's homework question"),
 	)
+	if err != nil {
+		return nil, err
+	}
 	agents := make(map[string]blades.Agent, len(routes))
 	for name, instructions := range routes {
-		agents[name] = blades.NewAgent(
+		agent, err := blades.NewAgent(
 			name,
 			blades.WithModel("gpt-5"),
 			blades.WithProvider(provider),
 			blades.WithInstructions(instructions),
 		)
+		if err != nil {
+			return nil, err
+		}
+		agents[name] = agent
 	}
 	return &RoutingWorkflow{
 		Agent:  router,
 		routes: routes,
 		agents: agents,
-	}
+	}, nil
 }
 
 // Run selects a route using the prompt content and streams from the chosen runner.
@@ -91,7 +98,10 @@ func main() {
 			"history_agent": "You provide assistance with historical queries. Explain important events and context clearly.",
 		}
 	)
-	routing := NewRoutingWorkflow(routes)
+	routing, err := NewRoutingWorkflow(routes)
+	if err != nil {
+		log.Fatal(err)
+	}
 	// Example prompt that will be routed to the history_agent
 	input := blades.UserMessage("What is the capital of France?")
 	runner := blades.NewRunner(routing)

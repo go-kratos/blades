@@ -11,6 +11,8 @@ var (
 	ErrNoAgentContext = errors.New("agent not found in context")
 	// ErrMissingInvocationContext is returned when an invocation context is missing from the context.
 	ErrNoInvocationContext = errors.New("invocation not found in context")
+	// ErrModelProvderRequired is returned when a model provider is not supplied where required.
+	ErrModelProvderRequired = errors.New("model provider is required")
 	// ErrMaxIterationsExceeded is returned when an agent exceeds the maximum allowed iterations.
 	ErrMaxIterationsExceeded = errors.New("maximum iterations exceeded in agent execution")
 	// ErrMissingFinalResponse is returned when an agent's stream ends without a final response.

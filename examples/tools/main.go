@@ -33,13 +33,16 @@ func main() {
 			return WeatherRes{Forecast: "Sunny, 25°C"}, nil
 		}),
 	)
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"Weather Agent",
 		blades.WithModel("gpt-5"),
 		blades.WithInstructions("You are a helpful assistant that provides weather information."),
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithTools(weatherTool),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	// Create a prompt asking for the weather in New York City
 	input := blades.UserMessage("What is the weather in New York City?")
 	// Run the agent with the prompt

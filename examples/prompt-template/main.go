@@ -26,12 +26,15 @@ func buildPrompt(params map[string]any) (string, error) {
 }
 
 func main() {
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"Template Agent",
 		blades.WithModel("gpt-5"),
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithInstructions("Please summarize {{.topic}} in three key points."),
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Define templates and params
 	params := map[string]any{
