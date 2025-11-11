@@ -187,13 +187,15 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*Mode
 		)
 		if invocation.Session != nil {
 			state = invocation.Session.State()
-		}
-		t, err := template.New("instructions").Parse(a.instructions)
-		if err != nil {
-			return nil, err
-		}
-		if err := t.Execute(&buf, state); err != nil {
-			return nil, err
+			t, err := template.New("instructions").Parse(a.instructions)
+			if err != nil {
+				return nil, err
+			}
+			if err := t.Execute(&buf, state); err != nil {
+				return nil, err
+			}
+		} else {
+			buf.WriteString(a.instructions)
 		}
 		req.Messages = append(req.Messages, SystemMessage(buf.String()))
 	}

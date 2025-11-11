@@ -29,5 +29,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	log.Println(session.State())
 	log.Println(message.Text())
 }
