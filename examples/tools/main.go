@@ -59,11 +59,11 @@ func main() {
 	}
 	log.Println("state:", session.State())
 	log.Println("output:", output.Text())
-	// Stream the response
-	for output, err := range runner.RunStream(context.Background(), input) {
+	// Stream the response with a different input
+	streamInput := blades.UserMessage("What is the weather in San Francisco?")
+	for output, err := range runner.RunStream(context.Background(), streamInput) {
 		if err != nil {
 			log.Fatal(err)
 		}
 		log.Printf("stream status: %s output: %s", output.Status, output.Text())
-	}
 }
