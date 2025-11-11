@@ -37,6 +37,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	// Create an agent with the weather tool
 	agent, err := blades.NewAgent(
 		"Weather Agent",
@@ -48,9 +49,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	// Create a prompt asking for the weather in New York City
 	input := blades.UserMessage("What is the weather in New York City?")
-	// Run the agent with the prompt
 	session := blades.NewSession()
 	runner := blades.NewRunner(agent, blades.WithSession(session))
 	output, err := runner.Run(context.Background(), input)
@@ -59,6 +60,7 @@ func main() {
 	}
 	log.Println("state:", session.State())
 	log.Println("output:", output.Text())
+
 	// Stream the response with a different input
 	streamInput := blades.UserMessage("What is the weather in San Francisco?")
 	for output, err := range runner.RunStream(context.Background(), streamInput) {
@@ -66,4 +68,5 @@ func main() {
 			log.Fatal(err)
 		}
 		log.Printf("stream status: %s output: %s", output.Status, output.Text())
+	}
 }
