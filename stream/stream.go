@@ -17,6 +17,13 @@ func Just[T any](values ...T) blades.Generator[T, error] {
 	}
 }
 
+// Error returns a blades.Generator that emits the provided error.
+func Error[T any](err error) blades.Generator[T, error] {
+	return func(yield func(T, error) bool) {
+		yield(*new(T), err)
+	}
+}
+
 // Filter returns a blades.Generator that emits only the values from the input stream
 // that satisfy the given predicate function.
 func Filter[T any](stream blades.Generator[T, error], predicate func(T) bool) blades.Generator[T, error] {

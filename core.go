@@ -14,6 +14,7 @@ type Invocation struct {
 	Resumable    bool
 	Streamable   bool
 	Message      *Message
+	History      []*Message
 	ModelOptions []ModelOption
 }
 
