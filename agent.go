@@ -203,7 +203,6 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*Mode
 	if len(invocation.History) > 0 {
 		req.Messages = append(req.Messages, invocation.History...)
 	}
-	fmt.Println("====", invocation.History)
 	// Append the current user message
 	if invocation.Message != nil {
 		req.Messages = append(req.Messages, invocation.Message)
