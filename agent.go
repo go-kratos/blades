@@ -124,7 +124,7 @@ func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 		opt(a)
 	}
 	if a.provider == nil {
-		return nil, ErrModelProvderRequired
+		return nil, ErrModelProviderRequired
 	}
 	return a, nil
 }
