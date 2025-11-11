@@ -10,7 +10,7 @@ import (
 
 func Logging(next blades.Handler) blades.Handler {
 	return blades.HandleFunc(func(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
-		log.Println("hisotry:", invocation.History)
+		log.Println("history:", invocation.History)
 		log.Println("message:", invocation.Message)
 		return next.Handle(ctx, invocation)
 	})
