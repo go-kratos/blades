@@ -194,6 +194,9 @@ func NewMessageID() string {
 // setMessageContext sets the author and invocation ID for the given messages.
 func setMessageContext(author, invocationID string, messages ...*Message) []*Message {
 	for _, message := range messages {
+		if message == nil {
+			continue
+		}
 		message.Author = author
 		message.InvocationID = invocationID
 	}

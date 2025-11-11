@@ -80,11 +80,11 @@ type Memory interface {
 package main
 
 import (
-	"context"
-	"log"
+    "context"
+    "log"
 
-	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/contrib/openai"
+    "github.com/go-kratos/blades"
+    "github.com/go-kratos/blades/contrib/openai"
 )
 
 func main() {

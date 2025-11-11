@@ -61,6 +61,10 @@ func (t *tracing) Start(ctx context.Context, agent blades.AgentContext, invocati
 	for _, opt := range invocation.ModelOptions {
 		opt(mo)
 	}
+	var sessionID string
+	if invocation.Session != nil {
+		sessionID = invocation.Session.ID()
+	}
 	span.SetAttributes(
 		semconv.GenAIOperationNameInvokeAgent,
 		semconv.GenAISystemKey.String(t.system),
@@ -73,7 +77,7 @@ func (t *tracing) Start(ctx context.Context, agent blades.AgentContext, invocati
 		semconv.GenAIRequestStopSequences(mo.StopSequences...),
 		semconv.GenAIRequestPresencePenalty(mo.PresencePenalty),
 		semconv.GenAIRequestFrequencyPenalty(mo.FrequencyPenalty),
-		semconv.GenAIConversationID(invocation.Session.ID()),
+		semconv.GenAIConversationID(sessionID),
 	)
 	return ctx, span
 }

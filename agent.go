@@ -53,13 +53,6 @@ func WithOutputSchema(schema *jsonschema.Schema) AgentOption {
 	}
 }
 
-// WithOutputKey sets the output key for storing the Agent's output in the session state.
-func WithOutputKey(key string) AgentOption {
-	return func(a *agent) {
-		a.outputKey = key
-	}
-}
-
 // WithProvider sets the model provider for the Agent.
 func WithProvider(provider ModelProvider) AgentOption {
 	return func(a *agent) {
@@ -104,7 +97,6 @@ type agent struct {
 	model         string
 	description   string
 	instructions  string
-	outputKey     string
 	maxIterations int
 	inputSchema   *jsonschema.Schema
 	outputSchema  *jsonschema.Schema
@@ -189,12 +181,18 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*Mode
 	}
 	// system messages
 	if a.instructions != "" {
-		var buf strings.Builder
+		var (
+			state State
+			buf   strings.Builder
+		)
+		if invocation.Session != nil {
+			state = invocation.Session.State()
+		}
 		t, err := template.New("instructions").Parse(a.instructions)
 		if err != nil {
 			return nil, err
 		}
-		if err := t.Execute(&buf, invocation.Session.State()); err != nil {
+		if err := t.Execute(&buf, state); err != nil {
 			return nil, err
 		}
 		req.Messages = append(req.Messages, SystemMessage(buf.String()))
@@ -209,12 +207,6 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*Mode
 // Run runs the agent with the given prompt and options, returning a streamable response.
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
-		// Create a new session if none exists
-		// This ensures that each invocation has its own session context.
-		if invocation.Session == nil {
-			invocation.Session = NewSession()
-			ctx = NewSessionContext(ctx, invocation.Session)
-		}
 		ctx = NewAgentContext(ctx, a)
 		// If resumable and a completed message exists, return it directly.
 		if message, ok := a.findResumeMessage(ctx, invocation); ok {
@@ -242,7 +234,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 }
 
 func (a *agent) findResumeMessage(ctx context.Context, invocation *Invocation) (*Message, bool) {
-	if !invocation.Resumable {
+	if !invocation.Resumable || invocation.Session == nil {
 		return nil, false
 	}
 	for _, m := range invocation.Session.History() {
@@ -254,22 +246,10 @@ func (a *agent) findResumeMessage(ctx context.Context, invocation *Invocation) (
 	return nil, false
 }
 
-// storeSession stores the agent's output to session state (if outputKey is defined) and appends messages to session history.
+// storeSession stores the conversation messages in the session.
 func (a *agent) storeSession(ctx context.Context, invocation *Invocation, toolMessages []*Message, assistantMessage *Message) error {
-	if a.outputKey != "" {
-		if a.outputSchema != nil {
-			value, err := ParseMessageState(assistantMessage, a.outputSchema)
-			if err != nil {
-				return err
-			}
-			if err := invocation.Session.PutState(a.outputKey, value); err != nil {
-				return err
-			}
-		} else {
-			if err := invocation.Session.PutState(a.outputKey, assistantMessage.Text()); err != nil {
-				return err
-			}
-		}
+	if invocation.Session == nil {
+		return nil
 	}
 	stores := make([]*Message, 0, len(toolMessages)+2)
 	stores = append(stores, setMessageContext("user", invocation.ID, invocation.Message)...)

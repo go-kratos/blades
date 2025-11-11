@@ -80,11 +80,11 @@ The following is a simple chat Agent example demonstrating how to use the OpenAI
 package main
 
 import (
-	"context"
-	"log"
+    "context"
+    "log"
 
-	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/contrib/openai"
+    "github.com/go-kratos/blades"
+    "github.com/go-kratos/blades/contrib/openai"
 )
 
 func main() {

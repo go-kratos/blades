@@ -23,11 +23,10 @@ func main() {
 		log.Fatal(err)
 	}
 	input := blades.UserMessage("What is the capital of France?")
-	// Run example
 	runner := blades.NewRunner(agent)
 	output, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(output.Text())
+	log.Println("runner:", output.Text())
 }

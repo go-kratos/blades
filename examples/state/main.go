@@ -12,27 +12,26 @@ func main() {
 	provider := openai.NewChatProvider()
 	codeWriterAgent, err := blades.NewAgent(
 		"CodeWriterAgent",
-		blades.WithModel("gpt-5"),
+		blades.WithModel("deepseek-chat"),
 		blades.WithProvider(provider),
 		blades.WithInstructions(`You are a Python Code Generator.
 Based *only* on the user's request, write Python code that fulfills the requirement.
 Output *only* the complete Python code block, enclosed in triple backticks ("python ... "). 
 Do not add any other text before or after the code block.`),
 		blades.WithDescription("Writes initial Python code based on a specification."),
-		blades.WithOutputKey("generated_code"),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 	codeReviewerAgent, err := blades.NewAgent(
 		"CodeReviewerAgent",
-		blades.WithModel("gpt-5"),
+		blades.WithModel("deepseek-chat"),
 		blades.WithProvider(provider),
 		blades.WithInstructions(`You are an expert Python Code Reviewer. 
     Your task is to provide constructive feedback on the provided code.
 
     **Code to Review:**
-	{{.generated_code}}
+	{{.CodeWriterAgent}}
 
 **Review Criteria:**
 1.  **Correctness:** Does the code work as intended? Are there logic errors?
@@ -46,23 +45,22 @@ Provide your feedback as a concise, bulleted list. Focus on the most important p
 If the code is excellent and requires no changes, simply state: "No major issues found."
 Output *only* the review comments or the "No major issues" statement.`),
 		blades.WithDescription("Reviews code and provides feedback."),
-		blades.WithOutputKey("review_comments"),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 	codeRefactorerAgent, err := blades.NewAgent(
 		"CodeRefactorerAgent",
-		blades.WithModel("gpt-5"),
+		blades.WithModel("deepseek-chat"),
 		blades.WithProvider(provider),
 		blades.WithInstructions(`You are a Python Code Refactoring AI.
 Your goal is to improve the given Python code based on the provided review comments.
 
   **Original Code:**
-  {{.generated_code}}
+  {{.CodeWriterAgent}}
 
   **Review Comments:**
-  {{.review_comments}}
+  {{.CodeReviewerAgent}}
 
 **Task:**
 Carefully apply the suggestions from the review comments to refactor the original code.
@@ -88,8 +86,8 @@ Do not add any other text before or after the code block.`),
 		if err != nil {
 			log.Fatal(err)
 		}
-		input = output
+		input = nil
+		session.PutState(agent.Name(), output.Text())
+		log.Println(agent.Name(), output.Text())
 	}
-	log.Println(session.State())
-	log.Println(output.Text())
 }
