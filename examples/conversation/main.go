@@ -30,16 +30,20 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	session := blades.NewSession()
-	runner := blades.NewRunner(agent, blades.WithSession(session))
-	output, err := runner.Run(context.Background(), blades.UserMessage("What is the capital of France?"))
-	if err != nil {
-		log.Fatal(err)
+	var (
+		session = blades.NewSession()
+		inputs  = []*blades.Message{
+			blades.UserMessage("What is the capital of France?"),
+			blades.UserMessage("And what is the population?"),
+			blades.UserMessage("Summarize in one sentence."),
+		}
+	)
+	for _, input := range inputs {
+		runner := blades.NewRunner(agent, blades.WithSession(session))
+		output, err := runner.Run(context.Background(), input)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Println(output.Text())
 	}
-	output2, err := runner.Run(context.Background(), blades.UserMessage("And what is the population?"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println(output.Text())
-	log.Println(output2.Text())
 }
