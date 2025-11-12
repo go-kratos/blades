@@ -30,7 +30,7 @@ func main() {
 			if !ok {
 				return WeatherRes{}, blades.ErrNoSessionContext
 			}
-			session.PutState("location", req.Location)
+			session.PutState(ctx, "location", req.Location)
 			return WeatherRes{Forecast: "Sunny, 25°C"}, nil
 		}),
 	)
@@ -54,11 +54,12 @@ func main() {
 	input := blades.UserMessage("What is the weather in New York City?")
 	session := blades.NewSession()
 	runner := blades.NewRunner(agent, blades.WithSession(session))
-	output, err := runner.Run(context.Background(), input)
+	ctx := context.Background()
+	output, err := runner.Run(ctx, input)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("state:", session.State())
+	log.Println("state:", session.State(ctx))
 	log.Println("output:", output.Text())
 
 	// Stream the response with a different input

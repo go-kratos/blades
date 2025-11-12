@@ -80,14 +80,15 @@ Do not add any other text before or after the code block.`),
 	input := blades.UserMessage("Write a Python function that takes a list of integers and returns a new list containing only the even integers from the original list.")
 	// Create a session to track state across the flow
 	session := blades.NewSession()
+	ctx := context.Background()
 	for _, agent := range []blades.Agent{codeWriterAgent, codeReviewerAgent, codeRefactorerAgent} {
 		runner := blades.NewRunner(agent, blades.WithSession(session))
-		output, err = runner.Run(context.Background(), input)
+		output, err = runner.Run(ctx, input)
 		if err != nil {
 			log.Fatal(err)
 		}
 		input = nil
-		session.PutState(agent.Name(), output.Text())
+		session.PutState(ctx, agent.Name(), output.Text())
 		log.Println(agent.Name(), output.Text())
 	}
 }

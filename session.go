@@ -11,9 +11,9 @@ import (
 // Session holds the state of a flow along with a unique session ID.
 type Session interface {
 	ID() string
-	State() State
-	History() ([]*Message, error)
-	PutState(key string, value any) error
+	State(context.Context) State
+	PutState(context.Context, string, any) error
+	History(context.Context) ([]*Message, error)
 	Append(context.Context, []*Message) error
 }
 
@@ -53,17 +53,17 @@ type sessionInMemory struct {
 func (s *sessionInMemory) ID() string {
 	return s.id
 }
-func (s *sessionInMemory) State() State {
+func (s *sessionInMemory) State(context.Context) State {
 	s.m.RLock()
 	defer s.m.RUnlock()
 	return s.state.Clone()
 }
-func (s *sessionInMemory) History() ([]*Message, error) {
+func (s *sessionInMemory) History(context.Context) ([]*Message, error) {
 	s.m.RLock()
 	defer s.m.RUnlock()
 	return slices.Clone(s.history), nil
 }
-func (s *sessionInMemory) PutState(key string, value any) error {
+func (s *sessionInMemory) PutState(ctx context.Context, key string, value any) error {
 	s.m.Lock()
 	defer s.m.Unlock()
 	s.state[key] = value

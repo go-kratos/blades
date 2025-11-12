@@ -186,7 +186,7 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*Mode
 			buf   strings.Builder
 		)
 		if invocation.Session != nil {
-			state = invocation.Session.State()
+			state = invocation.Session.State(ctx)
 			t, err := template.New("instructions").Parse(a.instructions)
 			if err != nil {
 				return nil, err
@@ -249,7 +249,7 @@ func (a *agent) findResumeMessage(ctx context.Context, invocation *Invocation) (
 	if !invocation.Resumable || invocation.Session == nil {
 		return nil, nil
 	}
-	history, err := invocation.Session.History()
+	history, err := invocation.Session.History(ctx)
 	if err != nil {
 		return nil, err
 	}
