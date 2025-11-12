@@ -30,7 +30,7 @@ func main() {
 			if !ok {
 				return WeatherRes{}, blades.ErrNoSessionContext
 			}
-			session.PutState(ctx, "location", req.Location)
+			session.PutState("location", req.Location)
 			return WeatherRes{Forecast: "Sunny, 25°C"}, nil
 		}),
 	)
@@ -59,7 +59,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("state:", session.State(ctx))
+	log.Println("state:", session.State())
 	log.Println("output:", output.Text())
 
 	// Stream the response with a different input

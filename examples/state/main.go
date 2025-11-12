@@ -88,7 +88,7 @@ Do not add any other text before or after the code block.`),
 			log.Fatal(err)
 		}
 		input = nil
-		session.PutState(ctx, agent.Name(), output.Text())
+		session.PutState(agent.Name(), output.Text())
 		log.Println(agent.Name(), output.Text())
 	}
 }
