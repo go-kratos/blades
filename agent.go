@@ -296,6 +296,7 @@ func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, e
 	for i, part := range message.Parts {
 		switch v := any(part).(type) {
 		case ToolPart:
+			i, v := i, v
 			eg.Go(func() error {
 				part, err := a.handleTools(ctx, v)
 				if err != nil {
