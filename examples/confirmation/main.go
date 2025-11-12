@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
+	"github.com/go-kratos/blades/middleware"
 )
 
 // confirmPrompt is a simple interactive confirmer that asks the user
@@ -37,7 +38,7 @@ func main() {
 		blades.WithModel("gpt-5"),
 		blades.WithInstructions("Answer clearly and concisely."),
 		blades.WithProvider(openai.NewChatProvider()),
-		blades.WithMiddleware(blades.Confirm(confirmPrompt)),
+		blades.WithMiddleware(middleware.Confirm(confirmPrompt)),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -48,7 +49,7 @@ func main() {
 	runner := blades.NewRunner(agent)
 	output, err := runner.Run(context.Background(), input)
 	if err != nil {
-		if errors.Is(err, blades.ErrConfirmDenied) {
+		if errors.Is(err, middleware.ErrConfirmDenied) {
 			log.Println("Confirmation denied. Aborting.")
 			return
 		}

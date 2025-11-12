@@ -24,6 +24,6 @@ build:
 test:
 	@for dir in $(GO_MODULE_DIRS); do \
 		echo "[TEST] $$dir"; \
-		(cd $$dir && go test ./...); \
+		(cd $$dir && go test -race ./...); \
 	done
 

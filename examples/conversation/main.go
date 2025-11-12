@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
+	"github.com/go-kratos/blades/middleware"
 )
 
 func Logging(next blades.Handler) blades.Handler {
@@ -23,7 +24,7 @@ func main() {
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
 		blades.WithMiddleware(
-			blades.ConversationBuffered(5),
+			middleware.ConversationBuffered(5),
 			Logging,
 		),
 	)

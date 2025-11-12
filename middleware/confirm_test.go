@@ -1,8 +1,10 @@
-package blades
+package middleware
 
 import (
 	"context"
 	"testing"
+
+	"github.com/go-kratos/blades"
 )
 
 func TestConfirmMiddleware_Run(t *testing.T) {
@@ -15,7 +17,7 @@ func TestConfirmMiddleware_Run(t *testing.T) {
 	}{
 		{
 			name: "allowed",
-			confirm: func(context.Context, *Message) (bool, error) {
+			confirm: func(context.Context, *blades.Message) (bool, error) {
 				return true, nil
 			},
 			wantErr:  nil,
@@ -23,23 +25,23 @@ func TestConfirmMiddleware_Run(t *testing.T) {
 		},
 		{
 			name: "denied",
-			confirm: func(context.Context, *Message) (bool, error) {
+			confirm: func(context.Context, *blades.Message) (bool, error) {
 				return false, nil
 			},
 			wantErr: ErrConfirmDenied,
 		},
 		{
 			name: "error",
-			confirm: func(context.Context, *Message) (bool, error) {
-				return false, ErrNoFinalResponse
+			confirm: func(context.Context, *blades.Message) (bool, error) {
+				return false, blades.ErrNoFinalResponse
 			},
-			wantErr: ErrNoFinalResponse,
+			wantErr: blades.ErrNoFinalResponse,
 		},
 	}
 
-	next := HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
-		return func(yield func(*Message, error) bool) {
-			yield(AssistantMessage("OK"), nil)
+	next := blades.HandleFunc(func(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
+		return func(yield func(*blades.Message, error) bool) {
+			yield(blades.AssistantMessage("OK"), nil)
 		}
 	})
 
@@ -47,10 +49,10 @@ func TestConfirmMiddleware_Run(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mw := Confirm(tt.confirm)
 			h := mw(next)
-			for got, err := range h.Handle(context.Background(), &Invocation{
+			for got, err := range h.Handle(context.Background(), &blades.Invocation{
 				ID:        "test-invocation-id",
-				Message:   UserMessage("test"),
-				Session:   NewSession(),
+				Message:   blades.UserMessage("test"),
+				Session:   blades.NewSession(),
 				Resumable: false,
 			}) {
 				if tt.wantErr != nil {
