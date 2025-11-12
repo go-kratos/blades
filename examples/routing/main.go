@@ -79,9 +79,7 @@ func (r *RoutingWorkflow) selectRoute(ctx context.Context, invocation *blades.In
 		return nil, err
 	}
 	buf.WriteString(string(routes))
-	invocation = invocation.Clone()
-	invocation.Message = blades.UserMessage(buf.String())
-	for res, err := range r.Agent.Run(ctx, invocation) {
+	for res, err := range r.Agent.Run(ctx, blades.NewInvocation(blades.UserMessage(buf.String()))) {
 		if err != nil {
 			return nil, err
 		}

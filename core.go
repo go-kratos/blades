@@ -48,9 +48,3 @@ func NewInvocation(message *Message, opts ...ModelOption) *Invocation {
 		ModelOptions: opts,
 	}
 }
-
-// Clone creates a deep copy of the Invocation.
-func (i *Invocation) Clone() *Invocation {
-	clone := *i
-	return &clone
-}
