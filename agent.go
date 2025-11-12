@@ -131,6 +131,11 @@ func (a *agent) Model() string {
 	return a.model
 }
 
+// Tools returns the tools of the Agent.
+func (a *agent) Tools() []tools.Tool {
+	return a.tools
+}
+
 // Description returns the description of the Agent.
 func (a *agent) Description() string {
 	return a.description

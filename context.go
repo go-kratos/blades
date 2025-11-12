@@ -1,6 +1,11 @@
 package blades
 
-import "context"
+import (
+	"context"
+
+	"github.com/go-kratos/blades/tools"
+	"github.com/google/jsonschema-go/jsonschema"
+)
 
 // AgentContext holds information about the agent handling the request.
 type AgentContext interface {
@@ -8,6 +13,9 @@ type AgentContext interface {
 	Model() string
 	Description() string
 	Instructions() string
+	Tools() []tools.Tool
+	InputSchema() *jsonschema.Schema
+	OutputSchema() *jsonschema.Schema
 }
 
 type ctxAgentKey struct{}

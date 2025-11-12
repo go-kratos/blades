@@ -23,7 +23,7 @@ func ConversationBuffered(maxMessage int) blades.Middleware {
 			session, ok := blades.FromSessionContext(ctx)
 			if ok {
 				// Append the session history to the invocation history
-				invocation.History = append([]*blades.Message{}, trimMessage(session.History())...)
+				invocation.History = append(invocation.History, trimMessage(session.History())...)
 			}
 			return next.Handle(ctx, invocation)
 		})
