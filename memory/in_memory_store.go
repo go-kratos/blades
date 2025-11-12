@@ -31,11 +31,7 @@ func (s *InMemoryStore) AddMemory(ctx context.Context, m *Memory) error {
 func (s *InMemoryStore) SaveSession(ctx context.Context, session blades.Session) error {
 	s.m.Lock()
 	defer s.m.Unlock()
-	history, err := session.History()
-	if err != nil {
-		return err
-	}
-	for _, m := range history {
+	for _, m := range session.History() {
 		s.AddMemory(ctx, &Memory{Content: m})
 	}
 	return nil

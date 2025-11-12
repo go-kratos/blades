@@ -249,11 +249,7 @@ func (a *agent) findResumeMessage(ctx context.Context, invocation *Invocation) (
 	if !invocation.Resumable || invocation.Session == nil {
 		return nil, nil
 	}
-	history, err := invocation.Session.History()
-	if err != nil {
-		return nil, err
-	}
-	for _, m := range history {
+	for _, m := range invocation.Session.History() {
 		if m.InvocationID == invocation.ID &&
 			m.Author == a.name && m.Role == RoleAssistant && m.Status == StatusCompleted {
 			return m, nil

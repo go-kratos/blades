@@ -18,14 +18,8 @@ func ConversationBuffered(maxMessage int) Middleware {
 		return HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 			session, ok := FromSessionContext(ctx)
 			if ok {
-				history, err := session.History()
-				if err != nil {
-					return func(yield func(*Message, error) bool) {
-						yield(nil, err)
-					}
-				}
 				// Append the session history to the invocation history
-				invocation.History = trimMessage(history)
+				invocation.History = trimMessage(session.History())
 			}
 			return next.Handle(ctx, invocation)
 		})
