@@ -201,9 +201,6 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation, instru
 		InputSchema:  a.inputSchema,
 		OutputSchema: a.outputSchema,
 	}
-	if instructions != nil {
-		req.Messages = append(req.Messages, instructions)
-	}
 	if len(invocation.History) > 0 {
 		req.Messages = append(req.Messages, invocation.History...)
 	}
