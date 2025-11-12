@@ -25,7 +25,7 @@ func ConversationBuffer(maxMessage int) Middleware {
 					}
 				}
 				// Append the session history to the invocation history
-				invocation.History = append(invocation.History, trimMessage(history)...)
+				invocation.History = trimMessage(history)
 			}
 			return next.Handle(ctx, invocation)
 		})
