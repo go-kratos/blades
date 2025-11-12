@@ -19,7 +19,7 @@ func ConversationBuffered(maxMessage int) Middleware {
 			session, ok := FromSessionContext(ctx)
 			if ok {
 				// Append the session history to the invocation history
-				invocation.History = trimMessage(session.History())
+				invocation.History = append([]*Message{}, trimMessage(session.History())...)
 			}
 			return next.Handle(ctx, invocation)
 		})
