@@ -129,9 +129,6 @@ func (p *AudioProvider) applyOptions(params *openai.AudioSpeechNewParams, opt bl
 	if opt.StreamFormat != "" {
 		params.StreamFormat = openai.AudioSpeechNewParamsStreamFormat(opt.StreamFormat)
 	}
-	if opt.Instructions != "" {
-		params.Instructions = param.NewOpt(opt.Instructions)
-	}
 	if opt.Speed > 0 {
 		params.Speed = param.NewOpt(opt.Speed)
 	}

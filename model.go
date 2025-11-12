@@ -44,7 +44,6 @@ type AudioOptions struct {
 	Voice          string
 	ResponseFormat string
 	StreamFormat   string
-	Instructions   string
 	Speed          float64
 }
 

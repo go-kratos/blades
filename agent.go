@@ -11,10 +11,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var (
-	_ AgentContext = (*agent)(nil)
-)
-
 // AgentOption is an option for configuring the Agent.
 type AgentOption func(*agent)
 
@@ -172,19 +168,8 @@ func (a *agent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
 	return tools, nil
 }
 
-// buildRequest builds the request for the Agent by combining system instructions and user messages.
-func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*ModelRequest, error) {
-	resolvedTools, err := a.resolveTools(ctx)
-	if err != nil {
-		return nil, err
-	}
-	req := ModelRequest{
-		Model:        a.model,
-		Tools:        resolvedTools,
-		InputSchema:  a.inputSchema,
-		OutputSchema: a.outputSchema,
-	}
-	// Process system instructions with template if session state is available
+// buildInstruction builds the system instruction message for the Agent.
+func (a *agent) buildInstruction(ctx context.Context, invocation *Invocation) (*Message, error) {
 	if a.instructions != "" {
 		var (
 			state State
@@ -202,13 +187,26 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*Mode
 		} else {
 			buf.WriteString(a.instructions)
 		}
-		req.Instruction = SystemMessage(buf.String())
+		return SystemMessage(buf.String()), nil
 	}
-	// Append history and the current message
+	return nil, nil
+}
+
+// buildRequest builds the request for the Agent by combining system instructions and user messages.
+func (a *agent) buildRequest(ctx context.Context, invocation *Invocation, instructions *Message, resolvedTools []tools.Tool) (*ModelRequest, error) {
+	req := ModelRequest{
+		Model:        a.model,
+		Tools:        resolvedTools,
+		Instruction:  instructions,
+		InputSchema:  a.inputSchema,
+		OutputSchema: a.outputSchema,
+	}
+	if instructions != nil {
+		req.Messages = append(req.Messages, instructions)
+	}
 	if len(invocation.History) > 0 {
 		req.Messages = append(req.Messages, invocation.History...)
 	}
-	// Append the current user message
 	if invocation.Message != nil {
 		req.Messages = append(req.Messages, invocation.Message)
 	}
@@ -218,14 +216,31 @@ func (a *agent) buildRequest(ctx context.Context, invocation *Invocation) (*Mode
 // Run runs the agent with the given prompt and options, returning a streamable response.
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
+		resolvedTools, err := a.resolveTools(ctx)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		instruction, err := a.buildInstruction(ctx, invocation)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
 		ctx = NewAgentContext(ctx, a)
+		ctx = NewModelContext(ctx, &modelContext{
+			model:        a.model,
+			tools:        resolvedTools,
+			instruction:  instruction,
+			inputSchema:  a.inputSchema,
+			outputSchema: a.outputSchema,
+		})
 		// If resumable and a completed message exists, return it directly.
 		if resumeMessage, ok := a.findResumeMessage(ctx, invocation); ok {
 			yield(resumeMessage, nil)
 			return
 		}
 		handler := Handler(HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
-			req, err := a.buildRequest(ctx, invocation)
+			req, err := a.buildRequest(ctx, invocation, instruction, resolvedTools)
 			if err != nil {
 				return func(yield func(*Message, error) bool) {
 					yield(nil, err)

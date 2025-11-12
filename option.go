@@ -147,13 +147,6 @@ func AudioStreamFormat(format string) ModelOption {
 	}
 }
 
-// AudioInstructions provide additional guidance on the delivery of speech.
-func AudioInstructions(instructions string) ModelOption {
-	return func(o *ModelOptions) {
-		o.Audio.Instructions = instructions
-	}
-}
-
 // AudioSpeed sets the playback speed multiplier (0.25 - 4.0).
 func AudioSpeed(speed float64) ModelOption {
 	return func(o *ModelOptions) {
