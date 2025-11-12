@@ -7,6 +7,15 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
+// ModelContext defines the interface for accessing model-related information
+type ModelContext interface {
+	Model() string
+	Tools() []tools.Tool
+	Instruction() *Message
+	InputSchema() *jsonschema.Schema
+	OutputSchema() *jsonschema.Schema
+}
+
 type ctxAgentKey struct{}
 
 // NewAgentContext returns a new context with the given AgentContext.
@@ -18,15 +27,6 @@ func NewAgentContext(ctx context.Context, agent Agent) context.Context {
 func FromAgentContext(ctx context.Context) (Agent, bool) {
 	agent, ok := ctx.Value(ctxAgentKey{}).(Agent)
 	return agent, ok
-}
-
-// ModelContext defines the interface for accessing model-related information
-type ModelContext interface {
-	Model() string
-	Tools() []tools.Tool
-	Instruction() *Message
-	InputSchema() *jsonschema.Schema
-	OutputSchema() *jsonschema.Schema
 }
 
 type ctxModelKey struct{}
