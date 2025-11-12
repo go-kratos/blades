@@ -215,12 +215,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 	return func(yield func(*Message, error) bool) {
 		ctx = NewAgentContext(ctx, a)
 		// If resumable and a completed message exists, return it directly.
-		resumeMessage, err := a.findResumeMessage(ctx, invocation)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		if resumeMessage != nil {
+		if resumeMessage, ok := a.findResumeMessage(ctx, invocation); ok {
 			yield(resumeMessage, nil)
 			return
 		}
@@ -245,17 +240,17 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 	}
 }
 
-func (a *agent) findResumeMessage(ctx context.Context, invocation *Invocation) (*Message, error) {
+func (a *agent) findResumeMessage(ctx context.Context, invocation *Invocation) (*Message, bool) {
 	if !invocation.Resumable || invocation.Session == nil {
-		return nil, nil
+		return nil, false
 	}
 	for _, m := range invocation.Session.History() {
 		if m.InvocationID == invocation.ID &&
 			m.Author == a.name && m.Role == RoleAssistant && m.Status == StatusCompleted {
-			return m, nil
+			return m, true
 		}
 	}
-	return nil, nil
+	return nil, false
 }
 
 // storeSession stores the conversation messages in the session.
