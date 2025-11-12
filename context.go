@@ -14,7 +14,7 @@ func NewAgentContext(ctx context.Context, agent Agent) context.Context {
 	return context.WithValue(ctx, ctxAgentKey{}, agent)
 }
 
-// FromContext retrieves the AgentContext from the context, if present.
+// FromAgentContext retrieves the AgentContext from the context, if present.
 func FromAgentContext(ctx context.Context) (Agent, bool) {
 	agent, ok := ctx.Value(ctxAgentKey{}).(Agent)
 	return agent, ok
