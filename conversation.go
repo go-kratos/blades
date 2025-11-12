@@ -2,10 +2,10 @@ package blades
 
 import "context"
 
-// Conversation is a middleware that manages conversation history within a session.
+// ConversationBuffered is a middleware that manages conversation history within a session.
 // It appends the session's message history to the invocation's history before processing.
 // The maxMessage parameter limits the number of messages retained from the session history.
-func ConversationBuffer(maxMessage int) Middleware {
+func ConversationBuffered(maxMessage int) Middleware {
 	// trimMessage trims the message slice to the maximum allowed messages
 	trimMessage := func(messages []*Message) []*Message {
 		if maxMessage <= 0 || len(messages) <= maxMessage {

@@ -23,7 +23,7 @@ func main() {
 		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
 		blades.WithMiddleware(
-			blades.ConversationBuffer(5),
+			blades.ConversationBuffered(5),
 			Logging,
 		),
 	)
