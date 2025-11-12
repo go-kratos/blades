@@ -192,24 +192,6 @@ func (a *agent) buildInstruction(ctx context.Context, invocation *Invocation) (*
 	return nil, nil
 }
 
-// buildRequest builds the request for the Agent by combining system instructions and user messages.
-func (a *agent) buildRequest(ctx context.Context, invocation *Invocation, instructions *Message, resolvedTools []tools.Tool) (*ModelRequest, error) {
-	req := ModelRequest{
-		Model:        a.model,
-		Tools:        resolvedTools,
-		Instruction:  instructions,
-		InputSchema:  a.inputSchema,
-		OutputSchema: a.outputSchema,
-	}
-	if len(invocation.History) > 0 {
-		req.Messages = append(req.Messages, invocation.History...)
-	}
-	if invocation.Message != nil {
-		req.Messages = append(req.Messages, invocation.Message)
-	}
-	return &req, nil
-}
-
 // Run runs the agent with the given prompt and options, returning a streamable response.
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
@@ -237,11 +219,18 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			return
 		}
 		handler := Handler(HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
-			req, err := a.buildRequest(ctx, invocation, instruction, resolvedTools)
-			if err != nil {
-				return func(yield func(*Message, error) bool) {
-					yield(nil, err)
-				}
+			req := &ModelRequest{
+				Model:        a.model,
+				Tools:        resolvedTools,
+				Instruction:  instruction,
+				InputSchema:  a.inputSchema,
+				OutputSchema: a.outputSchema,
+			}
+			if len(invocation.History) > 0 {
+				req.Messages = append(req.Messages, invocation.History...)
+			}
+			if invocation.Message != nil {
+				req.Messages = append(req.Messages, invocation.Message)
 			}
 			return a.handle(ctx, invocation, req)
 		}))
