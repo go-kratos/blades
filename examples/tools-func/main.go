@@ -19,12 +19,21 @@ type WeatherRes struct {
 	Forecast string `json:"forecast" jsonschema:"The weather forecast"`
 }
 
+func logger() tools.Middleware[WeatherReq, WeatherRes] {
+	return func(next tools.Handler[WeatherReq, WeatherRes]) tools.Handler[WeatherReq, WeatherRes] {
+		return tools.HandleFunc[WeatherReq, WeatherRes](func(ctx context.Context, req WeatherReq) (WeatherRes, error) {
+			log.Println("Request received for location:", req.Location)
+			return next.Handle(ctx, req)
+		})
+	}
+}
+
 func main() {
 	// Define a tool to get the weather
 	weatherTool, err := tools.NewFunc(
 		"get_weather",
 		"Get the current weather for a given city",
-		tools.HandleFunc[WeatherReq, WeatherRes](func(ctx context.Context, req WeatherReq) (WeatherRes, error) {
+		tools.ApplyMiddlewares(tools.HandleFunc[WeatherReq, WeatherRes](func(ctx context.Context, req WeatherReq) (WeatherRes, error) {
 			log.Println("Fetching weather for:", req.Location)
 			session, ok := blades.FromSessionContext(ctx)
 			if !ok {
@@ -32,7 +41,7 @@ func main() {
 			}
 			session.PutState("location", req.Location)
 			return WeatherRes{Forecast: "Sunny, 25°C"}, nil
-		}),
+		}), logger()),
 	)
 	if err != nil {
 		log.Fatal(err)
