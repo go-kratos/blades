@@ -43,9 +43,6 @@ type ClientConfig struct {
 
 // validate checks if the configuration is valid
 func (c *ClientConfig) validate() error {
-	if c.Timeout < 0 {
-		c.Timeout = 30 * time.Second
-	}
 	switch c.Transport {
 	case TransportStdio:
 		if c.Command == "" {

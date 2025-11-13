@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
-	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
@@ -17,15 +18,20 @@ var _ tools.Resolver = (*Client)(nil)
 
 // Client wraps the official MCP SDK client for a single server connection.
 type Client struct {
-	config    *ClientConfig
+	config    ClientConfig
 	client    *mcp.Client
 	session   *mcp.ClientSession
-	mu        sync.Mutex
-	connected bool
+	connected atomic.Bool
+
+	reconnectCtx    context.Context
+	reconnectCancel context.CancelFunc
 }
 
 // NewClient creates a new MCP client.
-func NewClient(config *ClientConfig) (*Client, error) {
+func NewClient(config ClientConfig) (*Client, error) {
+	if config.Timeout <= 0 {
+		config.Timeout = 30 * time.Second
+	}
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
@@ -33,21 +39,20 @@ func NewClient(config *ClientConfig) (*Client, error) {
 		Name:    config.Name,
 		Version: blades.Version,
 	}, nil)
-	return &Client{
+	c := &Client{
 		config: config,
 		client: client,
-	}, nil
+	}
+	c.reconnectCtx, c.reconnectCancel = context.WithCancel(context.Background())
+	go c.reconnect(c.reconnectCtx)
+	return c, nil
 }
 
 // Connect establishes connection to the MCP server.
 func (c *Client) Connect(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.connected {
+	if c.connected.Load() {
 		return nil
 	}
-
 	var (
 		err       error
 		transport mcp.Transport
@@ -71,9 +76,8 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("mcp [%s] connect: %w", c.config.Name, err)
 	}
-
 	c.session = session
-	c.connected = true
+	c.connected.Store(true)
 	return nil
 }
 
@@ -113,7 +117,7 @@ func (c *Client) createStreamableTransport() (mcp.Transport, error) {
 
 // ListTools lists all available tools from the server.
 func (c *Client) ListTools(ctx context.Context) ([]*mcp.Tool, error) {
-	if !c.connected {
+	if !c.connected.Load() {
 		if err := c.Connect(ctx); err != nil {
 			return nil, err
 		}
@@ -168,7 +172,7 @@ func (c *Client) handler(name string) tools.HandleFunc[string, string] {
 func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (*mcp.CallToolResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.Timeout)
 	defer cancel()
-	if !c.connected {
+	if !c.connected.Load() {
 		if err := c.Connect(ctx); err != nil {
 			return nil, err
 		}
@@ -185,9 +189,8 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 
 // Close closes the client connection.
 func (c *Client) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.connected {
+	c.reconnectCancel()
+	if !c.connected.Load() {
 		return nil
 	}
 	if c.session != nil {
@@ -195,6 +198,22 @@ func (c *Client) Close() error {
 			return fmt.Errorf("mcp [%s] close: %w", c.config.Name, err)
 		}
 	}
-	c.connected = false
+	c.connected.Store(false)
 	return nil
+}
+
+func (c *Client) reconnect(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Printf("mcp [%s] reconnect routine exiting...\n", c.config.Name)
+			return
+		default:
+			c.session.Wait()
+			fmt.Printf("mcp [%s] disconnected, attempting to reconnect...\n", c.config.Name)
+			c.connected.Store(false)
+			c.Connect(ctx)
+			return
+		}
+	}
 }

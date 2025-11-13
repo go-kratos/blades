@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-kratos/blades/tools"
 )
@@ -13,7 +14,7 @@ type ToolsResolver struct {
 	mu      sync.RWMutex
 	clients []*Client
 	tools   []tools.Tool
-	loaded  bool
+	loaded  atomic.Bool
 }
 
 // NewToolsResolver creates a new MCP tools resolver.
@@ -23,7 +24,7 @@ func NewToolsResolver(configs ...ClientConfig) (*ToolsResolver, error) {
 	}
 	clients := make([]*Client, 0, len(configs))
 	for _, config := range configs {
-		client, err := NewClient(&config)
+		client, err := NewClient(config)
 		if err != nil {
 			return nil, err
 		}
@@ -34,14 +35,24 @@ func NewToolsResolver(configs ...ClientConfig) (*ToolsResolver, error) {
 	}, nil
 }
 
+func (r *ToolsResolver) getTools() []tools.Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.tools
+}
+
+func (r *ToolsResolver) setTools(tools []tools.Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tools = tools
+}
+
 // Resolve implements the tools.Resolver interface.
 // Returns all tools from all configured MCP servers using lazy loading.
 func (r *ToolsResolver) Resolve(ctx context.Context) ([]tools.Tool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	// Return cached tools if already loaded
-	if r.loaded {
-		return r.tools, nil
+	if r.loaded.Load() {
+		return r.getTools(), nil
 	}
 	var (
 		errors   []error
@@ -76,8 +87,8 @@ func (r *ToolsResolver) Resolve(ctx context.Context) ([]tools.Tool, error) {
 	if len(errors) > 0 {
 		fmt.Printf("Some errors occurred while loading tools: %v\n", errors)
 	}
-	r.tools = allTools
-	r.loaded = true
+	r.setTools(allTools)
+	r.loaded.Store(true)
 	return allTools, nil
 }
 
