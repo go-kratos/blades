@@ -21,9 +21,9 @@ func NewToolsResolver(configs ...ClientConfig) (*ToolsResolver, error) {
 	if len(configs) == 0 {
 		return nil, fmt.Errorf("at least one server config is required")
 	}
-	var clients []*Client
+	clients := make([]*Client, 0, len(configs))
 	for _, config := range configs {
-		client, err := NewClient(config)
+		client, err := NewClient(&config)
 		if err != nil {
 			return nil, err
 		}

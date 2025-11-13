@@ -17,7 +17,7 @@ var _ tools.Resolver = (*Client)(nil)
 
 // Client wraps the official MCP SDK client for a single server connection.
 type Client struct {
-	config    ClientConfig
+	config    *ClientConfig
 	client    *mcp.Client
 	session   *mcp.ClientSession
 	mu        sync.Mutex
@@ -25,7 +25,7 @@ type Client struct {
 }
 
 // NewClient creates a new MCP client.
-func NewClient(config ClientConfig) (*Client, error) {
+func NewClient(config *ClientConfig) (*Client, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
