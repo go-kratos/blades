@@ -22,7 +22,7 @@ func translate(from string) error {
 			option.WithAPIKey(apiKey),
 		),
 	)
-	agent := blades.NewAgent(
+	agent, err := blades.NewAgent(
 		"Document translator",
 		blades.WithModel(model),
 		blades.WithProvider(provider),
@@ -37,14 +37,14 @@ func translate(from string) error {
 	6. For mixed-language content, maintain logical consistency.
 	7. Output **only the translated Markdown document** — do not add explanations, comments, or extra text.`),
 	)
-	prompt := blades.NewPrompt(
-		blades.UserMessage(string(content)),
-	)
+	if err != nil {
+		return err
+	}
 	session := blades.NewSession(map[string]any{
 		"target_language": to,
 	})
 	runner := blades.NewRunner(agent, blades.WithSession(session))
-	result, err := runner.Run(context.Background(), prompt)
+	result, err := runner.Run(context.Background(), blades.UserMessage(string(content)))
 	if err != nil {
 		return err
 	}
