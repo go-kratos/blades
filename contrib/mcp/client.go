@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,13 +19,13 @@ var _ tools.Resolver = (*Client)(nil)
 
 // Client wraps the official MCP SDK client for a single server connection.
 type Client struct {
-	config    ClientConfig
-	client    *mcp.Client
-	session   *mcp.ClientSession
-	connected atomic.Bool
-
-	reconnectCtx    context.Context
-	reconnectCancel context.CancelFunc
+	config        ClientConfig
+	client        *mcp.Client
+	session       *mcp.ClientSession
+	connected     atomic.Bool
+	connectMutex  sync.Mutex
+	connectCtx    context.Context
+	connectCancel context.CancelFunc
 }
 
 // NewClient creates a new MCP client.
@@ -43,11 +44,16 @@ func NewClient(config ClientConfig) (*Client, error) {
 		config: config,
 		client: client,
 	}
+	c.connectCtx, c.connectCancel = context.WithCancel(context.Background())
 	return c, nil
 }
 
 // Connect establishes connection to the MCP server.
 func (c *Client) Connect(ctx context.Context) error {
+	// Ensure only one connection attempt at a time
+	c.connectMutex.Lock()
+	defer c.connectMutex.Unlock()
+	// If already connected, return
 	if c.connected.Load() {
 		return nil
 	}
@@ -75,8 +81,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.session = session
 	c.connected.Store(true)
-	c.reconnectCtx, c.reconnectCancel = context.WithCancel(context.Background())
-	go c.reconnect(c.reconnectCtx)
+	go c.reconnect(c.connectCtx)
 	return nil
 }
 
@@ -188,8 +193,8 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 
 // Close closes the client connection.
 func (c *Client) Close() error {
-	if c.reconnectCancel != nil {
-		c.reconnectCancel()
+	if c.connectCancel != nil {
+		c.connectCancel()
 	}
 	if !c.connected.Load() {
 		return nil
