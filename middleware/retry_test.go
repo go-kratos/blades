@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -241,7 +242,7 @@ func TestRetry_HandlerReturnsMultipleMessages(t *testing.T) {
 		return func(yield func(*blades.Message, error) bool) {
 			// Yield multiple messages
 			for i := 0; i < 3; i++ {
-				msg := blades.AssistantMessage("message " + string(rune('0'+i)))
+				msg := blades.AssistantMessage(fmt.Sprintf("message %d", i))
 				if !yield(msg, nil) {
 					return
 				}
@@ -287,7 +288,7 @@ func TestRetry_ReceiverStopsProcessing(t *testing.T) {
 		return func(yield func(*blades.Message, error) bool) {
 			// Yield multiple messages
 			for i := 0; i < 10; i++ {
-				msg := blades.AssistantMessage("message " + string(rune('0'+i)))
+				msg := blades.AssistantMessage(fmt.Sprintf("message %d", i))
 				if !yield(msg, nil) {
 					// Receiver stopped processing
 					return
