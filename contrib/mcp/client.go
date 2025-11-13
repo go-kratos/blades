@@ -43,8 +43,6 @@ func NewClient(config ClientConfig) (*Client, error) {
 		config: config,
 		client: client,
 	}
-	c.reconnectCtx, c.reconnectCancel = context.WithCancel(context.Background())
-	go c.reconnect(c.reconnectCtx)
 	return c, nil
 }
 
@@ -70,7 +68,6 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("mcp [%s] create_transport: %w", c.config.Name, err)
 	}
-
 	// Connect to the server
 	session, err := c.client.Connect(ctx, transport, nil)
 	if err != nil {
@@ -78,6 +75,8 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.session = session
 	c.connected.Store(true)
+	c.reconnectCtx, c.reconnectCancel = context.WithCancel(context.Background())
+	go c.reconnect(c.reconnectCtx)
 	return nil
 }
 
@@ -189,7 +188,9 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 
 // Close closes the client connection.
 func (c *Client) Close() error {
-	c.reconnectCancel()
+	if c.reconnectCancel != nil {
+		c.reconnectCancel()
+	}
 	if !c.connected.Load() {
 		return nil
 	}
