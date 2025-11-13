@@ -30,7 +30,7 @@ func main() {
 
 func mockErr() blades.Middleware {
 	attempts := 0
-	// Return the conversation middleware
+	// Return the mock error middleware
 	return func(next blades.Handler) blades.Handler {
 		return blades.HandleFunc(func(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
 			if attempts == 0 {
