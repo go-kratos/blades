@@ -8,8 +8,6 @@ import (
 	"google.golang.org/genai"
 )
 
-var _ blades.ModelProvider = (*Provider)(nil)
-
 // Option defines a configuration option for the Provider.
 type Option func(*Options)
 
@@ -25,13 +23,15 @@ type Options struct {
 	ThinkingConfig *genai.ThinkingConfig
 }
 
-// Provider provides a unified interface for Gemini API access.
-type Provider struct {
+// geminiModel provides a unified interface for Gemini API access.
+type geminiModel struct {
+	model  string
 	opts   Options
 	client *genai.Client
 }
 
-func NewProvider(ctx context.Context, clientConfig *genai.ClientConfig, opts ...Option) (*Provider, error) {
+// NewModel creates a new Gemini model provider.
+func NewModel(ctx context.Context, model string, clientConfig *genai.ClientConfig, opts ...Option) (blades.ModelProvider, error) {
 	opt := Options{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -40,13 +40,19 @@ func NewProvider(ctx context.Context, clientConfig *genai.ClientConfig, opts ...
 	if err != nil {
 		return nil, err
 	}
-	return &Provider{
+	return &geminiModel{
+		model:  model,
 		opts:   opt,
 		client: client,
 	}, nil
 }
 
-func (c *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
+// Name returns the name of the model.
+func (m *geminiModel) Name() string {
+	return m.model
+}
+
+func (m *geminiModel) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -55,19 +61,19 @@ func (c *Provider) Generate(ctx context.Context, req *blades.ModelRequest, opts 
 	if err != nil {
 		return nil, err
 	}
-	config, err := c.toGenerateConfig(req, opt)
+	config, err := m.toGenerateConfig(req, opt)
 	if err != nil {
 		return nil, err
 	}
 	config.SystemInstruction = system
-	resp, err := c.client.Models.GenerateContent(ctx, req.Model, contents, config)
+	resp, err := m.client.Models.GenerateContent(ctx, m.model, contents, config)
 	if err != nil {
-		return nil, fmt.Errorf("generating content: %w", err)
+		return nil, err
 	}
 	return convertGenAIToBlades(resp)
 }
 
-func (c *Provider) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOptions) (*genai.GenerateContentConfig, error) {
+func (m *geminiModel) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOptions) (*genai.GenerateContentConfig, error) {
 	var config genai.GenerateContentConfig
 	if opt.Temperature > 0 {
 		temperature := float32(opt.Temperature)
@@ -80,8 +86,8 @@ func (c *Provider) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOp
 		topP := float32(opt.TopP)
 		config.TopP = &topP
 	}
-	if c.opts.ThinkingConfig != nil {
-		config.ThinkingConfig = c.opts.ThinkingConfig
+	if m.opts.ThinkingConfig != nil {
+		config.ThinkingConfig = m.opts.ThinkingConfig
 	}
 	if len(req.Tools) > 0 {
 		tools, err := convertBladesToolsToGenAI(req.Tools)
@@ -94,7 +100,7 @@ func (c *Provider) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOp
 }
 
 // NewStreaming is an alias for GenerateStream to implement the ModelProvider interface.
-func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
+func (m *geminiModel) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
 	opt := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&opt)
@@ -105,13 +111,13 @@ func (c *Provider) NewStreaming(ctx context.Context, req *blades.ModelRequest, o
 			yield(nil, err)
 			return
 		}
-		config, err := c.toGenerateConfig(req, opt)
+		config, err := m.toGenerateConfig(req, opt)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
 		config.SystemInstruction = system
-		streaming := c.client.Models.GenerateContentStream(ctx, req.Model, contents, config)
+		streaming := m.client.Models.GenerateContentStream(ctx, m.model, contents, config)
 		var accumulatedResponse *genai.GenerateContentResponse
 		for chunk, err := range streaming {
 			if err != nil {

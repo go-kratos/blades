@@ -12,10 +12,10 @@ import (
 )
 
 func main() {
+	model := openai.NewAudio("gpt-4o-mini-tts")
 	agent, err := blades.NewAgent(
 		"Audio Agent",
-		blades.WithModel("gpt-4o-mini-tts"),
-		blades.WithProvider(openai.NewAudioProvider()),
+		blades.WithModel(model),
 	)
 	if err != nil {
 		log.Fatal(err)

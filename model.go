@@ -49,7 +49,6 @@ type AudioOptions struct {
 
 // ModelRequest is a multimodal chat-style request to the provider.
 type ModelRequest struct {
-	Model        string             `json:"model"`
 	Tools        []tools.Tool       `json:"tools,omitempty"`
 	Messages     []*Message         `json:"messages"`
 	Instruction  *Message           `json:"instruction,omitempty"`
@@ -64,6 +63,8 @@ type ModelResponse struct {
 
 // ModelProvider is an interface for multimodal chat-style models.
 type ModelProvider interface {
+	// Name returns the model name.
+	Name() string
 	// Generate executes the request and returns a single assistant response.
 	Generate(context.Context, *ModelRequest, ...ModelOption) (*ModelResponse, error)
 	// NewStreaming executes the request and returns a stream of assistant responses.

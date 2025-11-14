@@ -23,9 +23,9 @@ var (
 	ErrAudioVoiceRequired = errors.New("openai/audio: voice is required")
 )
 
-var _ blades.ModelProvider = (*AudioProvider)(nil)
+var _ blades.ModelProvider = (*audioModel)(nil)
 
-// AudioOption defines functional options for configuring the AudioProvider.
+// AudioOption defines functional options for configuring the audioModel.
 type AudioOption func(*AudioOptions)
 
 // WithAudioOptions appends request options to the audio generation request.
@@ -35,31 +35,37 @@ func WithAudioOptions(opts ...option.RequestOption) AudioOption {
 	}
 }
 
-// AudioOptions holds configuration for the AudioProvider.
+// AudioOptions holds configuration for the audioModel.
 type AudioOptions struct {
 	RequestOpts []option.RequestOption
 }
 
-// AudioProvider calls OpenAI's speech synthesis endpoint.
-type AudioProvider struct {
+// audioModel calls OpenAI's speech synthesis endpoint.
+type audioModel struct {
+	model  string
 	opts   AudioOptions
 	client openai.Client
 }
 
-// NewAudioProvider creates a new instance of AudioProvider.
-func NewAudioProvider(opts ...AudioOption) blades.ModelProvider {
+// NewAudio creates a new instance of audioModel.
+func NewAudio(model string, opts ...AudioOption) blades.ModelProvider {
 	audioOpts := AudioOptions{}
 	for _, opt := range opts {
 		opt(&audioOpts)
 	}
-	return &AudioProvider{
+	return &audioModel{
 		opts:   audioOpts,
 		client: openai.NewClient(audioOpts.RequestOpts...),
 	}
 }
 
+// Name returns the name of the audio model.
+func (p *audioModel) Name() string {
+	return p.model
+}
+
 // Generate generates audio from text input using the configured OpenAI model.
-func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
+func (p *audioModel) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
 	modelOpts := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&modelOpts)
@@ -70,7 +76,7 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 	}
 	params := openai.AudioSpeechNewParams{
 		Input: input,
-		Model: openai.SpeechModel(req.Model),
+		Model: openai.SpeechModel(p.model),
 		Voice: openai.AudioSpeechNewParamsVoice(modelOpts.Audio.Voice),
 	}
 	if req.Instruction != nil {
@@ -111,7 +117,7 @@ func (p *AudioProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 }
 
 // NewStreaming wraps Generate with a single-yield stream for API compatibility.
-func (p *AudioProvider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
+func (p *audioModel) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
 		m, err := p.Generate(ctx, req, opts...)
 		if err != nil {
@@ -122,7 +128,7 @@ func (p *AudioProvider) NewStreaming(ctx context.Context, req *blades.ModelReque
 	}
 }
 
-func (p *AudioProvider) applyOptions(params *openai.AudioSpeechNewParams, opt blades.AudioOptions) error {
+func (p *audioModel) applyOptions(params *openai.AudioSpeechNewParams, opt blades.AudioOptions) error {
 	if opt.ResponseFormat != "" {
 		params.ResponseFormat = openai.AudioSpeechNewParamsResponseFormat(opt.ResponseFormat)
 	}

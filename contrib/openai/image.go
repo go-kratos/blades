@@ -11,9 +11,7 @@ import (
 	"github.com/openai/openai-go/v2/packages/param"
 )
 
-var _ blades.ModelProvider = (*ImageProvider)(nil)
-
-// ImageOption defines functional options for configuring the ImageProvider.
+// ImageOption defines functional options for configuring the imageModel.
 type ImageOption func(*ImageOptions)
 
 // WithImageOptions applies OpenAI image request options.
@@ -23,31 +21,38 @@ func WithImageOptions(opts ...option.RequestOption) ImageOption {
 	}
 }
 
-// ImageOptions holds configuration for the ImageProvider.
+// ImageOptions holds configuration for the imageModel.
 type ImageOptions struct {
 	RequestOpts []option.RequestOption
 }
 
-// ImageProvider calls OpenAI's image generation endpoints.
-type ImageProvider struct {
+// imageModel calls OpenAI's image generation endpoints.
+type imageModel struct {
+	model  string
 	opts   ImageOptions
 	client openai.Client
 }
 
-// NewImageProvider creates a new instance of ImageProvider.
-func NewImageProvider(opts ...ImageOption) blades.ModelProvider {
+// NewImage creates a new instance of imageModel.
+func NewImage(model string, opts ...ImageOption) blades.ModelProvider {
 	imageOpts := ImageOptions{}
 	for _, opt := range opts {
 		opt(&imageOpts)
 	}
-	return &ImageProvider{
+	return &imageModel{
+		model:  model,
 		opts:   imageOpts,
 		client: openai.NewClient(imageOpts.RequestOpts...),
 	}
 }
 
+// Name returns the name of the OpenAI image model.
+func (p *imageModel) Name() string {
+	return p.model
+}
+
 // Generate generates images using the configured OpenAI model.
-func (p *ImageProvider) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
+func (p *imageModel) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
 	modelOpts := blades.ModelOptions{}
 	for _, apply := range opts {
 		apply(&modelOpts)
@@ -58,7 +63,7 @@ func (p *ImageProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 	}
 	params := openai.ImageGenerateParams{
 		Prompt: prompt,
-		Model:  openai.ImageModel(req.Model),
+		Model:  openai.ImageModel(p.model),
 	}
 	if err := p.applyOptions(&params, modelOpts.Image); err != nil {
 		return nil, err
@@ -71,7 +76,7 @@ func (p *ImageProvider) Generate(ctx context.Context, req *blades.ModelRequest, 
 }
 
 // NewStreaming wraps Generate with a single-yield stream for API compatibility.
-func (p *ImageProvider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
+func (p *imageModel) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
 		m, err := p.Generate(ctx, req, opts...)
 		if err != nil {
@@ -83,7 +88,7 @@ func (p *ImageProvider) NewStreaming(ctx context.Context, req *blades.ModelReque
 }
 
 // applyOptions applies image generation options to the OpenAI parameters.
-func (p *ImageProvider) applyOptions(params *openai.ImageGenerateParams, opts blades.ImageOptions) error {
+func (p *imageModel) applyOptions(params *openai.ImageGenerateParams, opts blades.ImageOptions) error {
 	if opts.Background != "" {
 		params.Background = openai.ImageGenerateParamsBackground(opts.Background)
 	}

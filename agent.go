@@ -14,8 +14,8 @@ import (
 // AgentOption is an option for configuring the Agent.
 type AgentOption func(*agent)
 
-// WithModel sets the model for the Agent.
-func WithModel(model string) AgentOption {
+// WithModel sets the model provider for the Agent.
+func WithModel(model ModelProvider) AgentOption {
 	return func(a *agent) {
 		a.model = model
 	}
@@ -46,13 +46,6 @@ func WithInputSchema(schema *jsonschema.Schema) AgentOption {
 func WithOutputSchema(schema *jsonschema.Schema) AgentOption {
 	return func(a *agent) {
 		a.outputSchema = schema
-	}
-}
-
-// WithProvider sets the model provider for the Agent.
-func WithProvider(provider ModelProvider) AgentOption {
-	return func(a *agent) {
-		a.provider = provider
 	}
 }
 
@@ -90,13 +83,12 @@ func WithMaxIterations(n int) AgentOption {
 // agent is a struct that represents an AI agent.
 type agent struct {
 	name          string
-	model         string
 	description   string
 	instructions  string
 	maxIterations int
+	model         ModelProvider
 	inputSchema   *jsonschema.Schema
 	outputSchema  *jsonschema.Schema
-	provider      ModelProvider
 	middlewares   []Middleware
 	tools         []tools.Tool
 	toolsResolver tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
@@ -111,7 +103,7 @@ func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 	for _, opt := range opts {
 		opt(a)
 	}
-	if a.provider == nil {
+	if a.model == nil {
 		return nil, ErrModelProviderRequired
 	}
 	return a, nil
@@ -120,11 +112,6 @@ func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 // Name returns the name of the Agent.
 func (a *agent) Name() string {
 	return a.name
-}
-
-// Model returns the model of the Agent.
-func (a *agent) Model() string {
-	return a.model
 }
 
 // Tools returns the tools of the Agent.
@@ -207,7 +194,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 		}
 		ctx = NewAgentContext(ctx, a)
 		ctx = NewModelContext(ctx, &modelContext{
-			model:        a.model,
+			model:        a.model.Name(),
 			tools:        resolvedTools,
 			instruction:  instruction,
 			inputSchema:  a.inputSchema,
@@ -220,7 +207,6 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 		}
 		handler := Handler(HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 			req := &ModelRequest{
-				Model:        a.model,
 				Tools:        resolvedTools,
 				Instruction:  instruction,
 				InputSchema:  a.inputSchema,
@@ -320,13 +306,13 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 		)
 		for i := 0; i < a.maxIterations; i++ {
 			if !invocation.Streamable {
-				finalResponse, err = a.provider.Generate(ctx, req, invocation.ModelOptions...)
+				finalResponse, err = a.model.Generate(ctx, req, invocation.ModelOptions...)
 				if err != nil {
 					yield(nil, err)
 					return
 				}
 			} else {
-				streaming := a.provider.NewStreaming(ctx, req, invocation.ModelOptions...)
+				streaming := a.model.NewStreaming(ctx, req, invocation.ModelOptions...)
 				for finalResponse, err = range streaming {
 					if err != nil {
 						yield(nil, err)

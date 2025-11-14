@@ -12,10 +12,10 @@ import (
 )
 
 func main() {
+	model := openai.NewModel("deepseek-chat")
 	ra, err := blades.NewAgent(
 		"retry-agent",
-		blades.WithProvider(openai.NewChatProvider()),
-		blades.WithModel("deepseek-chat"),
+		blades.WithModel(model),
 		blades.WithMiddleware(middleware.Retry(2), mockErr()),
 	)
 	if err != nil {

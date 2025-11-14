@@ -9,10 +9,10 @@ import (
 )
 
 func main() {
+	model := openai.NewModel("deepseek-r1")
 	agent, err := blades.NewAgent(
 		"Chat Agent",
-		blades.WithModel("deepseek-r1"),
-		blades.WithProvider(openai.NewChatProvider()),
+		blades.WithModel(model),
 		blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
 	)
 	if err != nil {

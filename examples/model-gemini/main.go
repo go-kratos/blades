@@ -21,13 +21,12 @@ func main() {
 	config := &genai.ClientConfig{
 		APIKey: apiKey,
 	}
-	client, err := google.NewProvider(ctx, config)
+	model, err := google.NewModel(ctx, "gemini-2.5-flash-preview-09-2025", config)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 	// Simple text generation
 	request := &blades.ModelRequest{
-		Model: "gemini-2.5-flash-preview-09-2025",
 		Messages: []*blades.Message{
 			{
 				Role: blades.RoleUser,
@@ -38,7 +37,7 @@ func main() {
 		},
 	}
 	// Generate response
-	response, err := client.Generate(ctx, request,
+	response, err := model.Generate(ctx, request,
 		blades.Temperature(0.7),
 		blades.MaxOutputTokens(200),
 	)

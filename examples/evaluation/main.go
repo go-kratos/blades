@@ -41,17 +41,16 @@ Below are the inputs:
 }
 
 func main() {
-	qa := map[string]string{
-		"What is the capital of France?":  "Paris.",
-		"Convert 5 kilometers to meters.": "60 km/h.",
-	}
 	r, err := evaluate.NewCriteria(
 		"Evaluation Agent",
-		blades.WithModel("gpt-5"),
-		blades.WithProvider(openai.NewChatProvider()),
+		blades.WithModel(openai.NewModel("gpt-5")),
 	)
 	if err != nil {
 		log.Fatal(err)
+	}
+	qa := map[string]string{
+		"What is the capital of France?":  "Paris.",
+		"Convert 5 kilometers to meters.": "60 km/h.",
 	}
 	for q, a := range qa {
 		prompt, err := buildPrompt(map[string]any{

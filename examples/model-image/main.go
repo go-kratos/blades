@@ -12,10 +12,10 @@ import (
 )
 
 func main() {
+	model := openai.NewImage("gpt-image-1")
 	agent, err := blades.NewAgent(
 		"Image Agent",
-		blades.WithModel("gpt-image-1"),
-		blades.WithProvider(openai.NewImageProvider()),
+		blades.WithModel(model),
 	)
 	if err != nil {
 		log.Fatal(err)

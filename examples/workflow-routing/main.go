@@ -20,11 +20,10 @@ type RoutingWorkflow struct {
 
 // NewRoutingWorkflow creates a new RoutingWorkflow with the given model provider and routes.
 func NewRoutingWorkflow(routes map[string]string) (*RoutingWorkflow, error) {
-	provider := openai.NewChatProvider()
+	model := openai.NewModel("gpt-5")
 	router, err := blades.NewAgent(
 		"triage_agent",
-		blades.WithModel("gpt-5"),
-		blades.WithProvider(provider),
+		blades.WithModel(model),
 		blades.WithInstructions("You determine which agent to use based on the user's homework question"),
 	)
 	if err != nil {
@@ -34,8 +33,7 @@ func NewRoutingWorkflow(routes map[string]string) (*RoutingWorkflow, error) {
 	for name, instructions := range routes {
 		agent, err := blades.NewAgent(
 			name,
-			blades.WithModel("gpt-5"),
-			blades.WithProvider(provider),
+			blades.WithModel(model),
 			blades.WithInstructions(instructions),
 		)
 		if err != nil {
