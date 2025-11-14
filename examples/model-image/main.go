@@ -12,7 +12,11 @@ import (
 )
 
 func main() {
-	model := openai.NewImage("gpt-image-1")
+	model := openai.NewImage(
+		"gpt-image-1",
+		openai.WithImageSize("1024x1024"),
+		openai.WithImageOutputFormat("png"),
+	)
 	agent, err := blades.NewAgent(
 		"Image Agent",
 		blades.WithModel(model),
@@ -24,8 +28,6 @@ func main() {
 	output, err := runner.Run(
 		context.Background(),
 		blades.UserMessage("A watercolor illustration of a mountain cabin at sunrise"),
-		blades.ImageSize("1024x1024"),
-		blades.ImageOutputFormat("png"),
 	)
 	if err != nil {
 		log.Fatalf("generate image: %v", err)

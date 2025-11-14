@@ -6,10 +6,10 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-func promptFromMessages(messages []*blades.Message) (string, error) {
+func promptFromMessages(messages []*blades.Message) string {
 	var sections []string
 	for _, msg := range messages {
 		sections = append(sections, msg.Text())
 	}
-	return strings.Join(sections, "\n"), nil
+	return strings.Join(sections, "\n")
 }

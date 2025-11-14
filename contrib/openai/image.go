@@ -14,6 +14,83 @@ import (
 // ImageOption defines functional options for configuring the imageModel.
 type ImageOption func(*ImageOptions)
 
+// WithImageBackground sets the background for the image generation request.
+func WithImageBackground(background string) ImageOption {
+	return func(o *ImageOptions) {
+		o.Background = background
+	}
+}
+
+// WithImageSize sets the size for the image generation request.
+func WithImageSize(size string) ImageOption {
+	return func(o *ImageOptions) {
+		o.Size = size
+	}
+}
+
+// WithImageQuality sets the quality for the image generation request.
+func WithImageQuality(quality string) ImageOption {
+	return func(o *ImageOptions) {
+		o.Quality = quality
+	}
+}
+
+// WithImageResponseFormat sets the response format for the image generation request.
+func WithImageResponseFormat(format string) ImageOption {
+	return func(o *ImageOptions) {
+		o.ResponseFormat = format
+	}
+}
+
+// WithImageOutputFormat sets the output format for the image generation request.
+func WithImageOutputFormat(format string) ImageOption {
+	return func(o *ImageOptions) {
+		o.OutputFormat = format
+	}
+}
+
+// WithImageModeration sets the moderation level for the image generation request.
+func WithImageModeration(moderation string) ImageOption {
+	return func(o *ImageOptions) {
+		o.Moderation = moderation
+	}
+}
+
+// WithImageStyle sets the style for the image generation request.
+func WithImageStyle(style string) ImageOption {
+	return func(o *ImageOptions) {
+		o.Style = style
+	}
+}
+
+// WithImageUser sets the user identifier for the image generation request.
+func WithImageUser(user string) ImageOption {
+	return func(o *ImageOptions) {
+		o.User = user
+	}
+}
+
+// WithImageN sets the number of images to generate.
+func WithImageN(n int64) ImageOption {
+	return func(o *ImageOptions) {
+		o.N = n
+	}
+}
+
+// WithImagePartialImages sets the number of partial images to generate.
+func WithImagePartialImages(partialImages int64) ImageOption {
+	return func(o *ImageOptions) {
+		o.PartialImages = partialImages
+	}
+}
+
+// WithImageOutputCompression sets the output compression level for generated images.
+func WithImageOutputCompression(outputCompression int64) ImageOption {
+	return func(o *ImageOptions) {
+		o.OutputCompression = outputCompression
+	}
+}
+
 // WithImageOptions applies OpenAI image request options.
 func WithImageOptions(opts ...option.RequestOption) ImageOption {
 	return func(o *ImageOptions) {
@@ -23,7 +100,18 @@ func WithImageOptions(opts ...option.RequestOption) ImageOption {
 
 // ImageOptions holds configuration for the imageModel.
 type ImageOptions struct {
-	RequestOpts []option.RequestOption
+	Background        string
+	Size              string
+	Quality           string
+	ResponseFormat    string
+	OutputFormat      string
+	Moderation        string
+	Style             string
+	User              string
+	N                 int64
+	PartialImages     int64
+	OutputCompression int64
+	RequestOpts       []option.RequestOption
 }
 
 // imageModel calls OpenAI's image generation endpoints.
@@ -52,20 +140,9 @@ func (p *imageModel) Name() string {
 }
 
 // Generate generates images using the configured OpenAI model.
-func (p *imageModel) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
-	modelOpts := blades.ModelOptions{}
-	for _, apply := range opts {
-		apply(&modelOpts)
-	}
-	prompt, err := promptFromMessages(req.Messages)
+func (p *imageModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+	params, err := p.buildGenerateParams(req)
 	if err != nil {
-		return nil, err
-	}
-	params := openai.ImageGenerateParams{
-		Prompt: prompt,
-		Model:  openai.ImageModel(p.model),
-	}
-	if err := p.applyOptions(&params, modelOpts.Image); err != nil {
 		return nil, err
 	}
 	res, err := p.client.Images.Generate(ctx, params)
@@ -76,9 +153,9 @@ func (p *imageModel) Generate(ctx context.Context, req *blades.ModelRequest, opt
 }
 
 // NewStreaming wraps Generate with a single-yield stream for API compatibility.
-func (p *imageModel) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
+func (p *imageModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
-		m, err := p.Generate(ctx, req, opts...)
+		m, err := p.Generate(ctx, req)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -87,42 +164,45 @@ func (p *imageModel) NewStreaming(ctx context.Context, req *blades.ModelRequest,
 	}
 }
 
-// applyOptions applies image generation options to the OpenAI parameters.
-func (p *imageModel) applyOptions(params *openai.ImageGenerateParams, opts blades.ImageOptions) error {
-	if opts.Background != "" {
-		params.Background = openai.ImageGenerateParamsBackground(opts.Background)
+func (p *imageModel) buildGenerateParams(req *blades.ModelRequest) (openai.ImageGenerateParams, error) {
+	params := openai.ImageGenerateParams{
+		Prompt: promptFromMessages(req.Messages),
+		Model:  openai.ImageModel(p.model),
 	}
-	if opts.Size != "" {
-		params.Size = openai.ImageGenerateParamsSize(opts.Size)
+	if p.opts.Background != "" {
+		params.Background = openai.ImageGenerateParamsBackground(p.opts.Background)
 	}
-	if opts.Quality != "" {
-		params.Quality = openai.ImageGenerateParamsQuality(opts.Quality)
+	if p.opts.Size != "" {
+		params.Size = openai.ImageGenerateParamsSize(p.opts.Size)
 	}
-	if opts.ResponseFormat != "" {
-		params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(opts.ResponseFormat)
+	if p.opts.Quality != "" {
+		params.Quality = openai.ImageGenerateParamsQuality(p.opts.Quality)
 	}
-	if opts.OutputFormat != "" {
-		params.OutputFormat = openai.ImageGenerateParamsOutputFormat(opts.OutputFormat)
+	if p.opts.ResponseFormat != "" {
+		params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(p.opts.ResponseFormat)
 	}
-	if opts.Moderation != "" {
-		params.Moderation = openai.ImageGenerateParamsModeration(opts.Moderation)
+	if p.opts.OutputFormat != "" {
+		params.OutputFormat = openai.ImageGenerateParamsOutputFormat(p.opts.OutputFormat)
 	}
-	if opts.Style != "" {
-		params.Style = openai.ImageGenerateParamsStyle(opts.Style)
+	if p.opts.Moderation != "" {
+		params.Moderation = openai.ImageGenerateParamsModeration(p.opts.Moderation)
 	}
-	if opts.User != "" {
-		params.User = param.NewOpt(opts.User)
+	if p.opts.Style != "" {
+		params.Style = openai.ImageGenerateParamsStyle(p.opts.Style)
 	}
-	if opts.Count > 0 {
-		params.N = param.NewOpt(int64(opts.Count))
+	if p.opts.User != "" {
+		params.User = param.NewOpt(p.opts.User)
 	}
-	if opts.PartialImages > 0 {
-		params.PartialImages = param.NewOpt(int64(opts.PartialImages))
+	if p.opts.N > 0 {
+		params.N = param.NewOpt(int64(p.opts.N))
 	}
-	if opts.OutputCompression > 0 {
-		params.OutputCompression = param.NewOpt(int64(opts.OutputCompression))
+	if p.opts.PartialImages > 0 {
+		params.PartialImages = param.NewOpt(int64(p.opts.PartialImages))
 	}
-	return nil
+	if p.opts.OutputCompression > 0 {
+		params.OutputCompression = param.NewOpt(p.opts.OutputCompression)
+	}
+	return params, nil
 }
 
 func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) {

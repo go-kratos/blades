@@ -28,6 +28,34 @@ var _ blades.ModelProvider = (*audioModel)(nil)
 // AudioOption defines functional options for configuring the audioModel.
 type AudioOption func(*AudioOptions)
 
+// WithAudioVoice sets the voice for the generated audio.
+func WithAudioVoice(voice string) AudioOption {
+	return func(o *AudioOptions) {
+		o.Voice = voice
+	}
+}
+
+// WithAudioResponseFormat sets the response format of the generated audio.
+func WithAudioResponseFormat(format string) AudioOption {
+	return func(o *AudioOptions) {
+		o.ResponseFormat = format
+	}
+}
+
+// WithAudioStreamFormat sets the stream format of the generated audio.
+func WithAudioStreamFormat(format string) AudioOption {
+	return func(o *AudioOptions) {
+		o.StreamFormat = format
+	}
+}
+
+// WithAudioSpeed sets the speed of the generated audio.
+func WithAudioSpeed(speed float64) AudioOption {
+	return func(o *AudioOptions) {
+		o.Speed = &speed
+	}
+}
+
 // WithAudioOptions appends request options to the audio generation request.
 func WithAudioOptions(opts ...option.RequestOption) AudioOption {
 	return func(o *AudioOptions) {
@@ -37,7 +65,11 @@ func WithAudioOptions(opts ...option.RequestOption) AudioOption {
 
 // AudioOptions holds configuration for the audioModel.
 type AudioOptions struct {
-	RequestOpts []option.RequestOption
+	Voice          string
+	ResponseFormat string
+	StreamFormat   string
+	Speed          *float64
+	RequestOpts    []option.RequestOption
 }
 
 // audioModel calls OpenAI's speech synthesis endpoint.
@@ -64,27 +96,30 @@ func (p *audioModel) Name() string {
 	return p.model
 }
 
-// Generate generates audio from text input using the configured OpenAI model.
-func (p *audioModel) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
-	modelOpts := blades.ModelOptions{}
-	for _, apply := range opts {
-		apply(&modelOpts)
-	}
-	input, err := promptFromMessages(req.Messages)
-	if err != nil {
-		return nil, err
-	}
+func (p *audioModel) buildAudioParams(req *blades.ModelRequest) openai.AudioSpeechNewParams {
 	params := openai.AudioSpeechNewParams{
-		Input: input,
+		Input: promptFromMessages(req.Messages),
 		Model: openai.SpeechModel(p.model),
-		Voice: openai.AudioSpeechNewParamsVoice(modelOpts.Audio.Voice),
+		Voice: openai.AudioSpeechNewParamsVoice(p.opts.Voice),
 	}
 	if req.Instruction != nil {
 		params.Instructions = param.NewOpt(req.Instruction.Text())
 	}
-	if err := p.applyOptions(&params, modelOpts.Audio); err != nil {
-		return nil, err
+	if p.opts.ResponseFormat != "" {
+		params.ResponseFormat = openai.AudioSpeechNewParamsResponseFormat(p.opts.ResponseFormat)
 	}
+	if p.opts.StreamFormat != "" {
+		params.StreamFormat = openai.AudioSpeechNewParamsStreamFormat(p.opts.StreamFormat)
+	}
+	if p.opts.Speed != nil {
+		params.Speed = param.NewOpt(*p.opts.Speed)
+	}
+	return params
+}
+
+// Generate generates audio from text input using the configured OpenAI model.
+func (p *audioModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+	params := p.buildAudioParams(req)
 	resp, err := p.client.Audio.Speech.New(ctx, params)
 	if err != nil {
 		return nil, err
@@ -117,28 +152,15 @@ func (p *audioModel) Generate(ctx context.Context, req *blades.ModelRequest, opt
 }
 
 // NewStreaming wraps Generate with a single-yield stream for API compatibility.
-func (p *audioModel) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
+func (p *audioModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
-		m, err := p.Generate(ctx, req, opts...)
+		m, err := p.Generate(ctx, req)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
 		yield(m, nil)
 	}
-}
-
-func (p *audioModel) applyOptions(params *openai.AudioSpeechNewParams, opt blades.AudioOptions) error {
-	if opt.ResponseFormat != "" {
-		params.ResponseFormat = openai.AudioSpeechNewParamsResponseFormat(opt.ResponseFormat)
-	}
-	if opt.StreamFormat != "" {
-		params.StreamFormat = openai.AudioSpeechNewParamsStreamFormat(opt.StreamFormat)
-	}
-	if opt.Speed > 0 {
-		params.Speed = param.NewOpt(opt.Speed)
-	}
-	return nil
 }
 
 func audioMimeType(format openai.AudioSpeechNewParamsResponseFormat) blades.MIMEType {

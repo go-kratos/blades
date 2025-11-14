@@ -306,13 +306,13 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 		)
 		for i := 0; i < a.maxIterations; i++ {
 			if !invocation.Streamable {
-				finalResponse, err = a.model.Generate(ctx, req, invocation.ModelOptions...)
+				finalResponse, err = a.model.Generate(ctx, req)
 				if err != nil {
 					yield(nil, err)
 					return
 				}
 			} else {
-				streaming := a.model.NewStreaming(ctx, req, invocation.ModelOptions...)
+				streaming := a.model.NewStreaming(ctx, req)
 				for finalResponse, err = range streaming {
 					if err != nil {
 						yield(nil, err)

@@ -9,13 +9,12 @@ import (
 
 // Invocation holds information about the current invocation.
 type Invocation struct {
-	ID           string
-	Session      Session
-	Resumable    bool
-	Streamable   bool
-	Message      *Message
-	History      []*Message
-	ModelOptions []ModelOption
+	ID         string
+	Session    Session
+	Resumable  bool
+	Streamable bool
+	Message    *Message
+	History    []*Message
 }
 
 // Generator is a generic type representing a sequence generator that yields values of type T or errors of type E.
@@ -30,8 +29,8 @@ type Agent interface {
 
 // Runner represents a component that can execute a single message and return a response message or a stream of messages.
 type Runner interface {
-	Run(context.Context, *Message, ...ModelOption) (*Message, error)
-	RunStream(context.Context, *Message, ...ModelOption) Generator[*Message, error]
+	Run(context.Context, *Message) (*Message, error)
+	RunStream(context.Context, *Message) Generator[*Message, error]
 }
 
 // NewInvocationID generates a new unique invocation ID.
@@ -40,11 +39,10 @@ func NewInvocationID() string {
 }
 
 // NewInvocation creates a new Invocation with the given message and model options.
-func NewInvocation(message *Message, opts ...ModelOption) *Invocation {
+func NewInvocation(message *Message) *Invocation {
 	return &Invocation{
-		ID:           NewInvocationID(),
-		Session:      NewSession(),
-		Message:      message,
-		ModelOptions: opts,
+		ID:      NewInvocationID(),
+		Session: NewSession(),
+		Message: message,
 	}
 }

@@ -9,32 +9,120 @@ import (
 )
 
 // Option defines a configuration option for the Provider.
-type Option func(*Options)
+type Option func(*options)
+
+// WithTemperature sets the temperature for the model.
+func WithTemperature(t float32) Option {
+	return func(o *options) {
+		o.Temperature = &t
+	}
+}
+
+// WithTopP sets the top-p value for the model.
+func WithTopP(p float32) Option {
+	return func(o *options) {
+		o.TopP = &p
+	}
+}
+
+// WithTopK sets the top-k value for the model.
+func WithTopK(k float32) Option {
+	return func(o *options) {
+		o.TopK = &k
+	}
+}
+
+// WithCandidateCount sets the number of candidate responses to generate.
+func WithCandidateCount(count int32) Option {
+	return func(o *options) {
+		o.CandidateCount = count
+	}
+}
+
+// WithMaxOutputTokens sets the maximum number of output tokens.
+func WithMaxOutputTokens(tokens int32) Option {
+	return func(o *options) {
+		o.MaxOutputTokens = tokens
+	}
+}
+
+// WithStopSequences sets the stop sequences for the model.
+func WithStopSequences(sequences []string) Option {
+	return func(o *options) {
+		o.StopSequences = sequences
+	}
+}
+
+// WithResponseLogprobs enables or disables response logprobs.
+func WithResponseLogprobs(enabled bool) Option {
+	return func(o *options) {
+		o.ResponseLogprobs = enabled
+	}
+}
+
+// WithLogprobs sets the number of logprobs to return.
+func WithLogprobs(logprobs int32) Option {
+	return func(o *options) {
+		o.Logprobs = &logprobs
+	}
+}
+
+// WithPresencePenalty sets the presence penalty for the model.
+func WithPresencePenalty(penalty float32) Option {
+	return func(o *options) {
+		o.PresencePenalty = &penalty
+	}
+}
+
+// WithFrequencyPenalty sets the frequency penalty for the model.
+func WithFrequencyPenalty(penalty float32) Option {
+	return func(o *options) {
+		o.FrequencyPenalty = &penalty
+	}
+}
+
+// WithSeed sets the seed for the model.
+func WithSeed(seed int32) Option {
+	return func(o *options) {
+		o.Seed = &seed
+	}
+}
 
 // WithThinkingConfig sets the thinking config for the provider.
 func WithThinkingConfig(c *genai.ThinkingConfig) Option {
-	return func(o *Options) {
+	return func(o *options) {
 		o.ThinkingConfig = c
 	}
 }
 
-// Options holds configuration options for the Provider.
-type Options struct {
-	ThinkingConfig *genai.ThinkingConfig
+// options holds configuration options for the Provider.
+type options struct {
+	Temperature      *float32
+	TopP             *float32
+	TopK             *float32
+	CandidateCount   int32
+	MaxOutputTokens  int32
+	StopSequences    []string
+	ResponseLogprobs bool
+	Logprobs         *int32
+	PresencePenalty  *float32
+	FrequencyPenalty *float32
+	Seed             *int32
+	ThinkingConfig   *genai.ThinkingConfig
 }
 
 // geminiModel provides a unified interface for Gemini API access.
 type geminiModel struct {
 	model  string
-	opts   Options
+	opts   options
 	client *genai.Client
 }
 
 // NewModel creates a new Gemini model provider.
 func NewModel(ctx context.Context, model string, clientConfig *genai.ClientConfig, opts ...Option) (blades.ModelProvider, error) {
-	opt := Options{}
+	modelOpts := options{}
 	for _, apply := range opts {
-		apply(&opt)
+		apply(&modelOpts)
 	}
 	client, err := genai.NewClient(ctx, clientConfig)
 	if err != nil {
@@ -42,7 +130,7 @@ func NewModel(ctx context.Context, model string, clientConfig *genai.ClientConfi
 	}
 	return &geminiModel{
 		model:  model,
-		opts:   opt,
+		opts:   modelOpts,
 		client: client,
 	}, nil
 }
@@ -52,16 +140,12 @@ func (m *geminiModel) Name() string {
 	return m.model
 }
 
-func (m *geminiModel) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
-	opt := blades.ModelOptions{}
-	for _, apply := range opts {
-		apply(&opt)
-	}
+func (m *geminiModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
 	system, contents, err := convertMessageToGenAI(req)
 	if err != nil {
 		return nil, err
 	}
-	config, err := m.toGenerateConfig(req, opt)
+	config, err := m.toGenerateConfig(req)
 	if err != nil {
 		return nil, err
 	}
@@ -73,18 +157,40 @@ func (m *geminiModel) Generate(ctx context.Context, req *blades.ModelRequest, op
 	return convertGenAIToBlades(resp)
 }
 
-func (m *geminiModel) toGenerateConfig(req *blades.ModelRequest, opt blades.ModelOptions) (*genai.GenerateContentConfig, error) {
+func (m *geminiModel) toGenerateConfig(req *blades.ModelRequest) (*genai.GenerateContentConfig, error) {
 	var config genai.GenerateContentConfig
-	if opt.Temperature > 0 {
-		temperature := float32(opt.Temperature)
-		config.Temperature = &temperature
+	if m.opts.Temperature != nil {
+		config.Temperature = m.opts.Temperature
 	}
-	if opt.MaxOutputTokens > 0 {
-		config.MaxOutputTokens = int32(opt.MaxOutputTokens)
+	if m.opts.TopP != nil {
+		config.TopP = m.opts.TopP
 	}
-	if opt.TopP > 0 {
-		topP := float32(opt.TopP)
-		config.TopP = &topP
+	if m.opts.TopK != nil {
+		config.TopK = m.opts.TopK
+	}
+	if m.opts.CandidateCount > 0 {
+		config.CandidateCount = m.opts.CandidateCount
+	}
+	if m.opts.MaxOutputTokens > 0 {
+		config.MaxOutputTokens = m.opts.MaxOutputTokens
+	}
+	if len(m.opts.StopSequences) > 0 {
+		config.StopSequences = m.opts.StopSequences
+	}
+	if m.opts.ResponseLogprobs {
+		config.ResponseLogprobs = m.opts.ResponseLogprobs
+	}
+	if m.opts.Logprobs != nil {
+		config.Logprobs = m.opts.Logprobs
+	}
+	if m.opts.PresencePenalty != nil {
+		config.PresencePenalty = m.opts.PresencePenalty
+	}
+	if m.opts.FrequencyPenalty != nil {
+		config.FrequencyPenalty = m.opts.FrequencyPenalty
+	}
+	if m.opts.Seed != nil {
+		config.Seed = m.opts.Seed
 	}
 	if m.opts.ThinkingConfig != nil {
 		config.ThinkingConfig = m.opts.ThinkingConfig
@@ -100,18 +206,14 @@ func (m *geminiModel) toGenerateConfig(req *blades.ModelRequest, opt blades.Mode
 }
 
 // NewStreaming is an alias for GenerateStream to implement the ModelProvider interface.
-func (m *geminiModel) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
-	opt := blades.ModelOptions{}
-	for _, apply := range opts {
-		apply(&opt)
-	}
+func (m *geminiModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
 		system, contents, err := convertMessageToGenAI(req)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		config, err := m.toGenerateConfig(req, opt)
+		config, err := m.toGenerateConfig(req)
 		if err != nil {
 			yield(nil, err)
 			return

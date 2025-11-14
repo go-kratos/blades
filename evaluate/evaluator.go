@@ -22,5 +22,5 @@ type Evaluation struct {
 
 // Evaluator defines the interface for evaluating LLM responses.
 type Evaluator interface {
-	Evaluate(context.Context, *blades.Message, ...blades.ModelOption) (*Evaluation, error)
+	Evaluate(context.Context, *blades.Message) (*Evaluation, error)
 }
