@@ -11,7 +11,7 @@ import (
 
 // toBladesTool converts an MCP tool to a Blades tool.
 // This method is used by Provider to convert tools without creating separate Adapter instances.
-func toBladesTool(mcpTool *mcp.Tool, handler tools.HandleFunc[string, string]) (tools.Tool, error) {
+func toBladesTool(mcpTool *mcp.Tool, handler tools.HandleFunc) (tools.Tool, error) {
 	// Convert the input schema
 	inputSchema, err := convertSchema(mcpTool.InputSchema)
 	if err != nil {

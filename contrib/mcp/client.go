@@ -154,7 +154,7 @@ func (c *Client) Resolve(ctx context.Context) ([]tools.Tool, error) {
 }
 
 // handler returns a tool handler that calls the MCP tool.
-func (c *Client) handler(name string) tools.HandleFunc[string, string] {
+func (c *Client) handler(name string) tools.HandleFunc {
 	return func(ctx context.Context, input string) (string, error) {
 		var arguments map[string]any
 		if err := json.Unmarshal([]byte(input), &arguments); err != nil {

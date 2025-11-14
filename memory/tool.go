@@ -21,12 +21,12 @@ func NewMemoryTool(store MemoryStore) (tools.Tool, error) {
 	return tools.NewFunc[Request, Response](
 		"Memory",
 		"You have memory. You can use it to answer questions. If any questions need you to look up the memory.",
-		tools.HandleFunc[Request, Response](func(ctx context.Context, req Request) (Response, error) {
+		func(ctx context.Context, req Request) (Response, error) {
 			memories, err := store.SearchMemory(ctx, req.Query)
 			if err != nil {
 				return Response{}, err
 			}
 			return Response{Memories: memories}, nil
-		}),
+		},
 	)
 }

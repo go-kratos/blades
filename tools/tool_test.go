@@ -9,7 +9,7 @@ import (
 )
 
 func TestHandleFunc(t *testing.T) {
-	handler := HandleFunc[string, string](func(ctx context.Context, input string) (string, error) {
+	handler := HandleFunc(func(ctx context.Context, input string) (string, error) {
 		return "processed: " + input, nil
 	})
 
@@ -32,7 +32,7 @@ func TestHandleFuncToolCall(t *testing.T) {
 		Forecast string `json:"forecast"`
 	}
 
-	handler := HandleFunc[string, string](func(ctx context.Context, input string) (string, error) {
+	handler := HandleFunc(func(ctx context.Context, input string) (string, error) {
 		var payload request
 		if err := json.Unmarshal([]byte(input), &payload); err != nil {
 			return "", err
@@ -74,7 +74,7 @@ func TestHandleFuncInvalidPayload(t *testing.T) {
 		Location string `json:"location"`
 	}
 
-	handler := HandleFunc[string, string](func(ctx context.Context, input string) (string, error) {
+	handler := HandleFunc(func(ctx context.Context, input string) (string, error) {
 		var payload request
 		if err := json.Unmarshal([]byte(input), &payload); err != nil {
 			return "", err
@@ -91,11 +91,11 @@ func TestHandleFuncInvalidPayload(t *testing.T) {
 
 func TestCustomHandler(t *testing.T) {
 	handler := &struct {
-		Handler[string, string]
+		Handler
 		prefix string
 	}{prefix: "custom: "}
 
-	handler.Handler = HandleFunc[string, string](func(ctx context.Context, input string) (string, error) {
+	handler.Handler = HandleFunc(func(ctx context.Context, input string) (string, error) {
 		return handler.prefix + input, nil
 	})
 
@@ -124,9 +124,9 @@ func TestJSONAdapter(t *testing.T) {
 		Greet string `json:"greet"`
 	}
 
-	var h Handler[req, res] = HandleFunc[req, res](func(ctx context.Context, r req) (res, error) {
+	var h = func(ctx context.Context, r req) (res, error) {
 		return res{Greet: "hi, " + r.Name}, nil
-	})
+	}
 
 	adapter := JSONAdapter[req, res](h)
 
