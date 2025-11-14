@@ -19,37 +19,38 @@ type WeatherRes struct {
 	Forecast string `json:"forecast" jsonschema:"The weather forecast"`
 }
 
+// weatherHandle is the function that handles weather requests.
+func weatherHandle(ctx context.Context, req WeatherReq) (WeatherRes, error) {
+	log.Println("Fetching weather for:", req.Location)
+	session, ok := blades.FromSessionContext(ctx)
+	if !ok {
+		return WeatherRes{}, blades.ErrNoSessionContext
+	}
+	session.PutState("location", req.Location)
+	return WeatherRes{Forecast: "Sunny, 25°C"}, nil
+}
+
 func main() {
 	// Define a tool to get the weather
 	weatherTool, err := tools.NewFunc(
 		"get_weather",
 		"Get the current weather for a given city",
-		tools.HandleFunc[WeatherReq, WeatherRes](func(ctx context.Context, req WeatherReq) (WeatherRes, error) {
-			log.Println("Fetching weather for:", req.Location)
-			session, ok := blades.FromSessionContext(ctx)
-			if !ok {
-				return WeatherRes{}, blades.ErrNoSessionContext
-			}
-			session.PutState("location", req.Location)
-			return WeatherRes{Forecast: "Sunny, 25°C"}, nil
-		}),
+		weatherHandle,
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	// Create an agent with the weather tool
+	model := openai.NewModel("gpt-5")
 	agent, err := blades.NewAgent(
 		"Weather Agent",
-		blades.WithModel("gpt-5"),
+		blades.WithModel(model),
 		blades.WithInstructions("You are a helpful assistant that provides weather information."),
-		blades.WithProvider(openai.NewChatProvider()),
 		blades.WithTools(weatherTool),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	// Create a prompt asking for the weather in New York City
 	input := blades.UserMessage("What is the weather in New York City?")
 	session := blades.NewSession()
@@ -61,13 +62,4 @@ func main() {
 	}
 	log.Println("state:", session.State())
 	log.Println("output:", output.Text())
-
-	// Stream the response with a different input
-	streamInput := blades.UserMessage("What is the weather in San Francisco?")
-	for output, err := range runner.RunStream(context.Background(), streamInput) {
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("stream status: %s output: %s", output.Status, output.Text())
-	}
 }

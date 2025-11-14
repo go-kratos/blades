@@ -18,10 +18,10 @@ func Logging(next blades.Handler) blades.Handler {
 }
 
 func main() {
+	model := openai.NewModel("deepseek-chat")
 	agent, err := blades.NewAgent(
 		"Conversation Agent",
-		blades.WithModel("deepseek-chat"),
-		blades.WithProvider(openai.NewChatProvider()),
+		blades.WithModel(model),
 		blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
 		blades.WithMiddleware(
 			middleware.ConversationBuffered(5),

@@ -12,11 +12,11 @@ type Tool interface {
 	Description() string
 	InputSchema() *jsonschema.Schema
 	OutputSchema() *jsonschema.Schema
-	Handle(context.Context, string) (string, error)
+	Handler
 }
 
 // NewTool creates a new Tool with the given name, description, and handler.
-func NewTool(name string, description string, handler Handler[string, string], opts ...Option) Tool {
+func NewTool(name string, description string, handler Handler, opts ...Option) Tool {
 	t := &baseTool{
 		name:        name,
 		description: description,
@@ -29,7 +29,7 @@ func NewTool(name string, description string, handler Handler[string, string], o
 }
 
 // NewFunc creates a new Tool with the given name, description, input and output types, and handler.
-func NewFunc[I, O any](name string, description string, handler Handler[I, O]) (Tool, error) {
+func NewFunc[I, O any](name string, description string, handler func(context.Context, I) (O, error), opts ...Option) (Tool, error) {
 	inputSchema, err := jsonschema.For[I](nil)
 	if err != nil {
 		return nil, err
@@ -38,11 +38,15 @@ func NewFunc[I, O any](name string, description string, handler Handler[I, O]) (
 	if err != nil {
 		return nil, err
 	}
-	return &baseTool{
+	t := &baseTool{
 		name:         name,
 		description:  description,
 		inputSchema:  inputSchema,
 		outputSchema: outputSchema,
 		handler:      JSONAdapter(handler),
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t, nil
 }

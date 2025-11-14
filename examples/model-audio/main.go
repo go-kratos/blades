@@ -12,10 +12,14 @@ import (
 )
 
 func main() {
+	model := openai.NewAudio(
+		"gpt-4o-mini-tts",
+		openai.WithAudioVoice("alloy"),
+		openai.WithAudioResponseFormat("mp3"),
+	)
 	agent, err := blades.NewAgent(
 		"Audio Agent",
-		blades.WithModel("gpt-4o-mini-tts"),
-		blades.WithProvider(openai.NewAudioProvider()),
+		blades.WithModel(model),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -24,8 +28,6 @@ func main() {
 	output, err := runner.Run(
 		context.Background(),
 		blades.UserMessage("Welcome to the Blades audio demo!"),
-		blades.AudioVoice("alloy"),
-		blades.AudioResponseFormat("mp3"),
 	)
 	if err != nil {
 		log.Fatalf("generate audio: %v", err)

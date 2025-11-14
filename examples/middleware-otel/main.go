@@ -36,11 +36,13 @@ func main() {
 		),
 	)
 	// Create a blades agent with OpenTelemetry middleware
+	model := openai.NewModel("deepseek-chat")
 	agent, err := blades.NewAgent(
 		"OpenTelemetry Agent",
-		blades.WithMiddleware(middleware.Tracing()),
-		blades.WithModel("qwen-max"),
-		blades.WithProvider(openai.NewChatProvider()),
+		blades.WithMiddleware(
+			middleware.Tracing(),
+		),
+		blades.WithModel(model),
 	)
 	if err != nil {
 		log.Fatal(err)

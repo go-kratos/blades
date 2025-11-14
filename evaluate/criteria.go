@@ -30,8 +30,8 @@ func NewCriteria(name string, opts ...blades.AgentOption) (*Criteria, error) {
 }
 
 // Evaluate evaluates the relevancy of the LLM response.
-func (r *Criteria) Evaluate(ctx context.Context, message *blades.Message, opts ...blades.ModelOption) (*Evaluation, error) {
-	iter := r.agent.Run(ctx, blades.NewInvocation(message, opts...))
+func (r *Criteria) Evaluate(ctx context.Context, message *blades.Message) (*Evaluation, error) {
+	iter := r.agent.Run(ctx, blades.NewInvocation(message))
 	for msg, err := range iter {
 		if err != nil {
 			return nil, err

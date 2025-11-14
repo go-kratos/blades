@@ -25,13 +25,12 @@ func main() {
 	defer mcpResolver.Close()
 
 	// Create OpenAI provider (requires OPENAI_API_KEY environment variable)
-	openaiProvider := openai.NewChatProvider()
+	model := openai.NewModel("gpt-5")
 
 	// Create Agent with MCP tools resolver
 	// The resolver will dynamically provide tools from the MCP server
 	agent, err := blades.NewAgent("time-assistant",
-		blades.WithModel("gpt-5"),
-		blades.WithProvider(openaiProvider),
+		blades.WithModel(model),
 		blades.WithInstructions("You are a helpful assistant that can tell time in different timezones."),
 		blades.WithToolsResolver(mcpResolver),
 	)

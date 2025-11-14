@@ -56,11 +56,6 @@ func Tracing(opts ...TraceOption) blades.Middleware {
 }
 
 func (t *tracing) Start(ctx context.Context, agent blades.Agent, invocation *blades.Invocation) (context.Context, trace.Span) {
-	ctx, span := t.tracer.Start(ctx, fmt.Sprintf("invoke_agent %s", agent.Name()))
-	mo := &blades.ModelOptions{}
-	for _, opt := range invocation.ModelOptions {
-		opt(mo)
-	}
 	var (
 		model     string
 		sessionID string
@@ -71,18 +66,13 @@ func (t *tracing) Start(ctx context.Context, agent blades.Agent, invocation *bla
 	if m, ok := blades.FromModelContext(ctx); ok {
 		model = m.Model()
 	}
+	ctx, span := t.tracer.Start(ctx, fmt.Sprintf("invoke_agent %s", agent.Name()))
 	span.SetAttributes(
 		semconv.GenAIOperationNameInvokeAgent,
 		semconv.GenAISystemKey.String(t.system),
 		semconv.GenAIAgentName(agent.Name()),
 		semconv.GenAIAgentDescription(agent.Description()),
 		semconv.GenAIRequestModel(model),
-		semconv.GenAIRequestTopP(mo.TopP),
-		semconv.GenAIRequestSeed(int(mo.Seed)),
-		semconv.GenAIRequestTemperature(mo.Temperature),
-		semconv.GenAIRequestStopSequences(mo.StopSequences...),
-		semconv.GenAIRequestPresencePenalty(mo.PresencePenalty),
-		semconv.GenAIRequestFrequencyPenalty(mo.FrequencyPenalty),
 		semconv.GenAIConversationID(sessionID),
 	)
 	return ctx, span

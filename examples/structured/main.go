@@ -20,10 +20,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	model := openai.NewModel("gpt-5")
 	agent, err := blades.NewAgent(
 		"filmography",
-		blades.WithModel("gpt-5"),
-		blades.WithProvider(openai.NewChatProvider()),
+		blades.WithModel(model),
 		blades.WithOutputSchema(schema),
 	)
 	if err != nil {

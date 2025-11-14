@@ -9,11 +9,11 @@ import (
 )
 
 func main() {
+	model := openai.NewModel("gpt-5")
 	agent, err := blades.NewAgent(
 		"History Tutor",
-		blades.WithModel("qwen-plus"),
+		blades.WithModel(model),
 		blades.WithInstructions("You are a knowledgeable history tutor. Provide detailed and accurate information on historical events."),
-		blades.WithProvider(openai.NewChatProvider()),
 	)
 	if err != nil {
 		log.Fatal(err)

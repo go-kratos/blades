@@ -10,12 +10,11 @@ import (
 // agentTool is a tool that wraps an Agent.
 type agentTool struct {
 	Agent
-	opts []ModelOption
 }
 
 // NewAgentTool creates a new tool that wraps the given Agent.
-func NewAgentTool(agent Agent, opts ...ModelOption) tools.Tool {
-	return &agentTool{Agent: agent, opts: opts}
+func NewAgentTool(agent Agent) tools.Tool {
+	return &agentTool{Agent: agent}
 }
 
 // InputSchema returns the input schema of the underlying Agent, if it has one.
@@ -40,7 +39,7 @@ func (a *agentTool) OutputSchema() *jsonschema.Schema {
 
 // Handle runs the underlying Agent with the given input and returns the output.
 func (a *agentTool) Handle(ctx context.Context, input string) (string, error) {
-	iter := a.Agent.Run(ctx, NewInvocation(UserMessage(input), a.opts...))
+	iter := a.Agent.Run(ctx, NewInvocation(UserMessage(input)))
 	for output, err := range iter {
 		if err != nil {
 			return "", err

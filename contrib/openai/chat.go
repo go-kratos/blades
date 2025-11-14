@@ -14,61 +14,118 @@ import (
 	"github.com/openai/openai-go/v2/shared"
 )
 
-var _ blades.ModelProvider = (*ChatProvider)(nil)
+// ModelOption defines options for chat providers.
+type ModelOption func(*ModelOptions)
 
-// ChatOption defines options for chat providers.
-type ChatOption func(*ChatOptions)
+// WithSeed sets the seed for chat completions.
+func WithSeed(seed int64) ModelOption {
+	return func(o *ModelOptions) {
+		o.Seed = &seed
+	}
+}
+
+// WithMaxOutputTokens sets the maximum output tokens for chat completions.
+func WithMaxOutputTokens(maxTokens int64) ModelOption {
+	return func(o *ModelOptions) {
+		o.MaxOutputTokens = &maxTokens
+	}
+}
+
+// WithFrequencyPenalty sets the frequency penalty for chat completions.
+func WithFrequencyPenalty(penalty float64) ModelOption {
+	return func(o *ModelOptions) {
+		o.FrequencyPenalty = &penalty
+	}
+}
+
+// WithPresencePenalty sets the presence penalty for chat completions.
+func WithPresencePenalty(penalty float64) ModelOption {
+	return func(o *ModelOptions) {
+		o.PresencePenalty = &penalty
+	}
+}
+
+// WithTemperature sets the temperature for chat completions.
+func WithTemperature(temperature float64) ModelOption {
+	return func(o *ModelOptions) {
+		o.Temperature = &temperature
+	}
+}
+
+// WithTopP sets the top-p value for chat completions.
+func WithTopP(topP float64) ModelOption {
+	return func(o *ModelOptions) {
+		o.TopP = &topP
+	}
+}
+
+// WithStopSequences sets the stop sequences for chat completions.
+func WithStopSequences(sequences ...string) ModelOption {
+	return func(o *ModelOptions) {
+		o.StopSequences = sequences
+	}
+}
 
 // WithReasoningEffort sets the reasoning effort for chat completions.
-func WithReasoningEffort(effort shared.ReasoningEffort) ChatOption {
-	return func(o *ChatOptions) {
+func WithReasoningEffort(effort shared.ReasoningEffort) ModelOption {
+	return func(o *ModelOptions) {
 		o.ReasoningEffort = effort
 	}
 }
 
-// WithChatOptions sets request options for chat completions.
-func WithChatOptions(opts ...option.RequestOption) ChatOption {
-	return func(o *ChatOptions) {
+// WithModelOptions sets request options for chat completions.
+func WithModelOptions(opts ...option.RequestOption) ModelOption {
+	return func(o *ModelOptions) {
 		o.RequestOpts = opts
 	}
 }
 
-type ChatOptions struct {
-	ReasoningEffort shared.ReasoningEffort
-	RequestOpts     []option.RequestOption
+type ModelOptions struct {
+	Seed             *int64
+	MaxOutputTokens  *int64
+	FrequencyPenalty *float64
+	PresencePenalty  *float64
+	Temperature      *float64
+	TopP             *float64
+	StopSequences    []string
+	ReasoningEffort  shared.ReasoningEffort
+	RequestOpts      []option.RequestOption
 }
 
-// ChatProvider implements blades.ModelProvider for OpenAI-compatible chat models.
-type ChatProvider struct {
-	opts   ChatOptions
+// chatModel implements blades.chatModel for OpenAI-compatible chat models.
+type chatModel struct {
+	model  string
+	opts   ModelOptions
 	client openai.Client
 }
 
-// NewChatProvider constructs an OpenAI provider. The API key is read from
+// NewModel constructs an OpenAI provider. The API key is read from
 // the OPENAI_API_KEY environment variable. If OPENAI_BASE_URL is set,
 // it is used as the API base URL; otherwise the library default is used.
-func NewChatProvider(opts ...ChatOption) blades.ModelProvider {
-	chatOpts := ChatOptions{}
+func NewModel(model string, opts ...ModelOption) blades.ModelProvider {
+	modelOpts := ModelOptions{}
 	for _, opt := range opts {
-		opt(&chatOpts)
+		opt(&modelOpts)
 	}
-	return &ChatProvider{
-		opts:   chatOpts,
-		client: openai.NewClient(chatOpts.RequestOpts...),
+	return &chatModel{
+		model:  model,
+		opts:   modelOpts,
+		client: openai.NewClient(modelOpts.RequestOpts...),
 	}
 }
 
+// Name returns the model name.
+func (m *chatModel) Name() string {
+	return m.model
+}
+
 // Generate executes a non-streaming chat completion request.
-func (p *ChatProvider) Generate(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) (*blades.ModelResponse, error) {
-	opt := blades.ModelOptions{}
-	for _, apply := range opts {
-		apply(&opt)
-	}
-	params, err := p.toChatCompletionParams(req, opt)
+func (m *chatModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+	params, err := m.toChatCompletionParams(req)
 	if err != nil {
 		return nil, err
 	}
-	chatResponse, err := p.client.Chat.Completions.New(ctx, params)
+	chatResponse, err := m.client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -81,18 +138,14 @@ func (p *ChatProvider) Generate(ctx context.Context, req *blades.ModelRequest, o
 
 // NewStreaming streams chat completion chunks and converts each choice delta
 // into a ModelResponse for incremental consumption.
-func (p *ChatProvider) NewStreaming(ctx context.Context, req *blades.ModelRequest, opts ...blades.ModelOption) blades.Generator[*blades.ModelResponse, error] {
-	opt := blades.ModelOptions{}
-	for _, apply := range opts {
-		apply(&opt)
-	}
+func (m *chatModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
-		params, err := p.toChatCompletionParams(req, opt)
+		params, err := m.toChatCompletionParams(req)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		streaming := p.client.Chat.Completions.NewStreaming(ctx, params)
+		streaming := m.client.Chat.Completions.NewStreaming(ctx, params)
 		defer streaming.Close()
 		acc := openai.ChatCompletionAccumulator{}
 		for streaming.Next() {
@@ -121,37 +174,37 @@ func (p *ChatProvider) NewStreaming(ctx context.Context, req *blades.ModelReques
 }
 
 // toChatCompletionParams converts a generic model request into OpenAI params.
-func (p *ChatProvider) toChatCompletionParams(req *blades.ModelRequest, opt blades.ModelOptions) (openai.ChatCompletionNewParams, error) {
+func (m *chatModel) toChatCompletionParams(req *blades.ModelRequest) (openai.ChatCompletionNewParams, error) {
 	tools, err := toTools(req.Tools)
 	if err != nil {
 		return openai.ChatCompletionNewParams{}, err
 	}
 	params := openai.ChatCompletionNewParams{
 		Tools:           tools,
-		Model:           req.Model,
-		ReasoningEffort: p.opts.ReasoningEffort,
+		Model:           m.model,
+		ReasoningEffort: m.opts.ReasoningEffort,
 		Messages:        make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages)),
 	}
-	if opt.Seed > 0 {
-		params.Seed = param.NewOpt(opt.Seed)
+	if m.opts.Seed != nil {
+		params.Seed = param.NewOpt(*m.opts.Seed)
 	}
-	if opt.MaxOutputTokens > 0 {
-		params.MaxCompletionTokens = param.NewOpt(opt.MaxOutputTokens)
+	if m.opts.MaxOutputTokens != nil {
+		params.MaxCompletionTokens = param.NewOpt(*m.opts.MaxOutputTokens)
 	}
-	if opt.FrequencyPenalty > 0 {
-		params.FrequencyPenalty = param.NewOpt(opt.FrequencyPenalty)
+	if m.opts.FrequencyPenalty != nil {
+		params.FrequencyPenalty = param.NewOpt(*m.opts.FrequencyPenalty)
 	}
-	if opt.PresencePenalty > 0 {
-		params.PresencePenalty = param.NewOpt(opt.PresencePenalty)
+	if m.opts.PresencePenalty != nil {
+		params.PresencePenalty = param.NewOpt(*m.opts.PresencePenalty)
 	}
-	if opt.Temperature > 0 {
-		params.Temperature = param.NewOpt(opt.Temperature)
+	if m.opts.Temperature != nil {
+		params.Temperature = param.NewOpt(*m.opts.Temperature)
 	}
-	if opt.TopP > 0 {
-		params.TopP = param.NewOpt(opt.TopP)
+	if m.opts.TopP != nil {
+		params.TopP = param.NewOpt(*m.opts.TopP)
 	}
-	if len(opt.StopSequences) > 0 {
-		params.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: opt.StopSequences}
+	if len(m.opts.StopSequences) > 0 {
+		params.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: m.opts.StopSequences}
 	}
 	if req.OutputSchema != nil {
 		schemaParam := openai.ResponseFormatJSONSchemaJSONSchemaParam{
