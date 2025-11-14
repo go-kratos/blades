@@ -327,17 +327,13 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 				}
 			} else {
 				streaming := a.provider.NewStreaming(ctx, req, invocation.ModelOptions...)
-				for res, err := range streaming {
+				for finalResponse, err = range streaming {
 					if err != nil {
 						yield(nil, err)
 						return
 					}
-					if res.Message.Status == StatusCompleted {
-						finalResponse = res
-					} else {
-						if !yield(res.Message, nil) {
-							return // early termination
-						}
+					if !yield(finalResponse.Message, nil) {
+						return // early termination
 					}
 				}
 			}
@@ -359,7 +355,6 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 				yield(nil, err)
 				return
 			}
-			yield(finalResponse.Message, nil)
 			return
 		}
 		yield(nil, ErrMaxIterationsExceeded)
