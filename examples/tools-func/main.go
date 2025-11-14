@@ -19,13 +19,15 @@ type WeatherRes struct {
 	Forecast string `json:"forecast" jsonschema:"The weather forecast"`
 }
 
-func logger() tools.Middleware[WeatherReq, WeatherRes] {
-	return func(next tools.Handler[WeatherReq, WeatherRes]) tools.Handler[WeatherReq, WeatherRes] {
-		return tools.HandleFunc[WeatherReq, WeatherRes](func(ctx context.Context, req WeatherReq) (WeatherRes, error) {
-			log.Println("Request received for location:", req.Location)
-			return next.Handle(ctx, req)
-		})
+// weatherHandle is the function that handles weather requests.
+func weatherHandle(ctx context.Context, req WeatherReq) (WeatherRes, error) {
+	log.Println("Fetching weather for:", req.Location)
+	session, ok := blades.FromSessionContext(ctx)
+	if !ok {
+		return WeatherRes{}, blades.ErrNoSessionContext
 	}
+	session.PutState("location", req.Location)
+	return WeatherRes{Forecast: "Sunny, 25°C"}, nil
 }
 
 func main() {
@@ -33,20 +35,11 @@ func main() {
 	weatherTool, err := tools.NewFunc(
 		"get_weather",
 		"Get the current weather for a given city",
-		tools.ApplyMiddlewares(tools.HandleFunc[WeatherReq, WeatherRes](func(ctx context.Context, req WeatherReq) (WeatherRes, error) {
-			log.Println("Fetching weather for:", req.Location)
-			session, ok := blades.FromSessionContext(ctx)
-			if !ok {
-				return WeatherRes{}, blades.ErrNoSessionContext
-			}
-			session.PutState("location", req.Location)
-			return WeatherRes{Forecast: "Sunny, 25°C"}, nil
-		}), logger()),
+		weatherHandle,
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	// Create an agent with the weather tool
 	agent, err := blades.NewAgent(
 		"Weather Agent",
@@ -58,7 +51,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	// Create a prompt asking for the weather in New York City
 	input := blades.UserMessage("What is the weather in New York City?")
 	session := blades.NewSession()
@@ -70,13 +62,4 @@ func main() {
 	}
 	log.Println("state:", session.State())
 	log.Println("output:", output.Text())
-
-	// Stream the response with a different input
-	streamInput := blades.UserMessage("What is the weather in San Francisco?")
-	for output, err := range runner.RunStream(context.Background(), streamInput) {
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("stream status: %s output: %s", output.Status, output.Text())
-	}
 }

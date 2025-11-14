@@ -9,6 +9,13 @@ import (
 // Option defines a configuration option for a baseTool.
 type Option func(*baseTool)
 
+// WithMiddleware sets the middlewares for the tool.
+func WithMiddleware(mw ...Middleware) Option {
+	return func(t *baseTool) {
+		t.middlewares = mw
+	}
+}
+
 // WithInputSchema sets the input schema for the tool.
 func WithInputSchema(schema *jsonschema.Schema) Option {
 	return func(t *baseTool) {
@@ -29,7 +36,8 @@ type baseTool struct {
 	description  string
 	inputSchema  *jsonschema.Schema
 	outputSchema *jsonschema.Schema
-	handler      Handler[string, string]
+	handler      Handler
+	middlewares  []Middleware
 }
 
 func (t *baseTool) Name() string {
@@ -49,5 +57,9 @@ func (t *baseTool) OutputSchema() *jsonschema.Schema {
 }
 
 func (t *baseTool) Handle(ctx context.Context, input string) (string, error) {
-	return t.handler.Handle(ctx, input)
+	handler := t.handler
+	if len(t.middlewares) > 0 {
+		handler = ChainMiddlewares(t.middlewares...)(t.handler)
+	}
+	return handler.Handle(ctx, input)
 }
