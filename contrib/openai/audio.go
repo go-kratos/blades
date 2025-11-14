@@ -92,27 +92,27 @@ func NewAudio(model string, opts ...AudioOption) blades.ModelProvider {
 }
 
 // Name returns the name of the audio model.
-func (p *audioModel) Name() string {
-	return p.model
+func (m *audioModel) Name() string {
+	return m.model
 }
 
-func (p *audioModel) buildAudioParams(req *blades.ModelRequest) openai.AudioSpeechNewParams {
+func (m *audioModel) buildAudioParams(req *blades.ModelRequest) openai.AudioSpeechNewParams {
 	params := openai.AudioSpeechNewParams{
 		Input: promptFromMessages(req.Messages),
-		Model: openai.SpeechModel(p.model),
-		Voice: openai.AudioSpeechNewParamsVoice(p.opts.Voice),
+		Model: openai.SpeechModel(m.model),
+		Voice: openai.AudioSpeechNewParamsVoice(m.opts.Voice),
 	}
 	if req.Instruction != nil {
 		params.Instructions = param.NewOpt(req.Instruction.Text())
 	}
-	if p.opts.ResponseFormat != "" {
-		params.ResponseFormat = openai.AudioSpeechNewParamsResponseFormat(p.opts.ResponseFormat)
+	if m.opts.ResponseFormat != "" {
+		params.ResponseFormat = openai.AudioSpeechNewParamsResponseFormat(m.opts.ResponseFormat)
 	}
-	if p.opts.StreamFormat != "" {
-		params.StreamFormat = openai.AudioSpeechNewParamsStreamFormat(p.opts.StreamFormat)
+	if m.opts.StreamFormat != "" {
+		params.StreamFormat = openai.AudioSpeechNewParamsStreamFormat(m.opts.StreamFormat)
 	}
-	if p.opts.Speed != nil {
-		params.Speed = param.NewOpt(*p.opts.Speed)
+	if m.opts.Speed != nil {
+		params.Speed = param.NewOpt(*m.opts.Speed)
 	}
 	return params
 }

@@ -135,17 +135,17 @@ func NewImage(model string, opts ...ImageOption) blades.ModelProvider {
 }
 
 // Name returns the name of the OpenAI image model.
-func (p *imageModel) Name() string {
-	return p.model
+func (m *imageModel) Name() string {
+	return m.model
 }
 
 // Generate generates images using the configured OpenAI model.
-func (p *imageModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
-	params, err := p.buildGenerateParams(req)
+func (m *imageModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+	params, err := m.buildGenerateParams(req)
 	if err != nil {
 		return nil, err
 	}
-	res, err := p.client.Images.Generate(ctx, params)
+	res, err := m.client.Images.Generate(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -153,54 +153,54 @@ func (p *imageModel) Generate(ctx context.Context, req *blades.ModelRequest) (*b
 }
 
 // NewStreaming wraps Generate with a single-yield stream for API compatibility.
-func (p *imageModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
+func (m *imageModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
-		m, err := p.Generate(ctx, req)
+		message, err := m.Generate(ctx, req)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		yield(m, nil)
+		yield(message, nil)
 	}
 }
 
-func (p *imageModel) buildGenerateParams(req *blades.ModelRequest) (openai.ImageGenerateParams, error) {
+func (m *imageModel) buildGenerateParams(req *blades.ModelRequest) (openai.ImageGenerateParams, error) {
 	params := openai.ImageGenerateParams{
 		Prompt: promptFromMessages(req.Messages),
-		Model:  openai.ImageModel(p.model),
+		Model:  openai.ImageModel(m.model),
 	}
-	if p.opts.Background != "" {
-		params.Background = openai.ImageGenerateParamsBackground(p.opts.Background)
+	if m.opts.Background != "" {
+		params.Background = openai.ImageGenerateParamsBackground(m.opts.Background)
 	}
-	if p.opts.Size != "" {
-		params.Size = openai.ImageGenerateParamsSize(p.opts.Size)
+	if m.opts.Size != "" {
+		params.Size = openai.ImageGenerateParamsSize(m.opts.Size)
 	}
-	if p.opts.Quality != "" {
-		params.Quality = openai.ImageGenerateParamsQuality(p.opts.Quality)
+	if m.opts.Quality != "" {
+		params.Quality = openai.ImageGenerateParamsQuality(m.opts.Quality)
 	}
-	if p.opts.ResponseFormat != "" {
-		params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(p.opts.ResponseFormat)
+	if m.opts.ResponseFormat != "" {
+		params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(m.opts.ResponseFormat)
 	}
-	if p.opts.OutputFormat != "" {
-		params.OutputFormat = openai.ImageGenerateParamsOutputFormat(p.opts.OutputFormat)
+	if m.opts.OutputFormat != "" {
+		params.OutputFormat = openai.ImageGenerateParamsOutputFormat(m.opts.OutputFormat)
 	}
-	if p.opts.Moderation != "" {
-		params.Moderation = openai.ImageGenerateParamsModeration(p.opts.Moderation)
+	if m.opts.Moderation != "" {
+		params.Moderation = openai.ImageGenerateParamsModeration(m.opts.Moderation)
 	}
-	if p.opts.Style != "" {
-		params.Style = openai.ImageGenerateParamsStyle(p.opts.Style)
+	if m.opts.Style != "" {
+		params.Style = openai.ImageGenerateParamsStyle(m.opts.Style)
 	}
-	if p.opts.User != "" {
-		params.User = param.NewOpt(p.opts.User)
+	if m.opts.User != "" {
+		params.User = param.NewOpt(m.opts.User)
 	}
-	if p.opts.N > 0 {
-		params.N = param.NewOpt(int64(p.opts.N))
+	if m.opts.N > 0 {
+		params.N = param.NewOpt(m.opts.N)
 	}
-	if p.opts.PartialImages > 0 {
-		params.PartialImages = param.NewOpt(int64(p.opts.PartialImages))
+	if m.opts.PartialImages > 0 {
+		params.PartialImages = param.NewOpt(m.opts.PartialImages)
 	}
-	if p.opts.OutputCompression > 0 {
-		params.OutputCompression = param.NewOpt(p.opts.OutputCompression)
+	if m.opts.OutputCompression > 0 {
+		params.OutputCompression = param.NewOpt(m.opts.OutputCompression)
 	}
 	return params, nil
 }
