@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	model := openai.NewModel("gpt-5")
+	model := openai.NewModel("deepseek-chat")
 	agent, err := blades.NewAgent(
 		"Basic Agent",
 		blades.WithModel(model),

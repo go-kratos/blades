@@ -114,29 +114,9 @@ func (a *agent) Name() string {
 	return a.name
 }
 
-// Tools returns the tools of the Agent.
-func (a *agent) Tools() []tools.Tool {
-	return a.tools
-}
-
 // Description returns the description of the Agent.
 func (a *agent) Description() string {
 	return a.description
-}
-
-// Instructions returns the instructions of the Agent.
-func (a *agent) Instructions() string {
-	return a.instructions
-}
-
-// InputSchema returns the input schema of the Agent.
-func (a *agent) InputSchema() *jsonschema.Schema {
-	return a.inputSchema
-}
-
-// OutputSchema returns the output schema of the Agent.
-func (a *agent) OutputSchema() *jsonschema.Schema {
-	return a.outputSchema
 }
 
 // resolveTools combines static tools with dynamically resolved tools.
