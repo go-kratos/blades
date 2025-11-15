@@ -28,8 +28,9 @@ func NewHandoffAgent(config HandoffConfig) (blades.Agent, error) {
 	}
 	rootAgent, err := blades.NewAgent(
 		config.Name,
-		blades.WithInstructions(instructions),
 		blades.WithModel(config.Model),
+		blades.WithDescription(config.Description),
+		blades.WithInstructions(instructions),
 		blades.WithTools(handoff.NewHandoffTool()),
 	)
 	if err != nil {
