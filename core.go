@@ -37,12 +37,3 @@ type Runner interface {
 func NewInvocationID() string {
 	return uuid.NewString()
 }
-
-// NewInvocation creates a new Invocation with the given message and model options.
-func NewInvocation(message *Message) *Invocation {
-	return &Invocation{
-		ID:      NewInvocationID(),
-		Session: NewSession(),
-		Message: message,
-	}
-}
