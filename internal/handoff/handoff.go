@@ -9,7 +9,6 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-const StateHandoffToAgent = "handoff_to_agent"
 
 type handoffTool struct{}
 
