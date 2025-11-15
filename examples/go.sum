@@ -8,8 +8,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
-github.com/go-kratos/kit v0.0.0-20251107074530-fa502981ad29 h1:AJOT7bnCtnOPataHgWzdSuRm3oBVDDxGbGFVNX8cjVk=
-github.com/go-kratos/kit v0.0.0-20251107074530-fa502981ad29/go.mod h1:TrUs5NEMicK0I4hOGNMp0JQmjF1kWyuKuiueOszGp+o=
+github.com/go-kratos/kit v0.0.0-20251112070158-0ae377865458 h1:AMOSD1SEBVbWlG/seNMqwtaUK8AfJpKweSc8m+OWXks=
+github.com/go-kratos/kit v0.0.0-20251112070158-0ae377865458/go.mod h1:TrUs5NEMicK0I4hOGNMp0JQmjF1kWyuKuiueOszGp+o=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
 github.com/go-logr/logr v1.4.3/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=

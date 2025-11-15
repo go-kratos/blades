@@ -10,6 +10,8 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
+const StateHandoffToAgent = "handoff_to_agent"
+
 type handoffTool struct{}
 
 func NewHandoffTool() tools.Tool {
@@ -40,10 +42,11 @@ func (h *handoffTool) Handle(ctx context.Context, input string) (string, error) 
 		return "", err
 	}
 	agentName := args["agentName"]
-	control, ok := FromContext(ctx)
+	// Set the target agent in the handoff control
+	handoff, ok := FromContext(ctx)
 	if !ok {
 		return "", fmt.Errorf("handoff control not found in context")
 	}
-	control.TargetAgent = agentName
+	handoff.TargetAgent = agentName
 	return "", nil
 }

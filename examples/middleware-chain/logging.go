@@ -17,11 +17,11 @@ func NewLogging(next blades.Handler) blades.Handler {
 	return &Logging{next}
 }
 
-func (m *Logging) onError(start time.Time, agent blades.Agent, invocation *blades.Invocation, err error) {
+func (m *Logging) onError(start time.Time, agent blades.AgentContext, invocation *blades.Invocation, err error) {
 	log.Printf("logging: agent(%s) prompt(%s) failed after %s: %v", agent.Name(), invocation.Message.String(), time.Since(start), err)
 }
 
-func (m *Logging) onSuccess(start time.Time, agent blades.Agent, invocation *blades.Invocation, output *blades.Message) {
+func (m *Logging) onSuccess(start time.Time, agent blades.AgentContext, invocation *blades.Invocation, output *blades.Message) {
 	log.Printf("logging: agent(%s) prompt(%s) succeeded after %s: %s", agent.Name(), invocation.Message.String(), time.Since(start), output.String())
 }
 

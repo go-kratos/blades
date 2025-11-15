@@ -42,10 +42,10 @@ func main() {
 		log.Fatal(err)
 	}
 	input := blades.UserMessage("What is the capital of France?")
-	runner := blades.NewRunner(historyTutorAgent)
+	runner := blades.NewRunner(agent)
 	output, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println(agent, output.Text())
+	log.Println(output.Text())
 }

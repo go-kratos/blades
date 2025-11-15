@@ -2,7 +2,7 @@ package flow
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"strings"
 
 	"github.com/go-kratos/blades"
@@ -26,7 +26,6 @@ func NewHandoffAgent(config HandoffConfig) (blades.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Println(instructions)
 	rootAgent, err := blades.NewAgent(
 		config.Name,
 		blades.WithInstructions(instructions),
@@ -48,22 +47,23 @@ func NewHandoffAgent(config HandoffConfig) (blades.Agent, error) {
 
 func (h *HandoffAgent) Run(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
-		control := &handoff.Handoff{}
-		for message, err := range h.Agent.Run(handoff.NewContext(ctx, control), invocation) {
-			log.Println("Root Agent:", message, err)
+		hf := &handoff.Handoff{}
+		for _, err := range h.Agent.Run(handoff.NewContext(ctx, hf), invocation) {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
 			break
 		}
-		agent, ok := h.targets[control.TargetAgent]
+		agent, ok := h.targets[hf.TargetAgent]
 		if !ok {
-			log.Println("Unknown target agent:", control.TargetAgent)
+			yield(nil, fmt.Errorf("not found target agent: %s", hf.TargetAgent))
+			return
 		}
-		log.Println("Handoff Agent:", agent.Name(), invocation.Message.Text())
 		for message, err := range agent.Run(ctx, invocation) {
-			log.Println(message, err, control.TargetAgent)
 			if !yield(message, err) {
 				return
 			}
 		}
-
 	}
 }
