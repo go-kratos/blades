@@ -1,0 +1,49 @@
+package main
+
+import (
+	"context"
+	"log"
+
+	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/contrib/openai"
+	"github.com/go-kratos/blades/flow"
+)
+
+func main() {
+	model := openai.NewModel("deepseek-chat")
+	writerAgent, err := blades.NewAgent(
+		"WriterAgent",
+		blades.WithModel(model),
+		blades.WithInstructions("Draft a short paragraph on climate change."),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	reviewerAgent, err := blades.NewAgent(
+		"ReviewerAgent",
+		blades.WithModel(model),
+		blades.WithInstructions("Review the draft and suggest improvements."),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	sequentialAgent := flow.NewSequentialAgent(flow.SequentialConfig{
+		Name: "WritingReviewFlow",
+		SubAgents: []blades.Agent{
+			writerAgent,
+			reviewerAgent,
+		},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	input := blades.UserMessage("Please write a short paragraph about climate change.")
+	runner := blades.NewRunner(sequentialAgent)
+	stream := runner.RunStream(context.Background(), input)
+	for message, err := range stream {
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Println(message.Text())
+	}
+}
