@@ -22,7 +22,7 @@ func main() {
 	// Create a user message input
 	input := blades.UserMessage("What is the capital of France?")
 	// Run the agent with the input message
-	for output, err := range agent.Run(context.Background(), blades.NewInvocation(input)) {
+	for output, err := range agent.Run(context.Background(), &blades.Invocation{Message: input}) {
 		if err != nil {
 			log.Fatal(err)
 		}

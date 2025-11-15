@@ -311,6 +311,7 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					yield(nil, err)
 					return
 				}
+				yield(finalResponse.Message, nil)
 			} else {
 				streaming := a.model.NewStreaming(ctx, req)
 				for finalResponse, err = range streaming {

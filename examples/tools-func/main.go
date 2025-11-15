@@ -41,7 +41,7 @@ func main() {
 		log.Fatal(err)
 	}
 	// Create an agent with the weather tool
-	model := openai.NewModel("gpt-5")
+	model := openai.NewModel("deepseek-chat")
 	agent, err := blades.NewAgent(
 		"Weather Agent",
 		blades.WithModel(model),

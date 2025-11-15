@@ -39,7 +39,7 @@ func (a *agentTool) OutputSchema() *jsonschema.Schema {
 
 // Handle runs the underlying Agent with the given input and returns the output.
 func (a *agentTool) Handle(ctx context.Context, input string) (string, error) {
-	iter := a.Agent.Run(ctx, NewInvocation(UserMessage(input)))
+	iter := a.Agent.Run(ctx, &Invocation{Message: UserMessage(input)})
 	for output, err := range iter {
 		if err != nil {
 			return "", err
