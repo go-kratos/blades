@@ -4,10 +4,6 @@ import (
 	"context"
 )
 
-const (
-	AgentStateEscalate = "escalate"
-)
-
 type AgentContext interface {
 	Name() string
 	Model() string
