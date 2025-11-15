@@ -16,16 +16,15 @@ If you are the best to answer the question according to your description, you
 can answer it.
 If another agent is better for answering the question according to its
 description, call 'handoff_to_agent' function to transfer the
-question to that agent. When transfering, do not generate any text other than
+question to that agent. When transferring, do not generate any text other than
 the function call.`
 
 var transferToAgentPromptTmpl = template.Must(template.New("transfer_to_agent_prompt").Parse(transferInstructionTemplate))
 
 // BuildInstructions builds the instructions for transferring to another agent.
-func BuildInstructions(parent string, targets []blades.Agent) (string, error) {
+func BuildInstructions(targets []blades.Agent) (string, error) {
 	var buf bytes.Buffer
 	if err := transferToAgentPromptTmpl.Execute(&buf, map[string]any{
-		"Parent":  parent,
 		"Targets": targets,
 	}); err != nil {
 		return "", err

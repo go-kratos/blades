@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -25,7 +24,8 @@ This tool hands off control to another agent when it's more suitable to answer t
 }
 func (h *handoffTool) InputSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
-		Type: "object",
+		Type:     "object",
+		Required: []string{"agentName"},
 		Properties: map[string]*jsonschema.Schema{
 			"agentName": {
 				Type:        "string",
@@ -36,12 +36,14 @@ func (h *handoffTool) InputSchema() *jsonschema.Schema {
 }
 func (h *handoffTool) OutputSchema() *jsonschema.Schema { return nil }
 func (h *handoffTool) Handle(ctx context.Context, input string) (string, error) {
-	log.Println("Handoff tool invoked with input:", input)
 	args := map[string]string{}
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
 		return "", err
 	}
 	agentName := args["agentName"]
+	if agentName == "" {
+		return "", fmt.Errorf("agentName must be a non-empty string")
+	}
 	// Set the target agent in the handoff control
 	handoff, ok := FromContext(ctx)
 	if !ok {

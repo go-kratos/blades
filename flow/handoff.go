@@ -22,7 +22,7 @@ type HandoffAgent struct {
 }
 
 func NewHandoffAgent(config HandoffConfig) (blades.Agent, error) {
-	instructions, err := handoff.BuildInstructions(config.Name, config.SubAgents)
+	instructions, err := handoff.BuildInstructions(config.SubAgents)
 	if err != nil {
 		return nil, err
 	}
@@ -53,11 +53,10 @@ func (h *HandoffAgent) Run(ctx context.Context, invocation *blades.Invocation) b
 				yield(nil, err)
 				return
 			}
-			break
 		}
 		agent, ok := h.targets[hf.TargetAgent]
 		if !ok {
-			yield(nil, fmt.Errorf("not found target agent: %s", hf.TargetAgent))
+			yield(nil, fmt.Errorf("target agent not found: %s", hf.TargetAgent))
 			return
 		}
 		for message, err := range agent.Run(ctx, invocation) {
