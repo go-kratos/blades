@@ -2,7 +2,7 @@ package handoff
 
 import "context"
 
-// Handoff represents the data needed to transfer a conversation to a human agent.
+// Handoff represents the data needed to transfer control to another agent.
 type Handoff struct {
 	TargetAgent string
 }
