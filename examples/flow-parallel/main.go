@@ -53,9 +53,6 @@ func main() {
 			editorAgent2,
 		},
 	})
-	if err != nil {
-		log.Fatal(err)
-	}
 	sequentialAgent := flow.NewSequentialAgent(flow.SequentialConfig{
 		Name:        "WritingSequenceAgent",
 		Description: "Drafts, edits, and reviews a paragraph about climate change.",
