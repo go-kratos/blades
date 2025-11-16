@@ -41,27 +41,26 @@ func (p *parallelAgent) Run(ctx context.Context, invocation *blades.Invocation) 
 			message *blades.Message
 			err     error
 		}
-		resultsCh := make(chan result, 16) // buffer size can be tuned
+		ch := make(chan result, len(p.config.SubAgents)*8)
 		eg, ctx := errgroup.WithContext(ctx)
 		for _, agent := range p.config.SubAgents {
-			agent := agent // capture range variable
 			eg.Go(func() error {
 				for message, err := range agent.Run(ctx, invocation) {
 					if err != nil {
 						// Send error result and stop
-						resultsCh <- result{message: nil, err: err}
+						ch <- result{message: nil, err: err}
 						return err
 					}
-					resultsCh <- result{message: message, err: nil}
+					ch <- result{message: message, err: nil}
 				}
 				return nil
 			})
 		}
 		go func() {
 			eg.Wait()
-			close(resultsCh)
+			close(ch)
 		}()
-		for res := range resultsCh {
+		for res := range ch {
 			if !yield(res.message, res.err) {
 				break
 			}
