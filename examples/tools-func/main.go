@@ -54,9 +54,8 @@ func main() {
 	// Create a prompt asking for the weather in New York City
 	input := blades.UserMessage("What is the weather in New York City?")
 	session := blades.NewSession()
-	runner := blades.NewRunner(agent, blades.WithSession(session))
-	ctx := context.Background()
-	output, err := runner.Run(ctx, input)
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(context.Background(), input, blades.WithSession(session))
 	if err != nil {
 		log.Fatal(err)
 	}

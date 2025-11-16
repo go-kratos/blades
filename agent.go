@@ -294,12 +294,16 @@ func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, e
 
 // handle constructs the default handlers for Run and Stream using the provider.
 func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
-	setMessageContext("user", invocation, invocation.Message)
 	return func(yield func(*Message, error) bool) {
 		var (
 			err           error
 			finalResponse *ModelResponse
 		)
+		setMessageContext("user", invocation, invocation.Message)
+		if err := a.storeSession(ctx, invocation, invocation.Message); err != nil {
+			yield(nil, err)
+			return
+		}
 		for i := 0; i < a.maxIterations; i++ {
 			if !invocation.Streamable {
 				finalResponse, err = a.model.Generate(ctx, req)
@@ -312,7 +316,9 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					yield(nil, err)
 					return
 				}
-				yield(finalResponse.Message, nil)
+				if !yield(finalResponse.Message, nil) {
+					return
+				}
 			} else {
 				streaming := a.model.NewStreaming(ctx, req)
 				for finalResponse, err = range streaming {

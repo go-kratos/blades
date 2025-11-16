@@ -27,12 +27,6 @@ type Agent interface {
 	Run(context.Context, *Invocation) Generator[*Message, error]
 }
 
-// Runner represents a component that can execute a single message and return a response message or a stream of messages.
-type Runner interface {
-	Run(context.Context, *Message) (*Message, error)
-	RunStream(context.Context, *Message) Generator[*Message, error]
-}
-
 // NewInvocationID generates a new unique invocation ID.
 func NewInvocationID() string {
 	return uuid.NewString()

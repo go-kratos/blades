@@ -32,15 +32,15 @@ func main() {
 		log.Fatal(err)
 	}
 	var (
-		session = blades.NewSession()
-		inputs  = []*blades.Message{
+		inputs = []*blades.Message{
 			blades.UserMessage("What is the capital of France?"),
 			blades.UserMessage("And what is the population?"),
 			blades.UserMessage("Summarize in one sentence."),
 		}
 	)
+	runner := blades.NewRunner(agent)
+	// Execute inputs sequentially
 	for _, input := range inputs {
-		runner := blades.NewRunner(agent, blades.WithSession(session))
 		output, err := runner.Run(context.Background(), input)
 		if err != nil {
 			log.Fatal(err)

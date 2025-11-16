@@ -24,9 +24,8 @@ func main() {
 	})
 	input := blades.UserMessage("Tell me a joke.")
 	// Run the agent with the prompt and session context
-	runner := blades.NewRunner(agent, blades.WithSession(session))
-	ctx := context.Background()
-	message, err := runner.Run(ctx, input)
+	runner := blades.NewRunner(agent)
+	message, err := runner.Run(context.Background(), input, blades.WithSession(session))
 	if err != nil {
 		panic(err)
 	}

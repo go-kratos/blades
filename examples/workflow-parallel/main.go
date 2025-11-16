@@ -78,9 +78,8 @@ func main() {
 			reviewerAgent,
 		},
 	})
-	session := blades.NewSession()
 	input := blades.UserMessage("Please write a short paragraph about climate change.")
-	runner := blades.NewRunner(sequentialAgent, blades.WithSession(session))
+	runner := blades.NewRunner(sequentialAgent)
 	stream := runner.RunStream(context.Background(), input)
 	for message, err := range stream {
 		if err != nil {

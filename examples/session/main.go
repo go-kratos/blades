@@ -22,8 +22,8 @@ func main() {
 	// Create a new session
 	session := blades.NewSession()
 	// Run the agent
-	runner := blades.NewRunner(agent, blades.WithSession(session))
-	output, err := runner.Run(context.Background(), input)
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(context.Background(), input, blades.WithSession(session))
 	if err != nil {
 		log.Fatal(err)
 	}
