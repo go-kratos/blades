@@ -57,7 +57,7 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 						return
 					}
 				}
-				if a.config.Condition != nil {
+				if a.config.Condition != nil && message != nil {
 					shouldContinue, err := a.config.Condition(ctx, message)
 					if err != nil {
 						yield(nil, err)
