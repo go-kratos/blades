@@ -42,6 +42,8 @@ func (p *parallelAgent) Run(ctx context.Context, invocation *blades.Invocation) 
 			err     error
 		}
 		ch := make(chan result, len(p.config.SubAgents)*8)
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
 		eg, ctx := errgroup.WithContext(ctx)
 		for _, agent := range p.config.SubAgents {
 			eg.Go(func() error {
@@ -62,6 +64,7 @@ func (p *parallelAgent) Run(ctx context.Context, invocation *blades.Invocation) 
 		}()
 		for res := range ch {
 			if !yield(res.message, res.err) {
+				cancel()
 				break
 			}
 		}
