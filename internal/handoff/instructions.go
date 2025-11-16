@@ -14,8 +14,7 @@ Agent Description: {{.Description}}
 {{end}}
 Your task:
 1. Determine whether YOU are the most suitable agent to answer the user's question based on your description.
-2. If you ARE the best-suited agent, answer the question directly.
-3. If ANOTHER agent is more suitable based on their description, you MUST transfer the question by calling the 'handoff_to_agent' function.
+2. If ANOTHER agent is more suitable based on their description, you MUST transfer the question by calling the 'handoff_to_agent' function.
 
 Important rules:
 - When transferring, output ONLY the function call and nothing else.
