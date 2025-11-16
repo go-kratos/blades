@@ -7,17 +7,19 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-const transferInstructionTemplate = `You have a list of other agents to transfer to:
+const transferInstructionTemplate = `You have access to the following agents:
 {{range .Targets}}
-Agent name: {{.Name}}
-Agent description: {{.Description}}
+Agent Name: {{.Name}}
+Agent Description: {{.Description}}
 {{end}}
-If you are the best to answer the question according to your description, you
-can answer it.
-If another agent is better for answering the question according to its
-description, call 'handoff_to_agent' function to transfer the
-question to that agent. When transferring, do not generate any text other than
-the function call.`
+Your task:
+1. Determine whether YOU are the most suitable agent to answer the user's question based on your description.
+2. If you ARE the best-suited agent, answer the question directly.
+3. If ANOTHER agent is more suitable based on their description, you MUST transfer the question by calling the 'handoff_to_agent' function.
+
+Important rules:
+- When transferring, output ONLY the function call and nothing else.
+- Do not include explanations, reasoning, or extra text outside of the function call.`
 
 var transferToAgentPromptTmpl = template.Must(template.New("transfer_to_agent_prompt").Parse(transferInstructionTemplate))
 
