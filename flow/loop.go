@@ -41,8 +41,6 @@ func (a *loopAgent) Description() string {
 // Run runs the sub-agents loop.
 func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
-		control := &LoopContext{}
-		ctx = NewLoopContext(ctx, control)
 		for iteration := 0; iteration < a.config.MaxIterations; iteration++ {
 			for _, agent := range a.config.SubAgents {
 				var (
@@ -59,9 +57,6 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 						return
 					}
 				}
-				if control.ShouldExit {
-					return
-				}
 				if a.config.Condition != nil {
 					shouldContinue, err := a.config.Condition(ctx, message)
 					if err != nil {
@@ -75,23 +70,4 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 			}
 		}
 	}
-}
-
-// ctxLoopKey is the context key for LoopContext.
-type ctxLoopKey struct{}
-
-// LoopContext holds the state for a loop execution.
-type LoopContext struct {
-	ShouldExit bool
-}
-
-// NewLoopContext returns a new context with the given LoopContext.
-func NewLoopContext(ctx context.Context, loop *LoopContext) context.Context {
-	return context.WithValue(ctx, ctxLoopKey{}, loop)
-}
-
-// FromLoopContext retrieves the AgentContext from the context, if present.
-func FromLoopContext(ctx context.Context) (*LoopContext, bool) {
-	agent, ok := ctx.Value(ctxLoopKey{}).(*LoopContext)
-	return agent, ok
 }
