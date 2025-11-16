@@ -37,3 +37,17 @@ type Runner interface {
 func NewInvocationID() string {
 	return uuid.NewString()
 }
+
+// Clone creates a deep copy of the Invocation.
+func (inv *Invocation) Clone() *Invocation {
+	historyCopy := make([]*Message, len(inv.History))
+	copy(historyCopy, inv.History)
+	return &Invocation{
+		ID:         inv.ID,
+		Session:    inv.Session,
+		Resumable:  inv.Resumable,
+		Streamable: inv.Streamable,
+		Message:    inv.Message,
+		History:    historyCopy,
+	}
+}

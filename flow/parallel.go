@@ -45,7 +45,7 @@ func (p *parallelAgent) Run(ctx context.Context, invocation *blades.Invocation) 
 		eg, ctx := errgroup.WithContext(ctx)
 		for _, agent := range p.config.SubAgents {
 			eg.Go(func() error {
-				for message, err := range agent.Run(ctx, invocation) {
+				for message, err := range agent.Run(ctx, invocation.Clone()) {
 					if err != nil {
 						// Send error result and stop
 						ch <- result{message: nil, err: err}

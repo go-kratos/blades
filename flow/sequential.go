@@ -43,7 +43,7 @@ func (a *sequentialAgent) Run(ctx context.Context, invocation *blades.Invocation
 				err     error
 				message *blades.Message
 			)
-			for message, err = range agent.Run(ctx, invocation) {
+			for message, err = range agent.Run(ctx, invocation.Clone()) {
 				if err != nil {
 					yield(nil, err)
 					return
