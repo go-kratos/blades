@@ -49,6 +49,13 @@ func WithOutputSchema(schema *jsonschema.Schema) AgentOption {
 	}
 }
 
+// WithOutputKey sets the output key for storing the Agent's output in the session state.
+func WithOutputKey(key string) AgentOption {
+	return func(a *agent) {
+		a.outputKey = key
+	}
+}
+
 // WithTools sets the tools for the Agent.
 func WithTools(tools ...tools.Tool) AgentOption {
 	return func(a *agent) {
@@ -85,6 +92,7 @@ type agent struct {
 	name          string
 	description   string
 	instructions  string
+	outputKey     string
 	maxIterations int
 	model         ModelProvider
 	inputSchema   *jsonschema.Schema
@@ -224,15 +232,25 @@ func (a *agent) findResumeMessage(ctx context.Context, invocation *Invocation) (
 }
 
 // storeSession stores the conversation messages in the session.
-func (a *agent) storeSession(ctx context.Context, invocation *Invocation, toolMessages []*Message, assistantMessage *Message) error {
+func (a *agent) storeSession(ctx context.Context, invocation *Invocation, message *Message) error {
 	if invocation.Session == nil {
 		return nil
 	}
-	stores := make([]*Message, 0, len(toolMessages)+2)
-	stores = append(stores, setMessageContext("user", invocation.ID, invocation.Message)...)
-	stores = append(stores, setMessageContext(a.name, invocation.ID, toolMessages...)...)
-	stores = append(stores, setMessageContext(a.name, invocation.ID, assistantMessage)...)
-	return invocation.Session.Append(ctx, stores)
+	if message.Role != RoleUser && message.Status != StatusCompleted {
+		return nil
+	}
+	switch message.Role {
+	case RoleUser:
+		return invocation.Session.Append(ctx, []*Message{message})
+	case RoleTool:
+		return invocation.Session.Append(ctx, []*Message{message})
+	case RoleAssistant:
+		if a.outputKey != "" {
+			invocation.Session.PutState(a.outputKey, message.Text())
+		}
+		return invocation.Session.Append(ctx, []*Message{message})
+	}
+	return nil
 }
 
 func (a *agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error) {
@@ -276,6 +294,7 @@ func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, e
 
 // handle constructs the default handlers for Run and Stream using the provider.
 func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
+	setMessageContext("user", invocation, invocation.Message)
 	return func(yield func(*Message, error) bool) {
 		var (
 			err           error
@@ -289,11 +308,21 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					yield(nil, err)
 					return
 				}
+				setMessageContext(a.name, invocation, finalResponse.Message)
+				if err := a.storeSession(ctx, invocation, finalResponse.Message); err != nil {
+					yield(nil, err)
+					return
+				}
 				yield(finalResponse.Message, nil)
 			} else {
 				streaming := a.model.NewStreaming(ctx, req)
 				for finalResponse, err = range streaming {
 					if err != nil {
+						yield(nil, err)
+						return
+					}
+					setMessageContext(a.name, invocation, finalResponse.Message)
+					if err := a.storeSession(ctx, invocation, finalResponse.Message); err != nil {
 						yield(nil, err)
 						return
 					}
@@ -315,10 +344,6 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 				req.Messages = append(req.Messages, toolMessage)
 				toolMessages = append(toolMessages, toolMessage)
 				continue // continue to the next iteration
-			}
-			if err := a.storeSession(ctx, invocation, toolMessages, finalResponse.Message); err != nil {
-				yield(nil, err)
-				return
 			}
 			return
 		}

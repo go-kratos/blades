@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"strings"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
@@ -14,7 +15,14 @@ func main() {
 	writerAgent, err := blades.NewAgent(
 		"WriterAgent",
 		blades.WithModel(model),
-		blades.WithInstructions("Draft a short paragraph on climate change."),
+		blades.WithInstructions(`Draft a short paragraph on climate change.
+			{{if .suggestions}}	
+			**Draft**
+			{{.draft}}
+			Here are the suggestions to consider:
+			{{.suggestions}}
+			{{end}}
+		`),
 		blades.WithOutputKey("draft"),
 	)
 	if err != nil {
@@ -24,14 +32,23 @@ func main() {
 		"ReviewerAgent",
 		blades.WithModel(model),
 		blades.WithInstructions(`Review the draft and suggest improvements.
-			Draft: {{.draft}}	
+			If the draft is good, respond with "The draft is good".
+			If not, provide specific suggestions for improvement.
+			**Draft**
+			{{.draft}}	
 		`),
+		blades.WithOutputKey("suggestions"),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
-	sequentialAgent := flow.NewSequentialAgent(flow.SequentialConfig{
-		Name: "WritingReviewFlow",
+	loopAgent := flow.NewLoopAgent(flow.LoopConfig{
+		Name:          "WritingReviewFlow",
+		Description:   "An agent that loops between writing and reviewing until the draft is good.",
+		MaxIterations: 3,
+		Condition: func(ctx context.Context, output *blades.Message) (bool, error) {
+			return !strings.Contains(output.Text(), "good"), nil
+		},
 		SubAgents: []blades.Agent{
 			writerAgent,
 			reviewerAgent,
@@ -41,7 +58,7 @@ func main() {
 		log.Fatal(err)
 	}
 	input := blades.UserMessage("Please write a short paragraph about climate change.")
-	runner := blades.NewRunner(sequentialAgent)
+	runner := blades.NewRunner(loopAgent)
 	stream := runner.RunStream(context.Background(), input)
 	for message, err := range stream {
 		if err != nil {

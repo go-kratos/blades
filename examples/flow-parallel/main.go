@@ -7,7 +7,6 @@ import (
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
 	"github.com/go-kratos/blades/flow"
-	"github.com/go-kratos/blades/middleware"
 )
 
 func main() {
@@ -16,6 +15,7 @@ func main() {
 		"writerAgent",
 		blades.WithModel(model),
 		blades.WithInstructions("Draft a short paragraph on climate change."),
+		blades.WithOutputKey("draft"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -23,7 +23,11 @@ func main() {
 	editorAgent1, err := blades.NewAgent(
 		"editorAgent1",
 		blades.WithModel(model),
-		blades.WithInstructions("Edit the paragraph for grammar."),
+		blades.WithInstructions(`Edit the paragraph for grammar.
+			**Paragraph:**
+			{{.draft}}
+		`),
+		blades.WithOutputKey("grammar_edit"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -31,7 +35,11 @@ func main() {
 	editorAgent2, err := blades.NewAgent(
 		"editorAgent1",
 		blades.WithModel(model),
-		blades.WithInstructions("Edit the paragraph for style."),
+		blades.WithInstructions(`Edit the paragraph for style.
+			**Paragraph:**
+			{{.draft}}
+		`),
+		blades.WithOutputKey("style_edit"),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -39,8 +47,16 @@ func main() {
 	reviewerAgent, err := blades.NewAgent(
 		"finalReviewerAgent",
 		blades.WithModel(model),
-		blades.WithInstructions("Consolidate the grammar and style edits into a final version."),
-		blades.WithMiddleware(middleware.ConversationBuffered(10)),
+		blades.WithInstructions(`Consolidate the grammar and style edits into a final version.
+			**Draft:**
+			{{.draft}}
+
+			**Grammar Edit:**
+			{{.grammar_edit}}
+
+			**Style Edit:**
+			{{.style_edit}}
+		`),
 	)
 	if err != nil {
 		log.Fatal(err)

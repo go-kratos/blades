@@ -36,14 +36,15 @@ func (a *sequentialAgent) Description() string {
 }
 
 // Run runs the sub-agents sequentially.
-func (a *sequentialAgent) Run(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
+func (a *sequentialAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		for _, agent := range a.config.SubAgents {
 			var (
-				err     error
-				message *blades.Message
+				err        error
+				message    *blades.Message
+				invocation = input.Clone()
 			)
-			for message, err = range agent.Run(ctx, invocation.Clone()) {
+			for message, err = range agent.Run(ctx, invocation) {
 				if err != nil {
 					yield(nil, err)
 					return
@@ -52,7 +53,6 @@ func (a *sequentialAgent) Run(ctx context.Context, invocation *blades.Invocation
 					return
 				}
 			}
-			invocation.Message = message
 		}
 	}
 }
