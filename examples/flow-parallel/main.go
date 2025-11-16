@@ -7,6 +7,7 @@ import (
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
 	"github.com/go-kratos/blades/flow"
+	"github.com/go-kratos/blades/middleware"
 )
 
 func main() {
@@ -38,10 +39,8 @@ func main() {
 	reviewerAgent, err := blades.NewAgent(
 		"finalReviewerAgent",
 		blades.WithModel(model),
-		blades.WithInstructions(`paragraph: {{.writerAgent}}
-		grammar: {{.editorAgent1}}
-		style: {{.editorAgent2}}
-		Consolidate the grammar and style edits into a final version.`),
+		blades.WithInstructions("Consolidate the grammar and style edits into a final version."),
+		blades.WithMiddleware(middleware.ConversationBuffered(10)),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -50,18 +49,25 @@ func main() {
 		Name:        "EditorParallelAgent",
 		Description: "Edits the drafted paragraph in parallel for grammar and style.",
 		SubAgents: []blades.Agent{
-			writerAgent,
 			editorAgent1,
 			editorAgent2,
-			reviewerAgent,
 		},
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	input := blades.UserMessage("Please write a short paragraph about climate change.")
+	sequentialAgent := flow.NewSequentialAgent(flow.SequentialConfig{
+		Name:        "WritingSequenceAgent",
+		Description: "Drafts, edits, and reviews a paragraph about climate change.",
+		SubAgents: []blades.Agent{
+			writerAgent,
+			parallelAgent,
+			reviewerAgent,
+		},
+	})
 	session := blades.NewSession()
-	runner := blades.NewRunner(parallelAgent, blades.WithSession(session))
+	input := blades.UserMessage("Please write a short paragraph about climate change.")
+	runner := blades.NewRunner(sequentialAgent, blades.WithSession(session))
 	stream := runner.RunStream(context.Background(), input)
 	for message, err := range stream {
 		if err != nil {

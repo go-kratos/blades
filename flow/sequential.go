@@ -48,7 +48,9 @@ func (a *sequentialAgent) Run(ctx context.Context, invocation *blades.Invocation
 					yield(nil, err)
 					return
 				}
-				yield(message, nil)
+				if !yield(message, nil) {
+					return
+				}
 			}
 			invocation.Message = message
 		}
