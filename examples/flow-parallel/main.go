@@ -70,11 +70,10 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		// Only log completed messages
 		if message.Status != blades.StatusCompleted {
 			continue
 		}
-		session.PutState(message.Author, message.Text())
-		// Print the final consolidated paragraph
 		log.Println(message.Author, message.Text())
 	}
 }
