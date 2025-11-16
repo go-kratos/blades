@@ -298,7 +298,6 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 	return func(yield func(*Message, error) bool) {
 		var (
 			err           error
-			toolMessages  []*Message
 			finalResponse *ModelResponse
 		)
 		for i := 0; i < a.maxIterations; i++ {
@@ -342,7 +341,6 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					return
 				}
 				req.Messages = append(req.Messages, toolMessage)
-				toolMessages = append(toolMessages, toolMessage)
 				continue // continue to the next iteration
 			}
 			return

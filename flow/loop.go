@@ -25,6 +25,9 @@ type loopAgent struct {
 
 // NewLoopAgent creates a new LoopAgent.
 func NewLoopAgent(config LoopConfig) blades.Agent {
+	if config.MaxIterations <= 0 {
+		config.MaxIterations = 1
+	}
 	return &loopAgent{config: config}
 }
 

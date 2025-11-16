@@ -24,8 +24,7 @@ func main() {
 		"ReviewerAgent",
 		blades.WithModel(model),
 		blades.WithInstructions(`Review the draft and suggest improvements.
-			Draft: {{.draft}}	
-		`),
+			Draft: {{.draft}}`),
 	)
 	if err != nil {
 		log.Fatal(err)
