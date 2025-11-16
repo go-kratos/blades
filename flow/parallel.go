@@ -34,7 +34,7 @@ func (p *parallelAgent) Description() string {
 	return p.config.Description
 }
 
-// Run runs the sub-agents sequentially.
+// Run runs the sub-agents in parallel.
 func (p *parallelAgent) Run(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		eg, ctx := errgroup.WithContext(ctx)
