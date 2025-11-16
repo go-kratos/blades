@@ -19,6 +19,7 @@ func main() {
 			{{if .suggestions}}	
 			**Draft**
 			{{.draft}}
+
 			Here are the suggestions to consider:
 			{{.suggestions}}
 			{{end}}
@@ -33,7 +34,7 @@ func main() {
 		blades.WithModel(model),
 		blades.WithInstructions(`Review the draft and suggest improvements.
 			If the draft is good, respond with "The draft is good".
-			If not, provide specific suggestions for improvement.
+
 			**Draft**
 			{{.draft}}	
 		`),
