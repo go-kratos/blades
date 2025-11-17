@@ -82,6 +82,7 @@ package main
 import (
     "context"
     "log"
+    "os"
 
     "github.com/go-kratos/blades"
     "github.com/go-kratos/blades/contrib/openai"
