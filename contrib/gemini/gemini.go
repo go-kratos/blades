@@ -10,7 +10,7 @@ import (
 
 // Config holds configuration for the Gemini model.
 type Config struct {
-	APIKey           string
+	genai.ClientConfig
 	Seed             int32
 	MaxOutputTokens  int32
 	Temperature      float32
@@ -31,7 +31,7 @@ type Gemini struct {
 
 // NewModel creates a new Gemini model provider.
 func NewModel(ctx context.Context, model string, config Config) (blades.ModelProvider, error) {
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: config.APIKey})
+	client, err := genai.NewClient(ctx, &config.ClientConfig)
 	if err != nil {
 		return nil, err
 	}

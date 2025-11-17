@@ -26,6 +26,7 @@ type ImageConfig struct {
 	N                 int64
 	PartialImages     int64
 	OutputCompression int64
+	RequestOptions    []option.RequestOption
 }
 
 // imageModel calls OpenAI's image generation endpoints.
@@ -37,19 +38,16 @@ type imageModel struct {
 
 // NewImage creates a new instance of imageModel.
 func NewImage(model string, config ImageConfig) blades.ModelProvider {
-	var (
-		opts []option.RequestOption
-	)
 	if config.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(config.BaseURL))
+		config.RequestOptions = append(config.RequestOptions, option.WithBaseURL(config.BaseURL))
 	}
 	if config.APIKey != "" {
-		opts = append(opts, option.WithAPIKey(config.APIKey))
+		config.RequestOptions = append(config.RequestOptions, option.WithAPIKey(config.APIKey))
 	}
 	return &imageModel{
 		model:  model,
 		config: config,
-		client: openai.NewClient(opts...),
+		client: openai.NewClient(config.RequestOptions...),
 	}
 }
 

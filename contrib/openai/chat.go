@@ -24,6 +24,7 @@ type Config struct {
 	Temperature      float64
 	TopP             float64
 	StopSequences    []string
+	RequestOptions   []option.RequestOption
 	ReasoningEffort  shared.ReasoningEffort
 }
 
@@ -38,19 +39,16 @@ type chatModel struct {
 // the OPENAI_API_KEY environment variable. If OPENAI_BASE_URL is set,
 // it is used as the API base URL; otherwise the library default is used.
 func NewModel(model string, config Config) blades.ModelProvider {
-	var (
-		opts []option.RequestOption
-	)
 	if config.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(config.BaseURL))
+		config.RequestOptions = append(config.RequestOptions, option.WithBaseURL(config.BaseURL))
 	}
 	if config.APIKey != "" {
-		opts = append(opts, option.WithAPIKey(config.APIKey))
+		config.RequestOptions = append(config.RequestOptions, option.WithAPIKey(config.APIKey))
 	}
 	return &chatModel{
 		model:  model,
 		config: config,
-		client: openai.NewClient(opts...),
+		client: openai.NewClient(config.RequestOptions...),
 	}
 }
 

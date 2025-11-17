@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/gemini"
+	"google.golang.org/genai"
 )
 
 func main() {
@@ -18,7 +19,9 @@ func main() {
 	ctx := context.Background()
 	// Create Gemini client with basic configuration
 	config := gemini.Config{
-		APIKey:          apiKey,
+		ClientConfig: genai.ClientConfig{
+			APIKey: apiKey,
+		},
 		MaxOutputTokens: 1024,
 		Temperature:     0.7,
 	}
