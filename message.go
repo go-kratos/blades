@@ -140,11 +140,6 @@ func (m *Message) String() string {
 	return buf.String()
 }
 
-// contentPart is a type constraint for valid content inputs.
-type contentPart interface {
-	string | TextPart | FilePart | DataPart | ToolPart
-}
-
 // UserMessage creates a user-authored message from parts.
 func UserMessage[T contentPart](parts ...T) *Message {
 	return &Message{ID: NewMessageID(), Role: RoleUser, Parts: Parts(parts...)}
@@ -158,6 +153,21 @@ func SystemMessage[T contentPart](parts ...T) *Message {
 // AssistantMessage creates an assistant-authored message from parts.
 func AssistantMessage[T contentPart](parts ...T) *Message {
 	return &Message{ID: NewMessageID(), Role: RoleAssistant, Parts: Parts(parts...)}
+}
+
+// NewMessage creates a new empty message with a unique ID.
+func NewMessage(role Role) *Message {
+	return &Message{ID: NewMessageID(), Role: role}
+}
+
+// NewMessageID generates a new random message identifier.
+func NewMessageID() string {
+	return uuid.NewString()
+}
+
+// contentPart is a type constraint for valid content inputs.
+type contentPart interface {
+	string | TextPart | FilePart | DataPart | ToolPart
 }
 
 // Parts converts a heterogeneous list of content inputs into model parts.
@@ -179,25 +189,4 @@ func Parts[T contentPart](inputs ...T) []Part {
 		}
 	}
 	return parts
-}
-
-// NewMessage creates a new empty message with a unique ID.
-func NewMessage(role Role) *Message {
-	return &Message{ID: NewMessageID(), Role: role}
-}
-
-// NewMessageID generates a new random message identifier.
-func NewMessageID() string {
-	return uuid.NewString()
-}
-
-// setMessageContext sets the author and invocation ID for the given messages.
-func setMessageContext(author string, invocation *Invocation, messages ...*Message) {
-	for _, message := range messages {
-		if message == nil {
-			continue
-		}
-		message.Author = author
-		message.InvocationID = invocation.ID
-	}
 }

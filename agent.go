@@ -240,7 +240,6 @@ func (a *agent) storeSession(ctx context.Context, invocation *Invocation, messag
 	message.InvocationID = invocation.ID
 	switch message.Role {
 	case RoleUser:
-		setMessageContext("user", invocation, message)
 		return invocation.Session.Append(ctx, []*Message{message})
 	case RoleTool:
 		if message.Status != StatusCompleted {
