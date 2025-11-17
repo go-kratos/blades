@@ -43,15 +43,17 @@ type audioModel struct {
 
 // NewAudio creates a new instance of audioModel.
 func NewAudio(model string, config AudioConfig) blades.ModelProvider {
+	opts := config.RequestOptions
+	// Add base URL and API key if provided
 	if config.BaseURL != "" {
-		config.RequestOptions = append(config.RequestOptions, option.WithBaseURL(config.BaseURL))
+		opts = append(opts, option.WithBaseURL(config.BaseURL))
 	}
 	if config.APIKey != "" {
-		config.RequestOptions = append(config.RequestOptions, option.WithAPIKey(config.APIKey))
+		opts = append(opts, option.WithAPIKey(config.APIKey))
 	}
 	return &audioModel{
 		config: config,
-		client: openai.NewClient(config.RequestOptions...),
+		client: openai.NewClient(opts...),
 	}
 }
 

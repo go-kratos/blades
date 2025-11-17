@@ -38,11 +38,13 @@ type imageModel struct {
 
 // NewImage creates a new instance of imageModel.
 func NewImage(model string, config ImageConfig) blades.ModelProvider {
+	opts := config.RequestOptions
+	// Set base URL and API key if provided
 	if config.BaseURL != "" {
-		config.RequestOptions = append(config.RequestOptions, option.WithBaseURL(config.BaseURL))
+		opts = append(opts, option.WithBaseURL(config.BaseURL))
 	}
 	if config.APIKey != "" {
-		config.RequestOptions = append(config.RequestOptions, option.WithAPIKey(config.APIKey))
+		opts = append(opts, option.WithAPIKey(config.APIKey))
 	}
 	return &imageModel{
 		model:  model,

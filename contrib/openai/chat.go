@@ -39,16 +39,18 @@ type chatModel struct {
 // the OPENAI_API_KEY environment variable. If OPENAI_BASE_URL is set,
 // it is used as the API base URL; otherwise the library default is used.
 func NewModel(model string, config Config) blades.ModelProvider {
+	opts := config.RequestOptions
+	// Set base URL and API key if provided
 	if config.BaseURL != "" {
-		config.RequestOptions = append(config.RequestOptions, option.WithBaseURL(config.BaseURL))
+		opts = append(opts, option.WithBaseURL(config.BaseURL))
 	}
 	if config.APIKey != "" {
-		config.RequestOptions = append(config.RequestOptions, option.WithAPIKey(config.APIKey))
+		opts = append(opts, option.WithAPIKey(config.APIKey))
 	}
 	return &chatModel{
 		model:  model,
 		config: config,
-		client: openai.NewClient(config.RequestOptions...),
+		client: openai.NewClient(opts...),
 	}
 }
 

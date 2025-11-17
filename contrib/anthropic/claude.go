@@ -33,16 +33,17 @@ type Claude struct {
 // NewModel creates a new Claude model provider with the given model name and configuration.
 func NewModel(model string, config Config) blades.ModelProvider {
 	// Apply BaseURL and APIKey if provided
+	opts := config.RequestOptions
 	if config.BaseURL != "" {
-		config.RequestOptions = append(config.RequestOptions, option.WithBaseURL(config.BaseURL))
+		opts = append(opts, option.WithBaseURL(config.BaseURL))
 	}
 	if config.APIKey != "" {
-		config.RequestOptions = append(config.RequestOptions, option.WithAPIKey(config.APIKey))
+		opts = append(opts, option.WithAPIKey(config.APIKey))
 	}
 	return &Claude{
 		model:  model,
 		config: config,
-		client: anthropic.NewClient(config.RequestOptions...),
+		client: anthropic.NewClient(opts...),
 	}
 }
 
