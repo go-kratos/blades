@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -36,7 +37,9 @@ func main() {
 		),
 	)
 	// Create a blades agent with OpenTelemetry middleware
-	model := openai.NewModel("deepseek-chat")
+	model := openai.NewModel("gpt-5", openai.Config{
+		APIKey: os.Getenv("OPENAI_API_KEY"),
+	})
 	agent, err := blades.NewAgent(
 		"OpenTelemetry Agent",
 		blades.WithMiddleware(

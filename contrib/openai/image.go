@@ -11,95 +11,10 @@ import (
 	"github.com/openai/openai-go/v2/packages/param"
 )
 
-// ImageOption defines functional options for configuring the imageModel.
-type ImageOption func(*ImageOptions)
-
-// WithImageBackground sets the background for the image generation request.
-func WithImageBackground(background string) ImageOption {
-	return func(o *ImageOptions) {
-		o.Background = background
-	}
-}
-
-// WithImageSize sets the size for the image generation request.
-func WithImageSize(size string) ImageOption {
-	return func(o *ImageOptions) {
-		o.Size = size
-	}
-}
-
-// WithImageQuality sets the quality for the image generation request.
-func WithImageQuality(quality string) ImageOption {
-	return func(o *ImageOptions) {
-		o.Quality = quality
-	}
-}
-
-// WithImageResponseFormat sets the response format for the image generation request.
-func WithImageResponseFormat(format string) ImageOption {
-	return func(o *ImageOptions) {
-		o.ResponseFormat = format
-	}
-}
-
-// WithImageOutputFormat sets the output format for the image generation request.
-func WithImageOutputFormat(format string) ImageOption {
-	return func(o *ImageOptions) {
-		o.OutputFormat = format
-	}
-}
-
-// WithImageModeration sets the moderation level for the image generation request.
-func WithImageModeration(moderation string) ImageOption {
-	return func(o *ImageOptions) {
-		o.Moderation = moderation
-	}
-}
-
-// WithImageStyle sets the style for the image generation request.
-func WithImageStyle(style string) ImageOption {
-	return func(o *ImageOptions) {
-		o.Style = style
-	}
-}
-
-// WithImageUser sets the user identifier for the image generation request.
-func WithImageUser(user string) ImageOption {
-	return func(o *ImageOptions) {
-		o.User = user
-	}
-}
-
-// WithImageN sets the number of images to generate.
-func WithImageN(n int64) ImageOption {
-	return func(o *ImageOptions) {
-		o.N = n
-	}
-}
-
-// WithImagePartialImages sets the number of partial images to generate.
-func WithImagePartialImages(partialImages int64) ImageOption {
-	return func(o *ImageOptions) {
-		o.PartialImages = partialImages
-	}
-}
-
-// WithImageOutputCompression sets the output compression level for generated images.
-func WithImageOutputCompression(outputCompression int64) ImageOption {
-	return func(o *ImageOptions) {
-		o.OutputCompression = outputCompression
-	}
-}
-
-// WithImageOptions applies OpenAI image request options.
-func WithImageOptions(opts ...option.RequestOption) ImageOption {
-	return func(o *ImageOptions) {
-		o.RequestOpts = append(o.RequestOpts, opts...)
-	}
-}
-
-// ImageOptions holds configuration for the imageModel.
-type ImageOptions struct {
+// ImageConfig holds configuration options for image generation.
+type ImageConfig struct {
+	BaseURL           string
+	APIKey            string
 	Background        string
 	Size              string
 	Quality           string
@@ -111,26 +26,30 @@ type ImageOptions struct {
 	N                 int64
 	PartialImages     int64
 	OutputCompression int64
-	RequestOpts       []option.RequestOption
 }
 
 // imageModel calls OpenAI's image generation endpoints.
 type imageModel struct {
 	model  string
-	opts   ImageOptions
+	config ImageConfig
 	client openai.Client
 }
 
 // NewImage creates a new instance of imageModel.
-func NewImage(model string, opts ...ImageOption) blades.ModelProvider {
-	imageOpts := ImageOptions{}
-	for _, opt := range opts {
-		opt(&imageOpts)
+func NewImage(model string, config ImageConfig) blades.ModelProvider {
+	var (
+		opts []option.RequestOption
+	)
+	if config.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(config.BaseURL))
+	}
+	if config.APIKey != "" {
+		opts = append(opts, option.WithAPIKey(config.APIKey))
 	}
 	return &imageModel{
 		model:  model,
-		opts:   imageOpts,
-		client: openai.NewClient(imageOpts.RequestOpts...),
+		config: config,
+		client: openai.NewClient(opts...),
 	}
 }
 
@@ -169,38 +88,38 @@ func (m *imageModel) buildGenerateParams(req *blades.ModelRequest) (openai.Image
 		Prompt: promptFromMessages(req.Messages),
 		Model:  openai.ImageModel(m.model),
 	}
-	if m.opts.Background != "" {
-		params.Background = openai.ImageGenerateParamsBackground(m.opts.Background)
+	if m.config.Background != "" {
+		params.Background = openai.ImageGenerateParamsBackground(m.config.Background)
 	}
-	if m.opts.Size != "" {
-		params.Size = openai.ImageGenerateParamsSize(m.opts.Size)
+	if m.config.Size != "" {
+		params.Size = openai.ImageGenerateParamsSize(m.config.Size)
 	}
-	if m.opts.Quality != "" {
-		params.Quality = openai.ImageGenerateParamsQuality(m.opts.Quality)
+	if m.config.Quality != "" {
+		params.Quality = openai.ImageGenerateParamsQuality(m.config.Quality)
 	}
-	if m.opts.ResponseFormat != "" {
-		params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(m.opts.ResponseFormat)
+	if m.config.ResponseFormat != "" {
+		params.ResponseFormat = openai.ImageGenerateParamsResponseFormat(m.config.ResponseFormat)
 	}
-	if m.opts.OutputFormat != "" {
-		params.OutputFormat = openai.ImageGenerateParamsOutputFormat(m.opts.OutputFormat)
+	if m.config.OutputFormat != "" {
+		params.OutputFormat = openai.ImageGenerateParamsOutputFormat(m.config.OutputFormat)
 	}
-	if m.opts.Moderation != "" {
-		params.Moderation = openai.ImageGenerateParamsModeration(m.opts.Moderation)
+	if m.config.Moderation != "" {
+		params.Moderation = openai.ImageGenerateParamsModeration(m.config.Moderation)
 	}
-	if m.opts.Style != "" {
-		params.Style = openai.ImageGenerateParamsStyle(m.opts.Style)
+	if m.config.Style != "" {
+		params.Style = openai.ImageGenerateParamsStyle(m.config.Style)
 	}
-	if m.opts.User != "" {
-		params.User = param.NewOpt(m.opts.User)
+	if m.config.User != "" {
+		params.User = param.NewOpt(m.config.User)
 	}
-	if m.opts.N > 0 {
-		params.N = param.NewOpt(m.opts.N)
+	if m.config.N > 0 {
+		params.N = param.NewOpt(m.config.N)
 	}
-	if m.opts.PartialImages > 0 {
-		params.PartialImages = param.NewOpt(m.opts.PartialImages)
+	if m.config.PartialImages > 0 {
+		params.PartialImages = param.NewOpt(m.config.PartialImages)
 	}
-	if m.opts.OutputCompression > 0 {
-		params.OutputCompression = param.NewOpt(m.opts.OutputCompression)
+	if m.config.OutputCompression > 0 {
+		params.OutputCompression = param.NewOpt(m.config.OutputCompression)
 	}
 	return params, nil
 }

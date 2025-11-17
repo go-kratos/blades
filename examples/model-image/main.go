@@ -14,8 +14,7 @@ import (
 func main() {
 	model := openai.NewImage(
 		"gpt-image-1",
-		openai.WithImageSize("1024x1024"),
-		openai.WithImageOutputFormat("png"),
+		openai.ImageConfig{Size: "1024x1024", OutputFormat: "png"},
 	)
 	agent, err := blades.NewAgent(
 		"Image Agent",

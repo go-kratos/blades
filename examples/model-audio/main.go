@@ -12,10 +12,10 @@ import (
 )
 
 func main() {
+
 	model := openai.NewAudio(
 		"gpt-4o-mini-tts",
-		openai.WithAudioVoice("alloy"),
-		openai.WithAudioResponseFormat("mp3"),
+		openai.AudioConfig{Voice: "alloy", ResponseFormat: "mp3"},
 	)
 	agent, err := blades.NewAgent(
 		"Audio Agent",

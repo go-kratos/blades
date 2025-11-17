@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
@@ -41,7 +42,9 @@ func main() {
 		log.Fatal(err)
 	}
 	// Create an agent with the weather tool
-	model := openai.NewModel("deepseek-chat")
+	model := openai.NewModel("gpt-5", openai.Config{
+		APIKey: os.Getenv("OPENAI_API_KEY"),
+	})
 	agent, err := blades.NewAgent(
 		"Weather Agent",
 		blades.WithModel(model),

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"strings"
 	"text/template"
 
@@ -41,9 +42,12 @@ Below are the inputs:
 }
 
 func main() {
+	model := openai.NewModel("gpt-5", openai.Config{
+		APIKey: os.Getenv("OPENAI_API_KEY"),
+	})
 	r, err := evaluate.NewCriteria(
 		"Evaluation Agent",
-		blades.WithModel(openai.NewModel("gpt-5")),
+		blades.WithModel(model),
 	)
 	if err != nil {
 		log.Fatal(err)

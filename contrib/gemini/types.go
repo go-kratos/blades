@@ -1,4 +1,4 @@
-package google
+package gemini
 
 import (
 	"encoding/json"

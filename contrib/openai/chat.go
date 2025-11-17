@@ -14,103 +14,43 @@ import (
 	"github.com/openai/openai-go/v2/shared"
 )
 
-// ModelOption defines options for chat providers.
-type ModelOption func(*ModelOptions)
-
-// WithSeed sets the seed for chat completions.
-func WithSeed(seed int64) ModelOption {
-	return func(o *ModelOptions) {
-		o.Seed = &seed
-	}
-}
-
-// WithMaxOutputTokens sets the maximum output tokens for chat completions.
-func WithMaxOutputTokens(maxTokens int64) ModelOption {
-	return func(o *ModelOptions) {
-		o.MaxOutputTokens = &maxTokens
-	}
-}
-
-// WithFrequencyPenalty sets the frequency penalty for chat completions.
-func WithFrequencyPenalty(penalty float64) ModelOption {
-	return func(o *ModelOptions) {
-		o.FrequencyPenalty = &penalty
-	}
-}
-
-// WithPresencePenalty sets the presence penalty for chat completions.
-func WithPresencePenalty(penalty float64) ModelOption {
-	return func(o *ModelOptions) {
-		o.PresencePenalty = &penalty
-	}
-}
-
-// WithTemperature sets the temperature for chat completions.
-func WithTemperature(temperature float64) ModelOption {
-	return func(o *ModelOptions) {
-		o.Temperature = &temperature
-	}
-}
-
-// WithTopP sets the top-p value for chat completions.
-func WithTopP(topP float64) ModelOption {
-	return func(o *ModelOptions) {
-		o.TopP = &topP
-	}
-}
-
-// WithStopSequences sets the stop sequences for chat completions.
-func WithStopSequences(sequences ...string) ModelOption {
-	return func(o *ModelOptions) {
-		o.StopSequences = sequences
-	}
-}
-
-// WithReasoningEffort sets the reasoning effort for chat completions.
-func WithReasoningEffort(effort shared.ReasoningEffort) ModelOption {
-	return func(o *ModelOptions) {
-		o.ReasoningEffort = effort
-	}
-}
-
-// WithModelOptions sets request options for chat completions.
-func WithModelOptions(opts ...option.RequestOption) ModelOption {
-	return func(o *ModelOptions) {
-		o.RequestOpts = opts
-	}
-}
-
-type ModelOptions struct {
-	Seed             *int64
-	MaxOutputTokens  *int64
-	FrequencyPenalty *float64
-	PresencePenalty  *float64
-	Temperature      *float64
-	TopP             *float64
+type Config struct {
+	BaseURL          string
+	APIKey           string
+	Seed             int64
+	MaxOutputTokens  int64
+	FrequencyPenalty float64
+	PresencePenalty  float64
+	Temperature      float64
+	TopP             float64
 	StopSequences    []string
 	ReasoningEffort  shared.ReasoningEffort
-	RequestOpts      []option.RequestOption
 }
 
 // chatModel implements blades.chatModel for OpenAI-compatible chat models.
 type chatModel struct {
 	model  string
-	opts   ModelOptions
+	config Config
 	client openai.Client
 }
 
 // NewModel constructs an OpenAI provider. The API key is read from
 // the OPENAI_API_KEY environment variable. If OPENAI_BASE_URL is set,
 // it is used as the API base URL; otherwise the library default is used.
-func NewModel(model string, opts ...ModelOption) blades.ModelProvider {
-	modelOpts := ModelOptions{}
-	for _, opt := range opts {
-		opt(&modelOpts)
+func NewModel(model string, config Config) blades.ModelProvider {
+	var (
+		opts []option.RequestOption
+	)
+	if config.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(config.BaseURL))
+	}
+	if config.APIKey != "" {
+		opts = append(opts, option.WithAPIKey(config.APIKey))
 	}
 	return &chatModel{
 		model:  model,
-		opts:   modelOpts,
-		client: openai.NewClient(modelOpts.RequestOpts...),
+		config: config,
+		client: openai.NewClient(opts...),
 	}
 }
 
@@ -182,29 +122,29 @@ func (m *chatModel) toChatCompletionParams(req *blades.ModelRequest) (openai.Cha
 	params := openai.ChatCompletionNewParams{
 		Tools:           tools,
 		Model:           m.model,
-		ReasoningEffort: m.opts.ReasoningEffort,
+		ReasoningEffort: m.config.ReasoningEffort,
 		Messages:        make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages)),
 	}
-	if m.opts.Seed != nil {
-		params.Seed = param.NewOpt(*m.opts.Seed)
+	if m.config.Seed > 0 {
+		params.Seed = param.NewOpt(m.config.Seed)
 	}
-	if m.opts.MaxOutputTokens != nil {
-		params.MaxCompletionTokens = param.NewOpt(*m.opts.MaxOutputTokens)
+	if m.config.MaxOutputTokens > 0 {
+		params.MaxCompletionTokens = param.NewOpt(m.config.MaxOutputTokens)
 	}
-	if m.opts.FrequencyPenalty != nil {
-		params.FrequencyPenalty = param.NewOpt(*m.opts.FrequencyPenalty)
+	if m.config.FrequencyPenalty > 0 {
+		params.FrequencyPenalty = param.NewOpt(m.config.FrequencyPenalty)
 	}
-	if m.opts.PresencePenalty != nil {
-		params.PresencePenalty = param.NewOpt(*m.opts.PresencePenalty)
+	if m.config.PresencePenalty > 0 {
+		params.PresencePenalty = param.NewOpt(m.config.PresencePenalty)
 	}
-	if m.opts.Temperature != nil {
-		params.Temperature = param.NewOpt(*m.opts.Temperature)
+	if m.config.Temperature > 0 {
+		params.Temperature = param.NewOpt(m.config.Temperature)
 	}
-	if m.opts.TopP != nil {
-		params.TopP = param.NewOpt(*m.opts.TopP)
+	if m.config.TopP > 0 {
+		params.TopP = param.NewOpt(m.config.TopP)
 	}
-	if len(m.opts.StopSequences) > 0 {
-		params.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: m.opts.StopSequences}
+	if len(m.config.StopSequences) > 0 {
+		params.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: m.config.StopSequences}
 	}
 	if req.OutputSchema != nil {
 		schemaParam := openai.ResponseFormatJSONSchemaJSONSchemaParam{

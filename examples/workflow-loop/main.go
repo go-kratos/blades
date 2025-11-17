@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/go-kratos/blades"
@@ -11,7 +12,9 @@ import (
 )
 
 func main() {
-	model := openai.NewModel("deepseek-chat")
+	model := openai.NewModel("gpt-5", openai.Config{
+		APIKey: os.Getenv("OPENAI_API_KEY"),
+	})
 	writerAgent, err := blades.NewAgent(
 		"WriterAgent",
 		blades.WithModel(model),

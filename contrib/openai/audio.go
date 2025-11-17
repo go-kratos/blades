@@ -23,71 +23,37 @@ var (
 	ErrAudioVoiceRequired = errors.New("openai/audio: voice is required")
 )
 
-var _ blades.ModelProvider = (*audioModel)(nil)
-
-// AudioOption defines functional options for configuring the audioModel.
-type AudioOption func(*AudioOptions)
-
-// WithAudioVoice sets the voice for the generated audio.
-func WithAudioVoice(voice string) AudioOption {
-	return func(o *AudioOptions) {
-		o.Voice = voice
-	}
-}
-
-// WithAudioResponseFormat sets the response format of the generated audio.
-func WithAudioResponseFormat(format string) AudioOption {
-	return func(o *AudioOptions) {
-		o.ResponseFormat = format
-	}
-}
-
-// WithAudioStreamFormat sets the stream format of the generated audio.
-func WithAudioStreamFormat(format string) AudioOption {
-	return func(o *AudioOptions) {
-		o.StreamFormat = format
-	}
-}
-
-// WithAudioSpeed sets the speed of the generated audio.
-func WithAudioSpeed(speed float64) AudioOption {
-	return func(o *AudioOptions) {
-		o.Speed = &speed
-	}
-}
-
-// WithAudioOptions appends request options to the audio generation request.
-func WithAudioOptions(opts ...option.RequestOption) AudioOption {
-	return func(o *AudioOptions) {
-		o.RequestOpts = append(o.RequestOpts, opts...)
-	}
-}
-
-// AudioOptions holds configuration for the audioModel.
-type AudioOptions struct {
+// AudioConfig holds configuration for the audio model.
+type AudioConfig struct {
+	BaseURL        string
+	APIKey         string
 	Voice          string
 	ResponseFormat string
 	StreamFormat   string
-	Speed          *float64
-	RequestOpts    []option.RequestOption
+	Speed          float64
 }
 
-// audioModel calls OpenAI's speech synthesis endpoint.
+// audioModel implements the blades.ModelProvider interface for audio generation.
 type audioModel struct {
 	model  string
-	opts   AudioOptions
+	config AudioConfig
 	client openai.Client
 }
 
 // NewAudio creates a new instance of audioModel.
-func NewAudio(model string, opts ...AudioOption) blades.ModelProvider {
-	audioOpts := AudioOptions{}
-	for _, opt := range opts {
-		opt(&audioOpts)
+func NewAudio(model string, config AudioConfig) blades.ModelProvider {
+	var (
+		opts []option.RequestOption
+	)
+	if config.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(config.BaseURL))
+	}
+	if config.APIKey != "" {
+		opts = append(opts, option.WithAPIKey(config.APIKey))
 	}
 	return &audioModel{
-		opts:   audioOpts,
-		client: openai.NewClient(audioOpts.RequestOpts...),
+		config: config,
+		client: openai.NewClient(opts...),
 	}
 }
 
@@ -100,19 +66,19 @@ func (m *audioModel) buildAudioParams(req *blades.ModelRequest) openai.AudioSpee
 	params := openai.AudioSpeechNewParams{
 		Input: promptFromMessages(req.Messages),
 		Model: openai.SpeechModel(m.model),
-		Voice: openai.AudioSpeechNewParamsVoice(m.opts.Voice),
+		Voice: openai.AudioSpeechNewParamsVoice(m.config.Voice),
 	}
 	if req.Instruction != nil {
 		params.Instructions = param.NewOpt(req.Instruction.Text())
 	}
-	if m.opts.ResponseFormat != "" {
-		params.ResponseFormat = openai.AudioSpeechNewParamsResponseFormat(m.opts.ResponseFormat)
+	if m.config.ResponseFormat != "" {
+		params.ResponseFormat = openai.AudioSpeechNewParamsResponseFormat(m.config.ResponseFormat)
 	}
-	if m.opts.StreamFormat != "" {
-		params.StreamFormat = openai.AudioSpeechNewParamsStreamFormat(m.opts.StreamFormat)
+	if m.config.StreamFormat != "" {
+		params.StreamFormat = openai.AudioSpeechNewParamsStreamFormat(m.config.StreamFormat)
 	}
-	if m.opts.Speed != nil {
-		params.Speed = param.NewOpt(*m.opts.Speed)
+	if m.config.Speed > 0 {
+		params.Speed = param.NewOpt(m.config.Speed)
 	}
 	return params
 }

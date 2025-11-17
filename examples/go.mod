@@ -5,7 +5,7 @@ go 1.24.6
 replace (
 	github.com/go-kratos/blades => ../
 	github.com/go-kratos/blades/contrib/anthropic => ../contrib/anthropic
-	github.com/go-kratos/blades/contrib/google => ../contrib/google
+	github.com/go-kratos/blades/contrib/gemini => ../contrib/gemini
 	github.com/go-kratos/blades/contrib/mcp => ../contrib/mcp
 	github.com/go-kratos/blades/contrib/openai => ../contrib/openai
 	github.com/go-kratos/blades/contrib/otel => ../contrib/otel
@@ -13,7 +13,7 @@ replace (
 
 require (
 	github.com/go-kratos/blades v0.0.0
-	github.com/go-kratos/blades/contrib/google v0.0.0-00010101000000-000000000000
+	github.com/go-kratos/blades/contrib/gemini v0.0.0-00010101000000-000000000000
 	github.com/go-kratos/blades/contrib/mcp v0.0.0-20251106103709-242709515a73
 	github.com/go-kratos/blades/contrib/openai v0.0.0-20251106103709-242709515a73
 	github.com/go-kratos/blades/contrib/otel v0.0.0-20251106103709-242709515a73

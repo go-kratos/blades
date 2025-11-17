@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/mcp"
@@ -25,7 +26,9 @@ func main() {
 	defer mcpResolver.Close()
 
 	// Create OpenAI provider (requires OPENAI_API_KEY environment variable)
-	model := openai.NewModel("gpt-5")
+	model := openai.NewModel("gpt-5", openai.Config{
+		APIKey: os.Getenv("OPENAI_API_KEY"),
+	})
 
 	// Create Agent with MCP tools resolver
 	// The resolver will dynamically provide tools from the MCP server

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
@@ -20,7 +21,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	model := openai.NewModel("gpt-5")
+	model := openai.NewModel("gpt-5", openai.Config{
+		APIKey: os.Getenv("OPENAI_API_KEY"),
+	})
 	agent, err := blades.NewAgent(
 		"filmography",
 		blades.WithModel(model),

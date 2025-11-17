@@ -9,109 +9,50 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-// Option is a functional option for configuring the Claude client.
-type Option func(*options)
-
-// WithSeed sets the seed for the Claude client.
-func WithSeed(seed int64) Option {
-	return func(o *options) {
-		o.Seed = &seed
-	}
+// Config holds configuration options for the Claude client.
+type Config struct {
+	BaseURL         string
+	APIKey          string
+	MaxOutputTokens int64
+	Seed            int64
+	TopK            int64
+	TopP            float64
+	Temperature     float64
+	StopSequences   []string
+	Thinking        *anthropic.ThinkingConfigParamUnion
 }
 
-// WithMaxTokens sets the maximum tokens for the Claude client.
-func WithMaxTokens(maxTokens int64) Option {
-	return func(o *options) {
-		o.MaxTokens = maxTokens
-	}
-}
-
-// WithTopK sets the top-k value for the Claude client.
-func WithTopK(topK int64) Option {
-	return func(o *options) {
-		o.TopK = &topK
-	}
-}
-
-// WithTopP sets the top-p value for the Claude client.
-func WithTopP(topP float64) Option {
-	return func(o *options) {
-		o.TopP = &topP
-	}
-}
-
-// WithTemperature sets the temperature for the Claude client.
-func WithTemperature(temperature float64) Option {
-	return func(o *options) {
-		o.Temperature = &temperature
-	}
-}
-
-// WithStopSequences sets the stop sequences for the Claude client.
-func WithStopSequences(stopSequences []string) Option {
-	return func(o *options) {
-		o.StopSequences = stopSequences
-	}
-}
-
-// WithThinking sets the thinking configuration.
-func WithThinking(config *anthropic.ThinkingConfigParamUnion) Option {
-	return func(o *options) {
-		o.Thinking = config
-	}
-}
-
-// WithRequestOption sets the request options for the Anthropic client.
-func WithRequestOption(opts ...option.RequestOption) Option {
-	return func(o *options) {
-		o.RequestOpts = opts
-	}
-}
-
-// options holds configuration for the Claude client.
-type options struct {
-	MaxTokens     int64
-	Seed          *int64
-	TopK          *int64
-	TopP          *float64
-	Temperature   *float64
-	StopSequences []string
-	Thinking      *anthropic.ThinkingConfigParamUnion
-	RequestOpts   []option.RequestOption
-}
-
-// claudeModel provides a unified interface for Claude API access.
-type claudeModel struct {
+// Claude provides a unified interface for Claude API access.
+type Claude struct {
 	model  string
-	opts   options
+	config Config
 	client anthropic.Client
 }
 
-// NewModel creates a new Claude client with the given options.
-// Accepts official Anthropic SDK RequestOptions for maximum flexibility:
-//   - Direct API: option.WithAPIKey("sk-...")
-//   - AWS Bedrock: bedrock.WithLoadDefaultConfig(ctx)
-//   - Google Vertex: vertex.WithGoogleAuth(ctx, region, projectID)
-func NewModel(model string, opts ...Option) blades.ModelProvider {
-	opt := options{}
-	for _, apply := range opts {
-		apply(&opt)
+// NewModel creates a new Claude model provider with the given model name and configuration.
+func NewModel(model string, config Config) blades.ModelProvider {
+	var opts []option.RequestOption
+	if config.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(config.BaseURL))
 	}
-	return &claudeModel{
+	if config.APIKey != "" {
+		opts = append(opts, option.WithAPIKey(config.APIKey))
+	}
+	return &Claude{
 		model:  model,
-		opts:   opt,
-		client: anthropic.NewClient(opt.RequestOpts...),
+		config: config,
+		client: anthropic.NewClient(opts...),
 	}
 }
 
 // Name returns the name of the Claude model.
-func (m *claudeModel) Name() string {
+func (m *Claude) Name() string {
 	return m.model
 }
 
 // Generate generates content using the Claude API.
 // Returns blades.ModelResponse instead of SDK-specific types.
-func (m *claudeModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+func (m *Claude) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
 	params, err := m.toClaudeParams(req)
 	if err != nil {
 		return nil, fmt.Errorf("converting request: %w", err)
@@ -124,7 +65,7 @@ func (m *claudeModel) Generate(ctx context.Context, req *blades.ModelRequest) (*
 }
 
 // NewStreaming executes the request and returns a stream of assistant responses.
-func (m *claudeModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
+func (m *Claude) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
 		params, err := m.toClaudeParams(req)
 		if err != nil {
@@ -165,27 +106,27 @@ func (m *claudeModel) NewStreaming(ctx context.Context, req *blades.ModelRequest
 }
 
 // toClaudeParams converts Blades ModelRequest and ModelOptions to Claude MessageNewParams.
-func (m *claudeModel) toClaudeParams(req *blades.ModelRequest) (*anthropic.MessageNewParams, error) {
+func (m *Claude) toClaudeParams(req *blades.ModelRequest) (*anthropic.MessageNewParams, error) {
 	params := &anthropic.MessageNewParams{
 		Model: anthropic.Model(m.model),
 	}
-	if m.opts.MaxTokens > 0 {
-		params.MaxTokens = m.opts.MaxTokens
+	if m.config.MaxOutputTokens > 0 {
+		params.MaxTokens = m.config.MaxOutputTokens
 	}
-	if m.opts.Temperature != nil {
-		params.Temperature = anthropic.Float(*m.opts.Temperature)
+	if m.config.Temperature > 0 {
+		params.Temperature = anthropic.Float(m.config.Temperature)
 	}
-	if m.opts.TopK != nil {
-		params.TopK = anthropic.Int(*m.opts.TopK)
+	if m.config.TopK > 0 {
+		params.TopK = anthropic.Int(m.config.TopK)
 	}
-	if m.opts.TopP != nil {
-		params.TopP = anthropic.Float(*m.opts.TopP)
+	if m.config.TopP > 0 {
+		params.TopP = anthropic.Float(m.config.TopP)
 	}
-	if len(m.opts.StopSequences) > 0 {
-		params.StopSequences = m.opts.StopSequences
+	if len(m.config.StopSequences) > 0 {
+		params.StopSequences = m.config.StopSequences
 	}
-	if m.opts.Thinking != nil {
-		params.Thinking = *m.opts.Thinking
+	if m.config.Thinking != nil {
+		params.Thinking = *m.config.Thinking
 	}
 	if req.Instruction != nil {
 		params.System = []anthropic.TextBlockParam{{Text: req.Instruction.Text()}}

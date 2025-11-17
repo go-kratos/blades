@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"strings"
 	"text/template"
 
@@ -27,7 +28,9 @@ func buildPrompt(params map[string]any) (string, error) {
 
 func main() {
 	// Initialize the agent with a template
-	model := openai.NewModel("gpt-5")
+	model := openai.NewModel("gpt-5", openai.Config{
+		APIKey: os.Getenv("OPENAI_API_KEY"),
+	})
 	agent, err := blades.NewAgent(
 		"Template Agent",
 		blades.WithModel(model),

@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
 )
 
 func main() {
-	model := openai.NewModel("deepseek-chat")
+	model := openai.NewModel("gpt-5", openai.Config{
+		APIKey: os.Getenv("OPENAI_API_KEY"),
+	})
 	// Create a new agent with OpenAI provider
 	agent, err := blades.NewAgent(
 		"Invocation Agent",

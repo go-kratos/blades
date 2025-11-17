@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/go-kratos/blades"
@@ -20,7 +21,9 @@ type RoutingWorkflow struct {
 
 // NewRoutingWorkflow creates a new RoutingWorkflow with the given model provider and routes.
 func NewRoutingWorkflow(routes map[string]string) (*RoutingWorkflow, error) {
-	model := openai.NewModel("gpt-5")
+	model := openai.NewModel("gpt-5", openai.Config{
+		APIKey: os.Getenv("OPENAI_API_KEY"),
+	})
 	router, err := blades.NewAgent(
 		"triage_agent",
 		blades.WithModel(model),
