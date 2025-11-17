@@ -90,8 +90,8 @@ import (
 func main() {
     // Configure OpenAI API key and base URL using environment variables:
     model := openai.NewModel("gpt-5", openai.Config{
-		APIKey: os.Getenv("OPENAI_API_KEY"),
-	})
+        APIKey: os.Getenv("OPENAI_API_KEY"),
+    })
     agent := blades.NewAgent(
         "Blades Agent",
         blades.WithModel(model),
