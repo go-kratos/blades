@@ -42,7 +42,7 @@ func main() {
 		log.Fatal(err)
 	}
 	// Create an agent with the weather tool
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel("deepseek-chat", openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	agent, err := blades.NewAgent(
@@ -58,8 +58,7 @@ func main() {
 	input := blades.UserMessage("What is the weather in New York City?")
 	session := blades.NewSession()
 	runner := blades.NewRunner(agent, blades.WithSession(session))
-	ctx := context.Background()
-	output, err := runner.Run(ctx, input)
+	output, err := runner.Run(context.Background(), input)
 	if err != nil {
 		log.Fatal(err)
 	}

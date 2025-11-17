@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel("deepseek-chat", openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	mathTutorAgent, err := blades.NewAgent(

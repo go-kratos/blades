@@ -55,7 +55,7 @@ func main() {
 		}),
 	)
 	// Create an agent with the weather tool
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel("deepseek-chat", openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	agent, err := blades.NewAgent(

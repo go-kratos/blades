@@ -319,8 +319,10 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					yield(nil, err)
 					return
 				}
-				if !yield(finalResponse.Message, nil) {
-					return
+				if finalResponse.Message.Role == RoleAssistant {
+					if !yield(finalResponse.Message, nil) {
+						return
+					}
 				}
 			} else {
 				streaming := a.model.NewStreaming(ctx, req)
