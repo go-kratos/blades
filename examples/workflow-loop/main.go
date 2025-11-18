@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	model := openai.NewModel("deepseek-chat", openai.Config{
+	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	writerAgent, err := blades.NewAgent(
