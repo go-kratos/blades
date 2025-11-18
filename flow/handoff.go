@@ -48,8 +48,12 @@ func NewHandoffAgent(config HandoffConfig) (blades.Agent, error) {
 
 func (a *HandoffAgent) Run(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
+		var (
+			err     error
+			message *blades.Message
+		)
 		h := &handoff.Handoff{}
-		for _, err := range a.Agent.Run(handoff.NewContext(ctx, h), invocation) {
+		for message, err = range a.Agent.Run(handoff.NewContext(ctx, h), invocation) {
 			if err != nil {
 				yield(nil, err)
 				return
@@ -57,6 +61,11 @@ func (a *HandoffAgent) Run(ctx context.Context, invocation *blades.Invocation) b
 		}
 		agent, ok := a.targets[strings.TrimSpace(h.TargetAgent)]
 		if !ok {
+			// If no target agent found, return the last message from the root agent
+			if message.Text() != "" {
+				yield(message, nil)
+				return
+			}
 			yield(nil, fmt.Errorf("target agent not found: %s", h.TargetAgent))
 			return
 		}
