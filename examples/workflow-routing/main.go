@@ -97,7 +97,7 @@ func main() {
 	var (
 		routes = map[string]string{
 			"math_agent": "You provide help with math problems. Explain your reasoning at each step and include examples.",
-			"geo_agent":  "You provide assistance with geographical queries. Explain geographic concepts, locations, and spatial relationships clearly",
+			"geo_agent":  "You provide assistance with geographical queries. Explain geographic concepts, locations, and spatial relationships clearly.",
 		}
 	)
 	routing, err := NewRoutingWorkflow(routes)
