@@ -3,8 +3,8 @@ module github.com/go-kratos/blades/cmd/docs
 go 1.24.0
 
 require (
-	github.com/go-kratos/blades v0.1.1
-	github.com/go-kratos/blades/contrib/openai v0.1.1-0.20251118134045-c3b15b4fef46
+	github.com/go-kratos/blades v0.2.0
+	github.com/go-kratos/blades/contrib/openai v0.2.0
 	github.com/spf13/cobra v1.10.1
 )
 

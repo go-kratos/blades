@@ -1,8 +1,8 @@
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
-github.com/go-kratos/blades v0.1.1 h1:yC9y/OoTE2qudYGgtk/d4L7TgrTjzFtk2V/CSW6q3nA=
-github.com/go-kratos/blades v0.1.1/go.mod h1:QV8+BQLe9CGcaYVsqoIYjVqcg9o2NGmBdGLq2m29NmA=
-github.com/go-kratos/blades/contrib/openai v0.1.1-0.20251118134045-c3b15b4fef46 h1:xMeSP2gzIelta8UHlVZ/SFlBkLOdpEqXmOhk32U8A5M=
-github.com/go-kratos/blades/contrib/openai v0.1.1-0.20251118134045-c3b15b4fef46/go.mod h1:FArGkRYGYqlLuS5AhfFLUOtBQ6s/+I8iVkdEhtEee8s=
+github.com/go-kratos/blades v0.2.0 h1:HY85AwKbdTSgm+0v/lVg7mPBvB7aCEyLtU1xOCtA3dU=
+github.com/go-kratos/blades v0.2.0/go.mod h1:NF4v0Hh+W+gGbfgrvifxzZRsUYMokhEzGFvOxFLyzRs=
+github.com/go-kratos/blades/contrib/openai v0.2.0 h1:0u5pRvFhh9ozxjS+qE4vQVQlSkvxRBFOPu8mSbbKmHg=
+github.com/go-kratos/blades/contrib/openai v0.2.0/go.mod h1:FArGkRYGYqlLuS5AhfFLUOtBQ6s/+I8iVkdEhtEee8s=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
 github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
 github.com/google/jsonschema-go v0.3.0 h1:6AH2TxVNtk3IlvkkhjrtbUc4S8AvO0Xii0DxIygDg+Q=
