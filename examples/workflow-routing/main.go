@@ -21,7 +21,7 @@ type RoutingWorkflow struct {
 
 // NewRoutingWorkflow creates a new RoutingWorkflow with the given model provider and routes.
 func NewRoutingWorkflow(routes map[string]string) (*RoutingWorkflow, error) {
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel("deepseek-chat", openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	router, err := blades.NewAgent(
@@ -96,8 +96,8 @@ func (r *RoutingWorkflow) selectRoute(ctx context.Context, invocation *blades.In
 func main() {
 	var (
 		routes = map[string]string{
-			"math_agent":      "You provide help with math problems. Explain your reasoning at each step and include examples.",
-			"geography_agent": "You provide assistance with historical queries. Explain important events and context clearly.",
+			"math_agent": "You provide help with math problems. Explain your reasoning at each step and include examples.",
+			"geo_agent":  "You provide assistance with geographical queries. Explain geographic concepts, locations, and spatial relationships clearly",
 		}
 	)
 	routing, err := NewRoutingWorkflow(routes)
