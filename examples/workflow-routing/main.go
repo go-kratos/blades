@@ -80,7 +80,7 @@ func (r *RoutingWorkflow) selectRoute(ctx context.Context, invocation *blades.In
 		return nil, err
 	}
 	buf.WriteString(string(routes))
-	buf.WriteString("\nOnly return the value of the routing key")
+	buf.WriteString("\nOnly return the name of the routing key.")
 	for res, err := range r.Agent.Run(ctx, &blades.Invocation{Message: blades.UserMessage(buf.String())}) {
 		if err != nil {
 			return nil, err
