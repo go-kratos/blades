@@ -20,7 +20,7 @@ func main() {
 	memoryStore.AddMemory(ctx, &memory.Memory{Content: blades.AssistantMessage("My favorite project is the Blades Agent kit.")})
 	memoryStore.AddMemory(ctx, &memory.Memory{Content: blades.AssistantMessage("My favorite programming language is Go.")})
 	// Create an agent with memory tool
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	agent, err := blades.NewAgent(

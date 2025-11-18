@@ -28,7 +28,7 @@ func buildPrompt(params map[string]any) (string, error) {
 
 func main() {
 	// Initialize the agent with a template
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	agent, err := blades.NewAgent(

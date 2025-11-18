@@ -19,7 +19,7 @@ func Logging(next blades.Handler) blades.Handler {
 }
 
 func main() {
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	agent, err := blades.NewAgent(

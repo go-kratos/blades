@@ -22,7 +22,7 @@ func init() {
 
 func main() {
 	flag.Parse()
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	tr, err := blades.NewAgent(

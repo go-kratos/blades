@@ -33,7 +33,7 @@ func confirmPrompt(ctx context.Context, message *blades.Message) (bool, error) {
 
 func main() {
 	// Create an agent and wrap it with the confirmation middleware.
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	agent, err := blades.NewAgent(

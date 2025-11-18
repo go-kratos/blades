@@ -44,7 +44,7 @@ func main() {
 		tools.WithMiddleware(toolLogging()),
 	)
 	// Create an agent with the weather tool
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	agent, err := blades.NewAgent(

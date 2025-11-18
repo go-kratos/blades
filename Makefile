@@ -1,7 +1,7 @@
 # Find all directories that contain a go.mod file
 GO_MODULE_DIRS := $(shell find . -type f -name "go.mod" -exec dirname {} \;)
 
-.PHONY: all build test tidy
+.PHONY: all build test tidy examples
 
 # Default target: run tidy, build, and test
 all: tidy build test
@@ -27,3 +27,11 @@ test:
 		(cd $$dir && go test -race ./...); \
 	done
 
+# Run 'go run' for example programs 
+examples:
+	(cd examples && go run ./prompt-basic/main.go)
+	(cd examples && go run ./prompt-invocation/main.go)
+	(cd examples && go run ./prompt-instructions/main.go)
+	(cd examples && go run ./streaming/main.go)
+	(cd examples && go run ./tools-func/main.go)
+	(cd examples && go run ./tools-streaming/main.go)

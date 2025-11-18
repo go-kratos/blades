@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	// Create a new agent with OpenAI provider

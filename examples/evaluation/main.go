@@ -42,7 +42,7 @@ Below are the inputs:
 }
 
 func main() {
-	model := openai.NewModel("gpt-5", openai.Config{
+	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
 	r, err := evaluate.NewCriteria(
