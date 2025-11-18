@@ -62,14 +62,20 @@ func (r *runner) buildInvocation(ctx context.Context, message *Message, streamab
 
 // Run executes the agent with the provided prompt and options within the session context.
 func (r *runner) Run(ctx context.Context, message *Message) (*Message, error) {
+	var (
+		err    error
+		output *Message
+	)
 	iter := r.Agent.Run(r.buildInvocation(ctx, message, false))
-	for output, err := range iter {
+	for output, err = range iter {
 		if err != nil {
 			return nil, err
 		}
-		return output, nil
 	}
-	return nil, ErrNoFinalResponse
+	if output == nil {
+		return nil, ErrNoFinalResponse
+	}
+	return output, nil
 }
 
 func (r *runner) RunStream(ctx context.Context, message *Message) Generator[*Message, error] {
