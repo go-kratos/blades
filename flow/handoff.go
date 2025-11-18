@@ -62,7 +62,7 @@ func (a *HandoffAgent) Run(ctx context.Context, invocation *blades.Invocation) b
 		agent, ok := a.targets[strings.TrimSpace(h.TargetAgent)]
 		if !ok {
 			// If no target agent found, return the last message from the root agent
-			if message.Text() != "" {
+			if message != nil && message.Text() != "" {
 				yield(message, nil)
 				return
 			}
