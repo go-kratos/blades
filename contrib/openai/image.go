@@ -6,9 +6,9 @@ import (
 	"fmt"
 
 	"github.com/go-kratos/blades"
-	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
-	"github.com/openai/openai-go/v2/packages/param"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
 )
 
 // ImageConfig holds configuration options for image generation.
@@ -26,6 +26,7 @@ type ImageConfig struct {
 	N                 int64
 	PartialImages     int64
 	OutputCompression int64
+	ExtraFields       map[string]any
 	RequestOptions    []option.RequestOption
 }
 
@@ -120,6 +121,9 @@ func (m *imageModel) buildGenerateParams(req *blades.ModelRequest) (openai.Image
 	}
 	if m.config.OutputCompression > 0 {
 		params.OutputCompression = param.NewOpt(m.config.OutputCompression)
+	}
+	if len(m.config.ExtraFields) > 0 {
+		params.SetExtraFields(m.config.ExtraFields)
 	}
 	return params, nil
 }

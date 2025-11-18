@@ -8,10 +8,10 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
-	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
-	"github.com/openai/openai-go/v2/packages/param"
-	"github.com/openai/openai-go/v2/shared"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 type Config struct {
@@ -24,6 +24,7 @@ type Config struct {
 	Temperature      float64
 	TopP             float64
 	StopSequences    []string
+	ExtraFields      map[string]any
 	RequestOptions   []option.RequestOption
 	ReasoningEffort  shared.ReasoningEffort
 }
@@ -145,6 +146,9 @@ func (m *chatModel) toChatCompletionParams(req *blades.ModelRequest) (openai.Cha
 	}
 	if len(m.config.StopSequences) > 0 {
 		params.Stop = openai.ChatCompletionNewParamsStopUnion{OfStringArray: m.config.StopSequences}
+	}
+	if len(m.config.ExtraFields) > 0 {
+		params.SetExtraFields(m.config.ExtraFields)
 	}
 	if req.OutputSchema != nil {
 		schemaParam := openai.ResponseFormatJSONSchemaJSONSchemaParam{

@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/go-kratos/blades"
-	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
-	"github.com/openai/openai-go/v2/packages/param"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
 )
 
 var (
@@ -31,6 +31,7 @@ type AudioConfig struct {
 	ResponseFormat string
 	StreamFormat   string
 	Speed          float64
+	ExtraFields    map[string]any
 	RequestOptions []option.RequestOption
 }
 
@@ -65,7 +66,7 @@ func (m *audioModel) Name() string {
 func (m *audioModel) buildAudioParams(req *blades.ModelRequest) openai.AudioSpeechNewParams {
 	params := openai.AudioSpeechNewParams{
 		Input: promptFromMessages(req.Messages),
-		Model: openai.SpeechModel(m.model),
+		Model: m.model,
 		Voice: openai.AudioSpeechNewParamsVoice(m.config.Voice),
 	}
 	if req.Instruction != nil {
@@ -79,6 +80,9 @@ func (m *audioModel) buildAudioParams(req *blades.ModelRequest) openai.AudioSpee
 	}
 	if m.config.Speed > 0 {
 		params.Speed = param.NewOpt(m.config.Speed)
+	}
+	if len(m.config.ExtraFields) > 0 {
+		params.SetExtraFields(m.config.ExtraFields)
 	}
 	return params
 }
