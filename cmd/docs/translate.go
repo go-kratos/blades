@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/openai/openai-go/v2/option"
-
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
 )
@@ -16,15 +14,15 @@ func translate(from string) error {
 	if err != nil {
 		return err
 	}
-	provider := openai.NewChatProvider(
-		openai.WithChatOptions(
-			option.WithBaseURL(baseURL),
-			option.WithAPIKey(apiKey),
-		),
+	provider := openai.NewModel(
+		model,
+		openai.Config{
+			BaseURL: baseURL,
+			APIKey:  apiKey,
+		},
 	)
 	agent, err := blades.NewAgent(
 		"Document translator",
-		blades.WithModel(model),
 		blades.WithProvider(provider),
 		blades.WithInstructions(`You are a professional technical translator.
 	Please translate the following Markdown document into **{{.target_language}}**.
