@@ -92,6 +92,7 @@ func WithMaxIterations(n int) AgentOption {
 	}
 }
 
+// WithInstructionProvider sets a dynamic instruction provider for the Agent.
 func WithInstructionProvider(p InstructionProvider) AgentOption {
 	return func(a *agent) {
 		a.instructionProvider = p
