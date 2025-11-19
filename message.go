@@ -156,9 +156,15 @@ func AssistantMessage[T contentPart](parts ...T) *Message {
 	return &Message{ID: NewMessageID(), Role: RoleAssistant, Parts: Parts(parts...)}
 }
 
-// NewMessage creates a new empty message with a unique ID.
-func NewMessage(role Role) *Message {
-	return &Message{ID: NewMessageID(), Role: role}
+// NewAssistantMessage creates a new assistant message with the given status.
+func NewAssistantMessage(status Status) *Message {
+	return &Message{
+		ID:       NewMessageID(),
+		Role:     RoleAssistant,
+		Status:   status,
+		Actions:  make(map[string]any),
+		Metadata: make(map[string]any),
+	}
 }
 
 // NewMessageID generates a new random message identifier.

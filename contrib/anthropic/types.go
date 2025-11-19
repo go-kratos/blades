@@ -48,8 +48,8 @@ func convertBladesToolsToClaude(tools []tools.Tool) ([]anthropic.ToolUnionParam,
 }
 
 // convertClaudeToBlades converts a Claude Message to Blades ModelResponse.
-func convertClaudeToBlades(message *anthropic.Message) (*blades.ModelResponse, error) {
-	msg := blades.NewMessage(blades.RoleAssistant)
+func convertClaudeToBlades(message *anthropic.Message, status blades.Status) (*blades.ModelResponse, error) {
+	msg := blades.NewAssistantMessage(status)
 	for _, block := range message.Content {
 		switch b := block.AsAny().(type) {
 		case anthropic.TextBlock:
@@ -66,7 +66,6 @@ func convertClaudeToBlades(message *anthropic.Message) (*blades.ModelResponse, e
 			})
 		}
 	}
-
 	return &blades.ModelResponse{
 		Message: msg,
 	}, nil
@@ -74,16 +73,12 @@ func convertClaudeToBlades(message *anthropic.Message) (*blades.ModelResponse, e
 
 // convertStreamDeltaToBlades converts a Claude ContentBlockDeltaEvent to Blades ModelResponse.
 func convertStreamDeltaToBlades(event anthropic.ContentBlockDeltaEvent) (*blades.ModelResponse, error) {
-	response := &blades.ModelResponse{}
+	message := blades.NewAssistantMessage(blades.StatusIncomplete)
 	switch delta := event.Delta.AsAny().(type) {
 	case anthropic.TextDelta:
-		msg := &blades.Message{
-			Role: blades.RoleAssistant,
-			Parts: []blades.Part{
-				blades.TextPart{Text: delta.Text},
-			},
-		}
-		response.Message = msg
+		message.Parts = append(message.Parts, blades.TextPart{Text: delta.Text})
 	}
-	return response, nil
+	return &blades.ModelResponse{
+		Message: message,
+	}, nil
 }

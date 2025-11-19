@@ -61,7 +61,7 @@ func (m *Gemini) Generate(ctx context.Context, req *blades.ModelRequest) (*blade
 	if err != nil {
 		return nil, err
 	}
-	return convertGenAIToBlades(resp)
+	return convertGenAIToBlades(resp, blades.StatusCompleted)
 }
 
 func (m *Gemini) toGenerateConfig(req *blades.ModelRequest) (*genai.GenerateContentConfig, error) {
@@ -124,7 +124,7 @@ func (m *Gemini) NewStreaming(ctx context.Context, req *blades.ModelRequest) bla
 				yield(nil, err)
 				return
 			}
-			response, err := convertGenAIToBlades(chunk)
+			response, err := convertGenAIToBlades(chunk, blades.StatusIncomplete)
 			if err != nil {
 				yield(nil, err)
 				return
@@ -155,7 +155,7 @@ func (m *Gemini) NewStreaming(ctx context.Context, req *blades.ModelRequest) bla
 		}
 		// After streaming is complete, check for tool calls in accumulated response
 		if accumulatedResponse != nil {
-			finalResponse, err := convertGenAIToBlades(accumulatedResponse)
+			finalResponse, err := convertGenAIToBlades(accumulatedResponse, blades.StatusCompleted)
 			if err != nil {
 				yield(nil, err)
 				return
