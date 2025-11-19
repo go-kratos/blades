@@ -3,6 +3,7 @@ package blades
 import (
 	"context"
 	"iter"
+	"slices"
 
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/uuid"
@@ -44,14 +45,15 @@ func NewInvocationID() string {
 
 // Clone creates a deep copy of the Invocation.
 func (inv *Invocation) Clone() *Invocation {
-	historyCopy := make([]*Message, len(inv.History))
-	copy(historyCopy, inv.History)
 	return &Invocation{
-		ID:         inv.ID,
-		Session:    inv.Session,
-		Resumable:  inv.Resumable,
-		Streamable: inv.Streamable,
-		Message:    inv.Message,
-		History:    historyCopy,
+		ID:          inv.ID,
+		Model:       inv.Model,
+		Session:     inv.Session,
+		Resumable:   inv.Resumable,
+		Streamable:  inv.Streamable,
+		Message:     inv.Message.Clone(),
+		Instruction: inv.Instruction.Clone(),
+		History:     slices.Clone(inv.History),
+		Tools:       slices.Clone(inv.Tools),
 	}
 }
