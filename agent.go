@@ -352,7 +352,12 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 						return
 					}
 					if finalResponse.Message.Role == RoleTool && finalResponse.Message.Status == StatusCompleted {
-						// wait for tool execution after streaming is done
+						// Skip yielding tool messages during streaming.
+						// Tool messages with StatusCompleted indicate that a tool call has been made,
+						// but the result of the tool execution is not yet available. These messages
+						// will be processed and yielded after the tool execution is complete in the
+						// next step of the agent loop. This ensures that only completed tool results
+						// are sent to the client, maintaining correct message order and semantics.
 						continue
 					}
 					if !yield(finalResponse.Message, nil) {
