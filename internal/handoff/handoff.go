@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
@@ -42,7 +43,7 @@ func (h *handoffTool) Handle(ctx context.Context, input string) (string, error) 
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
 		return "", err
 	}
-	agentName := args["agentName"]
+	agentName := strings.TrimSpace(args["agentName"])
 	if agentName == "" {
 		return "", fmt.Errorf("agentName must be a non-empty string")
 	}

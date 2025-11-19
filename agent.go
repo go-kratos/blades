@@ -293,12 +293,12 @@ func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, e
 		switch v := any(part).(type) {
 		case ToolPart:
 			eg.Go(func() error {
-				ctx = NewToolContext(ctx, &toolContext{
+				toolCtx := NewToolContext(ctx, &toolContext{
 					id:      v.ID,
 					name:    v.Name,
 					actions: actions,
 				})
-				part, err := a.handleTools(ctx, v)
+				part, err := a.handleTools(toolCtx, v)
 				if err != nil {
 					return err
 				}

@@ -195,10 +195,13 @@ func Parts[T contentPart](inputs ...T) []Part {
 
 // MergeActions merges two action maps, with values from extra overriding those in base.
 func MergeActions(base, extra map[string]any) map[string]any {
-	if base == nil {
-		base = make(map[string]any)
-	}
 	cloned := maps.Clone(base)
+	if cloned == nil {
+		cloned = make(map[string]any)
+	}
+	if extra == nil {
+		extra = make(map[string]any)
+	}
 	for k, v := range extra {
 		cloned[k] = v
 	}
