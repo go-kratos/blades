@@ -22,15 +22,12 @@ type Generator[T, E any] iter.Seq2[T, E]
 
 // Agent represents an autonomous agent that can process invocations and produce a sequence of messages.
 type Agent interface {
+	// Name returns the name of the agent.
 	Name() string
+	// Description returns a brief description of the agent's functionality.
 	Description() string
+	// Run processes the given invocation and returns a generator that yields messages or errors.
 	Run(context.Context, *Invocation) Generator[*Message, error]
-}
-
-// Runner represents a component that can execute a single message and return a response message or a stream of messages.
-type Runner interface {
-	Run(context.Context, *Message) (*Message, error)
-	RunStream(context.Context, *Message) Generator[*Message, error]
 }
 
 // NewInvocationID generates a new unique invocation ID.

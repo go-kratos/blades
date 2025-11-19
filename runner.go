@@ -5,68 +5,76 @@ import (
 )
 
 // RunOption defines options for configuring the Runner.
-type RunOption func(*runner)
+type RunOption func(*RunOptions)
 
 // WithSession sets a custom session for the Runner.
 func WithSession(session Session) RunOption {
-	return func(r *runner) {
-		r.session = session
+	return func(r *RunOptions) {
+		r.Session = session
 	}
 }
 
 // WithResumable configures whether the Runner supports resumable sessions.
 func WithResumable(resumable bool) RunOption {
-	return func(r *runner) {
-		r.resumable = resumable
+	return func(r *RunOptions) {
+		r.Resumable = resumable
 	}
 }
 
 // WithInvocationID sets a custom invocation ID for the Runner.
 func WithInvocationID(invocationID string) RunOption {
-	return func(r *runner) {
-		r.invocationID = invocationID
+	return func(r *RunOptions) {
+		r.InvocationID = invocationID
 	}
 }
 
-// runner is responsible for executing a Runnable agent within a session context.
-type runner struct {
-	Agent
-	session      Session
-	resumable    bool
-	invocationID string
+// RunOptions holds configuration options for running the agent.
+type RunOptions struct {
+	Session      Session
+	Resumable    bool
+	InvocationID string
+}
+
+// Runner is responsible for executing a Runnable agent within a session context.
+type Runner struct {
+	rootAgent Agent
 }
 
 // NewRunner creates a new Runner with the given agent and options.
-func NewRunner(agent Agent, opts ...RunOption) Runner {
-	r := &runner{
-		Agent:        agent,
-		session:      NewSession(),
-		invocationID: NewInvocationID(),
+func NewRunner(rootAgent Agent) *Runner {
+	return &Runner{
+		rootAgent: rootAgent,
 	}
-	for _, opt := range opts {
-		opt(r)
-	}
-	return r
 }
 
 // buildInvocation constructs an Invocation object for the given message and options.
-func (r *runner) buildInvocation(ctx context.Context, message *Message, streamable bool) (context.Context, *Invocation) {
-	return NewSessionContext(ctx, r.session), &Invocation{
-		ID:         r.invocationID,
-		Resumable:  r.resumable,
-		Session:    r.session,
+func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamable bool, o *RunOptions) (context.Context, *Invocation) {
+	return NewSessionContext(ctx, o.Session), &Invocation{
+		ID:         o.InvocationID,
+		Resumable:  o.Resumable,
+		Session:    o.Session,
 		Streamable: streamable,
 		Message:    message,
 	}
 }
 
 // Run executes the agent with the provided prompt and options within the session context.
-func (r *runner) Run(ctx context.Context, message *Message) (*Message, error) {
+func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (*Message, error) {
+	o := &RunOptions{
+		Session:      NewSession(),
+		InvocationID: NewInvocationID(),
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
 	var (
 		err    error
 		output *Message
 	)
-	iter := r.Agent.Run(r.buildInvocation(ctx, message, false))
+	if err := o.Session.Append(ctx, message); err != nil {
+		return nil, err
+	}
+	iter := r.rootAgent.Run(r.buildInvocation(ctx, message, false, o))
 	for output, err = range iter {
 		if err != nil {
 			return nil, err
@@ -78,6 +86,18 @@ func (r *runner) Run(ctx context.Context, message *Message) (*Message, error) {
 	return output, nil
 }
 
-func (r *runner) RunStream(ctx context.Context, message *Message) Generator[*Message, error] {
-	return r.Agent.Run(r.buildInvocation(ctx, message, true))
+func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOption) Generator[*Message, error] {
+	o := &RunOptions{
+		Session:      NewSession(),
+		InvocationID: NewInvocationID(),
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+	if err := o.Session.Append(ctx, message); err != nil {
+		return func(yield func(*Message, error) bool) {
+			yield(nil, err)
+		}
+	}
+	return r.rootAgent.Run(r.buildInvocation(ctx, message, true, o))
 }

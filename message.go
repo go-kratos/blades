@@ -142,7 +142,7 @@ func (m *Message) String() string {
 
 // UserMessage creates a user-authored message from parts.
 func UserMessage[T contentPart](parts ...T) *Message {
-	return &Message{ID: NewMessageID(), Role: RoleUser, Parts: Parts(parts...)}
+	return &Message{ID: NewMessageID(), Role: RoleUser, Author: "user", Parts: Parts(parts...)}
 }
 
 // SystemMessage creates a system-authored message from parts.

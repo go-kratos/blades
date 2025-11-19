@@ -240,12 +240,12 @@ func (a *agent) storeSession(ctx context.Context, invocation *Invocation, messag
 	message.InvocationID = invocation.ID
 	switch message.Role {
 	case RoleUser:
-		return invocation.Session.Append(ctx, []*Message{message})
+		return invocation.Session.Append(ctx, message)
 	case RoleTool:
 		if message.Status != StatusCompleted {
 			return nil
 		}
-		return invocation.Session.Append(ctx, []*Message{message})
+		return invocation.Session.Append(ctx, message)
 	case RoleAssistant:
 		if message.Status != StatusCompleted {
 			return nil
@@ -253,7 +253,7 @@ func (a *agent) storeSession(ctx context.Context, invocation *Invocation, messag
 		if a.outputKey != "" {
 			invocation.Session.PutState(a.outputKey, message.Text())
 		}
-		return invocation.Session.Append(ctx, []*Message{message})
+		return invocation.Session.Append(ctx, message)
 	}
 	return nil
 }
@@ -304,10 +304,6 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 			err           error
 			finalResponse *ModelResponse
 		)
-		if err := a.storeSession(ctx, invocation, invocation.Message); err != nil {
-			yield(nil, err)
-			return
-		}
 		for i := 0; i < a.maxIterations; i++ {
 			if !invocation.Streamable {
 				finalResponse, err = a.model.Generate(ctx, req)

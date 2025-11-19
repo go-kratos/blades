@@ -14,7 +14,7 @@ type Session interface {
 	State() State
 	History() []*Message
 	PutState(string, any)
-	Append(context.Context, []*Message) error
+	Append(context.Context, *Message) error
 }
 
 // NewSession creates a new Session instance with an auto-generated UUID and optional initial state maps.
@@ -68,9 +68,9 @@ func (s *sessionInMemory) PutState(key string, value any) {
 	defer s.m.Unlock()
 	s.state[key] = value
 }
-func (s *sessionInMemory) Append(ctx context.Context, history []*Message) error {
+func (s *sessionInMemory) Append(ctx context.Context, message *Message) error {
 	s.m.Lock()
 	defer s.m.Unlock()
-	s.history = append(s.history, history...)
+	s.history = append(s.history, message)
 	return nil
 }
