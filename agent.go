@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html/template"
+	"maps"
 	"strings"
 	"sync"
 
@@ -280,13 +281,18 @@ func (a *agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error
 
 // executeTools executes the tools specified in the tool parts.
 func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, error) {
+	var (
+		m       sync.Mutex
+		actions = maps.Clone(message.Actions)
+	)
+	if actions == nil {
+		actions = make(map[string]any)
+	}
 	eg, ctx := errgroup.WithContext(ctx)
-	var m sync.Mutex
 	for i, part := range message.Parts {
 		switch v := any(part).(type) {
 		case ToolPart:
 			eg.Go(func() error {
-				actions := make(map[string]any)
 				ctx = NewToolContext(ctx, &toolContext{
 					id:      v.ID,
 					name:    v.Name,
