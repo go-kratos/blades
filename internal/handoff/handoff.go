@@ -50,7 +50,7 @@ func (h *handoffTool) Handle(ctx context.Context, input string) (string, error) 
 	// Set the target agent in the handoff control
 	toolCtx, ok := blades.FromToolContext(ctx)
 	if !ok {
-		return "", fmt.Errorf("handoff control not found in context")
+		return "", fmt.Errorf("tool context not found in context")
 	}
 	toolCtx.Actions()[ActionHandoffToAgent] = agentName
 	return "", nil
