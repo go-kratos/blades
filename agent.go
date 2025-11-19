@@ -202,7 +202,6 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			yield(nil, err)
 			return
 		}
-		// Create a new agent context with agent information.
 		ctx = NewAgentContext(ctx, &agentContext{
 			name:        a.name,
 			description: a.description,
