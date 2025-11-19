@@ -23,7 +23,7 @@ Important rules:
 
 var handoffToAgentPromptTmpl = template.Must(template.New("handoff_to_agent_prompt").Parse(handoffInstructionTemplate))
 
-// BuildInstructions builds the instructions for transferring to another agent.
+// BuildInstructions builds the instructions for handing off to another agent.
 func BuildInstructions(targets []blades.Agent) (string, error) {
 	var buf bytes.Buffer
 	if err := handoffToAgentPromptTmpl.Execute(&buf, map[string]any{
