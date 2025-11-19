@@ -57,3 +57,5 @@ func (inv *Invocation) Clone() *Invocation {
 		Tools:       slices.Clone(inv.Tools),
 	}
 }
+
+type InstructionProvider func(ctx context.Context, invocation *Invocation) string

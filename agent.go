@@ -89,19 +89,26 @@ func WithMaxIterations(n int) AgentOption {
 	}
 }
 
+func WithInstructionProvider(p InstructionProvider) AgentOption {
+	return func(a *agent) {
+		a.instructionProvider = p
+	}
+}
+
 // agent is a struct that represents an AI agent.
 type agent struct {
-	name          string
-	description   string
-	instructions  string
-	outputKey     string
-	maxIterations int
-	model         ModelProvider
-	inputSchema   *jsonschema.Schema
-	outputSchema  *jsonschema.Schema
-	middlewares   []Middleware
-	tools         []tools.Tool
-	toolsResolver tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
+	name                string
+	description         string
+	instructions        string
+	instructionProvider InstructionProvider
+	outputKey           string
+	maxIterations       int
+	model               ModelProvider
+	inputSchema         *jsonschema.Schema
+	outputSchema        *jsonschema.Schema
+	middlewares         []Middleware
+	tools               []tools.Tool
+	toolsResolver       tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
 }
 
 // NewAgent creates a new Agent with the given name and options.
@@ -145,28 +152,40 @@ func (a *agent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
 	return tools, nil
 }
 
-// buildInstructions builds the system instruction message for the Agent.
-func (a *agent) buildInstructions(ctx context.Context, invocation *Invocation) (string, error) {
-	if a.instructions != "" {
-		var (
-			state State
-			buf   strings.Builder
-		)
-		if invocation.Session != nil {
-			state = invocation.Session.State()
-			t, err := template.New("instructions").Parse(a.instructions)
-			if err != nil {
-				return "", err
-			}
-			if err := t.Execute(&buf, state); err != nil {
-				return "", err
-			}
-		} else {
-			buf.WriteString(a.instructions)
+// applyInstructions 构建并应用指令到 invocation
+func (a *agent) applyInstructions(ctx context.Context, invocation *Invocation) error {
+	var (
+		baseInstruction     = a.instructions
+		providerInstruction string
+	)
+	if a.instructions != "" && invocation.Session != nil {
+		var buf strings.Builder
+		t, err := template.New("instructions").Parse(a.instructions)
+		if err != nil {
+			return err
 		}
-		return buf.String(), nil
+		if err := t.Execute(&buf, invocation.Session.State()); err != nil {
+			return err
+		}
+		baseInstruction = buf.String()
 	}
-	return "", nil
+	if a.instructionProvider != nil {
+		providerInstruction = a.instructionProvider(ctx, invocation)
+	}
+	base := SystemMessage(baseInstruction, providerInstruction)
+	invocation.Instruction = MergeParts(base, invocation.Instruction)
+	return nil
+}
+
+// prepareInvocation 准备调用上下文，包括解析工具和构建指令
+func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) error {
+	resolvedTools, err := a.resolveTools(ctx)
+	if err != nil {
+		return err
+	}
+	invocation.Model = a.model.Name()
+	invocation.Tools = append(invocation.Tools, resolvedTools...)
+	return a.applyInstructions(ctx, invocation)
 }
 
 // Run runs the agent with the given prompt and options, returning a streamable response.
@@ -177,20 +196,9 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			yield(resumeMessage, nil)
 			return
 		}
-		resolvedTools, err := a.resolveTools(ctx)
-		if err != nil {
+		if err := a.prepareInvocation(ctx, invocation); err != nil {
 			yield(nil, err)
 			return
-		}
-		instructions, err := a.buildInstructions(ctx, invocation)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		invocation.Model = a.model.Name()
-		invocation.Tools = append(invocation.Tools, resolvedTools...)
-		if instructions != "" {
-			invocation.Instruction = MergeParts(SystemMessage(instructions), invocation.Instruction)
 		}
 		// Create a new agent context with agent infomation.
 		ctx = NewAgentContext(ctx, &agentContext{
@@ -224,7 +232,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 	}
 }
 
-func (a *agent) findResumeMessage(ctx context.Context, invocation *Invocation) (*Message, bool) {
+func (a *agent) findResumeMessage(_ context.Context, invocation *Invocation) (*Message, bool) {
 	if !invocation.Resumable || invocation.Session == nil {
 		return nil, false
 	}
