@@ -13,6 +13,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// InstructionProvider is a function type that generates instructions based on the given context.
+type InstructionProvider func(ctx context.Context) (string, error)
+
 // AgentOption is an option for configuring the Agent.
 type AgentOption func(*agent)
 
@@ -152,32 +155,7 @@ func (a *agent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
 	return tools, nil
 }
 
-// applyInstructions 构建并应用指令到 invocation
-func (a *agent) applyInstructions(ctx context.Context, invocation *Invocation) error {
-	var (
-		baseInstruction     = a.instructions
-		providerInstruction string
-	)
-	if a.instructions != "" && invocation.Session != nil {
-		var buf strings.Builder
-		t, err := template.New("instructions").Parse(a.instructions)
-		if err != nil {
-			return err
-		}
-		if err := t.Execute(&buf, invocation.Session.State()); err != nil {
-			return err
-		}
-		baseInstruction = buf.String()
-	}
-	if a.instructionProvider != nil {
-		providerInstruction = a.instructionProvider(ctx, invocation)
-	}
-	base := SystemMessage(baseInstruction, providerInstruction)
-	invocation.Instruction = MergeParts(base, invocation.Instruction)
-	return nil
-}
-
-// prepareInvocation 准备调用上下文，包括解析工具和构建指令
+// prepareInvocation prepares the invocation by resolving tools and applying instructions.
 func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) error {
 	resolvedTools, err := a.resolveTools(ctx)
 	if err != nil {
@@ -185,7 +163,30 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 	}
 	invocation.Model = a.model.Name()
 	invocation.Tools = append(invocation.Tools, resolvedTools...)
-	return a.applyInstructions(ctx, invocation)
+	// order of precedence: static instruction > instruction provider > invocation instruction
+	if a.instructionProvider != nil {
+		instruction, err := a.instructionProvider(ctx)
+		if err != nil {
+			return err
+		}
+		invocation.Instruction = MergeParts(SystemMessage(instruction), invocation.Instruction)
+	}
+	if a.instructions != "" {
+		if invocation.Session != nil {
+			var buf strings.Builder
+			t, err := template.New("instructions").Parse(a.instructions)
+			if err != nil {
+				return err
+			}
+			if err := t.Execute(&buf, invocation.Session.State()); err != nil {
+				return err
+			}
+			invocation.Instruction = MergeParts(SystemMessage(buf.String()), invocation.Instruction)
+		} else {
+			invocation.Instruction = MergeParts(SystemMessage(a.instructions), invocation.Instruction)
+		}
+	}
+	return nil
 }
 
 // Run runs the agent with the given prompt and options, returning a streamable response.
