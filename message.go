@@ -72,9 +72,9 @@ func (ToolPart) isPart() {}
 
 // TokenUsage tracks token consumption for a message.
 type TokenUsage struct {
-	PromptTokens     int64 `json:"promptTokens"`
-	CompletionTokens int64 `json:"completionTokens"`
-	TotalTokens      int64 `json:"totalTokens"`
+	InputTokens  int64 `json:"inputTokens"`
+	OutputTokens int64 `json:"outputTokens"`
+	TotalTokens  int64 `json:"totalTokens"`
 }
 
 // Message represents a single message in a conversation.
@@ -87,6 +87,7 @@ type Message struct {
 	Status       Status         `json:"status"`
 	FinishReason string         `json:"finishReason,omitempty"`
 	TokenUsage   TokenUsage     `json:"tokenUsage,omitempty"`
+	Actions      map[string]any `json:"actions,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
@@ -155,9 +156,15 @@ func AssistantMessage[T contentPart](parts ...T) *Message {
 	return &Message{ID: NewMessageID(), Role: RoleAssistant, Parts: Parts(parts...)}
 }
 
-// NewMessage creates a new empty message with a unique ID.
-func NewMessage(role Role) *Message {
-	return &Message{ID: NewMessageID(), Role: role}
+// NewAssistantMessage creates a new assistant message with the given status.
+func NewAssistantMessage(status Status) *Message {
+	return &Message{
+		ID:       NewMessageID(),
+		Role:     RoleAssistant,
+		Status:   status,
+		Actions:  make(map[string]any),
+		Metadata: make(map[string]any),
+	}
 }
 
 // NewMessageID generates a new random message identifier.
@@ -189,4 +196,27 @@ func Parts[T contentPart](inputs ...T) []Part {
 		}
 	}
 	return parts
+}
+
+// MergeParts merges two slices of parts into one.
+func MergeParts(base, extra *Message) *Message {
+	if extra == nil {
+		return base
+	}
+	for _, part := range extra.Parts {
+		base.Parts = append(base.Parts, part)
+	}
+	return base
+}
+
+// MergeActions merges two action maps, with values from extra overriding those in base.
+func MergeActions(base, extra map[string]any) map[string]any {
+	actions := make(map[string]any, len(base)+len(extra))
+	for k, v := range base {
+		actions[k] = v
+	}
+	for k, v := range extra {
+		actions[k] = v
+	}
+	return actions
 }

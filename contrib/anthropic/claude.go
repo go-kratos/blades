@@ -63,7 +63,7 @@ func (m *Claude) Generate(ctx context.Context, req *blades.ModelRequest) (*blade
 	if err != nil {
 		return nil, fmt.Errorf("generating content: %w", err)
 	}
-	return convertClaudeToBlades(message)
+	return convertClaudeToBlades(message, blades.StatusCompleted)
 }
 
 // NewStreaming executes the request and returns a stream of assistant responses.
@@ -98,7 +98,7 @@ func (m *Claude) NewStreaming(ctx context.Context, req *blades.ModelRequest) bla
 			yield(nil, err)
 			return
 		}
-		finalResponse, err := convertClaudeToBlades(message)
+		finalResponse, err := convertClaudeToBlades(message, blades.StatusCompleted)
 		if err != nil {
 			yield(nil, err)
 			return

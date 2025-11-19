@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
 )
+
+// ActionHandoffToAgent is the action name for handing off to a sub-agent.
+const ActionHandoffToAgent = "handoff_to_agent"
 
 type handoffTool struct{}
 
@@ -38,15 +43,15 @@ func (h *handoffTool) Handle(ctx context.Context, input string) (string, error) 
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
 		return "", err
 	}
-	agentName := args["agentName"]
+	agentName := strings.TrimSpace(args["agentName"])
 	if agentName == "" {
 		return "", fmt.Errorf("agentName must be a non-empty string")
 	}
 	// Set the target agent in the handoff control
-	handoff, ok := FromContext(ctx)
+	toolCtx, ok := blades.FromToolContext(ctx)
 	if !ok {
-		return "", fmt.Errorf("handoff control not found in context")
+		return "", fmt.Errorf("tool context not found in context")
 	}
-	handoff.TargetAgent = agentName
+	toolCtx.Actions()[ActionHandoffToAgent] = agentName
 	return "", nil
 }

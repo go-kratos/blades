@@ -104,18 +104,12 @@ func (p *audioModel) Generate(ctx context.Context, req *blades.ModelRequest) (*b
 	}
 	name := "audio." + strings.ToLower(string(params.ResponseFormat))
 	mimeType := audioMimeType(params.ResponseFormat)
-	message := &blades.Message{
-		Role:     blades.RoleAssistant,
-		Status:   blades.StatusCompleted,
-		Metadata: map[string]any{},
-		Parts: []blades.Part{
-			blades.DataPart{
-				Name:     name,
-				Bytes:    data,
-				MIMEType: mimeType,
-			},
-		},
-	}
+	message := blades.NewAssistantMessage(blades.StatusCompleted)
+	message.Parts = append(message.Parts, blades.DataPart{
+		Name:     name,
+		Bytes:    data,
+		MIMEType: mimeType,
+	})
 	message.Metadata["content_type"] = resp.Header.Get("Content-Type")
 	message.Metadata["response_format"] = params.ResponseFormat
 	return &blades.ModelResponse{Message: message}, nil

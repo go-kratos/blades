@@ -68,7 +68,7 @@ func (t *tracing) Start(ctx context.Context, agent blades.AgentContext, invocati
 		semconv.GenAISystemKey.String(t.system),
 		semconv.GenAIAgentName(agent.Name()),
 		semconv.GenAIAgentDescription(agent.Description()),
-		semconv.GenAIRequestModel(agent.Model()),
+		semconv.GenAIRequestModel(invocation.Model),
 		semconv.GenAIConversationID(sessionID),
 	)
 	return ctx, span
@@ -114,10 +114,10 @@ func (t *tracing) End(span trace.Span, msg *blades.Message, err error) {
 	if msg.FinishReason != "" {
 		span.SetAttributes(semconv.GenAIResponseFinishReasons(msg.FinishReason))
 	}
-	if msg.TokenUsage.PromptTokens > 0 {
-		span.SetAttributes(semconv.GenAIUsageInputTokens(int(msg.TokenUsage.PromptTokens)))
+	if msg.TokenUsage.InputTokens > 0 {
+		span.SetAttributes(semconv.GenAIUsageInputTokens(int(msg.TokenUsage.InputTokens)))
 	}
-	if msg.TokenUsage.CompletionTokens > 0 {
-		span.SetAttributes(semconv.GenAIUsageOutputTokens(int(msg.TokenUsage.CompletionTokens)))
+	if msg.TokenUsage.OutputTokens > 0 {
+		span.SetAttributes(semconv.GenAIUsageOutputTokens(int(msg.TokenUsage.OutputTokens)))
 	}
 }

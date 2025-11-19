@@ -14,16 +14,13 @@ func translate(from string) error {
 	if err != nil {
 		return err
 	}
-	provider := openai.NewModel(
-		model,
-		openai.Config{
-			BaseURL: baseURL,
-			APIKey:  apiKey,
-		},
-	)
+	provider := openai.NewModel(model, openai.Config{
+		BaseURL: baseURL,
+		APIKey:  apiKey,
+	})
 	agent, err := blades.NewAgent(
 		"Document translator",
-		blades.WithProvider(provider),
+		blades.WithModel(provider),
 		blades.WithInstructions(`You are a professional technical translator.
 	Please translate the following Markdown document into **{{.target_language}}**.
 	Follow these strict rules:

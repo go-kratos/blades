@@ -7,7 +7,7 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-const transferInstructionTemplate = `You have access to the following agents:
+const handoffInstructionTemplate = `You have access to the following agents:
 {{range .Targets}}
 Agent Name: {{.Name}}
 Agent Description: {{.Description}}
@@ -21,12 +21,12 @@ Important rules:
 - When transferring a query, output only the function call, and nothing else.
 - Do not include explanations, reasoning, or any additional text outside of the function call.`
 
-var transferToAgentPromptTmpl = template.Must(template.New("transfer_to_agent_prompt").Parse(transferInstructionTemplate))
+var handoffToAgentPromptTmpl = template.Must(template.New("handoff_to_agent_prompt").Parse(handoffInstructionTemplate))
 
-// BuildInstructions builds the instructions for transferring to another agent.
+// BuildInstructions builds the instructions for handing off to another agent.
 func BuildInstructions(targets []blades.Agent) (string, error) {
 	var buf bytes.Buffer
-	if err := transferToAgentPromptTmpl.Execute(&buf, map[string]any{
+	if err := handoffToAgentPromptTmpl.Execute(&buf, map[string]any{
 		"Targets": targets,
 	}); err != nil {
 		return "", err

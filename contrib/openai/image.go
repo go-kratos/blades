@@ -129,11 +129,7 @@ func (m *imageModel) buildGenerateParams(req *blades.ModelRequest) (openai.Image
 }
 
 func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) {
-	message := &blades.Message{
-		Role:     blades.RoleAssistant,
-		Status:   blades.StatusCompleted,
-		Metadata: map[string]any{},
-	}
+	message := blades.NewAssistantMessage(blades.StatusCompleted)
 	message.Metadata["size"] = res.Size
 	message.Metadata["quality"] = res.Quality
 	message.Metadata["background"] = res.Background

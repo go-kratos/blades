@@ -332,71 +332,62 @@ func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []opena
 
 // choiceToResponse converts a non-streaming choice to a ModelResponse.
 func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams, cc *openai.ChatCompletion) (*blades.ModelResponse, error) {
-	msg := &blades.Message{
-		Role:   blades.RoleAssistant,
-		Status: blades.StatusCompleted,
-		TokenUsage: blades.TokenUsage{
-			PromptTokens:     cc.Usage.PromptTokens,
-			CompletionTokens: cc.Usage.CompletionTokens,
-			TotalTokens:      cc.Usage.TotalTokens,
-		},
-		Metadata: map[string]any{},
+	message := blades.NewAssistantMessage(blades.StatusCompleted)
+	message.TokenUsage = blades.TokenUsage{
+		InputTokens:  cc.Usage.PromptTokens,
+		OutputTokens: cc.Usage.CompletionTokens,
+		TotalTokens:  cc.Usage.TotalTokens,
 	}
 	for _, choice := range cc.Choices {
 		if choice.Message.Content != "" {
-			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Message.Content})
+			message.Parts = append(message.Parts, blades.TextPart{Text: choice.Message.Content})
 		}
 		if choice.Message.Audio.Data != "" {
 			bytes, err := base64.StdEncoding.DecodeString(choice.Message.Audio.Data)
 			if err != nil {
 				return nil, err
 			}
-			msg.Parts = append(msg.Parts, blades.DataPart{Bytes: bytes})
+			message.Parts = append(message.Parts, blades.DataPart{Bytes: bytes})
 		}
 		if choice.Message.Refusal != "" {
 			// TODO: map refusal codes to specific error types
 		}
 		if choice.FinishReason != "" {
-			msg.FinishReason = choice.FinishReason
+			message.FinishReason = choice.FinishReason
 		}
 		for _, call := range choice.Message.ToolCalls {
-			msg.Role = blades.RoleTool
-			msg.Parts = append(msg.Parts, blades.ToolPart{
+			message.Role = blades.RoleTool
+			message.Parts = append(message.Parts, blades.ToolPart{
 				ID:      call.ID,
 				Name:    call.Function.Name,
 				Request: call.Function.Arguments,
 			})
 		}
-
 	}
-	return &blades.ModelResponse{Message: msg}, nil
+	return &blades.ModelResponse{Message: message}, nil
 }
 
 // chunkChoiceToResponse converts a streaming chunk choice to a ModelResponse.
 func chunkChoiceToResponse(ctx context.Context, choices []openai.ChatCompletionChunkChoice) (*blades.ModelResponse, error) {
-	msg := &blades.Message{
-		Role:     blades.RoleAssistant,
-		Status:   blades.StatusIncomplete,
-		Metadata: map[string]any{},
-	}
+	message := blades.NewAssistantMessage(blades.StatusIncomplete)
 	for _, choice := range choices {
 		if choice.Delta.Content != "" {
-			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Delta.Content})
+			message.Parts = append(message.Parts, blades.TextPart{Text: choice.Delta.Content})
 		}
 		if choice.Delta.Refusal != "" {
 			// TODO: map refusal codes to specific error types
 		}
 		if choice.FinishReason != "" {
-			msg.FinishReason = choice.FinishReason
+			message.FinishReason = choice.FinishReason
 		}
 		for _, call := range choice.Delta.ToolCalls {
-			msg.Role = blades.RoleTool
-			msg.Parts = append(msg.Parts, blades.ToolPart{
+			message.Role = blades.RoleTool
+			message.Parts = append(message.Parts, blades.ToolPart{
 				ID:      call.ID,
 				Name:    call.Function.Name,
 				Request: call.Function.Arguments,
 			})
 		}
 	}
-	return &blades.ModelResponse{Message: msg}, nil
+	return &blades.ModelResponse{Message: message}, nil
 }

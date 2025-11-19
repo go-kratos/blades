@@ -97,8 +97,8 @@ func convertBladesToolToGenAI(tool tools.Tool) (*genai.Tool, error) {
 	}, nil
 }
 
-func convertGenAIToBlades(resp *genai.GenerateContentResponse) (*blades.ModelResponse, error) {
-	message := &blades.Message{Status: blades.StatusIncomplete}
+func convertGenAIToBlades(resp *genai.GenerateContentResponse, status blades.Status) (*blades.ModelResponse, error) {
+	message := blades.NewAssistantMessage(status)
 	for _, candidate := range resp.Candidates {
 		if candidate.Content == nil {
 			continue
