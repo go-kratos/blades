@@ -18,8 +18,7 @@ type HandoffConfig struct {
 
 type HandoffAgent struct {
 	blades.Agent
-	subAgents []blades.Agent
-	targets   map[string]blades.Agent
+	targets map[string]blades.Agent
 }
 
 func NewHandoffAgent(config HandoffConfig) (blades.Agent, error) {
@@ -37,14 +36,13 @@ func NewHandoffAgent(config HandoffConfig) (blades.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	targets := make(map[string]blades.Agent, len(config.SubAgents))
+	targets := make(map[string]blades.Agent)
 	for _, agent := range config.SubAgents {
 		targets[strings.TrimSpace(agent.Name())] = agent
 	}
 	return &HandoffAgent{
-		Agent:     rootAgent,
-		subAgents: config.SubAgents,
-		targets:   targets,
+		Agent:   rootAgent,
+		targets: targets,
 	}, nil
 }
 
