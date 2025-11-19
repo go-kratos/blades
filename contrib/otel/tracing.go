@@ -114,10 +114,10 @@ func (t *tracing) End(span trace.Span, msg *blades.Message, err error) {
 	if msg.FinishReason != "" {
 		span.SetAttributes(semconv.GenAIResponseFinishReasons(msg.FinishReason))
 	}
-	if msg.TokenUsage.PromptTokens > 0 {
-		span.SetAttributes(semconv.GenAIUsageInputTokens(int(msg.TokenUsage.PromptTokens)))
+	if msg.TokenUsage.InputTokens > 0 {
+		span.SetAttributes(semconv.GenAIUsageInputTokens(int(msg.TokenUsage.InputTokens)))
 	}
-	if msg.TokenUsage.CompletionTokens > 0 {
-		span.SetAttributes(semconv.GenAIUsageOutputTokens(int(msg.TokenUsage.CompletionTokens)))
+	if msg.TokenUsage.OutputTokens > 0 {
+		span.SetAttributes(semconv.GenAIUsageOutputTokens(int(msg.TokenUsage.OutputTokens)))
 	}
 }
