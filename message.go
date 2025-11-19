@@ -2,6 +2,7 @@ package blades
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/google/uuid"
@@ -72,9 +73,9 @@ func (ToolPart) isPart() {}
 
 // TokenUsage tracks token consumption for a message.
 type TokenUsage struct {
-	PromptTokens     int64 `json:"promptTokens"`
-	CompletionTokens int64 `json:"completionTokens"`
-	TotalTokens      int64 `json:"totalTokens"`
+	InputTokens  int64 `json:"inputTokens"`
+	OutputTokens int64 `json:"outputTokens"`
+	TotalTokens  int64 `json:"totalTokens"`
 }
 
 // Message represents a single message in a conversation.
@@ -87,6 +88,7 @@ type Message struct {
 	Status       Status         `json:"status"`
 	FinishReason string         `json:"finishReason,omitempty"`
 	TokenUsage   TokenUsage     `json:"tokenUsage,omitempty"`
+	Actions      map[string]any `json:"actions,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
@@ -189,4 +191,16 @@ func Parts[T contentPart](inputs ...T) []Part {
 		}
 	}
 	return parts
+}
+
+// MergeActions merges two action maps, with values from extra overriding those in base.
+func MergeActions(base, extra map[string]any) map[string]any {
+	if base == nil {
+		base = make(map[string]any)
+	}
+	cloned := maps.Clone(base)
+	for k, v := range extra {
+		cloned[k] = v
+	}
+	return cloned
 }

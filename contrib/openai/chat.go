@@ -336,9 +336,9 @@ func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams
 		Role:   blades.RoleAssistant,
 		Status: blades.StatusCompleted,
 		TokenUsage: blades.TokenUsage{
-			PromptTokens:     cc.Usage.PromptTokens,
-			CompletionTokens: cc.Usage.CompletionTokens,
-			TotalTokens:      cc.Usage.TotalTokens,
+			InputTokens:  cc.Usage.PromptTokens,
+			OutputTokens: cc.Usage.CompletionTokens,
+			TotalTokens:  cc.Usage.TotalTokens,
 		},
 		Metadata: map[string]any{},
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"strings"
+	"sync"
 
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -281,15 +282,25 @@ func (a *agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error
 func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, error) {
 	toolMessage := &Message{ID: message.ID, Role: message.Role, Parts: message.Parts}
 	eg, ctx := errgroup.WithContext(ctx)
+	var m sync.Mutex
 	for i, part := range message.Parts {
 		switch v := any(part).(type) {
 		case ToolPart:
 			eg.Go(func() error {
+				actions := make(map[string]any)
+				ctx = NewToolContext(ctx, &toolContext{
+					id:      v.ID,
+					name:    v.Name,
+					actions: actions,
+				})
 				part, err := a.handleTools(ctx, v)
 				if err != nil {
 					return err
 				}
+				m.Lock()
 				toolMessage.Parts[i] = part
+				toolMessage.Actions = MergeActions(toolMessage.Actions, actions)
+				m.Unlock()
 				return nil
 			})
 		}
@@ -350,6 +361,11 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					yield(nil, err)
 					return
 				}
+				toolMessage.Status = StatusCompleted
+				if !yield(toolMessage, nil) {
+					return
+				}
+				// Append the tool response to the message history for the next iteration
 				req.Messages = append(req.Messages, toolMessage)
 				continue // continue to the next iteration
 			}
