@@ -68,7 +68,7 @@ func (t *tracing) Start(ctx context.Context, agent blades.AgentContext, invocati
 		semconv.GenAISystemKey.String(t.system),
 		semconv.GenAIAgentName(agent.Name()),
 		semconv.GenAIAgentDescription(agent.Description()),
-		semconv.GenAIRequestModel(agent.Model()),
+		semconv.GenAIRequestModel(invocation.Model),
 		semconv.GenAIConversationID(sessionID),
 	)
 	return ctx, span

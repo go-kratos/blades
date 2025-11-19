@@ -4,17 +4,21 @@ import (
 	"context"
 	"iter"
 
+	"github.com/go-kratos/blades/tools"
 	"github.com/google/uuid"
 )
 
 // Invocation holds information about the current invocation.
 type Invocation struct {
-	ID         string
-	Session    Session
-	Resumable  bool
-	Streamable bool
-	Message    *Message
-	History    []*Message
+	ID          string
+	Model       string
+	Session     Session
+	Resumable   bool
+	Streamable  bool
+	Instruction *Message
+	Message     *Message
+	History     []*Message
+	Tools       []tools.Tool
 }
 
 // Generator is a generic type representing a sequence generator that yields values of type T or errors of type E.

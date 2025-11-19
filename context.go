@@ -7,9 +7,7 @@ import (
 // AgentContext provides metadata about an AI agent.
 type AgentContext interface {
 	Name() string
-	Model() string
 	Description() string
-	Instructions() string
 }
 
 // ToolContext provides metadata about a tool used by an agent.
@@ -48,23 +46,15 @@ func FromToolContext(ctx context.Context) (ToolContext, bool) {
 }
 
 type agentContext struct {
-	name         string
-	model        string
-	description  string
-	instructions string
+	name        string
+	description string
 }
 
 func (a *agentContext) Name() string {
 	return a.name
 }
-func (a *agentContext) Model() string {
-	return a.model
-}
 func (a *agentContext) Description() string {
 	return a.description
-}
-func (a *agentContext) Instructions() string {
-	return a.instructions
 }
 
 type toolContext struct {

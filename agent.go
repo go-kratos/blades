@@ -172,6 +172,11 @@ func (a *agent) buildInstructions(ctx context.Context, invocation *Invocation) (
 // Run runs the agent with the given prompt and options, returning a streamable response.
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
+		// If resumable and a completed message exists, return it directly.
+		if resumeMessage, ok := a.findResumeMessage(ctx, invocation); ok {
+			yield(resumeMessage, nil)
+			return
+		}
 		resolvedTools, err := a.resolveTools(ctx)
 		if err != nil {
 			yield(nil, err)
@@ -182,21 +187,18 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			yield(nil, err)
 			return
 		}
+		invocation.Model = a.model.Name()
+		invocation.Instruction = SystemMessage(instructions)
+		invocation.Tools = append(invocation.Tools, resolvedTools...)
+		// Create a new agent context with agent infomation.
 		ctx = NewAgentContext(ctx, &agentContext{
-			name:         a.name,
-			model:        a.model.Name(),
-			description:  a.description,
-			instructions: instructions,
+			name:        a.name,
+			description: a.description,
 		})
-		// If resumable and a completed message exists, return it directly.
-		if resumeMessage, ok := a.findResumeMessage(ctx, invocation); ok {
-			yield(resumeMessage, nil)
-			return
-		}
 		handler := Handler(HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 			req := &ModelRequest{
-				Tools:        resolvedTools,
-				Instruction:  SystemMessage(instructions),
+				Tools:        invocation.Tools,
+				Instruction:  invocation.Instruction,
 				InputSchema:  a.inputSchema,
 				OutputSchema: a.outputSchema,
 			}
