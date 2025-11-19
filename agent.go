@@ -189,7 +189,9 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 		}
 		invocation.Model = a.model.Name()
 		invocation.Tools = append(invocation.Tools, resolvedTools...)
-		invocation.Instruction = MergeParts(SystemMessage(instructions), invocation.Instruction)
+		if instructions != "" {
+			invocation.Instruction = MergeParts(SystemMessage(instructions), invocation.Instruction)
+		}
 		// Create a new agent context with agent infomation.
 		ctx = NewAgentContext(ctx, &agentContext{
 			name:        a.name,

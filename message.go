@@ -124,6 +124,14 @@ func (m *Message) Data() *DataPart {
 	return nil
 }
 
+// Clone creates a shallow copy of the message.
+func (m *Message) Clone() *Message {
+	if m == nil {
+		return nil
+	}
+	return &(*m)
+}
+
 func (m *Message) String() string {
 	var buf strings.Builder
 	for _, part := range m.Parts {
