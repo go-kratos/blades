@@ -13,11 +13,13 @@ import (
 
 // timeHandle provides a mock current time response.
 func timeHandle(ctx context.Context, args string) (string, error) {
+	log.Println("Time tool called with args:", args)
 	return "The current time is 3:04 PM", nil
 }
 
 // weatherHandle provides a mock weather forecast for a given location.
 func weatherHandle(ctx context.Context, args string) (string, error) {
+	log.Println("Weather tool called with args:", args)
 	return "Sunny, 25°C", nil
 }
 

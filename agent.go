@@ -280,7 +280,6 @@ func (a *agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error
 
 // executeTools executes the tools specified in the tool parts.
 func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, error) {
-	toolMessage := &Message{ID: message.ID, Role: message.Role, Parts: message.Parts}
 	eg, ctx := errgroup.WithContext(ctx)
 	var m sync.Mutex
 	for i, part := range message.Parts {
@@ -298,14 +297,14 @@ func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, e
 					return err
 				}
 				m.Lock()
-				toolMessage.Parts[i] = part
-				toolMessage.Actions = MergeActions(toolMessage.Actions, actions)
+				message.Parts[i] = part
+				message.Actions = MergeActions(message.Actions, actions)
 				m.Unlock()
 				return nil
 			})
 		}
 	}
-	return toolMessage, eg.Wait()
+	return message, eg.Wait()
 }
 
 // handle constructs the default handlers for Run and Stream using the provider.
@@ -346,6 +345,10 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 						yield(nil, err)
 						return
 					}
+					if finalResponse.Message.Role == RoleTool && finalResponse.Message.Status == StatusCompleted {
+						// wait for tool execution after streaming is done
+						continue
+					}
 					if !yield(finalResponse.Message, nil) {
 						return // early termination
 					}
@@ -361,7 +364,6 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					yield(nil, err)
 					return
 				}
-				toolMessage.Status = StatusCompleted
 				if !yield(toolMessage, nil) {
 					return
 				}
