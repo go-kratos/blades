@@ -33,6 +33,7 @@ func FromAgentContext(ctx context.Context) (AgentContext, bool) {
 	return agent, ok
 }
 
+// ctxToolKey is the context key for ToolContext.
 type ctxToolKey struct{}
 
 // NewToolContext returns a new context with the given ToolContext.
