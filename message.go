@@ -198,6 +198,17 @@ func Parts[T contentPart](inputs ...T) []Part {
 	return parts
 }
 
+// MergeParts merges two slices of parts into one.
+func MergeParts(base, extra *Message) *Message {
+	if extra == nil {
+		return base
+	}
+	for _, part := range extra.Parts {
+		base.Parts = append(base.Parts, part)
+	}
+	return base
+}
+
 // MergeActions merges two action maps, with values from extra overriding those in base.
 func MergeActions(base, extra map[string]any) map[string]any {
 	actions := make(map[string]any, len(base)+len(extra))
