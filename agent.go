@@ -282,9 +282,9 @@ func (a *agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error
 // executeTools executes the tools specified in the tool parts.
 func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, error) {
 	var (
-		m       sync.Mutex
-		actions = maps.Clone(message.Actions)
+		m sync.Mutex
 	)
+	actions := maps.Clone(message.Actions)
 	if actions == nil {
 		actions = make(map[string]any)
 	}
@@ -293,6 +293,7 @@ func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, e
 		switch v := any(part).(type) {
 		case ToolPart:
 			eg.Go(func() error {
+				actions := maps.Clone(actions)
 				toolCtx := NewToolContext(ctx, &toolContext{
 					id:      v.ID,
 					name:    v.Name,

@@ -2,7 +2,6 @@ package blades
 
 import (
 	"fmt"
-	"maps"
 	"strings"
 
 	"github.com/google/uuid"
@@ -195,15 +194,12 @@ func Parts[T contentPart](inputs ...T) []Part {
 
 // MergeActions merges two action maps, with values from extra overriding those in base.
 func MergeActions(base, extra map[string]any) map[string]any {
-	cloned := maps.Clone(base)
-	if cloned == nil {
-		cloned = make(map[string]any)
-	}
-	if extra == nil {
-		extra = make(map[string]any)
+	actions := make(map[string]any, len(base)+len(extra))
+	for k, v := range base {
+		actions[k] = v
 	}
 	for k, v := range extra {
-		cloned[k] = v
+		actions[k] = v
 	}
-	return cloned
+	return actions
 }
