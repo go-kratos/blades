@@ -242,7 +242,6 @@ func (a *agent) storeSession(ctx context.Context, invocation *Invocation, messag
 	if invocation.Session == nil {
 		return nil
 	}
-	message.Author = a.name
 	message.InvocationID = invocation.ID
 	switch message.Role {
 	case RoleUser:
@@ -251,6 +250,7 @@ func (a *agent) storeSession(ctx context.Context, invocation *Invocation, messag
 		if message.Status != StatusCompleted {
 			return nil
 		}
+		message.Author = a.name
 		return invocation.Session.Append(ctx, message)
 	case RoleAssistant:
 		if message.Status != StatusCompleted {
@@ -259,6 +259,7 @@ func (a *agent) storeSession(ctx context.Context, invocation *Invocation, messag
 		if a.outputKey != "" {
 			invocation.Session.PutState(a.outputKey, message.Text())
 		}
+		message.Author = a.name
 		return invocation.Session.Append(ctx, message)
 	}
 	return nil

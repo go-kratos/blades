@@ -48,14 +48,23 @@ func NewRunner(rootAgent Agent) *Runner {
 }
 
 // buildInvocation constructs an Invocation object for the given message and options.
-func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamable bool, o *RunOptions) (context.Context, *Invocation) {
-	return NewSessionContext(ctx, o.Session), &Invocation{
+func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamable bool, o *RunOptions) (*Invocation, error) {
+	invocation := &Invocation{
 		ID:         o.InvocationID,
 		Resumable:  o.Resumable,
 		Session:    o.Session,
 		Streamable: streamable,
 		Message:    message,
 	}
+	if err := r.appendNewMessage(ctx, invocation, message); err != nil {
+		return nil, err
+	}
+	return invocation, nil
+}
+
+func (r *Runner) appendNewMessage(ctx context.Context, invocation *Invocation, message *Message) error {
+	message.InvocationID = invocation.ID
+	return invocation.Session.Append(ctx, message)
 }
 
 // Run executes the agent with the provided prompt and options within the session context.
@@ -71,10 +80,11 @@ func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (
 		err    error
 		output *Message
 	)
-	if err := o.Session.Append(ctx, message); err != nil {
+	invocation, err := r.buildInvocation(ctx, message, false, o)
+	if err != nil {
 		return nil, err
 	}
-	iter := r.rootAgent.Run(r.buildInvocation(ctx, message, false, o))
+	iter := r.rootAgent.Run(NewSessionContext(ctx, o.Session), invocation)
 	for output, err = range iter {
 		if err != nil {
 			return nil, err
@@ -94,10 +104,11 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 	for _, opt := range opts {
 		opt(o)
 	}
-	if err := o.Session.Append(ctx, message); err != nil {
+	invocation, err := r.buildInvocation(ctx, message, true, o)
+	if err != nil {
 		return func(yield func(*Message, error) bool) {
 			yield(nil, err)
 		}
 	}
-	return r.rootAgent.Run(r.buildInvocation(ctx, message, true, o))
+	return r.rootAgent.Run(NewSessionContext(ctx, o.Session), invocation)
 }
