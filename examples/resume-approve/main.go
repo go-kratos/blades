@@ -61,7 +61,7 @@ func main() {
 	ctx := context.Background()
 	session := blades.NewSession()
 	invocationID := "invocation-001"
-	// First run that encounters an error
+	// First run that will pause for approval (requires confirmation before proceeding)
 	runner := blades.NewRunner(sequentialAgent, blades.WithResumable(true))
 	output, err := runner.Run(
 		ctx,
