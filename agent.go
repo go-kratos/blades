@@ -13,6 +13,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// InstructionProvider is a function type that generates instructions based on the given context.
+type InstructionProvider func(ctx context.Context) (string, error)
+
 // AgentOption is an option for configuring the Agent.
 type AgentOption func(*agent)
 
@@ -89,19 +92,27 @@ func WithMaxIterations(n int) AgentOption {
 	}
 }
 
+// WithInstructionProvider sets a dynamic instruction provider for the Agent.
+func WithInstructionProvider(p InstructionProvider) AgentOption {
+	return func(a *agent) {
+		a.instructionProvider = p
+	}
+}
+
 // agent is a struct that represents an AI agent.
 type agent struct {
-	name          string
-	description   string
-	instructions  string
-	outputKey     string
-	maxIterations int
-	model         ModelProvider
-	inputSchema   *jsonschema.Schema
-	outputSchema  *jsonschema.Schema
-	middlewares   []Middleware
-	tools         []tools.Tool
-	toolsResolver tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
+	name                string
+	description         string
+	instructions        string
+	instructionProvider InstructionProvider
+	outputKey           string
+	maxIterations       int
+	model               ModelProvider
+	inputSchema         *jsonschema.Schema
+	outputSchema        *jsonschema.Schema
+	middlewares         []Middleware
+	tools               []tools.Tool
+	toolsResolver       tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
 }
 
 // NewAgent creates a new Agent with the given name and options.
@@ -145,28 +156,38 @@ func (a *agent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
 	return tools, nil
 }
 
-// buildInstructions builds the system instruction message for the Agent.
-func (a *agent) buildInstructions(ctx context.Context, invocation *Invocation) (string, error) {
+// prepareInvocation prepares the invocation by resolving tools and applying instructions.
+func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) error {
+	resolvedTools, err := a.resolveTools(ctx)
+	if err != nil {
+		return err
+	}
+	invocation.Model = a.model.Name()
+	invocation.Tools = append(invocation.Tools, resolvedTools...)
+	// order of precedence: static instruction > instruction provider > invocation instruction
+	if a.instructionProvider != nil {
+		instruction, err := a.instructionProvider(ctx)
+		if err != nil {
+			return err
+		}
+		invocation.Instruction = MergeParts(SystemMessage(instruction), invocation.Instruction)
+	}
 	if a.instructions != "" {
-		var (
-			state State
-			buf   strings.Builder
-		)
 		if invocation.Session != nil {
-			state = invocation.Session.State()
+			var buf strings.Builder
 			t, err := template.New("instructions").Parse(a.instructions)
 			if err != nil {
-				return "", err
+				return err
 			}
-			if err := t.Execute(&buf, state); err != nil {
-				return "", err
+			if err := t.Execute(&buf, invocation.Session.State()); err != nil {
+				return err
 			}
+			invocation.Instruction = MergeParts(SystemMessage(buf.String()), invocation.Instruction)
 		} else {
-			buf.WriteString(a.instructions)
+			invocation.Instruction = MergeParts(SystemMessage(a.instructions), invocation.Instruction)
 		}
-		return buf.String(), nil
 	}
-	return "", nil
+	return nil
 }
 
 // Run runs the agent with the given prompt and options, returning a streamable response.
@@ -177,22 +198,10 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			yield(resumeMessage, nil)
 			return
 		}
-		resolvedTools, err := a.resolveTools(ctx)
-		if err != nil {
+		if err := a.prepareInvocation(ctx, invocation); err != nil {
 			yield(nil, err)
 			return
 		}
-		instructions, err := a.buildInstructions(ctx, invocation)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		invocation.Model = a.model.Name()
-		invocation.Tools = append(invocation.Tools, resolvedTools...)
-		if instructions != "" {
-			invocation.Instruction = MergeParts(SystemMessage(instructions), invocation.Instruction)
-		}
-		// Create a new agent context with agent infomation.
 		ctx = NewAgentContext(ctx, &agentContext{
 			name:        a.name,
 			description: a.description,
@@ -224,7 +233,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 	}
 }
 
-func (a *agent) findResumeMessage(ctx context.Context, invocation *Invocation) (*Message, bool) {
+func (a *agent) findResumeMessage(_ context.Context, invocation *Invocation) (*Message, bool) {
 	if !invocation.Resumable || invocation.Session == nil {
 		return nil, false
 	}

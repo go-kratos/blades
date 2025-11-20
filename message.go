@@ -211,9 +211,7 @@ func MergeParts(base, extra *Message) *Message {
 	if extra == nil {
 		return base
 	}
-	for _, part := range extra.Parts {
-		base.Parts = append(base.Parts, part)
-	}
+	base.Parts = append(base.Parts, extra.Parts...)
 	return base
 }
 
