@@ -194,8 +194,11 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
 		// If resumable and a completed message exists, return it directly.
-		if resumeMessage, ok := a.findResumeMessage(ctx, invocation); ok {
-			yield(resumeMessage, nil)
+		resumeMessages, ok := a.findResumeMessage(ctx, invocation)
+		if ok {
+			for _, resumeMessage := range resumeMessages {
+				yield(resumeMessage, nil)
+			}
 			return
 		}
 		if err := a.prepareInvocation(ctx, invocation); err != nil {
@@ -214,10 +217,13 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 				OutputSchema: a.outputSchema,
 			}
 			if len(invocation.History) > 0 {
-				req.Messages = append(req.Messages, invocation.History...)
+				req.Messages = AppendMessages(req.Messages, invocation.History...)
+			}
+			if len(resumeMessages) > 0 {
+				req.Messages = AppendMessages(req.Messages, resumeMessages...)
 			}
 			if invocation.Message != nil {
-				req.Messages = append(req.Messages, invocation.Message)
+				req.Messages = AppendMessages(req.Messages, invocation.Message)
 			}
 			return a.handle(ctx, invocation, req)
 		}))
@@ -233,21 +239,24 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 	}
 }
 
-func (a *agent) findResumeMessage(_ context.Context, invocation *Invocation) (*Message, bool) {
+func (a *agent) findResumeMessage(_ context.Context, invocation *Invocation) ([]*Message, bool) {
 	if !invocation.Resumable || invocation.Session == nil {
 		return nil, false
 	}
+	var resumeMessages []*Message
 	for _, m := range invocation.Session.History() {
-		if m.InvocationID == invocation.ID &&
-			m.Author == a.name && m.Role == RoleAssistant && m.Status == StatusCompleted {
-			return m, true
+		if m.InvocationID == invocation.ID && m.Author == a.name {
+			resumeMessages = append(resumeMessages, m)
+		}
+		if m.Role == RoleAssistant && m.Status == StatusCompleted {
+			return resumeMessages, true
 		}
 	}
-	return nil, false
+	return resumeMessages, false
 }
 
-// storeSession stores the conversation messages in the session.
-func (a *agent) storeSession(ctx context.Context, invocation *Invocation, message *Message) error {
+// appendMessageToSession appends the given message to the session associated with the invocation.
+func (a *agent) appendMessageToSession(ctx context.Context, invocation *Invocation, message *Message) error {
 	if invocation.Session == nil {
 		return nil
 	}
@@ -342,7 +351,7 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					yield(nil, err)
 					return
 				}
-				if err := a.storeSession(ctx, invocation, finalResponse.Message); err != nil {
+				if err := a.appendMessageToSession(ctx, invocation, finalResponse.Message); err != nil {
 					yield(nil, err)
 					return
 				}
@@ -358,17 +367,13 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 						yield(nil, err)
 						return
 					}
-					if err := a.storeSession(ctx, invocation, finalResponse.Message); err != nil {
+					if err := a.appendMessageToSession(ctx, invocation, finalResponse.Message); err != nil {
 						yield(nil, err)
 						return
 					}
 					if finalResponse.Message.Role == RoleTool && finalResponse.Message.Status == StatusCompleted {
 						// Skip yielding tool messages during streaming.
 						// Tool messages with StatusCompleted indicate that a tool call has been made,
-						// but the result of the tool execution is not yet available. These messages
-						// will be processed and yielded after the tool execution is complete in the
-						// next step of the agent loop. This ensures that only completed tool results
-						// are sent to the client, maintaining correct message order and semantics.
 						continue
 					}
 					if !yield(finalResponse.Message, nil) {
