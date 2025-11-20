@@ -35,11 +35,6 @@ type Agent interface {
 	Run(context.Context, *Invocation) Generator[*Message, error]
 }
 
-// Resumer defines an interface for resuming operations based on a given message.
-type Resumer interface {
-	Resume(context.Context, *Message) error
-}
-
 // NewInvocationID generates a new unique invocation ID.
 func NewInvocationID() string {
 	return uuid.NewString()
