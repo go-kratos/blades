@@ -85,6 +85,9 @@ func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamab
 
 // appendNewMessage appends a new message to the session history.
 func (r *Runner) appendNewMessage(ctx context.Context, invocation *Invocation, message *Message) error {
+	if invocation.Session == nil {
+		return nil
+	}
 	message.InvocationID = invocation.ID
 	return invocation.Session.Append(ctx, message)
 }
