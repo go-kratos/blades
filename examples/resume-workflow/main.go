@@ -65,9 +65,6 @@ func main() {
 			refactorAgent,
 		},
 	})
-	if err != nil {
-		log.Fatal(err)
-	}
 	input := blades.UserMessage("Please write a short paragraph about climate change.")
 	ctx := context.Background()
 	session := blades.NewSession()
