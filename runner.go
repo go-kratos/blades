@@ -73,14 +73,14 @@ func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamab
 		Streamable: streamable,
 		Message:    message,
 	}
-	filters := r.historySets(ctx, o.Session)
-	if _, exists := filters[message.ID]; !exists {
+	history := r.historySets(ctx, o.Session)
+	if _, exists := history[message.ID]; !exists {
 		// Append the new message to the session history if it doesn't already exist.
 		if err := r.appendNewMessage(ctx, invocation, message); err != nil {
 			return nil, nil, err
 		}
 	}
-	return invocation, filters, nil
+	return invocation, history, nil
 }
 
 // appendNewMessage appends a new message to the session history.
@@ -142,7 +142,7 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 	for _, opt := range opts {
 		opt(o)
 	}
-	invocation, filters, err := r.buildInvocation(ctx, message, true, o)
+	invocation, history, err := r.buildInvocation(ctx, message, true, o)
 	if err != nil {
 		return stream.Error[*Message](err)
 	}
@@ -152,7 +152,7 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 		if r.ResumeHistory {
 			return true
 		}
-		_, exists := filters[msg.ID]
+		_, exists := history[msg.ID]
 		return !exists
 	})
 }

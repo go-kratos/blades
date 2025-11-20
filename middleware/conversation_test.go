@@ -17,7 +17,9 @@ func TestConversationBuffered(t *testing.T) {
 	newSessionWithHistory := func(msgs ...*blades.Message) blades.Session {
 		s := blades.NewSession()
 		// Append history to the session
-		_ = s.Append(context.Background(), msgs)
+		for _, m := range msgs {
+			_ = s.Append(context.Background(), m)
+		}
 		return s
 	}
 
