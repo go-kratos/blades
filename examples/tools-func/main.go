@@ -27,7 +27,7 @@ func weatherHandle(ctx context.Context, req WeatherReq) (WeatherRes, error) {
 	if !ok {
 		return WeatherRes{}, blades.ErrNoSessionContext
 	}
-	session.PutState("location", req.Location)
+	session.SetState("location", req.Location)
 	return WeatherRes{Forecast: "Sunny, 25°C"}, nil
 }
 
@@ -56,9 +56,10 @@ func main() {
 	}
 	// Create a prompt asking for the weather in New York City
 	input := blades.UserMessage("What is the weather in New York City?")
+	ctx := context.Background()
 	session := blades.NewSession()
-	runner := blades.NewRunner(agent, blades.WithSession(session))
-	output, err := runner.Run(context.Background(), input)
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(ctx, input, blades.WithSession(session))
 	if err != nil {
 		log.Fatal(err)
 	}

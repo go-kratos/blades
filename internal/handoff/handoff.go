@@ -52,6 +52,6 @@ func (h *handoffTool) Handle(ctx context.Context, input string) (string, error) 
 	if !ok {
 		return "", fmt.Errorf("tool context not found in context")
 	}
-	toolCtx.Actions()[ActionHandoffToAgent] = agentName
+	toolCtx.SetAction(ActionHandoffToAgent, agentName)
 	return "", nil
 }

@@ -2,6 +2,8 @@ package blades
 
 import (
 	"context"
+
+	"github.com/go-kratos/blades/stream"
 )
 
 // RunOption defines options for configuring the Runner.
@@ -14,13 +16,6 @@ func WithSession(session Session) RunOption {
 	}
 }
 
-// WithResumable configures whether the Runner supports resumable sessions.
-func WithResumable(resumable bool) RunOption {
-	return func(r *RunOptions) {
-		r.Resumable = resumable
-	}
-}
-
 // WithInvocationID sets a custom invocation ID for the Runner.
 func WithInvocationID(invocationID string) RunOption {
 	return func(r *RunOptions) {
@@ -28,43 +23,82 @@ func WithInvocationID(invocationID string) RunOption {
 	}
 }
 
+// RunnerOption defines options for configuring the Runner itself.
+type RunnerOption func(*Runner)
+
+// WithResumable configures whether the Runner supports resumable sessions.
+func WithResumable(resumable bool) RunnerOption {
+	return func(r *Runner) {
+		r.Resumable = resumable
+	}
+}
+
+// WithResumeHistory configures whether the Runner should resume history.
+func WithResumeHistory(resumeHistory bool) RunnerOption {
+	return func(r *Runner) {
+		r.ResumeHistory = resumeHistory
+	}
+}
+
 // RunOptions holds configuration options for running the agent.
 type RunOptions struct {
 	Session      Session
-	Resumable    bool
 	InvocationID string
 }
 
 // Runner is responsible for executing a Runnable agent within a session context.
 type Runner struct {
-	rootAgent Agent
+	Resumable     bool
+	ResumeHistory bool
+	rootAgent     Agent
 }
 
 // NewRunner creates a new Runner with the given agent and options.
-func NewRunner(rootAgent Agent) *Runner {
-	return &Runner{
+func NewRunner(rootAgent Agent, opts ...RunnerOption) *Runner {
+	r := &Runner{
 		rootAgent: rootAgent,
 	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // buildInvocation constructs an Invocation object for the given message and options.
-func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamable bool, o *RunOptions) (*Invocation, error) {
+func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamable bool, o *RunOptions) (*Invocation, map[string]*Message, error) {
 	invocation := &Invocation{
 		ID:         o.InvocationID,
-		Resumable:  o.Resumable,
 		Session:    o.Session,
+		Resumable:  r.Resumable,
 		Streamable: streamable,
 		Message:    message,
 	}
-	if err := r.appendNewMessage(ctx, invocation, message); err != nil {
-		return nil, err
+	filters := r.historySets(ctx, o.Session)
+	if _, exists := filters[message.ID]; !exists {
+		// Append the new message to the session history if it doesn't already exist.
+		if err := r.appendNewMessage(ctx, invocation, message); err != nil {
+			return nil, nil, err
+		}
 	}
-	return invocation, nil
+	return invocation, filters, nil
 }
 
+// appendNewMessage appends a new message to the session history.
 func (r *Runner) appendNewMessage(ctx context.Context, invocation *Invocation, message *Message) error {
 	message.InvocationID = invocation.ID
 	return invocation.Session.Append(ctx, message)
+}
+
+// historySets creates a set of message IDs from the session history to filter out already processed messages.
+func (r *Runner) historySets(ctx context.Context, session Session) map[string]*Message {
+	if session == nil {
+		return nil
+	}
+	sets := make(map[string]*Message)
+	for _, m := range session.History() {
+		sets[m.ID] = m
+	}
+	return sets
 }
 
 // Run executes the agent with the provided prompt and options within the session context.
@@ -80,7 +114,7 @@ func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (
 		err    error
 		output *Message
 	)
-	invocation, err := r.buildInvocation(ctx, message, false, o)
+	invocation, _, err := r.buildInvocation(ctx, message, false, o)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +130,7 @@ func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (
 	return output, nil
 }
 
+// RunStream executes the agent in a streaming manner, yielding messages as they are produced.
 func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOption) Generator[*Message, error] {
 	o := &RunOptions{
 		Session:      NewSession(),
@@ -104,11 +139,17 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 	for _, opt := range opts {
 		opt(o)
 	}
-	invocation, err := r.buildInvocation(ctx, message, true, o)
+	invocation, filters, err := r.buildInvocation(ctx, message, true, o)
 	if err != nil {
-		return func(yield func(*Message, error) bool) {
-			yield(nil, err)
-		}
+		return stream.Error[*Message](err)
 	}
-	return r.rootAgent.Run(NewSessionContext(ctx, o.Session), invocation)
+	return stream.Filter(r.rootAgent.Run(NewSessionContext(ctx, o.Session), invocation), func(msg *Message) bool {
+		// If ResumeHistory is enabled, allow all messages.
+		// Otherwise, filter out messages that already exist in history.
+		if r.ResumeHistory {
+			return true
+		}
+		_, exists := filters[msg.ID]
+		return !exists
+	})
 }

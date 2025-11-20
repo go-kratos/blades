@@ -82,13 +82,13 @@ Do not add any other text before or after the code block.`),
 	session := blades.NewSession()
 	ctx := context.Background()
 	for _, agent := range []blades.Agent{codeWriterAgent, codeReviewerAgent, codeRefactorerAgent} {
-		runner := blades.NewRunner(agent, blades.WithSession(session))
-		output, err = runner.Run(ctx, input)
+		runner := blades.NewRunner(agent)
+		output, err = runner.Run(ctx, input, blades.WithSession(session))
 		if err != nil {
 			log.Fatal(err)
 		}
 		input = nil
-		session.PutState(agent.Name(), output.Text())
+		session.SetState(agent.Name(), output.Text())
 		log.Println(agent.Name(), output.Text())
 	}
 }

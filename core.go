@@ -23,7 +23,7 @@ type Invocation struct {
 }
 
 // Generator is a generic type representing a sequence generator that yields values of type T or errors of type E.
-type Generator[T, E any] iter.Seq2[T, E]
+type Generator[T, E any] = iter.Seq2[T, E]
 
 // Agent represents an autonomous agent that can process invocations and produce a sequence of messages.
 type Agent interface {
@@ -33,6 +33,11 @@ type Agent interface {
 	Description() string
 	// Run processes the given invocation and returns a generator that yields messages or errors.
 	Run(context.Context, *Invocation) Generator[*Message, error]
+}
+
+// Resumer defines an interface for resuming operations based on a given message.
+type Resumer interface {
+	Resume(context.Context, *Message) error
 }
 
 // NewInvocationID generates a new unique invocation ID.

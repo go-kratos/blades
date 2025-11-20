@@ -12,8 +12,8 @@ import (
 type Session interface {
 	ID() string
 	State() State
+	SetState(string, any)
 	History() []*Message
-	PutState(string, any)
 	Append(context.Context, *Message) error
 }
 
@@ -63,7 +63,7 @@ func (s *sessionInMemory) History() []*Message {
 	defer s.m.RUnlock()
 	return slices.Clone(s.history)
 }
-func (s *sessionInMemory) PutState(key string, value any) {
+func (s *sessionInMemory) SetState(key string, value any) {
 	s.m.Lock()
 	defer s.m.Unlock()
 	s.state[key] = value

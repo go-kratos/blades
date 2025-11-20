@@ -43,8 +43,9 @@ func main() {
 		}
 	)
 	for _, input := range inputs {
-		runner := blades.NewRunner(agent, blades.WithSession(session))
-		output, err := runner.Run(context.Background(), input)
+		ctx := context.Background()
+		runner := blades.NewRunner(agent)
+		output, err := runner.Run(ctx, input, blades.WithSession(session))
 		if err != nil {
 			log.Fatal(err)
 		}

@@ -83,8 +83,10 @@ func main() {
 	})
 	session := blades.NewSession()
 	input := blades.UserMessage("Please write a short paragraph about climate change.")
-	runner := blades.NewRunner(sequentialAgent, blades.WithSession(session))
-	stream := runner.RunStream(context.Background(), input)
+	// Run the sequential agent with streaming
+	ctx := context.Background()
+	runner := blades.NewRunner(sequentialAgent)
+	stream := runner.RunStream(ctx, input, blades.WithSession(session))
 	for message, err := range stream {
 		if err != nil {
 			log.Fatal(err)

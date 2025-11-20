@@ -205,10 +205,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			yield(nil, err)
 			return
 		}
-		ctx = NewAgentContext(ctx, &agentContext{
-			name:        a.name,
-			description: a.description,
-		})
+		ctx = NewAgentContext(ctx, a)
 		handler := Handler(HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 			req := &ModelRequest{
 				Tools:        invocation.Tools,
@@ -247,9 +244,10 @@ func (a *agent) findResumeMessage(_ context.Context, invocation *Invocation) ([]
 	for _, m := range invocation.Session.History() {
 		if m.InvocationID == invocation.ID && m.Author == a.name {
 			resumeMessages = append(resumeMessages, m)
-		}
-		if m.Role == RoleAssistant && m.Status == StatusCompleted {
-			return resumeMessages, true
+			// If we find a completed assistant message, we can resume from here.
+			if m.Role == RoleAssistant && m.Status == StatusCompleted {
+				return resumeMessages, true
+			}
 		}
 	}
 	return resumeMessages, false
@@ -263,21 +261,26 @@ func (a *agent) appendMessageToSession(ctx context.Context, invocation *Invocati
 	message.InvocationID = invocation.ID
 	switch message.Role {
 	case RoleUser:
+		message.Author = "user"
 		return invocation.Session.Append(ctx, message)
 	case RoleTool:
+		if message.Author == "" {
+			message.Author = a.name
+		}
 		if message.Status != StatusCompleted {
 			return nil
 		}
-		message.Author = a.name
 		return invocation.Session.Append(ctx, message)
 	case RoleAssistant:
+		if message.Author == "" {
+			message.Author = a.name
+		}
 		if message.Status != StatusCompleted {
 			return nil
 		}
 		if a.outputKey != "" {
-			invocation.Session.PutState(a.outputKey, message.Text())
+			invocation.Session.SetState(a.outputKey, message.Text())
 		}
-		message.Author = a.name
 		return invocation.Session.Append(ctx, message)
 	}
 	return nil
