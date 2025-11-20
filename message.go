@@ -227,7 +227,7 @@ func MergeActions(base, extra map[string]any) map[string]any {
 	return actions
 }
 
-// AppendMessages appends extra messages to base, avoiding duplicates by message ID.
+// AppendMessages appends extra messages to base, replacing any messages in base that have matching IDs in extra.
 func AppendMessages(base []*Message, extra ...*Message) []*Message {
 	var (
 		sets     = make(map[string]struct{}, len(extra))
