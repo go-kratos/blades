@@ -197,7 +197,9 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 		resumeMessages, ok := a.findResumeMessage(ctx, invocation)
 		if ok {
 			for _, resumeMessage := range resumeMessages {
-				yield(resumeMessage, nil)
+				if !yield(resumeMessage, nil) {
+					return
+				}
 			}
 			return
 		}
