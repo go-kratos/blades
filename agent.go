@@ -218,10 +218,10 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			if len(invocation.History) > 0 {
 				req.Messages = AppendMessages(req.Messages, invocation.History...)
 			}
-			if len(resumeMessages) > 0 {
+			switch {
+			case len(resumeMessages) > 0:
 				req.Messages = AppendMessages(req.Messages, resumeMessages...)
-			} else if invocation.Message != nil {
-				// Append the current message if no resume messages exist
+			case invocation.Message != nil:
 				req.Messages = AppendMessages(req.Messages, invocation.Message)
 			}
 			return a.handle(ctx, invocation, req)
