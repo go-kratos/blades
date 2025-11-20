@@ -92,7 +92,9 @@ func (r *Runner) appendNewMessage(ctx context.Context, invocation *Invocation, m
 	return invocation.Session.Append(ctx, message)
 }
 
-// historySets creates a set of message IDs from the session history to filter out already processed messages.
+// historySets creates a map of message IDs to messages from the session history.
+// This map is used to filter out already processed messages during resume operations.
+// Returns nil if the session is nil.
 func (r *Runner) historySets(ctx context.Context, session Session) map[string]*Message {
 	if session == nil {
 		return nil
