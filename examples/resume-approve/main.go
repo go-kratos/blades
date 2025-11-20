@@ -2,25 +2,23 @@ package main
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log"
 	"os"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
 	"github.com/go-kratos/blades/flow"
-	"github.com/go-kratos/blades/stream"
+	"github.com/go-kratos/blades/middleware"
 )
 
-func mockErr() blades.Middleware {
-	return func(next blades.Handler) blades.Handler {
-		return blades.HandleFunc(func(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
-			if !invocation.Resumable {
-				return stream.Error[*blades.Message](errors.New("mock error"))
-			}
-			return next.Handle(ctx, invocation)
-		})
+func confirmPrompt(ctx context.Context, message *blades.Message) (bool, error) {
+	session, ok := blades.FromSessionContext(ctx)
+	if !ok {
+		return false, fmt.Errorf("no session found in context")
 	}
+	state := session.State()
+	return state["approved"] == "true", nil
 }
 
 func main() {
@@ -42,17 +40,9 @@ func main() {
 		blades.WithInstructions(`Review the draft and suggest improvements.
 			Draft: {{.draft}}`),
 		blades.WithOutputKey("review"),
-		blades.WithMiddleware(mockErr()),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-	refactorAgent, err := blades.NewAgent(
-		"RefactorAgent",
-		blades.WithModel(model),
-		blades.WithInstructions(`Refactor the draft based on the review.
-			Draft: {{.draft}}
-			Review: {{.review}}`),
+		blades.WithMiddleware(
+			middleware.Confirm(confirmPrompt),
+		),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -62,7 +52,6 @@ func main() {
 		SubAgents: []blades.Agent{
 			writerAgent,
 			reviewerAgent,
-			refactorAgent,
 		},
 	})
 	if err != nil {
@@ -73,39 +62,28 @@ func main() {
 	session := blades.NewSession()
 	invocationID := "invocation-001"
 	// First run that encounters an error
-	runner := blades.NewRunner(sequentialAgent)
-	stream := runner.RunStream(
+	runner := blades.NewRunner(sequentialAgent, blades.WithResumable(true))
+	output, err := runner.Run(
 		ctx,
 		input,
 		blades.WithSession(session),
 		blades.WithInvocationID(invocationID),
 	)
-	for message, err := range stream {
-		if err != nil {
-			log.Println(err)
-			break
-		}
-		if message.Status != blades.StatusCompleted {
-			continue
-		}
-		log.Println("first:", message.Author, message.Text())
+	if err != nil {
+		log.Println(err)
+	} else {
+		log.Fatal("expected an error but got none")
 	}
 	// Resume from the previous session
-	resumeRunner := blades.NewRunner(sequentialAgent, blades.WithResumable(true))
-	resumeStream := resumeRunner.RunStream(
+	session.SetState("approved", "true")
+	output, err = runner.Run(
 		ctx,
 		input,
 		blades.WithSession(session),
 		blades.WithInvocationID(invocationID),
 	)
-	for message, err := range resumeStream {
-		if err != nil {
-			log.Println(err)
-			break
-		}
-		if message.Status != blades.StatusCompleted {
-			continue
-		}
-		log.Println("second:", message.Author, message.Text())
+	if err != nil {
+		log.Fatal(err)
 	}
+	log.Println(output.Author, output.Text())
 }
