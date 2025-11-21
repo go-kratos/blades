@@ -71,8 +71,8 @@ func Map[T, R any](stream iter.Seq2[T, error], mapper func(T) (R, error)) iter.S
 	}
 }
 
-// Merge takes multiple input channels and merges their outputs into a single
-// output channel.
+// Merge takes multiple input streams (as iter.Seq2) and merges their outputs into a single
+// output stream.
 func Merge[T any](streams ...iter.Seq2[T, error]) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var (
