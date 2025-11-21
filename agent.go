@@ -194,7 +194,7 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
 		// If resumable and a completed message exists, return it directly.
-		resumeMessages, ok := a.findResumeMessage(invocation)
+		resumeMessages, ok := a.findResumeMessages(invocation)
 		if ok {
 			for _, resumeMessage := range resumeMessages {
 				if !yield(resumeMessage, nil) {
@@ -238,7 +238,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 	}
 }
 
-func (a *agent) findResumeMessage(invocation *Invocation) ([]*Message, bool) {
+func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
 	if !invocation.Resumable || invocation.Session == nil {
 		return nil, false
 	}
