@@ -288,13 +288,9 @@ func (a *agent) appendMessageToSession(ctx context.Context, invocation *Invocati
 	return nil
 }
 
-func (a *agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error) {
-	tools, err := a.resolveTools(ctx)
-	if err != nil {
-		return part, err
-	}
+func (a *agent) handleTools(ctx context.Context, invocation *Invocation, part ToolPart) (ToolPart, error) {
 	// Search through all available tools (static + resolved)
-	for _, tool := range tools {
+	for _, tool := range invocation.Tools {
 		if tool.Name() == part.Name {
 			response, err := tool.Handle(ctx, part.Request)
 			if err != nil {
@@ -304,18 +300,15 @@ func (a *agent) handleTools(ctx context.Context, part ToolPart) (ToolPart, error
 			return part, nil
 		}
 	}
-	return part, fmt.Errorf("tool %s not found", part.Name)
+	return part, fmt.Errorf("agent: tool %s not found", part.Name)
 }
 
 // executeTools executes the tools specified in the tool parts.
-func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, error) {
+func (a *agent) executeTools(ctx context.Context, invocation *Invocation, message *Message) (*Message, error) {
 	var (
 		m sync.Mutex
 	)
-	actions := maps.Clone(message.Actions)
-	if actions == nil {
-		actions = make(map[string]any)
-	}
+	actions := CloneMaps(message.Actions)
 	eg, ctx := errgroup.WithContext(ctx)
 	for i, part := range message.Parts {
 		switch v := any(part).(type) {
@@ -327,7 +320,7 @@ func (a *agent) executeTools(ctx context.Context, message *Message) (*Message, e
 					name:    v.Name,
 					actions: actions,
 				})
-				part, err := a.handleTools(toolCtx, v)
+				part, err := a.handleTools(toolCtx, invocation, v)
 				if err != nil {
 					return err
 				}
@@ -391,7 +384,7 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 				return
 			}
 			if finalResponse.Message.Role == RoleTool {
-				toolMessage, err := a.executeTools(ctx, finalResponse.Message)
+				toolMessage, err := a.executeTools(ctx, invocation, finalResponse.Message)
 				if err != nil {
 					yield(nil, err)
 					return
