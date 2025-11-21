@@ -65,7 +65,7 @@ func NewRunner(rootAgent Agent, opts ...RunnerOption) *Runner {
 }
 
 // buildInvocation constructs an Invocation object for the given message and options.
-func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamable bool, o *RunOptions) (*Invocation, map[string]*Message, error) {
+func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamable bool, o *RunOptions) (*Invocation, error) {
 	invocation := &Invocation{
 		ID:         o.InvocationID,
 		Session:    o.Session,
@@ -73,14 +73,11 @@ func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamab
 		Streamable: streamable,
 		Message:    message,
 	}
-	history := r.historySets(ctx, o.Session)
-	if _, exists := history[message.ID]; !exists {
-		// Append the new message to the session history if it doesn't already exist.
-		if err := r.appendNewMessage(ctx, invocation, message); err != nil {
-			return nil, nil, err
-		}
+	// Append the new message to the session history if it doesn't already exist.
+	if err := r.appendNewMessage(ctx, invocation, message); err != nil {
+		return nil, err
 	}
-	return invocation, history, nil
+	return invocation, nil
 }
 
 // appendNewMessage appends a new message to the session history.
@@ -99,8 +96,12 @@ func (r *Runner) historySets(ctx context.Context, session Session) map[string]*M
 	if session == nil {
 		return nil
 	}
-	sets := make(map[string]*Message)
-	for _, m := range session.History() {
+	history := session.History()
+	sets := make(map[string]*Message, len(history))
+	for _, m := range history {
+		if m.ID == "" {
+			continue
+		}
 		sets[m.ID] = m
 	}
 	return sets
@@ -119,7 +120,7 @@ func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (
 		err    error
 		output *Message
 	)
-	invocation, _, err := r.buildInvocation(ctx, message, false, o)
+	invocation, err := r.buildInvocation(ctx, message, false, o)
 	if err != nil {
 		return nil, err
 	}
@@ -144,10 +145,11 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 	for _, opt := range opts {
 		opt(o)
 	}
-	invocation, history, err := r.buildInvocation(ctx, message, true, o)
+	invocation, err := r.buildInvocation(ctx, message, true, o)
 	if err != nil {
 		return stream.Error[*Message](err)
 	}
+	history := r.historySets(ctx, o.Session)
 	return stream.Filter(r.rootAgent.Run(NewSessionContext(ctx, o.Session), invocation), func(msg *Message) bool {
 		// If ResumeHistory is enabled, allow all messages.
 		// Otherwise, filter out messages that already exist in history.
