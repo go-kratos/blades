@@ -17,6 +17,8 @@ type ToolContext interface {
 	ID() string
 	Name() string
 	Actions() map[string]any
+	// SetAction sets or updates an action in the tool's action map.
+	// This method is safe for concurrent use.
 	SetAction(key string, value any)
 }
 
