@@ -50,7 +50,9 @@ type RunOptions struct {
 
 // Runner is responsible for executing a Runnable agent within a session context.
 type Runner struct {
+	// Resumable indicates whether the runner supports resuming from previous invocations.
 	Resumable     bool
+	// ResumeHistory indicates whether historical messages should be included in streaming output.
 	ResumeHistory bool
 	rootAgent     Agent
 }
