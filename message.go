@@ -2,7 +2,6 @@ package blades
 
 import (
 	"fmt"
-	"maps"
 	"strings"
 
 	"github.com/google/uuid"
@@ -226,14 +225,6 @@ func MergeActions(base, extra map[string]any) map[string]any {
 		actions[k] = v
 	}
 	return actions
-}
-
-// CloneMaps creates a shallow copy of the given map.
-func CloneMaps(m map[string]any) map[string]any {
-	if m == nil {
-		return map[string]any{}
-	}
-	return maps.Clone(m)
 }
 
 // AppendMessages appends extra messages to base, replacing any messages in base that have matching IDs in extra.

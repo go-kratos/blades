@@ -2,7 +2,6 @@ package blades
 
 import (
 	"context"
-	"sync"
 
 	"github.com/go-kratos/kit/container/maps"
 	"github.com/go-kratos/kit/container/slices"
@@ -48,7 +47,6 @@ type sessionInMemory struct {
 	id      string
 	state   maps.Map[string, any]
 	history slices.Slice[*Message]
-	m       sync.RWMutex
 }
 
 func (s *sessionInMemory) ID() string {
