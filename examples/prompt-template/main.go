@@ -34,7 +34,7 @@ func main() {
 	agent, err := blades.NewAgent(
 		"Template Agent",
 		blades.WithModel(model),
-		blades.WithInstructions("Please summarize {{.topic}} in three key points."),
+		blades.WithInstruction("Please summarize {{.topic}} in three key points."),
 	)
 	if err != nil {
 		log.Fatal(err)

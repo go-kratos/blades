@@ -17,7 +17,7 @@ func main() {
 	agent, err := blades.NewAgent(
 		"Server Agent",
 		blades.WithModel(model),
-		blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
+		blades.WithInstruction("You are a helpful assistant that provides detailed and accurate information."),
 	)
 	if err != nil {
 		log.Fatal(err)

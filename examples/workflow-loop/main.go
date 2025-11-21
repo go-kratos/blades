@@ -18,7 +18,7 @@ func main() {
 	writerAgent, err := blades.NewAgent(
 		"WriterAgent",
 		blades.WithModel(model),
-		blades.WithInstructions(`Draft a short paragraph on climate change.
+		blades.WithInstruction(`Draft a short paragraph on climate change.
 			{{if .suggestions}}	
 			**Draft**
 			{{.draft}}
@@ -35,7 +35,7 @@ func main() {
 	reviewerAgent, err := blades.NewAgent(
 		"ReviewerAgent",
 		blades.WithModel(model),
-		blades.WithInstructions(`Review the draft and suggest improvements.
+		blades.WithInstruction(`Review the draft and suggest improvements.
 			If the draft is good, respond with "The draft is good".
 
 			**Draft**

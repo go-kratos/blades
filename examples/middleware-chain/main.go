@@ -16,7 +16,7 @@ func main() {
 	agent, err := blades.NewAgent(
 		"History Tutor",
 		blades.WithModel(model),
-		blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
+		blades.WithInstruction("You are a helpful assistant that provides detailed and accurate information."),
 		blades.WithMiddleware(
 			NewLogging,
 			NewGuardrails,

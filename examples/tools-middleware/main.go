@@ -50,7 +50,7 @@ func main() {
 	agent, err := blades.NewAgent(
 		"Weather Agent",
 		blades.WithModel(model),
-		blades.WithInstructions("You are a helpful assistant that provides weather information."),
+		blades.WithInstruction("You are a helpful assistant that provides weather information."),
 		blades.WithTools(weatherTool),
 	)
 	if err != nil {

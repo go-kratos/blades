@@ -16,7 +16,7 @@ func main() {
 	agent, err := blades.NewAgent(
 		"Stream Agent",
 		blades.WithModel(model),
-		blades.WithInstructions("You are a helpful assistant that provides detailed answers."),
+		blades.WithInstruction("You are a helpful assistant that provides detailed answers."),
 	)
 	if err != nil {
 		log.Fatal(err)

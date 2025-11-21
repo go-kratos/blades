@@ -17,7 +17,7 @@ func main() {
 	mathTutorAgent, err := blades.NewAgent(
 		"MathTutor",
 		blades.WithDescription("An agent that helps with math questions"),
-		blades.WithInstructions("You are a helpful math tutor. Answer questions related to mathematics."),
+		blades.WithInstruction("You are a helpful math tutor. Answer questions related to mathematics."),
 		blades.WithModel(model),
 	)
 	if err != nil {
@@ -26,7 +26,7 @@ func main() {
 	historyTutorAgent, err := blades.NewAgent(
 		"HistoryTutor",
 		blades.WithDescription("An agent that helps with history questions"),
-		blades.WithInstructions("You are a helpful history tutor. Answer questions related to history."),
+		blades.WithInstruction("You are a helpful history tutor. Answer questions related to history."),
 		blades.WithModel(model),
 	)
 	if err != nil {

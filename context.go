@@ -2,8 +2,8 @@ package blades
 
 import (
 	"context"
-	"maps"
-	"sync"
+
+	"github.com/go-kratos/kit/container/maps"
 )
 
 // AgentContext provides metadata about an agent.
@@ -16,6 +16,7 @@ type AgentContext interface {
 type ToolContext interface {
 	ID() string
 	Name() string
+	// Actions returns a copy of the tool's action map.
 	Actions() map[string]any
 	// SetAction sets or updates an action in the tool's action map.
 	// This method is safe for concurrent use.
@@ -51,10 +52,9 @@ func FromToolContext(ctx context.Context) (ToolContext, bool) {
 }
 
 type toolContext struct {
-	id           string
-	name         string
-	actions      map[string]any
-	actionsMutex sync.Mutex
+	id      string
+	name    string
+	actions *maps.Map[string, any]
 }
 
 func (t *toolContext) ID() string {
@@ -64,12 +64,8 @@ func (t *toolContext) Name() string {
 	return t.name
 }
 func (t *toolContext) Actions() map[string]any {
-	t.actionsMutex.Lock()
-	defer t.actionsMutex.Unlock()
-	return maps.Clone(t.actions)
+	return t.actions.ToMap()
 }
 func (t *toolContext) SetAction(key string, value any) {
-	t.actionsMutex.Lock()
-	t.actions[key] = value
-	t.actionsMutex.Unlock()
+	t.actions.Store(key, value)
 }

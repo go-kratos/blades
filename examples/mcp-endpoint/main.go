@@ -34,7 +34,7 @@ func main() {
 	// The resolver will dynamically provide tools from the MCP server
 	agent, err := blades.NewAgent("time-assistant",
 		blades.WithModel(model),
-		blades.WithInstructions("You are a helpful assistant that can tell time in different timezones."),
+		blades.WithInstruction("You are a helpful assistant that can tell time in different timezones."),
 		blades.WithToolsResolver(mcpResolver),
 	)
 	if err != nil {

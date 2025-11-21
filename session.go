@@ -2,9 +2,10 @@ package blades
 
 import (
 	"context"
-	"slices"
 	"sync"
 
+	"github.com/go-kratos/kit/container/maps"
+	"github.com/go-kratos/kit/container/slices"
 	"github.com/google/uuid"
 )
 
@@ -19,10 +20,10 @@ type Session interface {
 
 // NewSession creates a new Session instance with an auto-generated UUID and optional initial state maps.
 func NewSession(states ...map[string]any) Session {
-	session := &sessionInMemory{id: uuid.NewString(), state: State{}}
+	session := &sessionInMemory{id: uuid.NewString()}
 	for _, state := range states {
 		for k, v := range state {
-			session.state[k] = v
+			session.SetState(k, v)
 		}
 	}
 	return session
@@ -45,8 +46,8 @@ func FromSessionContext(ctx context.Context) (Session, bool) {
 // sessionInMemory is an in-memory implementation of the Session interface.
 type sessionInMemory struct {
 	id      string
-	state   State
-	history []*Message
+	state   maps.Map[string, any]
+	history slices.Slice[*Message]
 	m       sync.RWMutex
 }
 
@@ -54,23 +55,15 @@ func (s *sessionInMemory) ID() string {
 	return s.id
 }
 func (s *sessionInMemory) State() State {
-	s.m.RLock()
-	defer s.m.RUnlock()
-	return s.state.Clone()
+	return s.state.ToMap()
 }
 func (s *sessionInMemory) History() []*Message {
-	s.m.RLock()
-	defer s.m.RUnlock()
-	return slices.Clone(s.history)
+	return s.history.ToSlice()
 }
 func (s *sessionInMemory) SetState(key string, value any) {
-	s.m.Lock()
-	defer s.m.Unlock()
-	s.state[key] = value
+	s.state.Store(key, value)
 }
 func (s *sessionInMemory) Append(ctx context.Context, message *Message) error {
-	s.m.Lock()
-	defer s.m.Unlock()
-	s.history = append(s.history, message)
+	s.history.Append(message)
 	return nil
 }

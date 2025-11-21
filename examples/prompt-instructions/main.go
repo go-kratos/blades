@@ -16,7 +16,7 @@ func main() {
 	agent, err := blades.NewAgent(
 		"Instructions Agent",
 		blades.WithModel(model),
-		blades.WithInstructions("Respond as a {{.style}}."),
+		blades.WithInstruction("Respond as a {{.style}}."),
 	)
 	if err != nil {
 		log.Fatal(err)

@@ -28,7 +28,7 @@ func main() {
 	tr, err := blades.NewAgent(
 		"Document translator",
 		blades.WithModel(model),
-		blades.WithInstructions("Translate the Chinese text within the given Markdown content to fluent, publication-quality English, perfectly preserving all Markdown syntax and structure, and outputting only the raw translated Markdown content."),
+		blades.WithInstruction("Translate the Chinese text within the given Markdown content to fluent, publication-quality English, perfectly preserving all Markdown syntax and structure, and outputting only the raw translated Markdown content."),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -36,7 +36,7 @@ func main() {
 	refine, err := blades.NewAgent(
 		"Refine Agent",
 		blades.WithModel(model),
-		blades.WithInstructions("Polish the following translated Markdown text by refining its sentence structure and correcting grammatical errors to improve fluency and readability, while ensuring the original meaning and all Markdown \n  syntax remain unchanged"),
+		blades.WithInstruction("Polish the following translated Markdown text by refining its sentence structure and correcting grammatical errors to improve fluency and readability, while ensuring the original meaning and all Markdown \n  syntax remain unchanged"),
 	)
 	if err != nil {
 		log.Fatal(err)

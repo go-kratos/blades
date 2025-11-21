@@ -16,7 +16,7 @@ func main() {
 	agent, err := blades.NewAgent(
 		"History Tutor",
 		blades.WithModel(model),
-		blades.WithInstructions("You are a knowledgeable history tutor. Provide detailed and accurate information on historical events."),
+		blades.WithInstruction("You are a knowledgeable history tutor. Provide detailed and accurate information on historical events."),
 	)
 	if err != nil {
 		log.Fatal(err)

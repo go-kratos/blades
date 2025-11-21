@@ -16,7 +16,7 @@ func main() {
 	codeWriterAgent, err := blades.NewAgent(
 		"CodeWriterAgent",
 		blades.WithModel(model),
-		blades.WithInstructions(`You are a Python Code Generator.
+		blades.WithInstruction(`You are a Python Code Generator.
 Based *only* on the user's request, write Python code that fulfills the requirement.
 Output *only* the complete Python code block, enclosed in triple backticks ("python ... "). 
 Do not add any other text before or after the code block.`),
@@ -28,7 +28,7 @@ Do not add any other text before or after the code block.`),
 	codeReviewerAgent, err := blades.NewAgent(
 		"CodeReviewerAgent",
 		blades.WithModel(model),
-		blades.WithInstructions(`You are an expert Python Code Reviewer. 
+		blades.WithInstruction(`You are an expert Python Code Reviewer. 
     Your task is to provide constructive feedback on the provided code.
 
     **Code to Review:**
@@ -53,7 +53,7 @@ Output *only* the review comments or the "No major issues" statement.`),
 	codeRefactorerAgent, err := blades.NewAgent(
 		"CodeRefactorerAgent",
 		blades.WithModel(model),
-		blades.WithInstructions(`You are a Python Code Refactoring AI.
+		blades.WithInstruction(`You are a Python Code Refactoring AI.
 Your goal is to improve the given Python code based on the provided review comments.
 
   **Original Code:**

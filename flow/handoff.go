@@ -22,7 +22,7 @@ type HandoffAgent struct {
 }
 
 func NewHandoffAgent(config HandoffConfig) (blades.Agent, error) {
-	instructions, err := handoff.BuildInstructions(config.SubAgents)
+	instruction, err := handoff.BuildInstruction(config.SubAgents)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func NewHandoffAgent(config HandoffConfig) (blades.Agent, error) {
 		config.Name,
 		blades.WithModel(config.Model),
 		blades.WithDescription(config.Description),
-		blades.WithInstructions(instructions),
+		blades.WithInstruction(instruction),
 		blades.WithTools(handoff.NewHandoffTool()),
 	)
 	if err != nil {

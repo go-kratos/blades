@@ -39,7 +39,7 @@ func main() {
 	agent, err := blades.NewAgent(
 		"ConfirmAgent",
 		blades.WithModel(model),
-		blades.WithInstructions("Answer clearly and concisely."),
+		blades.WithInstruction("Answer clearly and concisely."),
 		blades.WithMiddleware(middleware.Confirm(confirmPrompt)),
 	)
 	if err != nil {

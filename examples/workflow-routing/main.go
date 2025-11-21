@@ -27,7 +27,7 @@ func NewRoutingWorkflow(routes map[string]string) (*RoutingWorkflow, error) {
 	router, err := blades.NewAgent(
 		"triage_agent",
 		blades.WithModel(model),
-		blades.WithInstructions("You determine which agent to use based on the user's homework question"),
+		blades.WithInstruction("You determine which agent to use based on the user's homework question"),
 	)
 	if err != nil {
 		return nil, err
@@ -37,7 +37,7 @@ func NewRoutingWorkflow(routes map[string]string) (*RoutingWorkflow, error) {
 		agent, err := blades.NewAgent(
 			name,
 			blades.WithModel(model),
-			blades.WithInstructions(instructions),
+			blades.WithInstruction(instructions),
 		)
 		if err != nil {
 			return nil, err

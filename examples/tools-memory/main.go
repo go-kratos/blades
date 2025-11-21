@@ -26,7 +26,7 @@ func main() {
 	agent, err := blades.NewAgent(
 		"MemoryRecallAgent",
 		blades.WithModel(model),
-		blades.WithInstructions("Answer the user's question. Use the 'Memory' tool if the answer might be in past conversations."),
+		blades.WithInstruction("Answer the user's question. Use the 'Memory' tool if the answer might be in past conversations."),
 		blades.WithTools(memoryTool),
 	)
 	if err != nil {

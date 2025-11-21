@@ -17,7 +17,7 @@ func main() {
 	writerAgent, err := blades.NewAgent(
 		"writerAgent",
 		blades.WithModel(model),
-		blades.WithInstructions("Draft a short paragraph on climate change."),
+		blades.WithInstruction("Draft a short paragraph on climate change."),
 		blades.WithOutputKey("draft"),
 	)
 	if err != nil {
@@ -26,7 +26,7 @@ func main() {
 	editorAgent1, err := blades.NewAgent(
 		"editorAgent1",
 		blades.WithModel(model),
-		blades.WithInstructions(`Edit the paragraph for grammar.
+		blades.WithInstruction(`Edit the paragraph for grammar.
 			**Paragraph:**
 			{{.draft}}
 		`),
@@ -38,7 +38,7 @@ func main() {
 	editorAgent2, err := blades.NewAgent(
 		"editorAgent1",
 		blades.WithModel(model),
-		blades.WithInstructions(`Edit the paragraph for style.
+		blades.WithInstruction(`Edit the paragraph for style.
 			**Paragraph:**
 			{{.draft}}
 		`),
@@ -50,7 +50,7 @@ func main() {
 	reviewerAgent, err := blades.NewAgent(
 		"finalReviewerAgent",
 		blades.WithModel(model),
-		blades.WithInstructions(`Consolidate the grammar and style edits into a final version.
+		blades.WithInstruction(`Consolidate the grammar and style edits into a final version.
 			**Draft:**
 			{{.draft}}
 

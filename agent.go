@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"html/template"
-	"maps"
 	"strings"
 	"sync"
 
 	"github.com/go-kratos/blades/tools"
+	"github.com/go-kratos/kit/container/maps"
 	"github.com/google/jsonschema-go/jsonschema"
 	"golang.org/x/sync/errgroup"
 )
@@ -33,10 +33,17 @@ func WithDescription(description string) AgentOption {
 	}
 }
 
-// WithInstructions sets the instructions for the Agent.
-func WithInstructions(instructions string) AgentOption {
+// WithInstruction sets the instruction for the Agent.
+func WithInstruction(instruction string) AgentOption {
 	return func(a *agent) {
-		a.instructions = instructions
+		a.instruction = instruction
+	}
+}
+
+// WithInstructionProvider sets a dynamic instruction provider for the Agent.
+func WithInstructionProvider(p InstructionProvider) AgentOption {
+	return func(a *agent) {
+		a.instructionProvider = p
 	}
 }
 
@@ -92,18 +99,11 @@ func WithMaxIterations(n int) AgentOption {
 	}
 }
 
-// WithInstructionProvider sets a dynamic instruction provider for the Agent.
-func WithInstructionProvider(p InstructionProvider) AgentOption {
-	return func(a *agent) {
-		a.instructionProvider = p
-	}
-}
-
 // agent is a struct that represents an AI agent.
 type agent struct {
 	name                string
 	description         string
-	instructions        string
+	instruction         string
 	instructionProvider InstructionProvider
 	outputKey           string
 	maxIterations       int
@@ -172,10 +172,10 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 		}
 		invocation.Instruction = MergeParts(SystemMessage(instruction), invocation.Instruction)
 	}
-	if a.instructions != "" {
+	if a.instruction != "" {
 		if invocation.Session != nil {
 			var buf strings.Builder
-			t, err := template.New("instructions").Parse(a.instructions)
+			t, err := template.New("instruction").Parse(a.instruction)
 			if err != nil {
 				return err
 			}
@@ -184,7 +184,7 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 			}
 			invocation.Instruction = MergeParts(SystemMessage(buf.String()), invocation.Instruction)
 		} else {
-			invocation.Instruction = MergeParts(SystemMessage(a.instructions), invocation.Instruction)
+			invocation.Instruction = MergeParts(SystemMessage(a.instruction), invocation.Instruction)
 		}
 	}
 	return nil
@@ -304,13 +304,12 @@ func (a *agent) executeTools(ctx context.Context, invocation *Invocation, messag
 	var (
 		m sync.Mutex
 	)
-	actions := CloneMaps(message.Actions)
+	actions := maps.New(message.Actions)
 	eg, ctx := errgroup.WithContext(ctx)
 	for i, part := range message.Parts {
 		switch v := any(part).(type) {
 		case ToolPart:
 			eg.Go(func() error {
-				actions := maps.Clone(actions)
 				toolCtx := NewToolContext(ctx, &toolContext{
 					id:      v.ID,
 					name:    v.Name,
@@ -322,7 +321,7 @@ func (a *agent) executeTools(ctx context.Context, invocation *Invocation, messag
 				}
 				m.Lock()
 				message.Parts[i] = part
-				message.Actions = MergeActions(message.Actions, actions)
+				message.Actions = MergeActions(message.Actions, actions.ToMap())
 				m.Unlock()
 				return nil
 			})

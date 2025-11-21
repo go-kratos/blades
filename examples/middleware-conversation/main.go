@@ -25,7 +25,7 @@ func main() {
 	agent, err := blades.NewAgent(
 		"Conversation Agent",
 		blades.WithModel(model),
-		blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
+		blades.WithInstruction("You are a helpful assistant that provides detailed and accurate information."),
 		blades.WithMiddleware(
 			middleware.ConversationBuffered(5),
 			Logging,
