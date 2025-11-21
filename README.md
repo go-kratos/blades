@@ -96,7 +96,7 @@ func main() {
     agent := blades.NewAgent(
         "Blades Agent",
         blades.WithModel(model),
-        blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
+        blades.WithInstruction("You are a helpful assistant that provides detailed and accurate information."),
     )
     // Create a Prompt with user message
     input := blades.UserMessage("What is the capital of France?")
