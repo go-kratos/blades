@@ -160,7 +160,6 @@ func (m *Gemini) NewStreaming(ctx context.Context, req *blades.ModelRequest) bla
 				yield(nil, err)
 				return
 			}
-			finalResponse.Message.Status = blades.StatusCompleted
 			yield(finalResponse, nil)
 		}
 	}

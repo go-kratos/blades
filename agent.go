@@ -13,9 +13,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// InstructionProvider is a function type that generates instructions based on the given context.
-type InstructionProvider func(ctx context.Context) (string, error)
-
 // AgentOption is an option for configuring the Agent.
 type AgentOption func(*agent)
 
@@ -37,13 +34,6 @@ func WithDescription(description string) AgentOption {
 func WithInstruction(instruction string) AgentOption {
 	return func(a *agent) {
 		a.instruction = instruction
-	}
-}
-
-// WithInstructionProvider sets a dynamic instruction provider for the Agent.
-func WithInstructionProvider(p InstructionProvider) AgentOption {
-	return func(a *agent) {
-		a.instructionProvider = p
 	}
 }
 
@@ -99,20 +89,27 @@ func WithMaxIterations(n int) AgentOption {
 	}
 }
 
+// WithPlanner sets a planner for the Agent.
+func WithPlanner(p Planner) AgentOption {
+	return func(a *agent) {
+		a.planner = p
+	}
+}
+
 // agent is a struct that represents an AI agent.
 type agent struct {
-	name                string
-	description         string
-	instruction         string
-	instructionProvider InstructionProvider
-	outputKey           string
-	maxIterations       int
-	model               ModelProvider
-	inputSchema         *jsonschema.Schema
-	outputSchema        *jsonschema.Schema
-	middlewares         []Middleware
-	tools               []tools.Tool
-	toolsResolver       tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
+	name          string
+	description   string
+	instruction   string
+	planner       Planner
+	outputKey     string
+	maxIterations int
+	model         ModelProvider
+	inputSchema   *jsonschema.Schema
+	outputSchema  *jsonschema.Schema
+	middlewares   []Middleware
+	tools         []tools.Tool
+	toolsResolver tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
 }
 
 // NewAgent creates a new Agent with the given name and options.
@@ -164,13 +161,12 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 	}
 	invocation.Model = a.model.Name()
 	invocation.Tools = append(invocation.Tools, resolvedTools...)
-	// order of precedence: static instruction > instruction provider > invocation instruction
-	if a.instructionProvider != nil {
-		instruction, err := a.instructionProvider(ctx)
-		if err != nil {
-			return err
+	// order: static instruction > planner > invocation instruction
+	if a.planner != nil {
+		instruction := a.planner.BuildInstruction(ctx)
+		if len(instruction) > 0 {
+			invocation.Instruction = MergeParts(SystemMessage(instruction), invocation.Instruction)
 		}
-		invocation.Instruction = MergeParts(SystemMessage(instruction), invocation.Instruction)
 	}
 	if a.instruction != "" {
 		if invocation.Session != nil {
@@ -347,6 +343,9 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 				if err := a.appendMessageToSession(ctx, invocation, finalResponse.Message); err != nil {
 					yield(nil, err)
 					return
+				}
+				if a.planner != nil {
+					finalResponse.Message = a.planner.ProcessMessage(ctx, finalResponse.Message)
 				}
 				if finalResponse.Message.Role == RoleAssistant {
 					if !yield(finalResponse.Message, nil) {

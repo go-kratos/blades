@@ -54,3 +54,11 @@ func (inv *Invocation) Clone() *Invocation {
 		Tools:       slices.Clone(inv.Tools),
 	}
 }
+
+// Planner defines the interface for planning strategies that generate instructions and process agent messages.
+type Planner interface {
+	// BuildInstruction generates the system instruction for the agent based on the planning strategy.
+	BuildInstruction(ctx context.Context) string
+	// ProcessMessage processes and potentially transforms the agent's output message according to the planning logic.
+	ProcessMessage(ctx context.Context, message *Message) *Message
+}

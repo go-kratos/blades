@@ -305,30 +305,30 @@ func toContentParts(message *blades.Message) []openai.ChatCompletionContentPartU
 	return parts
 }
 
-func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []openai.ChatCompletionChoice) (*blades.ModelResponse, error) {
-	msg := &blades.Message{
-		Role:   blades.RoleTool,
-		Status: blades.StatusCompleted,
-	}
-	for _, choice := range choices {
-		if choice.Message.Content != "" {
-			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Message.Content})
-		}
-		if len(choice.Message.ToolCalls) > 0 {
-			for _, call := range choice.Message.ToolCalls {
-				msg.Role = blades.RoleTool
-				msg.Parts = append(msg.Parts, blades.ToolPart{
-					ID:      call.ID,
-					Name:    call.Function.Name,
-					Request: call.Function.Arguments,
-				})
-			}
-		}
-	}
-	return &blades.ModelResponse{
-		Message: msg,
-	}, nil
-}
+// func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []openai.ChatCompletionChoice) (*blades.ModelResponse, error) {
+// 	msg := &blades.Message{
+// 		Role:   blades.RoleTool,
+// 		Status: blades.StatusCompleted,
+// 	}
+// 	for _, choice := range choices {
+// 		if choice.Message.Content != "" {
+// 			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Message.Content})
+// 		}
+// 		if len(choice.Message.ToolCalls) > 0 {
+// 			for _, call := range choice.Message.ToolCalls {
+// 				msg.Role = blades.RoleTool
+// 				msg.Parts = append(msg.Parts, blades.ToolPart{
+// 					ID:      call.ID,
+// 					Name:    call.Function.Name,
+// 					Request: call.Function.Arguments,
+// 				})
+// 			}
+// 		}
+// 	}
+// 	return &blades.ModelResponse{
+// 		Message: msg,
+// 	}, nil
+// }
 
 // choiceToResponse converts a non-streaming choice to a ModelResponse.
 func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams, cc *openai.ChatCompletion) (*blades.ModelResponse, error) {
@@ -349,9 +349,9 @@ func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams
 			}
 			message.Parts = append(message.Parts, blades.DataPart{Bytes: bytes})
 		}
-		if choice.Message.Refusal != "" {
-			// TODO: map refusal codes to specific error types
-		}
+		// if choice.Message.Refusal != "" {
+		// 	// TODO: map refusal codes to specific error types
+		// }
 		if choice.FinishReason != "" {
 			message.FinishReason = choice.FinishReason
 		}
@@ -374,9 +374,9 @@ func chunkChoiceToResponse(ctx context.Context, choices []openai.ChatCompletionC
 		if choice.Delta.Content != "" {
 			message.Parts = append(message.Parts, blades.TextPart{Text: choice.Delta.Content})
 		}
-		if choice.Delta.Refusal != "" {
-			// TODO: map refusal codes to specific error types
-		}
+		// if choice.Delta.Refusal != "" {
+		// 	// TODO: map refusal codes to specific error types
+		// }
 		if choice.FinishReason != "" {
 			message.FinishReason = choice.FinishReason
 		}
