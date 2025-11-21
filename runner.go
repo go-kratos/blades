@@ -42,7 +42,9 @@ func WithResumeHistory(resumeHistory bool) RunnerOption {
 
 // RunOptions holds configuration options for running the agent.
 type RunOptions struct {
+	// Session is the session to use for maintaining conversation history and state.
 	Session      Session
+	// InvocationID is a unique identifier for this invocation, used for resuming.
 	InvocationID string
 }
 
