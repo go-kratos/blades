@@ -194,7 +194,7 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
 		// If resumable and a completed message exists, return it directly.
-		resumeMessages, ok := a.findResumeMessage(ctx, invocation)
+		resumeMessages, ok := a.findResumeMessage(invocation)
 		if ok {
 			for _, resumeMessage := range resumeMessages {
 				if !yield(resumeMessage, nil) {
@@ -238,7 +238,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 	}
 }
 
-func (a *agent) findResumeMessage(_ context.Context, invocation *Invocation) ([]*Message, bool) {
+func (a *agent) findResumeMessage(invocation *Invocation) ([]*Message, bool) {
 	if !invocation.Resumable || invocation.Session == nil {
 		return nil, false
 	}
@@ -266,17 +266,13 @@ func (a *agent) appendMessageToSession(ctx context.Context, invocation *Invocati
 		message.Author = "user"
 		return invocation.Session.Append(ctx, message)
 	case RoleTool:
-		if message.Author == "" {
-			message.Author = a.name
-		}
+		message.Author = a.name
 		if message.Status != StatusCompleted {
 			return nil
 		}
 		return invocation.Session.Append(ctx, message)
 	case RoleAssistant:
-		if message.Author == "" {
-			message.Author = a.name
-		}
+		message.Author = a.name
 		if message.Status != StatusCompleted {
 			return nil
 		}

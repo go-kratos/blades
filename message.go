@@ -243,6 +243,9 @@ func AppendMessages(base []*Message, extra ...*Message) []*Message {
 		filtered = make([]*Message, 0, len(base))
 	)
 	for _, m := range extra {
+		if m.ID == "" {
+			continue
+		}
 		sets[m.ID] = struct{}{}
 	}
 	for _, m := range base {
