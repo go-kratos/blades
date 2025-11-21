@@ -42,17 +42,13 @@ func WithResumeHistory(resumeHistory bool) RunnerOption {
 
 // RunOptions holds configuration options for running the agent.
 type RunOptions struct {
-	// Session is the session to use for maintaining conversation history and state.
 	Session      Session
-	// InvocationID is a unique identifier for this invocation, used for resuming.
 	InvocationID string
 }
 
 // Runner is responsible for executing a Runnable agent within a session context.
 type Runner struct {
-	// Resumable indicates whether the runner supports resuming from previous invocations.
 	Resumable     bool
-	// ResumeHistory indicates whether historical messages should be included in streaming output.
 	ResumeHistory bool
 	rootAgent     Agent
 }
