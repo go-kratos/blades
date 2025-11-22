@@ -33,12 +33,15 @@ type Task struct {
 	// Visited: nodes that have completed
 	visited map[string]bool
 
+	onCheckpoint            func(Checkpoint)
+	progressSinceCheckpoint bool
+
 	finished    bool
 	finishState State
 	err         error
 }
 
-func newTask(e *Executor) *Task {
+func newTask(e *Executor, onCheckpoint func(Checkpoint)) *Task {
 	// Initialize remaining dependencies count for each node from precomputed nodeInfo
 	remaining := make(map[string]int, len(e.graph.nodes))
 	for nodeName, info := range e.nodeInfos {
@@ -54,16 +57,22 @@ func newTask(e *Executor) *Task {
 		received:      make(map[string]int),
 		inFlight:      make(map[string]bool, len(e.graph.nodes)),
 		visited:       make(map[string]bool, len(e.graph.nodes)),
+		onCheckpoint:  onCheckpoint,
 	}
 	task.readyCond = sync.NewCond(&task.mu)
 	return task
 }
 
-func (t *Task) run(ctx context.Context, state State) (State, error) {
-	// Add initial contribution to entry point
-	t.addInitialContribution(state)
+func (t *Task) run(ctx context.Context, state State, checkpoint *Checkpoint) (State, error) {
+	if checkpoint != nil {
+		t.restoreCheckpoint(*checkpoint)
+	} else {
+		// Add initial contribution to entry point
+		t.addInitialContribution(state)
+	}
 	// Main scheduling loop
 	for {
+		t.emitCheckpointIfIdle()
 		// Check termination conditions
 		if shouldStop, result := t.checkTermination(); shouldStop {
 			return result.state, result.err
@@ -92,6 +101,64 @@ func (t *Task) addInitialContribution(initial State) {
 	t.ready = append(t.ready, t.executor.graph.entryPoint)
 }
 
+func (t *Task) restoreCheckpoint(cp Checkpoint) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.ready = cloneStringSlice(cp.Ready)
+
+	t.remaining = cloneIntMap(cp.Remaining)
+	if t.remaining == nil {
+		t.remaining = make(map[string]int)
+	}
+
+	t.contributions = cloneContributions(cp.Contributions)
+	if t.contributions == nil {
+		t.contributions = make(map[string]map[string]State)
+	}
+
+	t.received = cloneIntMap(cp.Received)
+	if t.received == nil {
+		t.received = make(map[string]int)
+	}
+
+	t.visited = cloneBoolMap(cp.Visited)
+	if t.visited == nil {
+		t.visited = make(map[string]bool)
+	}
+
+	t.inFlight = make(map[string]bool, len(t.executor.graph.nodes))
+	t.finished = cp.Finished
+	if cp.FinishState != nil {
+		t.finishState = cp.FinishState.Clone()
+	} else {
+		t.finishState = nil
+	}
+	t.err = nil
+	t.progressSinceCheckpoint = false
+}
+
+func (t *Task) shouldCheckpointLocked() bool {
+	return t.onCheckpoint != nil && t.progressSinceCheckpoint && len(t.inFlight) == 0
+}
+
+func (t *Task) emitCheckpointIfIdle() {
+	if t.onCheckpoint == nil {
+		return
+	}
+
+	t.mu.Lock()
+	if !t.shouldCheckpointLocked() {
+		t.mu.Unlock()
+		return
+	}
+	checkpoint := t.buildCheckpointLocked()
+	t.progressSinceCheckpoint = false
+	t.mu.Unlock()
+
+	t.onCheckpoint(checkpoint)
+}
+
 // checkTermination checks if execution should terminate and returns the result
 func (t *Task) checkTermination() (bool, terminationResult) {
 	t.mu.Lock()
@@ -118,8 +185,17 @@ func (t *Task) checkTermination() (bool, terminationResult) {
 func (t *Task) scheduleNext(ctx context.Context) bool {
 	t.mu.Lock()
 
+	if t.shouldCheckpointLocked() {
+		t.mu.Unlock()
+		return false
+	}
+
 	for len(t.ready) == 0 {
 		if t.err != nil || t.finished {
+			t.mu.Unlock()
+			return false
+		}
+		if t.shouldCheckpointLocked() {
 			t.mu.Unlock()
 			return false
 		}
@@ -129,6 +205,11 @@ func (t *Task) scheduleNext(ctx context.Context) bool {
 			return false
 		}
 		t.readyCond.Wait()
+	}
+
+	if t.shouldCheckpointLocked() {
+		t.mu.Unlock()
+		return false
 	}
 
 	// Check if we have ready nodes
@@ -192,6 +273,7 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 	// Mark as visited and get precomputed node info
 	t.mu.Lock()
 	t.visited[node] = true
+	t.progressSinceCheckpoint = true
 	info := t.executor.nodeInfos[node]
 	if info.isFinish && !t.finished {
 		t.finished = true
@@ -272,6 +354,7 @@ func (t *Task) satisfy(from, to string, state State) {
 		if t.received[to] == 0 {
 			// All predecessors skipped - mark as skipped and propagate skip
 			t.visited[to] = true
+			t.progressSinceCheckpoint = true
 			// No need to delete contributions: received==0 means contributions[to] is empty
 			delete(t.received, to)
 			t.readyCond.Signal()
@@ -329,6 +412,21 @@ func (t *Task) buildAggregateLocked(node string) State {
 	delete(t.contributions, node)
 	delete(t.received, node)
 	return state
+}
+
+func (t *Task) buildCheckpointLocked() Checkpoint {
+	checkpoint := Checkpoint{
+		Ready:         cloneStringSlice(t.ready),
+		Remaining:     cloneIntMap(t.remaining),
+		Contributions: cloneContributions(t.contributions),
+		Received:      cloneIntMap(t.received),
+		Visited:       cloneBoolMap(t.visited),
+		Finished:      t.finished,
+	}
+	if t.finishState != nil {
+		checkpoint.FinishState = t.finishState.Clone()
+	}
+	return checkpoint
 }
 
 func (t *Task) addContributionLocked(node, parent string, state State) bool {

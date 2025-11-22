@@ -22,6 +22,31 @@ type Executor struct {
 	nodeInfos map[string]*nodeInfo // Precomputed node information
 }
 
+// ExecuteOption configures a single execution run.
+type ExecuteOption func(*executeConfig)
+
+type executeConfig struct {
+	onCheckpoint func(Checkpoint)
+	resume       *Checkpoint
+}
+
+// WithCheckpointCallback registers a hook to receive checkpoints when the
+// scheduler reaches a quiescent point (no in-flight nodes).
+func WithCheckpointCallback(cb func(Checkpoint)) ExecuteOption {
+	return func(cfg *executeConfig) {
+		cfg.onCheckpoint = cb
+	}
+}
+
+// WithCheckpointResume resumes execution from a previously captured checkpoint.
+// The checkpoint is cloned internally to avoid caller-side mutation.
+func WithCheckpointResume(cp Checkpoint) ExecuteOption {
+	cloned := cp.Clone()
+	return func(cfg *executeConfig) {
+		cfg.resume = &cloned
+	}
+}
+
 // NewExecutor creates a new Executor for the given graph.
 func NewExecutor(g *Graph) *Executor {
 	// Build predecessors map for deterministic state aggregation
@@ -69,9 +94,15 @@ func NewExecutor(g *Graph) *Executor {
 }
 
 // Execute runs the graph task starting from the given state.
-func (e *Executor) Execute(ctx context.Context, state State) (State, error) {
-	t := newTask(e)
-	return t.run(ctx, state)
+func (e *Executor) Execute(ctx context.Context, state State, opts ...ExecuteOption) (State, error) {
+	cfg := executeConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	t := newTask(e, cfg.onCheckpoint)
+	return t.run(ctx, state, cfg.resume)
 }
 
 // cloneEdges creates a copy of edge slice to avoid shared state issues.

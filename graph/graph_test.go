@@ -46,6 +46,19 @@ func getStringSlice(value any) []string {
 	return []string{}
 }
 
+func containsAll(values []string, expected ...string) bool {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+	for _, item := range expected {
+		if _, ok := set[item]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func TestGraphCompileValidation(t *testing.T) {
 	t.Run("missing entry", func(t *testing.T) {
 		g := New()
@@ -872,6 +885,159 @@ func TestExecutorResetBetweenRuns(t *testing.T) {
 	}
 	if _, ok := secondResult["completed"].(bool); !ok {
 		t.Fatalf("expected finish flag in second result, got %#v", secondResult)
+	}
+}
+
+func TestExecutorCheckpointsWaitForParallel(t *testing.T) {
+	g := New()
+
+	g.AddNode("start", stepHandler("start"))
+	g.AddNode("branch_a", stepHandler("branch_a"))
+	g.AddNode("branch_b", stepHandler("branch_b"))
+	g.AddNode("join", stepHandler("join"))
+
+	g.AddEdge("start", "branch_a")
+	g.AddEdge("start", "branch_b")
+	g.AddEdge("branch_a", "join")
+	g.AddEdge("branch_b", "join")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	var (
+		mu          sync.Mutex
+		checkpoints []Checkpoint
+	)
+	result, err := executor.Execute(context.Background(), State{}, WithCheckpointCallback(func(cp Checkpoint) {
+		mu.Lock()
+		checkpoints = append(checkpoints, cp.Clone())
+		mu.Unlock()
+	}))
+	if err != nil {
+		t.Fatalf("execute error: %v", err)
+	}
+
+	if len(checkpoints) != 3 {
+		t.Fatalf("expected 3 checkpoints, got %d", len(checkpoints))
+	}
+
+	first := checkpoints[0]
+	if !first.Visited["start"] {
+		t.Fatalf("first checkpoint missing start visit: %#v", first)
+	}
+	if !containsAll(first.Ready, "branch_a", "branch_b") {
+		t.Fatalf("first checkpoint missing ready branches: %#v", first.Ready)
+	}
+
+	second := checkpoints[1]
+	if !second.Visited["branch_a"] || !second.Visited["branch_b"] {
+		t.Fatalf("second checkpoint should include both branches visited: %#v", second.Visited)
+	}
+	if len(second.Ready) != 1 || second.Ready[0] != "join" {
+		t.Fatalf("join should be ready after both branches, got %#v", second.Ready)
+	}
+
+	third := checkpoints[2]
+	if !third.Finished {
+		t.Fatalf("expected final checkpoint to mark finished, got %#v", third)
+	}
+	steps := getStringSlice(result[stepsKey])
+	if len(steps) == 0 || steps[len(steps)-1] != "join" {
+		t.Fatalf("unexpected final steps: %v", steps)
+	}
+}
+
+func TestExecutorResumeFromCheckpoint(t *testing.T) {
+	type counters struct {
+		start  int
+		mid    int
+		finish int
+	}
+
+	build := func(c *counters) *Graph {
+		g := New(WithParallel(false))
+		g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+			c.start++
+			next := state.Clone()
+			val, _ := next[valueKey].(int)
+			next[valueKey] = val + 1
+			return next, nil
+		})
+		g.AddNode("mid", func(ctx context.Context, state State) (State, error) {
+			c.mid++
+			next := state.Clone()
+			val, _ := next[valueKey].(int)
+			next[valueKey] = val + 10
+			return next, nil
+		})
+		g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+			c.finish++
+			next := state.Clone()
+			val, _ := next[valueKey].(int)
+			next[valueKey] = val + 100
+			return next, nil
+		})
+		g.AddEdge("start", "mid")
+		g.AddEdge("mid", "finish")
+		g.SetEntryPoint("start")
+		g.SetFinishPoint("finish")
+		return g
+	}
+
+	firstCounters := &counters{}
+	firstExecutor, err := build(firstCounters).Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	var (
+		captured bool
+		cp       Checkpoint
+	)
+	initial := State{valueKey: 0}
+	fullResult, err := firstExecutor.Execute(context.Background(), initial, WithCheckpointCallback(func(snapshot Checkpoint) {
+		if captured {
+			return
+		}
+		captured = true
+		cp = snapshot.Clone()
+	}))
+	if err != nil {
+		t.Fatalf("execute error: %v", err)
+	}
+	if !captured {
+		t.Fatal("expected at least one checkpoint to be captured")
+	}
+	if firstCounters.start != 1 || firstCounters.mid != 1 || firstCounters.finish != 1 {
+		t.Fatalf("unexpected execution counts in first run: %#v", firstCounters)
+	}
+
+	secondCounters := &counters{}
+	secondExecutor, err := build(secondCounters).Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	resumedResult, err := secondExecutor.Execute(context.Background(), nil, WithCheckpointResume(cp))
+	if err != nil {
+		t.Fatalf("resume error: %v", err)
+	}
+
+	if secondCounters.start != 0 {
+		t.Fatalf("start node should not run on resume, counters=%#v", secondCounters)
+	}
+	if secondCounters.mid != 1 || secondCounters.finish != 1 {
+		t.Fatalf("mid and finish should run once on resume, counters=%#v", secondCounters)
+	}
+
+	fullValue, _ := fullResult[valueKey].(int)
+	resumedValue, _ := resumedResult[valueKey].(int)
+	if fullValue != resumedValue {
+		t.Fatalf("expected resumed result %d to match full run %d", resumedValue, fullValue)
 	}
 }
 
