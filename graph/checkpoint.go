@@ -1,8 +1,7 @@
 package graph
 
 // Checkpoint captures the execution progress of a Task so it can be resumed.
-// All maps/slices are shallow copies of the underlying state at the moment the
-// checkpoint was taken.
+// Use Clone() to create a deep copy if you need to modify the checkpoint.
 type Checkpoint struct {
 	Ready         []string
 	Remaining     map[string]int
