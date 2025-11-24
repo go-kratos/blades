@@ -88,9 +88,9 @@ func (m *audioModel) buildAudioParams(req *blades.ModelRequest) openai.AudioSpee
 }
 
 // Generate generates audio from text input using the configured OpenAI model.
-func (p *audioModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
-	params := p.buildAudioParams(req)
-	resp, err := p.client.Audio.Speech.New(ctx, params)
+func (m *audioModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+	params := m.buildAudioParams(req)
+	resp, err := m.client.Audio.Speech.New(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -116,14 +116,14 @@ func (p *audioModel) Generate(ctx context.Context, req *blades.ModelRequest) (*b
 }
 
 // NewStreaming wraps Generate with a single-yield stream for API compatibility.
-func (p *audioModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
+func (m *audioModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
-		m, err := p.Generate(ctx, req)
+		r, err := m.Generate(ctx, req)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		yield(m, nil)
+		yield(r, nil)
 	}
 }
 
