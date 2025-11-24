@@ -9,6 +9,9 @@ const (
 
 // Interrupted checks if the action map indicates an interrupted action.
 func Interrupted(actions map[string]any) bool {
+	if actions == nil {
+		return false
+	}
 	interrupted, _ := actions[ActionInterrupted].(bool)
 	return interrupted
 }
