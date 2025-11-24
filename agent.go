@@ -163,8 +163,7 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 	invocation.Tools = append(invocation.Tools, resolvedTools...)
 	// order: static instruction > planner > invocation instruction
 	if a.planner != nil {
-		instruction := a.planner.BuildInstruction(ctx)
-		if len(instruction) > 0 {
+		if instruction := a.planner.BuildInstruction(ctx); len(instruction) > 0 {
 			invocation.Instruction = MergeParts(SystemMessage(instruction), invocation.Instruction)
 		}
 	}
@@ -340,7 +339,7 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					yield(nil, err)
 					return
 				}
-				if err := a.appendMessageToSession(ctx, invocation, finalResponse.Message); err != nil {
+				if err = a.appendMessageToSession(ctx, invocation, finalResponse.Message); err != nil {
 					yield(nil, err)
 					return
 				}
