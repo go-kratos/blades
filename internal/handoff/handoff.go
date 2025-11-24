@@ -49,7 +49,7 @@ func (h *handoffTool) Handle(ctx context.Context, input string) (string, error) 
 	if !ok {
 		return "", fmt.Errorf("tool context not found in context")
 	}
-	toolCtx.SetAction(blades.ActionHandoffToAgent, agentName)
 	toolCtx.SetAction(blades.ActionInterrupted, true)
+	toolCtx.SetAction(blades.ActionHandoffToAgent, agentName)
 	return "", nil
 }
