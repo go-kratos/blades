@@ -50,7 +50,7 @@ func NewImage(model string, config ImageConfig) blades.ModelProvider {
 	return &imageModel{
 		model:  model,
 		config: config,
-		client: openai.NewClient(config.RequestOptions...),
+		client: openai.NewClient(opts...),
 	}
 }
 
