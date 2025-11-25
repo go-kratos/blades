@@ -26,7 +26,7 @@ func main() {
 		log.Fatal(err)
 	}
 	// input := blades.UserMessage("What preparations should a beginner make before going to the gym? Please help me make a to-do list use write_todos")
-	input := blades.UserMessage("I want to conduct research on the accomplishments of Lebron James, Michael Jordan, and Kobe Bryant, and then compare them(You can to-do tool decompose the task).")
+	input := blades.UserMessage("I want to conduct research on the accomplishments of Lebron James, Michael Jordan, and Kobe Bryant, and then compare them (You can use the to-do tool to decompose the task).")
 	runner := blades.NewRunner(agent)
 	output, err := runner.Run(context.Background(), input)
 	if err != nil {
