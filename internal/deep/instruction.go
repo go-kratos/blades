@@ -184,7 +184,7 @@ It is better to just complete the task directly and NOT use the 'task' tool.
 "content-reviewer": use this agent after you are done creating significant content or documents
 "greeting-responder": use this agent when to respond to user greetings with a friendly joke
 "research-analyst": use this agent to conduct thorough research on complex topics
-</example_agent_description>
+</example_agent_descriptions>
 
 <example>
 user: "Please write a function that checks if a number is prime"
