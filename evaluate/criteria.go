@@ -14,7 +14,7 @@ type Criteria struct {
 }
 
 // NewCriteria creates a new Criteria evaluator.
-func NewCriteria(name string, opts ...blades.AgentOption) (*Criteria, error) {
+func NewCriteria(name string, opts ...blades.AgentOption) (Evaluator, error) {
 	schema, err := jsonschema.For[Evaluation](nil)
 	if err != nil {
 		return nil, err
@@ -29,8 +29,8 @@ func NewCriteria(name string, opts ...blades.AgentOption) (*Criteria, error) {
 	return &Criteria{agent: agent}, nil
 }
 
-// Evaluate evaluates the relevancy of the LLM response.
-func (r *Criteria) Evaluate(ctx context.Context, message *blades.Message) (*Evaluation, error) {
+// Run evaluates the LLM response against the configured criteria.
+func (r *Criteria) Run(ctx context.Context, message *blades.Message) (*Evaluation, error) {
 	iter := r.agent.Run(ctx, &blades.Invocation{Message: message})
 	for msg, err := range iter {
 		if err != nil {
