@@ -74,7 +74,7 @@ func main() {
 	input := blades.UserMessage("Please translate the following sentence to Spanish, French, and Italian: 'Hello, how are you?'")
 	orchestratorRunner := blades.NewRunner(orchestratorAgent)
 	stream := orchestratorRunner.RunStream(ctx, input)
-	var results []string
+	var tasks []string
 	for message, err := range stream {
 		if err != nil {
 			log.Fatal(err)
@@ -82,11 +82,10 @@ func main() {
 		if message.Role != blades.RoleAssistant && message.Status != blades.StatusCompleted {
 			continue
 		}
-		results = append(results, message.Text())
+		tasks = append(tasks, message.Text())
 	}
-	log.Println("Orchestrator:", results)
 	synthesizerRunner := blades.NewRunner(synthesizerAgent)
-	output, err := synthesizerRunner.Run(ctx, blades.UserMessage(strings.Join(results, "\n")))
+	output, err := synthesizerRunner.Run(ctx, blades.UserMessage(strings.Join(tasks, "\n")))
 	if err != nil {
 		log.Fatal(err)
 	}
