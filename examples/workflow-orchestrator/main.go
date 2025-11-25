@@ -22,7 +22,7 @@ func createTranslatorWorkers(model blades.ModelProvider) []tools.Tool {
 	}
 	frenchAgent, err := blades.NewAgent(
 		"french_agent",
-		blades.WithDescription("An english to french translator"),
+		blades.WithDescription("An English to French translator"),
 		blades.WithInstruction("You translate the user's message to French"),
 		blades.WithModel(model),
 	)
