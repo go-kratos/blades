@@ -58,8 +58,9 @@ func (a *HandoffAgent) Run(ctx context.Context, invocation *blades.Invocation) b
 				yield(nil, err)
 				return
 			}
-			if target, ok := message.Actions[handoff.ActionHandoffToAgent]; ok {
+			if target, ok := message.Actions[blades.ActionHandoffToAgent]; ok {
 				targetAgent, _ = target.(string)
+				break
 			}
 		}
 		agent, ok := a.targets[targetAgent]
