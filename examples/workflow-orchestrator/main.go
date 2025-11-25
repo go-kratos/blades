@@ -53,8 +53,8 @@ func main() {
 	orchestratorAgent, err := blades.NewAgent(
 		"orchestrator_agent",
 		blades.WithInstruction(`You are a translation agent. You use the tools given to you to translate.
-        If asked for multiple translations, you call the relevant tools in order.
-        You never translate on your own, you always use the provided tools.`),
+If asked for multiple translations, you call the relevant tools in order.
+You never translate on your own, you always use the provided tools.`),
 		blades.WithModel(model),
 		blades.WithTools(translatorWorkers...),
 	)
