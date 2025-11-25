@@ -13,7 +13,7 @@ import (
 func createTranslatorWorkers(model blades.ModelProvider) []tools.Tool {
 	spanishAgent, err := blades.NewAgent(
 		"spanish_agent",
-		blades.WithDescription("An english to spanish translator"),
+		blades.WithDescription("An English to Spanish translator"),
 		blades.WithInstruction("You translate the user's message to Spanish"),
 		blades.WithModel(model),
 	)
@@ -31,7 +31,7 @@ func createTranslatorWorkers(model blades.ModelProvider) []tools.Tool {
 	}
 	italianAgent, err := blades.NewAgent(
 		"italian_agent",
-		blades.WithDescription("An english to italian translator"),
+		blades.WithDescription("An English to Italian translator"),
 		blades.WithInstruction("You translate the user's message to Italian"),
 		blades.WithModel(model),
 	)
