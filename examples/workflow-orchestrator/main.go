@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"os"
-	"strings"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
@@ -74,18 +73,14 @@ func main() {
 	input := blades.UserMessage("Please translate the following sentence to Spanish, French, and Italian: 'Hello, how are you?'")
 	orchestratorRunner := blades.NewRunner(orchestratorAgent)
 	stream := orchestratorRunner.RunStream(ctx, input)
-	var tasks []string
-	for message, err := range stream {
+	var message *blades.Message
+	for message, err = range stream {
 		if err != nil {
 			log.Fatal(err)
 		}
-		if message.Role != blades.RoleAssistant && message.Status != blades.StatusCompleted {
-			continue
-		}
-		tasks = append(tasks, message.Text())
 	}
 	synthesizerRunner := blades.NewRunner(synthesizerAgent)
-	output, err := synthesizerRunner.Run(ctx, blades.UserMessage(strings.Join(tasks, "\n")))
+	output, err := synthesizerRunner.Run(ctx, blades.UserMessage(message.Text()))
 	if err != nil {
 		log.Fatal(err)
 	}
