@@ -29,7 +29,7 @@ func NewCriteria(name string, opts ...blades.AgentOption) (Evaluator, error) {
 	return &Criteria{agent: agent}, nil
 }
 
-// Run evaluates the relevancy of the LLM response.
+// Run evaluates the LLM response against the configured criteria.
 func (r *Criteria) Run(ctx context.Context, message *blades.Message) (*Evaluation, error) {
 	iter := r.agent.Run(ctx, &blades.Invocation{Message: message})
 	for msg, err := range iter {
