@@ -24,6 +24,7 @@ func NewDeepAgent(config DeepConfig) (blades.Agent, error) {
 	var (
 		instructions = []string{deep.BaseAgentPrompt}
 		subAgents    = append([]blades.Agent{}, config.SubAgents...)
+		agentTools   = append([]tools.Tool{}, config.Tools...)
 	)
 	if len(config.Instruction) > 0 {
 		instructions = append([]string{config.Instruction}, instructions...)
@@ -32,11 +33,11 @@ func NewDeepAgent(config DeepConfig) (blades.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	config.Tools = append(config.Tools, todosTool)
+	agentTools = append(agentTools, todosTool)
 	instructions = append(instructions, todosInstruction)
 
 	if !config.WithoutGeneralSubAgent {
-		generalAgent, err := newGeneralPurposeAgent(config, instructions)
+		generalAgent, err := newGeneralPurposeAgent(config, instructions, agentTools)
 		if err != nil {
 			return nil, err
 		}
@@ -46,23 +47,23 @@ func NewDeepAgent(config DeepConfig) (blades.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	config.Tools = append(config.Tools, tasksTool)
+	agentTools = append(agentTools, tasksTool)
 	instructions = append(instructions, tasksInstruction)
 	return blades.NewAgent(config.Name,
 		blades.WithModel(config.Model),
 		blades.WithDescription(config.Description),
 		blades.WithInstruction(strings.Join(instructions, "\n")),
-		blades.WithTools(config.Tools...),
+		blades.WithTools(agentTools...),
 		blades.WithMaxIterations(config.MaxIterations),
 	)
 }
 
-func newGeneralPurposeAgent(config DeepConfig, instructions []string) (blades.Agent, error) {
+func newGeneralPurposeAgent(config DeepConfig, instructions []string, agentTools []tools.Tool) (blades.Agent, error) {
 	return blades.NewAgent(deep.GeneralAgentName,
 		blades.WithModel(config.Model),
 		blades.WithDescription(deep.GeneralAgentDescription),
 		blades.WithInstruction(strings.Join(instructions, "\n")),
-		blades.WithTools(config.Tools...),
+		blades.WithTools(agentTools...),
 		blades.WithMaxIterations(config.MaxIterations),
 	)
 }

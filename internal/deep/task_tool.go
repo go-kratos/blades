@@ -41,16 +41,17 @@ type taskTool struct {
 func (t *taskTool) Name() string { return "task" }
 
 func (t *taskTool) buildDescription() (string, error) {
-	var builder strings.Builder
+	var sb strings.Builder
 	for _, a := range t.subAgents {
-		builder.WriteString(fmt.Sprintf("- %s: %s\n", a.Name(), a.Description()))
+		sb.WriteString(fmt.Sprintf("- %s: %s\n", a.Name(), a.Description()))
 	}
-	if err := taskToolDescriptionTmpl.Execute(&builder, map[string]any{
-		"SubAgents": builder.String(),
+	var result strings.Builder
+	if err := taskToolDescriptionTmpl.Execute(&result, map[string]any{
+		"SubAgents": sb.String(),
 	}); err != nil {
 		return "", err
 	}
-	return builder.String(), nil
+	return result.String(), nil
 }
 
 func (t *taskTool) Description() string {
