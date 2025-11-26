@@ -177,7 +177,7 @@ It is better to just complete the task directly and NOT use the 'task' tool.
 
 <example_agent_descriptions>
 "content-reviewer": use this agent after you are done creating significant content or documents
-"greeting-responder": use this agent when to respond to user greetings with a friendly joke
+"greeting-responder": use this agent to respond to user greetings with a friendly joke
 "research-analyst": use this agent to conduct thorough research on complex topics
 </example_agent_descriptions>
 
