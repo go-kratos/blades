@@ -47,7 +47,7 @@ func TestNewTaskTool(t *testing.T) {
 				SubAgents: []blades.Agent{
 					&mockAgent{name: "test-agent", description: "test agent"},
 				},
-				WithoutGeneralSubAgent: true,
+				WithoutGeneralPurposeAgent: true,
 			},
 			wantErr: false,
 		},
@@ -59,23 +59,23 @@ func TestNewTaskTool(t *testing.T) {
 					&mockAgent{name: "agent2", description: "second agent"},
 					&mockAgent{name: "agent3", description: "third agent"},
 				},
-				WithoutGeneralSubAgent: true,
+				WithoutGeneralPurposeAgent: true,
 			},
 			wantErr: false,
 		},
 		{
 			name: "empty subagents list without general agent",
 			config: TaskToolConfig{
-				SubAgents:              []blades.Agent{},
-				WithoutGeneralSubAgent: true,
+				SubAgents:                  []blades.Agent{},
+				WithoutGeneralPurposeAgent: true,
 			},
 			wantErr: false,
 		},
 		{
 			name: "nil subagents list without general agent",
 			config: TaskToolConfig{
-				SubAgents:              nil,
-				WithoutGeneralSubAgent: true,
+				SubAgents:                  nil,
+				WithoutGeneralPurposeAgent: true,
 			},
 			wantErr: false,
 		},
@@ -114,7 +114,7 @@ func TestTaskToolName(t *testing.T) {
 		SubAgents: []blades.Agent{
 			&mockAgent{name: "test", description: "test"},
 		},
-		WithoutGeneralSubAgent: true,
+		WithoutGeneralPurposeAgent: true,
 	}
 	tool, _, err := NewTaskTool(config)
 	if err != nil {
@@ -131,8 +131,8 @@ func TestTaskToolDescription(t *testing.T) {
 		&mockAgent{name: "agent2", description: "second test agent"},
 	}
 	config := TaskToolConfig{
-		SubAgents:              subAgents,
-		WithoutGeneralSubAgent: true,
+		SubAgents:                  subAgents,
+		WithoutGeneralPurposeAgent: true,
 	}
 	tool, _, err := NewTaskTool(config)
 	if err != nil {
@@ -157,7 +157,7 @@ func TestTaskToolInputSchema(t *testing.T) {
 		SubAgents: []blades.Agent{
 			&mockAgent{name: "test", description: "test"},
 		},
-		WithoutGeneralSubAgent: true,
+		WithoutGeneralPurposeAgent: true,
 	}
 	tool, _, err := NewTaskTool(config)
 	if err != nil {
@@ -202,7 +202,7 @@ func TestTaskToolOutputSchema(t *testing.T) {
 		SubAgents: []blades.Agent{
 			&mockAgent{name: "test", description: "test"},
 		},
-		WithoutGeneralSubAgent: true,
+		WithoutGeneralPurposeAgent: true,
 	}
 	tool, _, err := NewTaskTool(config)
 	if err != nil {
@@ -314,8 +314,8 @@ func TestTaskToolHandle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := TaskToolConfig{
-				SubAgents:              tt.agents,
-				WithoutGeneralSubAgent: true,
+				SubAgents:                  tt.agents,
+				WithoutGeneralPurposeAgent: true,
 			}
 			tool, _, err := NewTaskTool(config)
 			if err != nil {
@@ -361,8 +361,8 @@ func TestTaskToolHandleWithContext(t *testing.T) {
 		},
 	}
 	config := TaskToolConfig{
-		SubAgents:              []blades.Agent{agent},
-		WithoutGeneralSubAgent: true,
+		SubAgents:                  []blades.Agent{agent},
+		WithoutGeneralPurposeAgent: true,
 	}
 	tool, _, err := NewTaskTool(config)
 	if err != nil {

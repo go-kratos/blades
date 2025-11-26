@@ -14,12 +14,12 @@ import (
 var _ tools.Tool = (*taskTool)(nil)
 
 type TaskToolConfig struct {
-	Model                  blades.ModelProvider
-	SubAgents              []blades.Agent
-	Tools                  []tools.Tool
-	Instructions           []string
-	MaxIterations          int
-	WithoutGeneralSubAgent bool
+	Model                      blades.ModelProvider
+	SubAgents                  []blades.Agent
+	Tools                      []tools.Tool
+	Instructions               []string
+	MaxIterations              int
+	WithoutGeneralPurposeAgent bool
 }
 
 func newGeneralPurposeAgent(tc TaskToolConfig) (blades.Agent, error) {
@@ -37,7 +37,7 @@ func NewTaskTool(tc TaskToolConfig) (tools.Tool, string, error) {
 		subAgents:    tc.SubAgents,
 		subAgentsMap: make(map[string]blades.Agent),
 	}
-	if !tc.WithoutGeneralSubAgent {
+	if !tc.WithoutGeneralPurposeAgent {
 		generalAgent, err := newGeneralPurposeAgent(tc)
 		if err != nil {
 			return nil, "", err
