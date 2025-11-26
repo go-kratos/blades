@@ -9,19 +9,19 @@ import (
 	"github.com/go-kratos/blades/internal/handoff"
 )
 
-type HandoffConfig struct {
+type RoutingConfig struct {
 	Name        string
 	Description string
 	Model       blades.ModelProvider
 	SubAgents   []blades.Agent
 }
 
-type HandoffAgent struct {
+type RoutingAgent struct {
 	blades.Agent
 	targets map[string]blades.Agent
 }
 
-func NewHandoffAgent(config HandoffConfig) (blades.Agent, error) {
+func NewRoutingAgent(config RoutingConfig) (blades.Agent, error) {
 	instruction, err := handoff.BuildInstruction(config.SubAgents)
 	if err != nil {
 		return nil, err
@@ -40,13 +40,13 @@ func NewHandoffAgent(config HandoffConfig) (blades.Agent, error) {
 	for _, agent := range config.SubAgents {
 		targets[strings.TrimSpace(agent.Name())] = agent
 	}
-	return &HandoffAgent{
+	return &RoutingAgent{
 		Agent:   rootAgent,
 		targets: targets,
 	}, nil
 }
 
-func (a *HandoffAgent) Run(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
+func (a *RoutingAgent) Run(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		var (
 			err         error
