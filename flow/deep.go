@@ -19,6 +19,12 @@ type DeepConfig struct {
 	WithoutGeneralSubAgent bool
 }
 
+// NewDeepAgent constructs and returns a "deep agent" using the provided configuration.
+// A deep agent is an advanced agent capable of managing complex tasks, maintaining a list of todos,
+// and delegating work to subagents. Unlike a regular agent, a deep agent supports hierarchical
+// delegation, allowing it to break down tasks and assign them to specialized subagents as needed.
+// The returned agent can manage its own todos, utilize custom tools, and coordinate with subagents
+// to accomplish multi-step or collaborative objectives.
 func NewDeepAgent(config DeepConfig) (blades.Agent, error) {
 	tc := deep.TaskToolConfig{
 		Model:                  config.Model,
