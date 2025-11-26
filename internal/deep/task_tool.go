@@ -13,13 +13,36 @@ import (
 
 var _ tools.Tool = (*taskTool)(nil)
 
-func NewTaskTool(subAgents ...blades.Agent) (tools.Tool, string, error) {
-	if len(subAgents) == 0 {
-		return nil, "", fmt.Errorf("at least one subagent is required")
-	}
+type TaskToolConfig struct {
+	Model                  blades.ModelProvider
+	SubAgents              []blades.Agent
+	Tools                  []tools.Tool
+	Instructions           []string
+	MaxIterations          int
+	WithoutGeneralSubAgent bool
+}
+
+func newGeneralPurposeAgent(tc TaskToolConfig) (blades.Agent, error) {
+	return blades.NewAgent(generalAgentName,
+		blades.WithModel(tc.Model),
+		blades.WithDescription(generalAgentDescription),
+		blades.WithInstruction(strings.Join(tc.Instructions, "\n\n")),
+		blades.WithTools(tc.Tools...),
+		blades.WithMaxIterations(tc.MaxIterations),
+	)
+}
+
+func NewTaskTool(tc TaskToolConfig) (tools.Tool, string, error) {
 	t := &taskTool{
-		subAgents:    subAgents,
+		subAgents:    tc.SubAgents,
 		subAgentsMap: make(map[string]blades.Agent),
+	}
+	if !tc.WithoutGeneralSubAgent {
+		generalAgent, err := newGeneralPurposeAgent(tc)
+		if err != nil {
+			return nil, "", err
+		}
+		t.subAgents = append(t.subAgents, generalAgent)
 	}
 	for _, a := range t.subAgents {
 		t.subAgentsMap[a.Name()] = a
@@ -41,17 +64,17 @@ type taskTool struct {
 func (t *taskTool) Name() string { return "task" }
 
 func (t *taskTool) buildDescription() (string, error) {
-	var sb strings.Builder
+	descs := make([]string, 0, len(t.subAgents))
 	for _, a := range t.subAgents {
-		sb.WriteString(fmt.Sprintf("- %s: %s\n", a.Name(), a.Description()))
+		descs = append(descs, fmt.Sprintf("- %s: %s", a.Name(), a.Description()))
 	}
-	var result strings.Builder
-	if err := taskToolDescriptionTmpl.Execute(&result, map[string]any{
-		"SubAgents": sb.String(),
+	var sb strings.Builder
+	if err := taskToolDescriptionTmpl.Execute(&sb, map[string]any{
+		"SubAgents": strings.Join(descs, "\n"),
 	}); err != nil {
 		return "", err
 	}
-	return result.String(), nil
+	return sb.String(), nil
 }
 
 func (t *taskTool) Description() string {

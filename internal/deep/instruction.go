@@ -3,12 +3,11 @@ package deep
 import "html/template"
 
 var (
-	BaseAgentPrompt         = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
-	GeneralAgentName        = "general-purpose"
-	GeneralAgentDescription = `General-purpose agent for researching complex questions, searching for files and content, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. This agent has access to all tools as the main agent.`
+	BaseAgentPrompt         = `In order to complete the objective that the user asks of you, you have access to a number of standard tools.`
+	generalAgentName        = "general-purpose"
+	generalAgentDescription = `General-purpose agent for researching complex questions, searching for files and content, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. This agent has access to all tools as the main agent.`
 
-	writeTodosToolPrompt = `
-## 'write_todos'
+	writeTodosToolPrompt = `## 'write_todos'
 
 You have access to the 'write_todos' tool to help you manage and plan complex objectives.
 Use this tool for complex objectives to ensure that you are tracking each necessary step and giving the user visibility into your progress.
@@ -20,8 +19,7 @@ Writing todos takes time and tokens, use it when it is helpful for managing comp
 
 ## Important To-Do List Usage Notes to Remember
 - The 'write_todos' tool should never be called multiple times in parallel.
-- Don't be afraid to revise the To-Do list as you go. New information may reveal new tasks that need to be done, or old tasks that are irrelevant.
-`
+- Don't be afraid to revise the To-Do list as you go. New information may reveal new tasks that need to be done, or old tasks that are irrelevant.`
 
 	writeTodosToolDescription = `Use this tool to create and manage a structured task list for your current work session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
 
@@ -81,11 +79,9 @@ It is important to skip using this tool when:
    - Use clear, descriptive task names
 
 Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully
-Remember: If you only need to make a few tool calls to complete a task, and it is clear what you need to do, it is better to just do the task directly and NOT call this tool at all.
-`
+Remember: If you only need to make a few tool calls to complete a task, and it is clear what you need to do, it is better to just do the task directly and NOT call this tool at all.`
 
-	taskPrompt = `
-## 'task' (subagent spawner)
+	taskPrompt = `## 'task' (subagent spawner)
 
 You have access to a 'task' tool to launch short-lived subagents that handle isolated tasks. These agents are ephemeral — they live only for the duration of the task and return a single result.
 
@@ -111,8 +107,7 @@ When NOT to use the task tool:
 ## Important Task Tool Usage Notes to Remember
 - Whenever possible, parallelize the work that you do. This is true for both tool_calls, and for tasks. Whenever you have independent steps to complete - make tool_calls, or kick off tasks (subagents) in parallel to accomplish them faster. This saves time for the user, which is incredibly important.
 - Remember to use the 'task' tool to silo independent tasks within a multi-part objective.
-- You should use the 'task' tool whenever you have a complex task that will take multiple steps, and is independent from other tasks that the agent needs to complete. These agents are highly competent and efficient.
-`
+- You should use the 'task' tool whenever you have a complex task that will take multiple steps, and is independent from other tasks that the agent needs to complete. These agents are highly competent and efficient.`
 
 	taskToolDescription = `Launch an ephemeral subagent to handle complex, multi-step independent tasks with isolated context windows. 
 
