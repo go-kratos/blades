@@ -132,7 +132,7 @@ When using the Task tool, you must specify a subagent_type parameter to select w
 </example_agent_descriptions>
 
 <example>
-User: "I want to conduct research on the accomplishments of Lebron James, Michael Jordan, and Kobe Bryant, and then compare them."
+User: "I want to conduct research on the accomplishments of LeBron James, Michael Jordan, and Kobe Bryant, and then compare them."
 Assistant: *Uses the task tool in parallel to conduct isolated research on each of the three players*
 Assistant: *Synthesizes the results of the three isolated research tasks and responds to the User*
 <commentary>
