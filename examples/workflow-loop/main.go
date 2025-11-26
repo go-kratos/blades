@@ -51,7 +51,7 @@ func main() {
 		Description:   "An agent that loops between writing and reviewing until the draft is good.",
 		MaxIterations: 3,
 		Condition: func(ctx context.Context, output *blades.Message) (bool, error) {
-			return !strings.Contains(output.Text(), "good"), nil
+			return !strings.Contains(output.Text(), "The draft is good"), nil
 		},
 		SubAgents: []blades.Agent{
 			writerAgent,
