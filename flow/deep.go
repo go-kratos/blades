@@ -8,6 +8,7 @@ import (
 	"github.com/go-kratos/blades/tools"
 )
 
+// DeepConfig defines the configuration options for creating a deep agent.
 type DeepConfig struct {
 	Name                   string
 	Model                  blades.ModelProvider
