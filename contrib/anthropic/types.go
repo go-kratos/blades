@@ -26,7 +26,8 @@ func convertBladesToolsToClaude(tools []tools.Tool) ([]anthropic.ToolUnionParam,
 	var claudeTools []anthropic.ToolUnionParam
 	for _, tool := range tools {
 		var inputSchema anthropic.ToolInputSchemaParam
-		schemaBytes, err := json.Marshal(tool.InputSchema)
+		//schemaBytes, err := json.Marshal(tool.InputSchema)
+		schemaBytes, err := json.Marshal(tool.InputSchema())
 		if err != nil {
 			return nil, fmt.Errorf("marshaling tool schema: %w", err)
 		}
