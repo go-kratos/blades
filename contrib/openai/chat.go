@@ -62,7 +62,7 @@ func (m *chatModel) Name() string {
 
 // Generate executes a non-streaming chat completion request.
 func (m *chatModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
-	params, err := m.toChatCompletionParams(req)
+	params, err := m.toChatCompletionParams(false, req)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (m *chatModel) Generate(ctx context.Context, req *blades.ModelRequest) (*bl
 // into a ModelResponse for incremental consumption.
 func (m *chatModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
-		params, err := m.toChatCompletionParams(req)
+		params, err := m.toChatCompletionParams(true, req)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -115,7 +115,7 @@ func (m *chatModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) 
 }
 
 // toChatCompletionParams converts a generic model request into OpenAI params.
-func (m *chatModel) toChatCompletionParams(req *blades.ModelRequest) (openai.ChatCompletionNewParams, error) {
+func (m *chatModel) toChatCompletionParams(isStreaming bool, req *blades.ModelRequest) (openai.ChatCompletionNewParams, error) {
 	tools, err := toTools(req.Tools)
 	if err != nil {
 		return openai.ChatCompletionNewParams{}, err
@@ -164,6 +164,11 @@ func (m *chatModel) toChatCompletionParams(req *blades.ModelRequest) (openai.Cha
 		}
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{JSONSchema: schemaParam},
+		}
+	}
+	if isStreaming {
+		params.StreamOptions = openai.ChatCompletionStreamOptionsParam{
+			IncludeUsage: openai.Bool(true),
 		}
 	}
 	if req.Instruction != nil {
