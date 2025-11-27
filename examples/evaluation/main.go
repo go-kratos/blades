@@ -65,7 +65,8 @@ func main() {
 			log.Fatal(err)
 		}
 		input := blades.UserMessage(prompt)
-		output, err := r.Evaluate(context.Background(), input)
+		//output, err := r.Evaluate(context.Background(), input)
+		output, err := r.Run(context.Background(), input)
 		if err != nil {
 			log.Fatal(err)
 		}
