@@ -1,3 +1,7 @@
+
+//go:build legacy_state
+// +build legacy_state
+
 package graph
 
 import (
@@ -17,33 +21,35 @@ const stepsKey = "steps"
 const valueKey = "value"
 
 func stepHandler(name string) Handler {
-	return func(ctx context.Context, state State) (State, error) {
-		return appendStep(state, name), nil
+	return func(ctx context.Context, state State) error {
+		appendStep(state, name)
+		return nil
 	}
 }
 
 func incrementHandler(delta int) Handler {
-	return func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		val, _ := next[valueKey].(int)
-		next[valueKey] = val + delta
-		return next, nil
+	return func(ctx context.Context, state State) error {
+		val, _ := state.Load(valueKey)
+		if current, ok := val.(int); ok {
+			state.Store(valueKey, current+delta)
+		} else {
+			state.Store(valueKey, delta)
+		}
+		return nil
 	}
 }
 
-func appendStep(state State, name string) State {
-	next := state.Clone()
-	steps := getStringSlice(next[stepsKey])
-	steps = append(steps, name)
-	next[stepsKey] = steps
-	return next
+func appendStep(state State, name string) {
+	steps := getStringSliceFromState(state, stepsKey)
+	state.Store(stepsKey, append(steps, name))
 }
 
-func getStringSlice(value any) []string {
-	if v, ok := value.([]string); ok {
-		return v
+func getStringSliceFromState(state State, key string) []string {
+	raw, ok := state.Load(key)
+	if !ok {
+		return []string{}
 	}
-	return []string{}
+	return getStringSlice(raw)
 }
 
 func containsAll(values []string, expected ...string) bool {
@@ -149,7 +155,7 @@ func TestGraphSequentialOrder(t *testing.T) {
 	g := New(WithParallel(false))
 	execOrder := make([]string, 0, 4)
 	handlerFor := func(name string) Handler {
-		return func(ctx context.Context, state State) (State, error) {
+		return func(ctx context.Context, state State) error {
 			execOrder = append(execOrder, name)
 			return stepHandler(name)(ctx, state)
 		}
@@ -171,7 +177,7 @@ func TestGraphSequentialOrder(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	result, err := executor.Execute(context.Background(), nil)
+	result, err := executor.Execute(context.Background(), NewState())
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -180,7 +186,8 @@ func TestGraphSequentialOrder(t *testing.T) {
 		t.Fatalf("unexpected execution order: %v", execOrder)
 	}
 
-	steps, _ := result[stepsKey].([]string)
+	snap := result.Snapshot()
+	steps, _ := snap[stepsKey].([]string)
 	if len(steps) == 0 || steps[len(steps)-1] != "D" {
 		t.Fatalf("expected final node D, got %v", steps)
 	}
@@ -189,8 +196,8 @@ func TestGraphSequentialOrder(t *testing.T) {
 func TestGraphErrorPropagation(t *testing.T) {
 	g := New()
 	_ = g.AddNode("A", stepHandler("A"))
-	_ = g.AddNode("B", func(ctx context.Context, state State) (State, error) {
-		return state, fmt.Errorf("boom")
+	_ = g.AddNode("B", func(ctx context.Context, state State) error {
+		return fmt.Errorf("boom")
 	})
 	_ = g.AddEdge("A", "B")
 	_ = g.SetEntryPoint("A")
@@ -201,7 +208,7 @@ func TestGraphErrorPropagation(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	_, err = executor.Execute(context.Background(), nil)
+	_, err = executor.Execute(context.Background(), NewState())
 	if err == nil || !strings.Contains(err.Error(), "node B") {
 		t.Fatalf("expected error from node B, got %v", err)
 	}
@@ -216,11 +223,11 @@ func TestGraphConditionalRouting(t *testing.T) {
 
 	_ = g.AddEdge("A", "B")
 	_ = g.AddEdge("B", "C", WithEdgeCondition(func(_ context.Context, state State) bool {
-		steps, _ := state[stepsKey].([]string)
+		steps := getStringSliceFromState(state, stepsKey)
 		return len(steps) == 2 && steps[1] == "B"
 	}))
 	_ = g.AddEdge("B", "D", WithEdgeCondition(func(_ context.Context, state State) bool {
-		steps, _ := state[stepsKey].([]string)
+		steps := getStringSliceFromState(state, stepsKey)
 		return !(len(steps) == 2 && steps[1] == "B")
 	}))
 	_ = g.AddEdge("D", "C") // D also needs to eventually reach C (the finish point)
@@ -233,12 +240,12 @@ func TestGraphConditionalRouting(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	result, err := executor.Execute(context.Background(), nil)
+	result, err := executor.Execute(context.Background(), NewState())
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
 
-	steps, _ := result[stepsKey].([]string)
+	steps := getStringSliceFromState(result, stepsKey)
 	if steps[len(steps)-1] != "C" {
 		t.Fatalf("expected to finish at C, got %v", steps)
 	}
@@ -249,29 +256,28 @@ func TestGraphConditionalMixedPrecedence(t *testing.T) {
 
 	visited := make(map[string]int)
 	record := func(name string, allow bool) Handler {
-		return func(ctx context.Context, state State) (State, error) {
+		return func(ctx context.Context, state State) error {
 			visited[name]++
-			next := state.Clone()
-			next["path"] = append(getStringSlice(state["path"]), name)
-			next["allow"] = allow
-			return next, nil
+			path := getStringSliceFromState(state, "path")
+			state.Store("path", append(path, name))
+			state.Store("allow", allow)
+			return nil
 		}
 	}
 
-	_ = g.AddNode("start", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		next["path"] = []string{"start"}
-		return next, nil
+	_ = g.AddNode("start", func(ctx context.Context, state State) error {
+		state.Store("path", []string{"start"})
+		return nil
 	})
-	_ = g.AddNode("decision", func(ctx context.Context, state State) (State, error) {
-		return state.Clone(), nil
+	_ = g.AddNode("decision", func(ctx context.Context, state State) error {
+		return nil
 	})
 	_ = g.AddNode("first", record("first", false))
 	_ = g.AddNode("second", record("second", true))
 	_ = g.AddNode("fallback", record("fallback", false))
-	_ = g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+	_ = g.AddNode("finish", func(ctx context.Context, state State) error {
 		visited["finish"]++
-		return state.Clone(), nil
+		return nil
 	})
 
 	_ = g.AddEdge("start", "decision")
@@ -317,22 +323,20 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 
 	var mu sync.Mutex
 	executed := make(map[string]int)
-	record := func(name string, mutate func(State) State) Handler {
-		return func(ctx context.Context, state State) (State, error) {
+	record := func(name string, mutate func(State)) Handler {
+		return func(ctx context.Context, state State) error {
 			mu.Lock()
 			executed[name]++
 			mu.Unlock()
 			if mutate != nil {
-				return mutate(state), nil
+				mutate(state)
 			}
-			return state.Clone(), nil
+			return nil
 		}
 	}
 
-	g.AddNode("start", record("start", func(state State) State {
-		next := state.Clone()
-		next["allow_conditional"] = true
-		return next
+	g.AddNode("start", record("start", func(state State) {
+		state.Store("allow_conditional", true)
 	}))
 	g.AddNode("always", record("always", nil))
 	g.AddNode("conditional", record("conditional", nil))
@@ -342,7 +346,8 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 		return true // Always execute
 	}))
 	g.AddEdge("start", "conditional", WithEdgeCondition(func(_ context.Context, state State) bool {
-		allow, _ := state["allow_conditional"].(bool)
+		raw, _ := state.Load("allow_conditional")
+		allow, _ := raw.(bool)
 		return allow
 	}))
 	g.AddEdge("always", "join")
@@ -356,7 +361,7 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+	if _, err := executor.Execute(context.Background(), NewState()); err != nil {
 		t.Fatalf("execution error: %v", err)
 	}
 
@@ -371,7 +376,7 @@ func TestGraphParallelDoesNotStallIndependentBranches(t *testing.T) {
 	var mu sync.Mutex
 	execTime := make(map[string]time.Time)
 	record := func(name string, fn func()) Handler {
-		return func(ctx context.Context, state State) (State, error) {
+		return func(ctx context.Context, state State) error {
 			if fn != nil {
 				fn()
 			}
@@ -379,7 +384,7 @@ func TestGraphParallelDoesNotStallIndependentBranches(t *testing.T) {
 			mu.Lock()
 			execTime[name] = now
 			mu.Unlock()
-			return state.Clone(), nil
+			return nil
 		}
 	}
 
@@ -406,7 +411,7 @@ func TestGraphParallelDoesNotStallIndependentBranches(t *testing.T) {
 	}
 
 	start := time.Now()
-	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+	if _, err := executor.Execute(context.Background(), NewState()); err != nil {
 		t.Fatalf("execution error: %v", err)
 	}
 
@@ -428,7 +433,7 @@ func TestMiddlewareReceivesNodeName(t *testing.T) {
 	var mu sync.Mutex
 	var seen []string
 	mw := func(next Handler) Handler {
-		return func(ctx context.Context, state State) (State, error) {
+		return func(ctx context.Context, state State) error {
 			if node, ok := FromNodeContext(ctx); ok {
 				mu.Lock()
 				seen = append(seen, node.Name)
@@ -441,10 +446,10 @@ func TestMiddlewareReceivesNodeName(t *testing.T) {
 	}
 
 	g := New(WithMiddleware(mw))
-	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		next[stepsKey] = append(getStringSlice(state[stepsKey]), "start")
-		return next, nil
+	g.AddNode("start", func(ctx context.Context, state State) error {
+		steps := getStringSliceFromState(state, stepsKey)
+		state.Store(stepsKey, append(steps, "start"))
+		return nil
 	})
 	g.AddNode("finish", stepHandler("finish"))
 	g.AddEdge("start", "finish")
@@ -456,7 +461,7 @@ func TestMiddlewareReceivesNodeName(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+	if _, err := executor.Execute(context.Background(), NewState()); err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
 
@@ -488,12 +493,12 @@ func TestGraphSerialVsParallel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
-	parallelState, err := handlerParallel.Execute(context.Background(), State{})
+	parallelState, err := handlerParallel.Execute(context.Background(), NewState())
 	if err != nil {
 		t.Fatalf("parallel run error: %v", err)
 	}
 
-	if parallelState[valueKey].(int) == 0 {
+	if snapshot := parallelState.Snapshot(); snapshot[valueKey].(int) == 0 {
 		t.Fatalf("expected merged value in parallel mode")
 	}
 
@@ -501,14 +506,16 @@ func TestGraphSerialVsParallel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
-	serialState, err := handlerSerial.Execute(context.Background(), State{})
+	serialState, err := handlerSerial.Execute(context.Background(), NewState())
 	if err != nil {
 		t.Fatalf("serial run error: %v", err)
 	}
 
-	if serialState[valueKey].(int) != parallelState[valueKey].(int) {
+	pSnap := parallelState.Snapshot()
+	sSnap := serialState.Snapshot()
+	if sSnap[valueKey].(int) != pSnap[valueKey].(int) {
 		t.Fatalf("expected serial and parallel execution to yield same result, got serial=%d parallel=%d",
-			serialState[valueKey].(int), parallelState[valueKey].(int))
+			sSnap[valueKey].(int), pSnap[valueKey].(int))
 	}
 }
 

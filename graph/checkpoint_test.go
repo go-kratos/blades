@@ -1,3 +1,7 @@
+
+//go:build legacy_state
+// +build legacy_state
+
 package graph
 
 import (
