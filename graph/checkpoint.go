@@ -1,61 +1,33 @@
 package graph
 
 import (
-	"encoding/json"
+	"context"
 	"maps"
 )
 
-// Checkpointer persists and restores checkpoints for a task identified by taskID.
+// Checkpointer persists and restores checkpoints for a task identified by checkpointID.
 // Save and Resume must be safe for concurrent use.
 type Checkpointer interface {
-	Save(taskID string, cp Checkpoint) error
-	Resume(taskID string) (Checkpoint, bool, error) // bool indicates whether a checkpoint was found
-}
-
-// CheckpointerFuncs adapts functions to the Checkpointer interface.
-type CheckpointerFuncs struct {
-	SaveFunc   func(taskID string, cp Checkpoint) error
-	ResumeFunc func(taskID string) (Checkpoint, bool, error)
-}
-
-func (c CheckpointerFuncs) Save(taskID string, cp Checkpoint) error {
-	if c.SaveFunc == nil {
-		return nil
-	}
-	return c.SaveFunc(taskID, cp)
-}
-
-func (c CheckpointerFuncs) Resume(taskID string) (Checkpoint, bool, error) {
-	if c.ResumeFunc == nil {
-		return Checkpoint{}, false, nil
-	}
-	return c.ResumeFunc(taskID)
+	Save(ctx context.Context, checkpoint *Checkpoint) error
+	Resume(ctx context.Context, checkpointID string) (*Checkpoint, error)
 }
 
 // Checkpoint captures the execution progress of a Task so it can be resumed.
 // Use Clone() to create a deep copy if you need to modify the checkpoint.
 type Checkpoint struct {
-	Received map[string]int
-	Visited  map[string]bool
-	State    map[string]any
+	ID       string          `json:"id"`
+	Received map[string]int  `json:"received"`
+	Visited  map[string]bool `json:"visited"`
+	State    map[string]any  `json:"state"`
 }
 
 // Clone returns a deep copy of the checkpoint so callers can modify it without
 // affecting the original snapshot.
-func (c Checkpoint) Clone() Checkpoint {
-	return Checkpoint{
+func (c *Checkpoint) Clone() *Checkpoint {
+	return &Checkpoint{
+		ID:       c.ID,
 		Received: maps.Clone(c.Received),
 		Visited:  maps.Clone(c.Visited),
 		State:    maps.Clone(c.State),
 	}
-}
-
-// Marshal serializes the checkpoint as JSON.
-func (c Checkpoint) Marshal() ([]byte, error) {
-	return json.Marshal(c)
-}
-
-// Unmarshal populates the checkpoint from JSON.
-func (c *Checkpoint) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, c)
 }

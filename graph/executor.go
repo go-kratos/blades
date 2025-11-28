@@ -102,24 +102,16 @@ func (e *Executor) Execute(ctx context.Context, state State, opts ...ExecuteOpti
 }
 
 // Resume continues a previously started task using the configured Checkpointer.
-func (e *Executor) Resume(ctx context.Context, taskID string) (State, error) {
-	if taskID == "" {
-		return State{}, fmt.Errorf("graph: taskID is required to resume")
-	}
+func (e *Executor) Resume(ctx context.Context, checkpointID string) (State, error) {
 	if e.checkpointer == nil {
 		return State{}, fmt.Errorf("graph: no checkpointer configured")
 	}
-	checkpoint, ok, err := e.checkpointer.Resume(taskID)
+	checkpoint, err := e.checkpointer.Resume(ctx, checkpointID)
 	if err != nil {
 		return State{}, fmt.Errorf("graph: failed to load checkpoint: %w", err)
 	}
-	if !ok {
-		return State{}, fmt.Errorf("graph: checkpoint not found for task %q", taskID)
-	}
-
-	cloned := checkpoint.Clone()
-	t := newTask(e, State{}, e.checkpointer, taskID)
-	return t.run(ctx, &cloned)
+	t := newTask(e, State{}, e.checkpointer, checkpointID)
+	return t.run(ctx, checkpoint.Clone())
 }
 
 // cloneEdges creates a copy of edge slice to avoid shared state issues.

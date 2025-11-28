@@ -32,14 +32,14 @@ type Task struct {
 	visited map[string]bool
 
 	checkpointer            Checkpointer
-	taskID                  string
+	checkpointID            string
 	progressSinceCheckpoint bool
 
 	finished bool
 	err      error
 }
 
-func newTask(e *Executor, state State, checkpointer Checkpointer, taskID string) *Task {
+func newTask(e *Executor, state State, checkpointer Checkpointer, checkpointID string) *Task {
 	// Initialize remaining dependencies count for each node from precomputed nodeInfo
 	state.ensure()
 	task := &Task{
@@ -51,7 +51,7 @@ func newTask(e *Executor, state State, checkpointer Checkpointer, taskID string)
 		inFlight:     make(map[string]bool, len(e.graph.nodes)),
 		visited:      make(map[string]bool, len(e.graph.nodes)),
 		checkpointer: checkpointer,
-		taskID:       taskID,
+		checkpointID: checkpointID,
 	}
 	task.readyCond = sync.NewCond(&task.mu)
 	return task
@@ -65,7 +65,7 @@ func (t *Task) run(ctx context.Context, checkpoint *Checkpoint) (State, error) {
 	}
 	// Main scheduling loop
 	for {
-		t.emitCheckpointIfIdle()
+		t.emitCheckpointIfIdle(ctx)
 		// Check termination conditions
 		if shouldStop, result := t.checkTermination(); shouldStop {
 			return result.state, result.err
@@ -123,7 +123,7 @@ func (t *Task) restoreCheckpoint(cp Checkpoint) {
 }
 
 func (t *Task) shouldCheckpointLocked() bool {
-	return t.checkpointer != nil && t.taskID != "" && t.progressSinceCheckpoint && len(t.inFlight) == 0
+	return t.checkpointer != nil && t.checkpointID != "" && t.progressSinceCheckpoint && len(t.inFlight) == 0
 }
 
 // rebuildRemainingLocked derives remaining counts from visited nodes and graph topology.
@@ -173,8 +173,8 @@ func (t *Task) rebuildReadyLocked() {
 	}
 }
 
-func (t *Task) emitCheckpointIfIdle() {
-	if t.checkpointer == nil || t.taskID == "" {
+func (t *Task) emitCheckpointIfIdle(ctx context.Context) {
+	if t.checkpointer == nil || t.checkpointID == "" {
 		return
 	}
 
@@ -187,7 +187,7 @@ func (t *Task) emitCheckpointIfIdle() {
 	t.progressSinceCheckpoint = false
 	t.mu.Unlock()
 
-	if err := t.checkpointer.Save(t.taskID, checkpoint); err != nil {
+	if err := t.checkpointer.Save(ctx, checkpoint); err != nil {
 		t.fail(fmt.Errorf("graph: checkpoint save failed: %w", err))
 	}
 }
@@ -418,11 +418,11 @@ func (t *Task) fail(err error) {
 	t.readyCond.Broadcast()
 }
 
-func (t *Task) buildCheckpointLocked() Checkpoint {
-	checkpoint := Checkpoint{
+func (t *Task) buildCheckpointLocked() *Checkpoint {
+	return &Checkpoint{
+		ID:       t.checkpointID,
 		Received: maps.Clone(t.received),
 		Visited:  maps.Clone(t.visited),
 		State:    t.state.Snapshot(),
 	}
-	return checkpoint
 }
