@@ -81,7 +81,8 @@ func NewExecutor(g *Graph, checkpointer Checkpointer) *Executor {
 }
 
 // Execute runs the graph task starting from the given state.
-// A taskID is generated automatically if not provided.
+// If no taskID is provided (via WithTaskID), one is generated automatically.
+// The returned string is the taskID used for checkpoint persistence and can be used to resume the task later via the Resume method.
 func (e *Executor) Execute(ctx context.Context, state State, opts ...ExecuteOption) (string, error) {
 	cfg := executeConfig{}
 	for _, opt := range opts {
