@@ -1,5 +1,20 @@
 package graph
 
+import (
+	"encoding/json"
+	"maps"
+)
+
+// CheckpointSaver persists checkpoints during execution.
+type CheckpointSaver interface {
+	Save(Checkpoint)
+}
+
+// CheckpointSaverFunc adapts a function to the CheckpointSaver interface.
+type CheckpointSaverFunc func(Checkpoint)
+
+func (f CheckpointSaverFunc) Save(cp Checkpoint) { f(cp) }
+
 // Checkpoint captures the execution progress of a Task so it can be resumed.
 // Use Clone() to create a deep copy if you need to modify the checkpoint.
 type Checkpoint struct {
@@ -12,41 +27,18 @@ type Checkpoint struct {
 // affecting the original snapshot.
 func (c Checkpoint) Clone() Checkpoint {
 	return Checkpoint{
-		Received: cloneIntMap(c.Received),
-		Visited:  cloneBoolMap(c.Visited),
-		State:    cloneAnyMap(c.State),
+		Received: maps.Clone(c.Received),
+		Visited:  maps.Clone(c.Visited),
+		State:    maps.Clone(c.State),
 	}
 }
 
-func cloneIntMap(input map[string]int) map[string]int {
-	if len(input) == 0 {
-		return nil
-	}
-	out := make(map[string]int, len(input))
-	for k, v := range input {
-		out[k] = v
-	}
-	return out
+// Marshal serializes the checkpoint as JSON.
+func (c Checkpoint) Marshal() ([]byte, error) {
+	return json.Marshal(c)
 }
 
-func cloneBoolMap(input map[string]bool) map[string]bool {
-	if len(input) == 0 {
-		return nil
-	}
-	out := make(map[string]bool, len(input))
-	for k, v := range input {
-		out[k] = v
-	}
-	return out
-}
-
-func cloneAnyMap(input map[string]any) map[string]any {
-	if len(input) == 0 {
-		return nil
-	}
-	out := make(map[string]any, len(input))
-	for k, v := range input {
-		out[k] = v
-	}
-	return out
+// Unmarshal populates the checkpoint from JSON.
+func (c *Checkpoint) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, c)
 }

@@ -54,11 +54,11 @@ func TestExecuteCheckpointCallbackParallel(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		result, runErr = executor.Execute(context.Background(), State{}, WithCheckpointCallback(func(cp Checkpoint) {
+		result, runErr = executor.Execute(context.Background(), State{}, WithCheckpointSaver(CheckpointSaverFunc(func(cp Checkpoint) {
 			mu.Lock()
 			checkpoints = append(checkpoints, cp.Clone())
 			mu.Unlock()
-		}))
+		})))
 	}()
 
 	if err := waitForChannel(slowStarted, time.Second); err != nil {
@@ -167,7 +167,7 @@ func TestExecuteResumeParallelCheckpoint(t *testing.T) {
 		captured bool
 		cp       Checkpoint
 	)
-	fullResult, err := exec1.Execute(context.Background(), State{}, WithCheckpointCallback(func(snapshot Checkpoint) {
+	fullResult, err := exec1.Execute(context.Background(), State{}, WithCheckpointSaver(CheckpointSaverFunc(func(snapshot Checkpoint) {
 		if captured {
 			return
 		}

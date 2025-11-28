@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 )
 
@@ -30,25 +31,25 @@ type Task struct {
 	// Visited: nodes that have completed
 	visited map[string]bool
 
-	onCheckpoint            func(Checkpoint)
+	saver                   CheckpointSaver
 	progressSinceCheckpoint bool
 
 	finished bool
 	err      error
 }
 
-func newTask(e *Executor, state State, onCheckpoint func(Checkpoint)) *Task {
+func newTask(e *Executor, state State, saver CheckpointSaver) *Task {
 	// Initialize remaining dependencies count for each node from precomputed nodeInfo
 	state.ensure()
 	task := &Task{
-		executor:     e,
-		state:        state,
-		ready:        make([]string, 0, 4),
-		remaining:    make(map[string]int, len(e.graph.nodes)),
-		received:     make(map[string]int),
-		inFlight:     make(map[string]bool, len(e.graph.nodes)),
-		visited:      make(map[string]bool, len(e.graph.nodes)),
-		onCheckpoint: onCheckpoint,
+		executor:  e,
+		state:     state,
+		ready:     make([]string, 0, 4),
+		remaining: make(map[string]int, len(e.graph.nodes)),
+		received:  make(map[string]int),
+		inFlight:  make(map[string]bool, len(e.graph.nodes)),
+		visited:   make(map[string]bool, len(e.graph.nodes)),
+		saver:     saver,
 	}
 	task.readyCond = sync.NewCond(&task.mu)
 	return task
@@ -93,12 +94,12 @@ func (t *Task) restoreCheckpoint(cp Checkpoint) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.received = cloneIntMap(cp.Received)
+	t.received = maps.Clone(cp.Received)
 	if t.received == nil {
 		t.received = make(map[string]int)
 	}
 
-	t.visited = cloneBoolMap(cp.Visited)
+	t.visited = maps.Clone(cp.Visited)
 	if t.visited == nil {
 		t.visited = make(map[string]bool)
 	}
@@ -114,7 +115,7 @@ func (t *Task) restoreCheckpoint(cp Checkpoint) {
 }
 
 func (t *Task) shouldCheckpointLocked() bool {
-	return t.onCheckpoint != nil && t.progressSinceCheckpoint && len(t.inFlight) == 0
+	return t.saver != nil && t.progressSinceCheckpoint && len(t.inFlight) == 0
 }
 
 // rebuildRemainingLocked derives remaining counts from visited nodes and graph topology.
@@ -165,7 +166,7 @@ func (t *Task) rebuildReadyLocked() {
 }
 
 func (t *Task) emitCheckpointIfIdle() {
-	if t.onCheckpoint == nil {
+	if t.saver == nil {
 		return
 	}
 
@@ -178,7 +179,7 @@ func (t *Task) emitCheckpointIfIdle() {
 	t.progressSinceCheckpoint = false
 	t.mu.Unlock()
 
-	t.onCheckpoint(checkpoint)
+	t.saver.Save(checkpoint)
 }
 
 // checkTermination checks if execution should terminate and returns the result
@@ -409,8 +410,8 @@ func (t *Task) fail(err error) {
 
 func (t *Task) buildCheckpointLocked() Checkpoint {
 	checkpoint := Checkpoint{
-		Received: cloneIntMap(t.received),
-		Visited:  cloneBoolMap(t.visited),
+		Received: maps.Clone(t.received),
+		Visited:  maps.Clone(t.visited),
 		State:    t.state.Snapshot(),
 	}
 	return checkpoint

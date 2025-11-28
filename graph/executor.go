@@ -22,15 +22,15 @@ type Executor struct {
 type ExecuteOption func(*executeConfig)
 
 type executeConfig struct {
-	onCheckpoint func(Checkpoint)
-	resume       *Checkpoint
+	saver  CheckpointSaver
+	resume *Checkpoint
 }
 
-// WithCheckpointCallback registers a hook to receive checkpoints when the
+// WithCheckpointSaver registers a saver to persist checkpoints when the
 // scheduler reaches a quiescent point (no in-flight nodes).
-func WithCheckpointCallback(cb func(Checkpoint)) ExecuteOption {
+func WithCheckpointSaver(saver CheckpointSaver) ExecuteOption {
 	return func(cfg *executeConfig) {
-		cfg.onCheckpoint = cb
+		cfg.saver = saver
 	}
 }
 
@@ -88,7 +88,7 @@ func (e *Executor) Execute(ctx context.Context, state State, opts ...ExecuteOpti
 		}
 	}
 	state.ensure()
-	t := newTask(e, state, cfg.onCheckpoint)
+	t := newTask(e, state, cfg.saver)
 	return t.run(ctx, cfg.resume)
 }
 

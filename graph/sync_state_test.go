@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"sync/atomic"
 	"testing"
 )
@@ -82,12 +83,12 @@ func TestCheckpointResumeSharedState(t *testing.T) {
 	}
 
 	var captured Checkpoint
-	_, err = exec1.Execute(context.Background(), NewState(), WithCheckpointCallback(func(cp Checkpoint) {
+	_, err = exec1.Execute(context.Background(), NewState(), WithCheckpointSaver(CheckpointSaverFunc(func(cp Checkpoint) {
 		if captured.State != nil {
 			return
 		}
 		captured = cp.Clone()
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -121,12 +122,46 @@ func TestCheckpointResumeSharedState(t *testing.T) {
 	}
 }
 
+func TestCheckpointMarshalUnmarshal(t *testing.T) {
+	original := Checkpoint{
+		Received: map[string]int{"a": 1, "b": 2},
+		Visited:  map[string]bool{"start": true},
+		State:    map[string]any{"k": "v", "n": 1},
+	}
+
+	data, err := original.Marshal()
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var decoded Checkpoint
+	if err := decoded.Unmarshal(data); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if !jsonEqual(t, original, decoded) {
+		t.Fatalf("decoded checkpoint mismatch: %#v vs %#v", decoded, original)
+	}
+}
+
 func getIntFromState(state State, key string) int {
 	raw, _ := state.Load(key)
 	if v, ok := raw.(int); ok {
 		return v
 	}
 	return 0
+}
+
+func jsonEqual(t *testing.T, a, b any) bool {
+	ta, err := json.Marshal(a)
+	if err != nil {
+		t.Fatalf("jsonEqual marshal a: %v", err)
+	}
+	tb, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("jsonEqual marshal b: %v", err)
+	}
+	return string(ta) == string(tb)
 }
 
 func getStringSlice(value any) []string {
