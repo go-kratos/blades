@@ -86,6 +86,12 @@ type terminationResult struct {
 func (t *Task) prepareEntry() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// Initialize remaining dependencies
+	for nodeName, info := range t.executor.nodeInfos {
+		if info.dependencies > 0 {
+			t.remaining[nodeName] = info.dependencies
+		}
+	}
 	t.received[t.executor.graph.entryPoint]++
 	t.ready = append(t.ready, t.executor.graph.entryPoint)
 }
