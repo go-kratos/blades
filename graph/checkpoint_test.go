@@ -14,6 +14,56 @@ const (
 	valueKey = "value"
 )
 
+// memoryCheckpointer is a test helper that stores checkpoints in memory keyed by taskID.
+type memoryCheckpointer struct {
+	mu      sync.Mutex
+	last    map[string]Checkpoint
+	history map[string][]Checkpoint
+}
+
+func newMemoryCheckpointer() *memoryCheckpointer {
+	return &memoryCheckpointer{
+		last:    make(map[string]Checkpoint),
+		history: make(map[string][]Checkpoint),
+	}
+}
+
+func (m *memoryCheckpointer) Save(taskID string, cp Checkpoint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cloned := cp.Clone()
+	m.last[taskID] = cloned
+	m.history[taskID] = append(m.history[taskID], cloned)
+	return nil
+}
+
+func (m *memoryCheckpointer) Resume(taskID string) (Checkpoint, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp, ok := m.last[taskID]
+	if !ok {
+		return Checkpoint{}, false, nil
+	}
+	return cp.Clone(), true, nil
+}
+
+func (m *memoryCheckpointer) seed(taskID string, cp Checkpoint) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.last[taskID] = cp.Clone()
+}
+
+func (m *memoryCheckpointer) snapshots(taskID string) []Checkpoint {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	checkpoints := m.history[taskID]
+	out := make([]Checkpoint, len(checkpoints))
+	for i, cp := range checkpoints {
+		out[i] = cp.Clone()
+	}
+	return out
+}
+
 func TestSequentialExecutionSharedState(t *testing.T) {
 	g := New(WithParallel(false))
 	g.AddNode("start", func(ctx context.Context, state State) error {
@@ -36,12 +86,12 @@ func TestSequentialExecutionSharedState(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	final, err := exec.Execute(context.Background(), NewState())
-	if err != nil {
+	state := NewState()
+	if _, err := exec.Execute(context.Background(), state); err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
 
-	steps := getStringSliceFromState(final, stepsKey)
+	steps := getStringSliceFromState(state, stepsKey)
 	if len(steps) != 2 || steps[0] != "start" || steps[1] != "finish" {
 		t.Fatalf("unexpected steps: %v", steps)
 	}
@@ -79,34 +129,34 @@ func TestCheckpointResumeSharedState(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("finish")
 
-	exec1, err := g.Compile()
+	store := newMemoryCheckpointer()
+	exec1, err := g.Compile(WithCheckpointer(store))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	var captured Checkpoint
-	_, err = exec1.Execute(context.Background(), NewState(), WithCheckpointSaver(CheckpointSaverFunc(func(cp Checkpoint) {
-		if captured.State != nil {
-			return
-		}
-		captured = cp.Clone()
-	})))
+	_, err = exec1.Execute(context.Background(), NewState(), WithTaskID("task"))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
-	if captured.State == nil {
+
+	checkpoints := store.snapshots("task")
+	if len(checkpoints) == 0 {
 		t.Fatal("expected checkpoint to capture state")
 	}
+	captured := checkpoints[0]
+	store.seed("task", captured)
+
 	if atomic.LoadInt32(&counters.start) != 1 || atomic.LoadInt32(&counters.mid) != 1 || atomic.LoadInt32(&counters.finish) != 1 {
 		t.Fatalf("unexpected counters after first run: %#v", counters)
 	}
 
-	exec2, err := g.Compile()
+	exec2, err := g.Compile(WithCheckpointer(store))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	final, err := exec2.Execute(context.Background(), NewState(), WithCheckpointResume(captured))
+	final, err := exec2.Resume(context.Background(), "task")
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -188,28 +238,24 @@ func TestCheckpointResumeWithSkippedBranch(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("join")
 
-	exec1, err := g.Compile()
+	store := newMemoryCheckpointer()
+	const taskID = "skipped-branch"
+	exec1, err := g.Compile(WithCheckpointer(store))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	var (
-		cp       Checkpoint
-		captured bool
-	)
-	_, err = exec1.Execute(context.Background(), NewState(), WithCheckpointSaver(CheckpointSaverFunc(func(snapshot Checkpoint) {
-		if captured {
-			return
-		}
-		captured = true
-		cp = snapshot.Clone()
-	})))
+	_, err = exec1.Execute(context.Background(), NewState(), WithTaskID(taskID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
-	if !captured {
+
+	checkpoints := store.snapshots(taskID)
+	if len(checkpoints) == 0 {
 		t.Fatal("expected checkpoint to be captured")
 	}
+	cp := checkpoints[0]
+	store.seed(taskID, cp)
 
 	// Resume on a fresh executor with fresh counters; start/branch_b should not rerun.
 	var counts2 struct {
@@ -234,12 +280,12 @@ func TestCheckpointResumeWithSkippedBranch(t *testing.T) {
 	g2.SetEntryPoint("start")
 	g2.SetFinishPoint("join")
 
-	exec2, err := g2.Compile()
+	exec2, err := g2.Compile(WithCheckpointer(store))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	if _, err := exec2.Execute(context.Background(), NewState(), WithCheckpointResume(cp)); err != nil {
+	if _, err := exec2.Resume(context.Background(), taskID); err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
 
@@ -283,24 +329,23 @@ func TestCheckpointResumeRebuildReadyQueue(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("finish")
 
-	exec1, err := g.Compile()
+	store := newMemoryCheckpointer()
+	const taskID = "ready-queue"
+	exec1, err := g.Compile(WithCheckpointer(store))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	var cp Checkpoint
-	_, err = exec1.Execute(context.Background(), NewState(), WithCheckpointSaver(CheckpointSaverFunc(func(snapshot Checkpoint) {
-		if cp.State != nil {
-			return
-		}
-		cp = snapshot.Clone()
-	})))
+	_, err = exec1.Execute(context.Background(), NewState(), WithTaskID(taskID))
 	if err != nil {
 		t.Fatalf("first execution error: %v", err)
 	}
-	if cp.State == nil {
+	checkpoints := store.snapshots(taskID)
+	if len(checkpoints) == 0 {
 		t.Fatal("expected checkpoint to capture state")
 	}
+	cp := checkpoints[0]
+	store.seed(taskID, cp)
 	if _, ok := cp.Received["mid"]; !ok {
 		t.Fatalf("expected checkpoint to mark mid as activated, got %#v", cp.Received)
 	}
@@ -333,12 +378,12 @@ func TestCheckpointResumeRebuildReadyQueue(t *testing.T) {
 	g2.SetEntryPoint("start")
 	g2.SetFinishPoint("finish")
 
-	exec2, err := g2.Compile()
+	exec2, err := g2.Compile(WithCheckpointer(store))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	final, err := exec2.Execute(context.Background(), NewState(), WithCheckpointResume(cp))
+	final, err := exec2.Resume(context.Background(), taskID)
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -422,22 +467,23 @@ func TestCheckpointResumeParallelBranches(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("join")
 
-	exec, err := g.Compile()
+	store := newMemoryCheckpointer()
+	const taskID = "parallel-branches"
+	exec, err := g.Compile(WithCheckpointer(store))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
 	// Capture checkpoint after start completes (branches ready but not executed)
-	var captured Checkpoint
-	_, err = exec.Execute(context.Background(), NewState(), WithCheckpointSaver(CheckpointSaverFunc(func(cp Checkpoint) {
-		if captured.State != nil {
-			return
-		}
-		captured = cp.Clone()
-	})))
+	_, err = exec.Execute(context.Background(), NewState(), WithTaskID(taskID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
+	checkpoints := store.snapshots(taskID)
+	if len(checkpoints) == 0 {
+		t.Fatal("expected checkpoint to capture state")
+	}
+	store.seed(taskID, checkpoints[0])
 
 	// Reset counters and resume
 	atomic.StoreInt32(&counters.start, 0)
@@ -445,7 +491,7 @@ func TestCheckpointResumeParallelBranches(t *testing.T) {
 	atomic.StoreInt32(&counters.branchB, 0)
 	atomic.StoreInt32(&counters.join, 0)
 
-	_, err = exec.Execute(context.Background(), NewState(), WithCheckpointResume(captured))
+	_, err = exec.Resume(context.Background(), taskID)
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -503,7 +549,8 @@ func TestCheckpointResumeConditionalEdge(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("finish")
 
-	exec, err := g.Compile()
+	store := newMemoryCheckpointer()
+	exec, err := g.Compile(WithCheckpointer(store))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
@@ -535,7 +582,9 @@ func TestCheckpointResumeConditionalEdge(t *testing.T) {
 	atomic.StoreInt32(&counters.branchB, 0)
 	atomic.StoreInt32(&counters.finish, 0)
 
-	_, err = exec.Execute(context.Background(), NewState(), WithCheckpointResume(checkpoint))
+	store.seed("conditional-edge", checkpoint)
+
+	_, err = exec.Resume(context.Background(), "conditional-edge")
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -569,28 +618,33 @@ func TestCheckpointResumeFromFinished(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("finish")
 
-	exec, err := g.Compile()
+	store := newMemoryCheckpointer()
+	const taskID = "finished"
+	exec, err := g.Compile(WithCheckpointer(store))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
 	// Capture final checkpoint
-	var finalCheckpoint Checkpoint
-	_, err = exec.Execute(context.Background(), NewState(), WithCheckpointSaver(CheckpointSaverFunc(func(cp Checkpoint) {
-		finalCheckpoint = cp.Clone()
-	})))
+	_, err = exec.Execute(context.Background(), NewState(), WithTaskID(taskID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
 
+	checkpoints := store.snapshots(taskID)
+	if len(checkpoints) == 0 {
+		t.Fatal("expected checkpoints to be recorded")
+	}
+	finalCheckpoint := checkpoints[len(checkpoints)-1]
 	if !finalCheckpoint.Visited["finish"] {
 		t.Fatal("finish should be visited in final checkpoint")
 	}
+	store.seed(taskID, finalCheckpoint)
 
 	// Reset and resume from finished state
 	atomic.StoreInt32(&runCount, 0)
 
-	_, err = exec.Execute(context.Background(), NewState(), WithCheckpointResume(finalCheckpoint))
+	_, err = exec.Resume(context.Background(), taskID)
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -618,7 +672,9 @@ func TestCheckpointResumeEmptyCheckpoint(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("finish")
 
-	exec, err := g.Compile()
+	store := newMemoryCheckpointer()
+	const taskID = "empty"
+	exec, err := g.Compile(WithCheckpointer(store))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
@@ -630,7 +686,9 @@ func TestCheckpointResumeEmptyCheckpoint(t *testing.T) {
 		State:    map[string]any{},
 	}
 
-	result, err := exec.Execute(context.Background(), NewState(), WithCheckpointResume(emptyCheckpoint))
+	store.seed(taskID, emptyCheckpoint)
+
+	result, err := exec.Resume(context.Background(), taskID)
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -679,19 +737,19 @@ func TestCheckpointResumeMultiLevelFanOut(t *testing.T) {
 	g.SetEntryPoint("start")
 	g.SetFinishPoint("finish")
 
-	exec, err := g.Compile()
+	store := newMemoryCheckpointer()
+	const taskID = "multi-fanout"
+	exec, err := g.Compile(WithCheckpointer(store))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
 
 	// Capture checkpoint after mid completes
-	var checkpoints []Checkpoint
-	_, err = exec.Execute(context.Background(), NewState(), WithCheckpointSaver(CheckpointSaverFunc(func(cp Checkpoint) {
-		checkpoints = append(checkpoints, cp.Clone())
-	})))
+	_, err = exec.Execute(context.Background(), NewState(), WithTaskID(taskID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
+	checkpoints := store.snapshots(taskID)
 
 	// Find checkpoint where mid is visited but finish is not
 	var midCheckpoint Checkpoint
@@ -704,13 +762,14 @@ func TestCheckpointResumeMultiLevelFanOut(t *testing.T) {
 	if midCheckpoint.Visited == nil {
 		t.Fatal("could not find checkpoint after mid")
 	}
+	store.seed(taskID, midCheckpoint)
 
 	// Reset and resume
 	mu.Lock()
 	order = nil
 	mu.Unlock()
 
-	_, err = exec.Execute(context.Background(), NewState(), WithCheckpointResume(midCheckpoint))
+	_, err = exec.Resume(context.Background(), taskID)
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}

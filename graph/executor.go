@@ -1,6 +1,11 @@
 package graph
 
-import "context"
+import (
+	"context"
+	"fmt"
+
+	"github.com/google/uuid"
+)
 
 // nodeInfo contains precomputed information for a node to avoid runtime lookups.
 type nodeInfo struct {
@@ -14,37 +19,32 @@ type nodeInfo struct {
 // Executor represents a compiled graph ready for execution. It is safe for
 // concurrent use; each Execute call runs on an isolated execution context.
 type Executor struct {
-	graph     *Graph
-	nodeInfos map[string]*nodeInfo // Precomputed node information
+	graph        *Graph
+	nodeInfos    map[string]*nodeInfo // Precomputed node information
+	checkpointer Checkpointer
 }
 
 // ExecuteOption configures a single execution run.
 type ExecuteOption func(*executeConfig)
 
 type executeConfig struct {
-	saver  CheckpointSaver
-	resume *Checkpoint
+	taskID string
 }
 
-// WithCheckpointSaver registers a saver to persist checkpoints when the
-// scheduler reaches a quiescent point (no in-flight nodes).
-func WithCheckpointSaver(saver CheckpointSaver) ExecuteOption {
-	return func(cfg *executeConfig) {
-		cfg.saver = saver
-	}
+func generateTaskID() string {
+	return uuid.NewString()
 }
 
-// WithCheckpointResume resumes execution from a previously captured checkpoint.
-// The checkpoint is cloned internally to avoid caller-side mutation.
-func WithCheckpointResume(cp Checkpoint) ExecuteOption {
-	cloned := cp.Clone()
+// WithTaskID sets the identifier used for checkpoint persistence during Execute.
+// When omitted or empty, a task ID is generated automatically.
+func WithTaskID(taskID string) ExecuteOption {
 	return func(cfg *executeConfig) {
-		cfg.resume = &cloned
+		cfg.taskID = taskID
 	}
 }
 
 // NewExecutor creates a new Executor for the given graph.
-func NewExecutor(g *Graph) *Executor {
+func NewExecutor(g *Graph, checkpointer Checkpointer) *Executor {
 	dependencyCounts := make(map[string]int)
 	for _, edges := range g.edges {
 		for _, edge := range edges {
@@ -74,22 +74,52 @@ func NewExecutor(g *Graph) *Executor {
 		nodeInfos[nodeName] = node
 	}
 	return &Executor{
-		graph:     g,
-		nodeInfos: nodeInfos,
+		graph:        g,
+		nodeInfos:    nodeInfos,
+		checkpointer: checkpointer,
 	}
 }
 
 // Execute runs the graph task starting from the given state.
-func (e *Executor) Execute(ctx context.Context, state State, opts ...ExecuteOption) (State, error) {
+// A taskID is generated automatically if not provided.
+func (e *Executor) Execute(ctx context.Context, state State, opts ...ExecuteOption) (string, error) {
 	cfg := executeConfig{}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)
 		}
 	}
+	if cfg.taskID == "" {
+		cfg.taskID = generateTaskID()
+	}
 	state.ensure()
-	t := newTask(e, state, cfg.saver)
-	return t.run(ctx, cfg.resume)
+	t := newTask(e, state, e.checkpointer, cfg.taskID)
+	_, err := t.run(ctx, nil)
+	if err != nil {
+		return cfg.taskID, err
+	}
+	return cfg.taskID, nil
+}
+
+// Resume continues a previously started task using the configured Checkpointer.
+func (e *Executor) Resume(ctx context.Context, taskID string) (State, error) {
+	if taskID == "" {
+		return State{}, fmt.Errorf("graph: taskID is required to resume")
+	}
+	if e.checkpointer == nil {
+		return State{}, fmt.Errorf("graph: no checkpointer configured")
+	}
+	checkpoint, ok, err := e.checkpointer.Resume(taskID)
+	if err != nil {
+		return State{}, fmt.Errorf("graph: failed to load checkpoint: %w", err)
+	}
+	if !ok {
+		return State{}, fmt.Errorf("graph: checkpoint not found for task %q", taskID)
+	}
+
+	cloned := checkpoint.Clone()
+	t := newTask(e, State{}, e.checkpointer, taskID)
+	return t.run(ctx, &cloned)
 }
 
 // cloneEdges creates a copy of edge slice to avoid shared state issues.

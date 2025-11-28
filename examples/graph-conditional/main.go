@@ -46,9 +46,10 @@ func main() {
 		log.Fatalf("compile error: %v", err)
 	}
 
-	state, err := executor.Execute(context.Background(), graph.StateFromMap(map[string]any{"n": 100}))
+	state := graph.StateFromMap(map[string]any{"n": 100})
+	taskID, err := executor.Execute(context.Background(), state)
 	if err != nil {
 		log.Fatalf("execution error: %v", err)
 	}
-	log.Println(state.Snapshot())
+	log.Printf("task %s final state: %+v", taskID, state.Snapshot())
 }

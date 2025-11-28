@@ -1,4 +1,3 @@
-
 //go:build legacy_state
 // +build legacy_state
 
@@ -177,7 +176,7 @@ func TestGraphSequentialOrder(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	result, err := executor.Execute(context.Background(), NewState())
+	result, err := executor.Execute(context.Background(), NewState(), "")
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -208,7 +207,7 @@ func TestGraphErrorPropagation(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	_, err = executor.Execute(context.Background(), NewState())
+	_, err = executor.Execute(context.Background(), NewState(), "")
 	if err == nil || !strings.Contains(err.Error(), "node B") {
 		t.Fatalf("expected error from node B, got %v", err)
 	}
@@ -240,7 +239,7 @@ func TestGraphConditionalRouting(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	result, err := executor.Execute(context.Background(), NewState())
+	result, err := executor.Execute(context.Background(), NewState(), "")
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -303,7 +302,7 @@ func TestGraphConditionalMixedPrecedence(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+	if _, err := executor.Execute(context.Background(), State{}, ""); err != nil {
 		t.Fatalf("execution error: %v", err)
 	}
 
@@ -361,7 +360,7 @@ func TestGraphConditionalUnconditionalOrder(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	if _, err := executor.Execute(context.Background(), NewState()); err != nil {
+	if _, err := executor.Execute(context.Background(), NewState(), ""); err != nil {
 		t.Fatalf("execution error: %v", err)
 	}
 
@@ -411,7 +410,7 @@ func TestGraphParallelDoesNotStallIndependentBranches(t *testing.T) {
 	}
 
 	start := time.Now()
-	if _, err := executor.Execute(context.Background(), NewState()); err != nil {
+	if _, err := executor.Execute(context.Background(), NewState(), ""); err != nil {
 		t.Fatalf("execution error: %v", err)
 	}
 
@@ -461,7 +460,7 @@ func TestMiddlewareReceivesNodeName(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	if _, err := executor.Execute(context.Background(), NewState()); err != nil {
+	if _, err := executor.Execute(context.Background(), NewState(), ""); err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
 
@@ -493,7 +492,7 @@ func TestGraphSerialVsParallel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
-	parallelState, err := handlerParallel.Execute(context.Background(), NewState())
+	parallelState, err := handlerParallel.Execute(context.Background(), NewState(), "")
 	if err != nil {
 		t.Fatalf("parallel run error: %v", err)
 	}
@@ -506,7 +505,7 @@ func TestGraphSerialVsParallel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
-	serialState, err := handlerSerial.Execute(context.Background(), NewState())
+	serialState, err := handlerSerial.Execute(context.Background(), NewState(), "")
 	if err != nil {
 		t.Fatalf("serial run error: %v", err)
 	}
@@ -543,7 +542,7 @@ func TestGraphParallelContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err = executor.Execute(ctx, State{})
+	_, err = executor.Execute(ctx, State{}, "")
 	if err == nil {
 		t.Fatalf("expected timeout error")
 	}
@@ -583,7 +582,7 @@ func TestGraphParallelFanOutBranches(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+	if _, err := executor.Execute(context.Background(), State{}, ""); err != nil {
 		t.Fatalf("run error: %v", err)
 	}
 
@@ -677,7 +676,7 @@ func TestGraphParallelNestedFanOutConcurrency(t *testing.T) {
 
 	resCh := make(chan result, 1)
 	go func() {
-		state, err := executor.Execute(ctx, State{})
+		state, err := executor.Execute(ctx, State{}, "")
 		resCh <- result{state: state, err: err}
 	}()
 
@@ -737,7 +736,7 @@ func TestGraphParallelPropagatesBranchError(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	_, err = executor.Execute(context.Background(), State{})
+	_, err = executor.Execute(context.Background(), State{}, "")
 	if err == nil || !strings.Contains(err.Error(), "node fail_branch") {
 		t.Fatalf("expected failure from fail_branch, got %v", err)
 	}
@@ -776,7 +775,7 @@ func TestGraphParallelMergeByKey(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	final, err := executor.Execute(context.Background(), State{})
+	final, err := executor.Execute(context.Background(), State{}, "")
 	if err != nil {
 		t.Fatalf("run error: %v", err)
 	}
@@ -820,7 +819,7 @@ func TestExecutorInitialStatePropagates(t *testing.T) {
 	}
 
 	initial := State{"seed": "value"}
-	result, err := executor.Execute(context.Background(), initial)
+	result, err := executor.Execute(context.Background(), initial, "")
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -868,7 +867,7 @@ func TestExecutorResetBetweenRuns(t *testing.T) {
 	}
 
 	firstInitial := State{"run": 1}
-	firstResult, err := executor.Execute(context.Background(), firstInitial)
+	firstResult, err := executor.Execute(context.Background(), firstInitial, "")
 	if err != nil {
 		t.Fatalf("first execution error: %v", err)
 	}
@@ -880,7 +879,7 @@ func TestExecutorResetBetweenRuns(t *testing.T) {
 	}
 
 	secondInitial := State{"run": 2}
-	secondResult, err := executor.Execute(context.Background(), secondInitial)
+	secondResult, err := executor.Execute(context.Background(), secondInitial, "")
 	if err != nil {
 		t.Fatalf("second execution error: %v", err)
 	}

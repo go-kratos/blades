@@ -55,10 +55,11 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	state, err := executor.Execute(ctx, graph.NewState())
+	state := graph.NewState()
+	taskID, err := executor.Execute(ctx, state)
 	if err != nil {
 		log.Fatalf("execution error: %v", err)
 	}
 
-	log.Printf("final state: %+v", state.Snapshot())
+	log.Printf("task %s final state: %+v", taskID, state.Snapshot())
 }

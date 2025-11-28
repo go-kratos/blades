@@ -31,25 +31,27 @@ type Task struct {
 	// Visited: nodes that have completed
 	visited map[string]bool
 
-	saver                   CheckpointSaver
+	checkpointer            Checkpointer
+	taskID                  string
 	progressSinceCheckpoint bool
 
 	finished bool
 	err      error
 }
 
-func newTask(e *Executor, state State, saver CheckpointSaver) *Task {
+func newTask(e *Executor, state State, checkpointer Checkpointer, taskID string) *Task {
 	// Initialize remaining dependencies count for each node from precomputed nodeInfo
 	state.ensure()
 	task := &Task{
-		executor:  e,
-		state:     state,
-		ready:     make([]string, 0, 4),
-		remaining: make(map[string]int, len(e.graph.nodes)),
-		received:  make(map[string]int),
-		inFlight:  make(map[string]bool, len(e.graph.nodes)),
-		visited:   make(map[string]bool, len(e.graph.nodes)),
-		saver:     saver,
+		executor:     e,
+		state:        state,
+		ready:        make([]string, 0, 4),
+		remaining:    make(map[string]int, len(e.graph.nodes)),
+		received:     make(map[string]int),
+		inFlight:     make(map[string]bool, len(e.graph.nodes)),
+		visited:      make(map[string]bool, len(e.graph.nodes)),
+		checkpointer: checkpointer,
+		taskID:       taskID,
 	}
 	task.readyCond = sync.NewCond(&task.mu)
 	return task
@@ -121,7 +123,7 @@ func (t *Task) restoreCheckpoint(cp Checkpoint) {
 }
 
 func (t *Task) shouldCheckpointLocked() bool {
-	return t.saver != nil && t.progressSinceCheckpoint && len(t.inFlight) == 0
+	return t.checkpointer != nil && t.taskID != "" && t.progressSinceCheckpoint && len(t.inFlight) == 0
 }
 
 // rebuildRemainingLocked derives remaining counts from visited nodes and graph topology.
@@ -172,7 +174,7 @@ func (t *Task) rebuildReadyLocked() {
 }
 
 func (t *Task) emitCheckpointIfIdle() {
-	if t.saver == nil {
+	if t.checkpointer == nil || t.taskID == "" {
 		return
 	}
 
@@ -185,7 +187,9 @@ func (t *Task) emitCheckpointIfIdle() {
 	t.progressSinceCheckpoint = false
 	t.mu.Unlock()
 
-	t.saver.Save(checkpoint)
+	if err := t.checkpointer.Save(t.taskID, checkpoint); err != nil {
+		t.fail(fmt.Errorf("graph: checkpoint save failed: %w", err))
+	}
 }
 
 // checkTermination checks if execution should terminate and returns the result
