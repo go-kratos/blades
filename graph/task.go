@@ -3,10 +3,9 @@ package graph
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 )
-
-const entryContributionParent = "graph_entry"
 
 // Task coordinates a single execution of the graph using a ready-queue based scheduler.
 // This implementation combines:
@@ -14,6 +13,7 @@ const entryContributionParent = "graph_entry"
 // - Blades' automatic skip propagation for complex routing scenarios
 type Task struct {
 	executor *Executor
+	state    State
 
 	wg sync.WaitGroup
 
@@ -24,8 +24,6 @@ type Task struct {
 	ready []string
 	// Remaining dependencies: target -> count of unsatisfied predecessors
 	remaining map[string]int
-	// Contributions: target -> parent -> state (for aggregation)
-	contributions map[string]map[string]State
 	// Number of contributions observed per node
 	received map[string]int
 	// In-flight: nodes currently executing
@@ -33,37 +31,41 @@ type Task struct {
 	// Visited: nodes that have completed
 	visited map[string]bool
 
-	finished    bool
-	finishState State
-	err         error
+	checkpointer            Checkpointer
+	checkpointID            string
+	progressSinceCheckpoint bool
+
+	finished bool
+	err      error
 }
 
-func newTask(e *Executor) *Task {
+func newTask(e *Executor, state State, checkpointer Checkpointer, checkpointID string) *Task {
 	// Initialize remaining dependencies count for each node from precomputed nodeInfo
-	remaining := make(map[string]int, len(e.graph.nodes))
-	for nodeName, info := range e.nodeInfos {
-		if info.dependencies > 0 {
-			remaining[nodeName] = info.dependencies
-		}
-	}
+	state.ensure()
 	task := &Task{
-		executor:      e,
-		ready:         make([]string, 0, 4),
-		remaining:     remaining,
-		contributions: make(map[string]map[string]State),
-		received:      make(map[string]int),
-		inFlight:      make(map[string]bool, len(e.graph.nodes)),
-		visited:       make(map[string]bool, len(e.graph.nodes)),
+		executor:     e,
+		state:        state,
+		ready:        make([]string, 0, 4),
+		remaining:    make(map[string]int, len(e.graph.nodes)),
+		received:     make(map[string]int),
+		inFlight:     make(map[string]bool, len(e.graph.nodes)),
+		visited:      make(map[string]bool, len(e.graph.nodes)),
+		checkpointer: checkpointer,
+		checkpointID: checkpointID,
 	}
 	task.readyCond = sync.NewCond(&task.mu)
 	return task
 }
 
-func (t *Task) run(ctx context.Context, state State) (State, error) {
-	// Add initial contribution to entry point
-	t.addInitialContribution(state)
+func (t *Task) run(ctx context.Context, checkpoint *Checkpoint) (State, error) {
+	if checkpoint != nil {
+		t.restoreCheckpoint(*checkpoint)
+	} else {
+		t.prepareEntry()
+	}
 	// Main scheduling loop
 	for {
+		t.emitCheckpointIfIdle(ctx)
 		// Check termination conditions
 		if shouldStop, result := t.checkTermination(); shouldStop {
 			return result.state, result.err
@@ -82,14 +84,117 @@ type terminationResult struct {
 	err   error
 }
 
-// addInitialContribution adds the initial state to the entry point
-func (t *Task) addInitialContribution(initial State) {
+// prepareEntry seeds the entry node as ready to run.
+func (t *Task) prepareEntry() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.addContributionLocked(t.executor.graph.entryPoint, entryContributionParent, initial) {
-		t.received[t.executor.graph.entryPoint]++
+	// Initialize remaining dependencies
+	for nodeName, info := range t.executor.nodeInfos {
+		if info.dependencies > 0 {
+			t.remaining[nodeName] = info.dependencies
+		}
 	}
+	t.received[t.executor.graph.entryPoint]++
 	t.ready = append(t.ready, t.executor.graph.entryPoint)
+}
+
+func (t *Task) restoreCheckpoint(cp Checkpoint) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.received = maps.Clone(cp.Received)
+	if t.received == nil {
+		t.received = make(map[string]int)
+	}
+
+	t.visited = maps.Clone(cp.Visited)
+	if t.visited == nil {
+		t.visited = make(map[string]bool)
+	}
+
+	t.inFlight = make(map[string]bool, len(t.executor.graph.nodes))
+	t.state.ensure()
+	for key, value := range cp.State {
+		if _, exists := t.state.Load(key); exists {
+			continue
+		}
+		t.state.Store(key, value)
+	}
+	t.rebuildRemainingLocked()
+	t.rebuildReadyLocked()
+	t.finished = t.visited[t.executor.graph.finishPoint]
+	t.err = nil
+	t.progressSinceCheckpoint = false
+}
+
+func (t *Task) shouldCheckpointLocked() bool {
+	return t.checkpointer != nil && t.checkpointID != "" && t.progressSinceCheckpoint && len(t.inFlight) == 0
+}
+
+// rebuildRemainingLocked derives remaining counts from visited nodes and graph topology.
+func (t *Task) rebuildRemainingLocked() {
+	t.remaining = make(map[string]int, len(t.executor.graph.nodes))
+	satisfied := make(map[string]int, len(t.executor.graph.nodes))
+
+	// Count satisfied predecessors based on visited nodes propagating to their children.
+	for from, edges := range t.executor.graph.edges {
+		if !t.visited[from] {
+			continue
+		}
+		for _, edge := range edges {
+			satisfied[edge.to]++
+		}
+	}
+
+	for nodeName, info := range t.executor.nodeInfos {
+		if info.dependencies == 0 {
+			continue
+		}
+		remaining := info.dependencies - satisfied[nodeName]
+		if remaining > 0 {
+			t.remaining[nodeName] = remaining
+		}
+	}
+}
+
+// rebuildReadyLocked rebuilds the ready queue consistent with remaining/visited/received.
+func (t *Task) rebuildReadyLocked() {
+	t.ready = t.ready[:0]
+	for nodeName, info := range t.executor.nodeInfos {
+		if info.dependencies == 0 && !t.visited[nodeName] {
+			// Dependency-free nodes are ready if they had any activation (entry is handled elsewhere)
+			if t.received[nodeName] > 0 {
+				t.ready = append(t.ready, nodeName)
+			}
+			continue
+		}
+		if t.visited[nodeName] || t.remaining[nodeName] > 0 {
+			continue
+		}
+		if t.received[nodeName] == 0 {
+			continue
+		}
+		t.ready = append(t.ready, nodeName)
+	}
+}
+
+func (t *Task) emitCheckpointIfIdle(ctx context.Context) {
+	if t.checkpointer == nil || t.checkpointID == "" {
+		return
+	}
+
+	t.mu.Lock()
+	if !t.shouldCheckpointLocked() {
+		t.mu.Unlock()
+		return
+	}
+	checkpoint := t.buildCheckpointLocked()
+	t.progressSinceCheckpoint = false
+	t.mu.Unlock()
+
+	if err := t.checkpointer.Save(ctx, checkpoint); err != nil {
+		t.fail(fmt.Errorf("graph: checkpoint save failed: %w", err))
+	}
 }
 
 // checkTermination checks if execution should terminate and returns the result
@@ -97,7 +202,7 @@ func (t *Task) checkTermination() (bool, terminationResult) {
 	t.mu.Lock()
 	err := t.err
 	finished := t.finished
-	state := t.finishState
+	state := t.state
 	t.mu.Unlock()
 
 	if err != nil {
@@ -118,8 +223,17 @@ func (t *Task) checkTermination() (bool, terminationResult) {
 func (t *Task) scheduleNext(ctx context.Context) bool {
 	t.mu.Lock()
 
+	if t.shouldCheckpointLocked() {
+		t.mu.Unlock()
+		return false
+	}
+
 	for len(t.ready) == 0 {
 		if t.err != nil || t.finished {
+			t.mu.Unlock()
+			return false
+		}
+		if t.shouldCheckpointLocked() {
 			t.mu.Unlock()
 			return false
 		}
@@ -129,6 +243,11 @@ func (t *Task) scheduleNext(ctx context.Context) bool {
 			return false
 		}
 		t.readyCond.Wait()
+	}
+
+	if t.shouldCheckpointLocked() {
+		t.mu.Unlock()
+		return false
 	}
 
 	// Check if we have ready nodes
@@ -141,8 +260,8 @@ func (t *Task) scheduleNext(ctx context.Context) bool {
 		return true
 	}
 
-	// Build aggregated state and mark as in-flight
-	state := t.buildAggregateLocked(node)
+	// Mark as in-flight
+	state := t.state
 	t.inFlight[node] = true
 	t.wg.Add(1)
 	parallel := t.executor.graph.parallel
@@ -183,7 +302,7 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 	}
 
 	nodeCtx := NewNodeContext(ctx, &NodeContext{Name: node})
-	nextState, err := handler(nodeCtx, state)
+	err := handler(nodeCtx, state)
 	if err != nil {
 		t.fail(fmt.Errorf("graph: failed to execute node %s: %w", node, err))
 		return
@@ -192,10 +311,10 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 	// Mark as visited and get precomputed node info
 	t.mu.Lock()
 	t.visited[node] = true
+	t.progressSinceCheckpoint = true
 	info := t.executor.nodeInfos[node]
 	if info.isFinish && !t.finished {
 		t.finished = true
-		t.finishState = nextState
 		t.readyCond.Broadcast()
 	}
 	t.mu.Unlock()
@@ -206,13 +325,13 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 	}
 
 	// Process outgoing edges (at least one edge guaranteed by compile-time validation)
-	t.processOutgoing(ctx, node, info, nextState)
+	t.processOutgoing(ctx, node, info, state)
 }
 
 func (t *Task) processOutgoing(ctx context.Context, node string, info *nodeInfo, state State) {
 	if !info.hasConditions {
 		for _, dest := range info.unconditionalDests {
-			t.satisfy(node, dest, state.Clone())
+			t.satisfy(node, dest, true)
 		}
 		return
 	}
@@ -225,9 +344,9 @@ func (t *Task) processOutgoing(ctx context.Context, node string, info *nodeInfo,
 		}
 		if edge.condition(ctx, state) {
 			matched = true
-			t.satisfy(node, edge.to, state.Clone())
+			t.satisfy(node, edge.to, true)
 		} else {
-			t.satisfy(node, edge.to, nil)
+			t.satisfy(node, edge.to, false)
 		}
 	}
 
@@ -237,9 +356,9 @@ func (t *Task) processOutgoing(ctx context.Context, node string, info *nodeInfo,
 	}
 }
 
-// satisfy handles both state propagation and skip registration in a unified way.
-// When state is non-nil, it's a propagation (contribution); when nil, it's a skip.
-func (t *Task) satisfy(from, to string, state State) {
+// satisfy handles dependency fulfillment and skip registration.
+// activated indicates whether the edge was taken (true) or skipped (false).
+func (t *Task) satisfy(from, to string, activated bool) {
 	t.mu.Lock()
 
 	// Early exit if already visited
@@ -255,11 +374,9 @@ func (t *Task) satisfy(from, to string, state State) {
 		return
 	}
 
-	// Add contribution if state provided
-	if state != nil {
-		if t.addContributionLocked(to, from, state) {
-			t.received[to]++
-		}
+	// Track active contributions
+	if activated {
+		t.received[to]++
 	}
 
 	// Decrement remaining count
@@ -272,12 +389,12 @@ func (t *Task) satisfy(from, to string, state State) {
 		if t.received[to] == 0 {
 			// All predecessors skipped - mark as skipped and propagate skip
 			t.visited[to] = true
-			// No need to delete contributions: received==0 means contributions[to] is empty
+			t.progressSinceCheckpoint = true
 			delete(t.received, to)
 			t.readyCond.Signal()
 			t.mu.Unlock()
 			for _, edge := range info.outEdges {
-				t.satisfy(to, edge.to, nil)
+				t.satisfy(to, edge.to, false)
 			}
 			return
 		}
@@ -306,55 +423,11 @@ func (t *Task) fail(err error) {
 	t.readyCond.Broadcast()
 }
 
-func (t *Task) buildAggregateLocked(node string) State {
-	state := State{}
-	contribs, ok := t.contributions[node]
-	if !ok || len(contribs) == 0 {
-		delete(t.received, node)
-		return state
+func (t *Task) buildCheckpointLocked() *Checkpoint {
+	return &Checkpoint{
+		ID:       t.checkpointID,
+		Received: maps.Clone(t.received),
+		Visited:  maps.Clone(t.visited),
+		State:    t.state.Snapshot(),
 	}
-
-	// Use precomputed predecessors order from nodeInfo
-	info := t.executor.nodeInfos[node]
-	order := info.predecessors
-
-	// Merge in predecessor order for determinism; the entry node's list already includes the synthetic parent
-	for _, parent := range order {
-		if contribution, exists := contribs[parent]; exists {
-			state = mergeStates(state, contribution)
-		}
-	}
-
-	// Clean up contributions
-	delete(t.contributions, node)
-	delete(t.received, node)
-	return state
-}
-
-func (t *Task) addContributionLocked(node, parent string, state State) bool {
-	if t.contributions[node] == nil {
-		t.contributions[node] = make(map[string]State)
-	}
-	if _, exists := t.contributions[node][parent]; exists {
-		// Ignore duplicate contribution
-		return false
-	}
-	t.contributions[node][parent] = state
-	return true
-}
-
-func mergeStates(base State, updates ...State) State {
-	merged := State{}
-	if base != nil {
-		merged = base.Clone()
-	}
-	for _, update := range updates {
-		if update == nil {
-			continue
-		}
-		for k, v := range update {
-			merged[k] = v
-		}
-	}
-	return merged
 }

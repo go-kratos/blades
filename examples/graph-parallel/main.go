@@ -9,11 +9,11 @@ import (
 )
 
 func logger(name string) graph.Handler {
-	return func(ctx context.Context, state graph.State) (graph.State, error) {
+	return func(ctx context.Context, state graph.State) error {
 		time.Sleep(time.Millisecond * 500)
 		log.Println("execute node:", name)
-		state[name] = "visited"
-		return state, nil
+		state.Store(name, "visited")
+		return nil
 	}
 }
 
@@ -43,9 +43,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	state, err := executor.Execute(context.Background(), graph.State{})
-	if err != nil {
+	state := graph.NewState()
+	if err := executor.Execute(context.Background(), state); err != nil {
 		log.Fatal(err)
 	}
-	log.Println("final state:", state)
+	log.Printf("task final state: %+v", state.Snapshot())
 }
