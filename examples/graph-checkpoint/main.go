@@ -22,13 +22,13 @@ func NewCheckpointStore() *checkpointStore {
 }
 
 func (s *checkpointStore) Save(ctx context.Context, checkpoint *graph.Checkpoint) error {
-	s.checkpoints[checkpoint.ID] = checkpoint
+	s.checkpoints[checkpoint.ID] = checkpoint.Clone()
 	return nil
 }
 
 func (s *checkpointStore) Resume(ctx context.Context, checkpointID string) (*graph.Checkpoint, error) {
 	if cp, ok := s.checkpoints[checkpointID]; ok {
-		return cp, nil
+		return cp.Clone(), nil
 	}
 	return nil, fmt.Errorf("checkpoint %s not found", checkpointID)
 }
@@ -64,11 +64,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("compile error: %v", err)
 	}
+
 	// Execute the graph with checkpointing
 	initState := graph.NewState()
 	if err := executor.Execute(context.Background(), initState, graph.WithCheckpointID(checkpointID)); err != nil {
-		log.Fatal(err)
+		if !errors.Is(err, ErrProcessApproval) {
+			log.Fatalf("execute error: %v", err)
+		}
+		log.Printf("execution paused waiting for approval: %v", err)
+	} else {
+		log.Println("task completed without approval, no resume needed")
+		return
 	}
+
 	// Simulate approval and resume execution
 	resumeState := graph.NewState(map[string]any{
 		"approved": true,
@@ -76,4 +84,6 @@ func main() {
 	if err := executor.Resume(context.Background(), resumeState, graph.WithCheckpointID(checkpointID)); err != nil {
 		log.Fatal(err)
 	}
+
+	log.Printf("resumed from checkpoint %s, final state: %+v", checkpointID, resumeState.Snapshot())
 }

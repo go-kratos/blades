@@ -113,8 +113,13 @@ func (t *Task) restoreCheckpoint(cp Checkpoint) {
 	}
 
 	t.inFlight = make(map[string]bool, len(t.executor.graph.nodes))
-	t.state = NewState(cp.State)
 	t.state.ensure()
+	for key, value := range cp.State {
+		if _, exists := t.state.Load(key); exists {
+			continue
+		}
+		t.state.Store(key, value)
+	}
 	t.rebuildRemainingLocked()
 	t.rebuildReadyLocked()
 	t.finished = t.visited[t.executor.graph.finishPoint]

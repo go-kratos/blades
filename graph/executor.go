@@ -101,9 +101,23 @@ func (e *Executor) Resume(ctx context.Context, state State, opts ...ExecuteOptio
 	if err != nil {
 		return fmt.Errorf("graph: failed to load checkpoint: %w", err)
 	}
-	resumeState := NewState(checkpoint.State)
-	resumeState.Merge(state)
-	t := newTask(e, resumeState, e.checkpointer, o.CheckpointID)
+
+	// Merge checkpoint state with provided state (provided values override checkpoint)
+	mergedState := NewState(checkpoint.State)
+	mergedState.Merge(state)
+
+	// Copy merged values back into the provided state so callers observe updates.
+	state.ensure()
+	state.data.Range(func(key, _ any) bool {
+		state.data.Delete(key)
+		return true
+	})
+	mergedState.data.Range(func(key, value any) bool {
+		state.data.Store(key, value)
+		return true
+	})
+
+	t := newTask(e, state, e.checkpointer, o.CheckpointID)
 	_, err = t.run(ctx, checkpoint)
 	return err
 }

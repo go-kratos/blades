@@ -44,9 +44,8 @@ func main() {
 	}
 
 	state := graph.NewState()
-	taskID, err := executor.Execute(context.Background(), state)
-	if err != nil {
+	if err := executor.Execute(context.Background(), state); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("task %s final state: %+v", taskID, state.Snapshot())
+	log.Printf("task final state: %+v", state.Snapshot())
 }

@@ -56,10 +56,9 @@ func main() {
 	defer cancel()
 
 	state := graph.NewState()
-	taskID, err := executor.Execute(ctx, state)
-	if err != nil {
+	if err := executor.Execute(ctx, state); err != nil {
 		log.Fatalf("execution error: %v", err)
 	}
 
-	log.Printf("task %s final state: %+v", taskID, state.Snapshot())
+	log.Printf("task final state: %+v", state.Snapshot())
 }
