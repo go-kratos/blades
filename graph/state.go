@@ -49,13 +49,6 @@ func (s State) Delete(key string) {
 	s.data.Delete(key)
 }
 
-func (s State) Merge(other State) {
-	other.data.Range(func(key, value any) bool {
-		s.Store(key.(string), value)
-		return true
-	})
-}
-
 // Snapshot copies the contents into a plain map for serialization or testing.
 func (s State) Snapshot() map[string]any {
 	if s.data == nil {

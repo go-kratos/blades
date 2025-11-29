@@ -103,19 +103,11 @@ func (e *Executor) Resume(ctx context.Context, state State, opts ...ExecuteOptio
 	}
 
 	// Merge checkpoint state with provided state (provided values override checkpoint)
-	mergedState := NewState(checkpoint.State)
-	mergedState.Merge(state)
-
-	// Copy merged values back into the provided state so callers observe updates.
-	state.ensure()
-	state.data.Range(func(key, _ any) bool {
-		state.data.Delete(key)
-		return true
-	})
-	mergedState.data.Range(func(key, value any) bool {
-		state.data.Store(key, value)
-		return true
-	})
+	for k, v := range checkpoint.State {
+		if _, ok := state.Load(k); !ok {
+			state.Store(k, v)
+		}
+	}
 
 	t := newTask(e, state, e.checkpointer, o.CheckpointID)
 	_, err = t.run(ctx, checkpoint)
