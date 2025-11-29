@@ -150,18 +150,18 @@ func (m *Message) String() string {
 }
 
 // UserMessage creates a user-authored message from parts.
-func UserMessage[T contentPart](parts ...T) *Message {
-	return &Message{ID: NewMessageID(), Role: RoleUser, Author: "user", Parts: Parts(parts...)}
+func UserMessage(parts ...any) *Message {
+	return &Message{ID: NewMessageID(), Role: RoleUser, Author: "user", Parts: NewMessageParts(parts...)}
 }
 
 // SystemMessage creates a system-authored message from parts.
-func SystemMessage[T contentPart](parts ...T) *Message {
-	return &Message{ID: NewMessageID(), Role: RoleSystem, Parts: Parts(parts...)}
+func SystemMessage(parts ...any) *Message {
+	return &Message{ID: NewMessageID(), Role: RoleSystem, Parts: NewMessageParts(parts...)}
 }
 
 // AssistantMessage creates an assistant-authored message from parts.
-func AssistantMessage[T contentPart](parts ...T) *Message {
-	return &Message{ID: NewMessageID(), Role: RoleAssistant, Parts: Parts(parts...)}
+func AssistantMessage(parts ...any) *Message {
+	return &Message{ID: NewMessageID(), Role: RoleAssistant, Parts: NewMessageParts(parts...)}
 }
 
 // NewAssistantMessage creates a new assistant message with the given status.
@@ -180,14 +180,9 @@ func NewMessageID() string {
 	return uuid.NewString()
 }
 
-// contentPart is a type constraint for valid content inputs.
-type contentPart interface {
-	string | TextPart | FilePart | DataPart | ToolPart
-}
-
-// Parts converts a heterogeneous list of content inputs into model parts.
+// NewMessageParts converts a heterogeneous list of content inputs into model parts.
 // Accepts raw string, Text, FileURI, and FileBytes.
-func Parts[T contentPart](inputs ...T) []Part {
+func NewMessageParts(inputs ...any) []Part {
 	parts := make([]Part, 0, len(inputs))
 	for _, input := range inputs {
 		switch v := any(input).(type) {
