@@ -1,0 +1,39 @@
+package main
+
+import (
+	"context"
+	"log"
+	"os"
+
+	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/contrib/openai"
+)
+
+func main() {
+	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
+		APIKey: os.Getenv("OPENAI_API_KEY"),
+	})
+	agent, err := blades.NewAgent(
+		"Basic Agent",
+		blades.WithModel(model),
+		blades.WithInstruction("You are a helpful assistant that provides detailed and accurate information."),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	input := blades.UserMessage(
+		blades.TextPart{
+			Text: "Can you describe the image in logo.svg?",
+		},
+		blades.FilePart{
+			MIMEType: "image/png",
+			URI:      "https://go-kratos.dev/images/architecture.png",
+		},
+	)
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(context.Background(), input)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println(output.Text())
+}
