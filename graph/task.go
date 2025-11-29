@@ -113,7 +113,7 @@ func (t *Task) restoreCheckpoint(cp Checkpoint) {
 	}
 
 	t.inFlight = make(map[string]bool, len(t.executor.graph.nodes))
-	t.state = StateFromMap(cp.State)
+	t.state = NewState(cp.State)
 	t.state.ensure()
 	t.rebuildRemainingLocked()
 	t.rebuildReadyLocked()

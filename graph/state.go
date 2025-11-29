@@ -10,17 +10,14 @@ type State struct {
 }
 
 // NewState constructs an empty State.
-func NewState() State {
-	return State{data: &sync.Map{}}
-}
-
-// StateFromMap seeds a State with the provided entries.
-func StateFromMap(values map[string]any) State {
-	s := NewState()
-	for k, v := range values {
-		s.Store(k, v)
+func NewState(ms ...map[string]any) State {
+	state := State{data: &sync.Map{}}
+	for _, m := range ms {
+		for k, v := range m {
+			state.data.Store(k, v)
+		}
 	}
-	return s
+	return state
 }
 
 // ensure lazily initializes the backing map.
@@ -50,6 +47,13 @@ func (s State) Delete(key string) {
 		return
 	}
 	s.data.Delete(key)
+}
+
+func (s State) Merge(other State) {
+	other.data.Range(func(key, value any) bool {
+		s.Store(key.(string), value)
+		return true
+	})
 }
 
 // Snapshot copies the contents into a plain map for serialization or testing.

@@ -87,7 +87,7 @@ func TestSequentialExecutionSharedState(t *testing.T) {
 	}
 
 	state := NewState()
-	if _, err := exec.Execute(context.Background(), state); err != nil {
+	if err := exec.Execute(context.Background(), state); err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
 
@@ -135,7 +135,7 @@ func TestCheckpointResumeSharedState(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	_, err = exec1.Execute(context.Background(), NewState(), WithTaskID("task"))
+	err = exec1.Execute(context.Background(), NewState(), WithCheckpointID("task"))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -156,7 +156,8 @@ func TestCheckpointResumeSharedState(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	final, err := exec2.Resume(context.Background(), "task")
+	state := NewState()
+	err = exec2.Resume(context.Background(), state, WithCheckpointID("task"))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -168,7 +169,7 @@ func TestCheckpointResumeSharedState(t *testing.T) {
 		t.Fatalf("mid/finish should run again on resume, counters=%#v", counters)
 	}
 
-	val := getIntFromState(final, valueKey)
+	val := getIntFromState(state, valueKey)
 	if val != 3 {
 		t.Fatalf("expected value to be 3 after resume, got %d", val)
 	}
@@ -245,7 +246,7 @@ func TestCheckpointResumeWithSkippedBranch(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	_, err = exec1.Execute(context.Background(), NewState(), WithTaskID(checkpointID))
+	err = exec1.Execute(context.Background(), NewState(), WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -285,7 +286,8 @@ func TestCheckpointResumeWithSkippedBranch(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	if _, err := exec2.Resume(context.Background(), checkpointID); err != nil {
+	state := NewState()
+	if err := exec2.Resume(context.Background(), state, WithCheckpointID(checkpointID)); err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
 
@@ -336,7 +338,7 @@ func TestCheckpointResumeRebuildReadyQueue(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	_, err = exec1.Execute(context.Background(), NewState(), WithTaskID(checkpointID))
+	err = exec1.Execute(context.Background(), NewState(), WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("first execution error: %v", err)
 	}
@@ -383,7 +385,8 @@ func TestCheckpointResumeRebuildReadyQueue(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	final, err := exec2.Resume(context.Background(), checkpointID)
+	state := NewState()
+	err = exec2.Resume(context.Background(), state, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -394,7 +397,7 @@ func TestCheckpointResumeRebuildReadyQueue(t *testing.T) {
 	if secondCounts.mid != 1 || secondCounts.finish != 1 {
 		t.Fatalf("mid/finish should run once on resume, got mid=%d finish=%d", secondCounts.mid, secondCounts.finish)
 	}
-	if val := getIntFromState(final, valueKey); val != 3 {
+	if val := getIntFromState(state, valueKey); val != 3 {
 		t.Fatalf("expected final value 3 after resume, got %d", val)
 	}
 }
@@ -475,7 +478,7 @@ func TestCheckpointResumeParallelBranches(t *testing.T) {
 	}
 
 	// Capture checkpoint after start completes (branches ready but not executed)
-	_, err = exec.Execute(context.Background(), NewState(), WithTaskID(checkpointID))
+	err = exec.Execute(context.Background(), NewState(), WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -491,7 +494,8 @@ func TestCheckpointResumeParallelBranches(t *testing.T) {
 	atomic.StoreInt32(&counters.branchB, 0)
 	atomic.StoreInt32(&counters.join, 0)
 
-	_, err = exec.Resume(context.Background(), checkpointID)
+	state := NewState()
+	err = exec.Resume(context.Background(), state, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -556,7 +560,7 @@ func TestCheckpointResumeConditionalEdge(t *testing.T) {
 	}
 
 	// Run full execution first
-	_, err = exec.Execute(context.Background(), NewState())
+	err = exec.Execute(context.Background(), NewState())
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -584,7 +588,8 @@ func TestCheckpointResumeConditionalEdge(t *testing.T) {
 
 	store.seed("conditional-edge", checkpoint)
 
-	_, err = exec.Resume(context.Background(), "conditional-edge")
+	state := NewState()
+	err = exec.Resume(context.Background(), state, WithCheckpointID("conditional-edge"))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -626,7 +631,7 @@ func TestCheckpointResumeFromFinished(t *testing.T) {
 	}
 
 	// Capture final checkpoint
-	_, err = exec.Execute(context.Background(), NewState(), WithTaskID(checkpointID))
+	err = exec.Execute(context.Background(), NewState(), WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -644,7 +649,8 @@ func TestCheckpointResumeFromFinished(t *testing.T) {
 	// Reset and resume from finished state
 	atomic.StoreInt32(&runCount, 0)
 
-	_, err = exec.Resume(context.Background(), checkpointID)
+	state := NewState()
+	err = exec.Resume(context.Background(), state, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -688,8 +694,8 @@ func TestCheckpointResumeEmptyCheckpoint(t *testing.T) {
 
 	store.seed(checkpointID, emptyCheckpoint)
 
-	result, err := exec.Resume(context.Background(), checkpointID)
-	if err != nil {
+	state := NewState()
+	if err := exec.Resume(context.Background(), state, WithCheckpointID(checkpointID)); err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
 
@@ -698,7 +704,7 @@ func TestCheckpointResumeEmptyCheckpoint(t *testing.T) {
 		t.Fatalf("expected 2 nodes to run, got %d", runCount)
 	}
 
-	val := getIntFromState(result, valueKey)
+	val := getIntFromState(state, valueKey)
 	if val != 42 {
 		t.Fatalf("expected value 42, got %d", val)
 	}
@@ -745,7 +751,7 @@ func TestCheckpointResumeMultiLevelFanOut(t *testing.T) {
 	}
 
 	// Capture checkpoint after mid completes
-	_, err = exec.Execute(context.Background(), NewState(), WithTaskID(checkpointID))
+	err = exec.Execute(context.Background(), NewState(), WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -769,7 +775,8 @@ func TestCheckpointResumeMultiLevelFanOut(t *testing.T) {
 	order = nil
 	mu.Unlock()
 
-	_, err = exec.Resume(context.Background(), checkpointID)
+	state := NewState()
+	err = exec.Resume(context.Background(), state, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
