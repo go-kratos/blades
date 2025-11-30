@@ -36,21 +36,21 @@ func (s *checkpointStore) Resume(ctx context.Context, checkpointID string) (*gra
 func main() {
 	g := graph.New(graph.WithMiddleware(graph.Retry(3)))
 	// Define nodes
-	g.AddNode("start", func(ctx context.Context, state graph.State) error {
-		state.Store("start", true)
-		return nil
+	g.AddNode("start", func(ctx context.Context, state graph.State) (graph.State, error) {
+		state["start"] = true
+		return state, nil
 	})
-	g.AddNode("process", func(ctx context.Context, state graph.State) error {
-		state.Store("process", true)
-		approved, ok := state.Load("approved")
-		if !ok || !approved.(bool) {
-			return ErrProcessApproval
+	g.AddNode("process", func(ctx context.Context, state graph.State) (graph.State, error) {
+		state["process"] = true
+		approved, ok := state["approved"].(bool)
+		if !ok || !approved {
+			return nil, ErrProcessApproval
 		}
-		return nil
+		return state, nil
 	})
-	g.AddNode("finish", func(ctx context.Context, state graph.State) error {
-		state.Store("finish", true)
-		return nil
+	g.AddNode("finish", func(ctx context.Context, state graph.State) (graph.State, error) {
+		state["finish"] = true
+		return state, nil
 	})
 	// Define edges
 	g.AddEdge("start", "process")
@@ -66,8 +66,8 @@ func main() {
 	}
 
 	// Execute the graph with checkpointing
-	initState := graph.NewState()
-	if err := executor.Execute(context.Background(), initState, graph.WithCheckpointID(checkpointID)); err != nil {
+	state, err := executor.Execute(context.Background(), graph.State{}, graph.WithCheckpointID(checkpointID))
+	if err != nil {
 		if !errors.Is(err, ErrProcessApproval) {
 			log.Fatalf("execute error: %v", err)
 		}
@@ -76,14 +76,16 @@ func main() {
 		log.Println("task completed without approval, no resume needed")
 		return
 	}
+	log.Println("task paused, waiting for approval...", state)
 
 	// Simulate approval and resume execution
-	resumeState := graph.NewState(map[string]any{
+	resumeState := graph.State{
 		"approved": true,
-	})
-	if err := executor.Resume(context.Background(), resumeState, graph.WithCheckpointID(checkpointID)); err != nil {
+	}
+	finalState, err := executor.Resume(context.Background(), resumeState, graph.WithCheckpointID(checkpointID))
+	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Printf("resumed from checkpoint %s, final state: %+v", checkpointID, resumeState.Snapshot())
+	log.Printf("resumed from checkpoint %s, final state: %+v", checkpointID, finalState)
 }

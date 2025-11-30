@@ -8,9 +8,9 @@ import (
 )
 
 func logger(name string) graph.Handler {
-	return func(ctx context.Context, state graph.State) error {
+	return func(ctx context.Context, state graph.State) (graph.State, error) {
 		log.Println("execute node:", name)
-		return nil
+		return state, nil
 	}
 }
 
@@ -26,13 +26,11 @@ func main() {
 
 	g.AddEdge("start", "decision")
 	g.AddEdge("decision", "positive", graph.WithEdgeCondition(func(_ context.Context, state graph.State) bool {
-		raw, _ := state.Load("n")
-		n, _ := raw.(int)
+		n, _ := state["n"].(int)
 		return n > 0
 	}))
 	g.AddEdge("decision", "negative", graph.WithEdgeCondition(func(_ context.Context, state graph.State) bool {
-		raw, _ := state.Load("n")
-		n, _ := raw.(int)
+		n, _ := state["n"].(int)
 		return n < 0
 	}))
 	g.AddEdge("positive", "finish")
@@ -46,10 +44,9 @@ func main() {
 		log.Fatalf("compile error: %v", err)
 	}
 
-	state := graph.NewState(map[string]any{"n": 100})
-	err = executor.Execute(context.Background(), state)
+	state, err := executor.Execute(context.Background(), graph.State{"n": 100})
 	if err != nil {
 		log.Fatalf("execution error: %v", err)
 	}
-	log.Printf("task final state: %+v", state.Snapshot())
+	log.Printf("task final state: %+v", state)
 }
