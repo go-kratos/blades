@@ -66,16 +66,16 @@ func (m *memoryCheckpointer) snapshots(checkpointID string) []*Checkpoint {
 
 func TestSequentialExecutionSharedState(t *testing.T) {
 	g := New(WithParallel(false))
-	g.AddNode("start", func(ctx context.Context, state State) error {
-		state.Store(stepsKey, []string{"start"})
-		return nil
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		state[stepsKey] = []string{"start"}
+		return state, nil
 	})
-	g.AddNode("finish", func(ctx context.Context, state State) error {
-		raw, _ := state.Load(stepsKey)
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		raw, _ := state[stepsKey]
 		steps := getStringSlice(raw)
 		steps = append(steps, "finish")
-		state.Store(stepsKey, steps)
-		return nil
+		state[stepsKey] = steps
+		return state, nil
 	})
 	g.AddEdge("start", "finish")
 	g.SetEntryPoint("start")
@@ -86,8 +86,8 @@ func TestSequentialExecutionSharedState(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	state := NewState()
-	if err := exec.Execute(context.Background(), state); err != nil {
+	state, err := exec.Execute(context.Background(), State{})
+	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
 
@@ -104,25 +104,24 @@ func TestCheckpointResumeSharedState(t *testing.T) {
 		mid    int32
 		finish int32
 	}
-
-	g.AddNode("start", func(ctx context.Context, state State) error {
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counters.start, 1)
-		state.Store(valueKey, 1)
-		return nil
+		state[valueKey] = 1
+		return state, nil
 	})
-	g.AddNode("mid", func(ctx context.Context, state State) error {
+	g.AddNode("mid", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counters.mid, 1)
-		raw, _ := state.Load(valueKey)
+		raw, _ := state[valueKey]
 		v, _ := raw.(int)
-		state.Store(valueKey, v+1)
-		return nil
+		state[valueKey] = v + 1
+		return state, nil
 	})
-	g.AddNode("finish", func(ctx context.Context, state State) error {
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counters.finish, 1)
-		raw, _ := state.Load(valueKey)
+		raw, _ := state[valueKey]
 		v, _ := raw.(int)
-		state.Store(valueKey, v+1)
-		return nil
+		state[valueKey] = v + 1
+		return state, nil
 	})
 	g.AddEdge("start", "mid")
 	g.AddEdge("mid", "finish")
@@ -135,7 +134,7 @@ func TestCheckpointResumeSharedState(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	err = exec1.Execute(context.Background(), NewState(), WithCheckpointID("task"))
+	state, err := exec1.Execute(context.Background(), State{}, WithCheckpointID("task"))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -156,8 +155,7 @@ func TestCheckpointResumeSharedState(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	state := NewState()
-	err = exec2.Resume(context.Background(), state, WithCheckpointID("task"))
+	state, err = exec2.Resume(context.Background(), State{}, WithCheckpointID("task"))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -206,30 +204,30 @@ func TestCheckpointResumeWithSkippedBranch(t *testing.T) {
 		join    int32
 	}
 
-	g.AddNode("start", func(ctx context.Context, state State) error {
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counts.start, 1)
-		state.Store("start", true)
-		return nil
+		state["start"] = true
+		return state, nil
 	})
-	g.AddNode("branch_a", func(ctx context.Context, state State) error {
+	g.AddNode("branch_a", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counts.branchA, 1)
-		state.Store("a", true)
-		return nil
+		state["a"] = true
+		return state, nil
 	})
-	g.AddNode("branch_b", func(ctx context.Context, state State) error {
+	g.AddNode("branch_b", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counts.branchB, 1)
-		state.Store("b", true)
-		return nil
+		state["b"] = true
+		return state, nil
 	})
-	g.AddNode("join", func(ctx context.Context, state State) error {
+	g.AddNode("join", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counts.join, 1)
-		if _, ok := state.Load("a"); !ok {
-			return fmt.Errorf("missing branch_a state")
+		if _, ok := state["a"]; !ok {
+			return nil, fmt.Errorf("missing branch_a state")
 		}
-		if _, ok := state.Load("b"); ok {
-			return fmt.Errorf("unexpected branch_b state")
+		if _, ok := state["b"]; ok {
+			return nil, fmt.Errorf("unexpected branch_b state")
 		}
-		return nil
+		return state, nil
 	})
 
 	g.AddEdge("start", "branch_a", WithEdgeCondition(func(_ context.Context, _ State) bool { return true }))
@@ -246,7 +244,7 @@ func TestCheckpointResumeWithSkippedBranch(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	err = exec1.Execute(context.Background(), NewState(), WithCheckpointID(checkpointID))
+	_, err = exec1.Execute(context.Background(), State{}, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -266,14 +264,23 @@ func TestCheckpointResumeWithSkippedBranch(t *testing.T) {
 		join    int32
 	}
 	g2 := New(WithParallel(false))
-	g2.AddNode("start", func(ctx context.Context, state State) error { atomic.AddInt32(&counts2.start, 1); return nil })
-	g2.AddNode("branch_a", func(ctx context.Context, state State) error {
-		atomic.AddInt32(&counts2.branchA, 1)
-		state.Store("a", true)
-		return nil
+	g2.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		atomic.AddInt32(&counts2.start, 1)
+		return state, nil
 	})
-	g2.AddNode("branch_b", func(ctx context.Context, state State) error { atomic.AddInt32(&counts2.branchB, 1); return nil })
-	g2.AddNode("join", func(ctx context.Context, state State) error { atomic.AddInt32(&counts2.join, 1); return nil })
+	g2.AddNode("branch_a", func(ctx context.Context, state State) (State, error) {
+		atomic.AddInt32(&counts2.branchA, 1)
+		state["a"] = true
+		return state, nil
+	})
+	g2.AddNode("branch_b", func(ctx context.Context, state State) (State, error) {
+		atomic.AddInt32(&counts2.branchB, 1)
+		return state, nil
+	})
+	g2.AddNode("join", func(ctx context.Context, state State) (State, error) {
+		atomic.AddInt32(&counts2.join, 1)
+		return state, nil
+	})
 	g2.AddEdge("start", "branch_a", WithEdgeCondition(func(_ context.Context, _ State) bool { return true }))
 	g2.AddEdge("start", "branch_b", WithEdgeCondition(func(_ context.Context, _ State) bool { return false }))
 	g2.AddEdge("branch_a", "join")
@@ -286,8 +293,8 @@ func TestCheckpointResumeWithSkippedBranch(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	state := NewState()
-	if err := exec2.Resume(context.Background(), state, WithCheckpointID(checkpointID)); err != nil {
+	_, err = exec2.Resume(context.Background(), State{}, WithCheckpointID(checkpointID))
+	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
 
@@ -309,22 +316,22 @@ func TestCheckpointResumeRebuildReadyQueue(t *testing.T) {
 		finish int32
 	}
 	g := New(WithParallel(false))
-	g.AddNode("start", func(ctx context.Context, state State) error {
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&firstCounts.start, 1)
-		state.Store(valueKey, 1)
-		return nil
+		state[valueKey] = 1
+		return state, nil
 	})
-	g.AddNode("mid", func(ctx context.Context, state State) error {
+	g.AddNode("mid", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&firstCounts.mid, 1)
 		val := getIntFromState(state, valueKey)
-		state.Store(valueKey, val+1)
-		return nil
+		state[valueKey] = val + 1
+		return state, nil
 	})
-	g.AddNode("finish", func(ctx context.Context, state State) error {
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&firstCounts.finish, 1)
 		val := getIntFromState(state, valueKey)
-		state.Store(valueKey, val+1)
-		return nil
+		state[valueKey] = val + 1
+		return state, nil
 	})
 	g.AddEdge("start", "mid")
 	g.AddEdge("mid", "finish")
@@ -338,7 +345,7 @@ func TestCheckpointResumeRebuildReadyQueue(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	err = exec1.Execute(context.Background(), NewState(), WithCheckpointID(checkpointID))
+	_, err = exec1.Execute(context.Background(), State{}, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("first execution error: %v", err)
 	}
@@ -359,21 +366,21 @@ func TestCheckpointResumeRebuildReadyQueue(t *testing.T) {
 		finish int32
 	}
 	g2 := New(WithParallel(false))
-	g2.AddNode("start", func(ctx context.Context, state State) error {
+	g2.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&secondCounts.start, 1)
-		return nil
+		return state, nil
 	})
-	g2.AddNode("mid", func(ctx context.Context, state State) error {
+	g2.AddNode("mid", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&secondCounts.mid, 1)
 		val := getIntFromState(state, valueKey)
-		state.Store(valueKey, val+1)
-		return nil
+		state[valueKey] = val + 1
+		return state, nil
 	})
-	g2.AddNode("finish", func(ctx context.Context, state State) error {
+	g2.AddNode("finish", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&secondCounts.finish, 1)
 		val := getIntFromState(state, valueKey)
-		state.Store(valueKey, val+1)
-		return nil
+		state[valueKey] = val + 1
+		return state, nil
 	})
 	g2.AddEdge("start", "mid")
 	g2.AddEdge("mid", "finish")
@@ -385,8 +392,7 @@ func TestCheckpointResumeRebuildReadyQueue(t *testing.T) {
 		t.Fatalf("compile error: %v", err)
 	}
 
-	state := NewState()
-	err = exec2.Resume(context.Background(), state, WithCheckpointID(checkpointID))
+	state, err := exec2.Resume(context.Background(), State{}, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -403,7 +409,7 @@ func TestCheckpointResumeRebuildReadyQueue(t *testing.T) {
 }
 
 func getIntFromState(state State, key string) int {
-	raw, _ := state.Load(key)
+	raw, _ := state[key]
 	if v, ok := raw.(int); ok {
 		return v
 	}
@@ -430,7 +436,7 @@ func getStringSlice(value any) []string {
 }
 
 func getStringSliceFromState(state State, key string) []string {
-	raw, ok := state.Load(key)
+	raw, ok := state[key]
 	if !ok {
 		return []string{}
 	}
@@ -446,22 +452,22 @@ func TestCheckpointResumeParallelBranches(t *testing.T) {
 	}
 
 	g := New()
-	g.AddNode("start", func(ctx context.Context, state State) error {
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counters.start, 1)
-		state.Store(valueKey, 1)
-		return nil
+		state[valueKey] = 1
+		return state, nil
 	})
-	g.AddNode("branch_a", func(ctx context.Context, state State) error {
+	g.AddNode("branch_a", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counters.branchA, 1)
-		return nil
+		return state, nil
 	})
-	g.AddNode("branch_b", func(ctx context.Context, state State) error {
+	g.AddNode("branch_b", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counters.branchB, 1)
-		return nil
+		return state, nil
 	})
-	g.AddNode("join", func(ctx context.Context, state State) error {
+	g.AddNode("join", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counters.join, 1)
-		return nil
+		return state, nil
 	})
 	g.AddEdge("start", "branch_a")
 	g.AddEdge("start", "branch_b")
@@ -478,7 +484,7 @@ func TestCheckpointResumeParallelBranches(t *testing.T) {
 	}
 
 	// Capture checkpoint after start completes (branches ready but not executed)
-	err = exec.Execute(context.Background(), NewState(), WithCheckpointID(checkpointID))
+	_, err = exec.Execute(context.Background(), State{}, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -494,8 +500,7 @@ func TestCheckpointResumeParallelBranches(t *testing.T) {
 	atomic.StoreInt32(&counters.branchB, 0)
 	atomic.StoreInt32(&counters.join, 0)
 
-	state := NewState()
-	err = exec.Resume(context.Background(), state, WithCheckpointID(checkpointID))
+	_, err = exec.Resume(context.Background(), State{}, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -522,30 +527,30 @@ func TestCheckpointResumeConditionalEdge(t *testing.T) {
 	}
 
 	g := New(WithParallel(false))
-	g.AddNode("start", func(ctx context.Context, state State) error {
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counters.start, 1)
-		state.Store("route", "A")
-		return nil
+		state["route"] = "A"
+		return state, nil
 	})
-	g.AddNode("branch_a", func(ctx context.Context, state State) error {
+	g.AddNode("branch_a", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counters.branchA, 1)
-		return nil
+		return state, nil
 	})
-	g.AddNode("branch_b", func(ctx context.Context, state State) error {
+	g.AddNode("branch_b", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counters.branchB, 1)
-		return nil
+		return state, nil
 	})
-	g.AddNode("finish", func(ctx context.Context, state State) error {
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&counters.finish, 1)
-		return nil
+		return state, nil
 	})
 	// Both branches have conditions, but both lead to finish
 	g.AddEdge("start", "branch_a", WithEdgeCondition(func(ctx context.Context, state State) bool {
-		v, _ := state.Load("route")
+		v, _ := state["route"]
 		return v == "A"
 	}))
 	g.AddEdge("start", "branch_b", WithEdgeCondition(func(ctx context.Context, state State) bool {
-		v, _ := state.Load("route")
+		v, _ := state["route"]
 		return v == "B"
 	}))
 	g.AddEdge("branch_a", "finish")
@@ -560,7 +565,7 @@ func TestCheckpointResumeConditionalEdge(t *testing.T) {
 	}
 
 	// Run full execution first
-	err = exec.Execute(context.Background(), NewState())
+	_, err = exec.Execute(context.Background(), State{})
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -588,8 +593,7 @@ func TestCheckpointResumeConditionalEdge(t *testing.T) {
 
 	store.seed("conditional-edge", checkpoint)
 
-	state := NewState()
-	err = exec.Resume(context.Background(), state, WithCheckpointID("conditional-edge"))
+	_, err = exec.Resume(context.Background(), State{}, WithCheckpointID("conditional-edge"))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -611,13 +615,13 @@ func TestCheckpointResumeFromFinished(t *testing.T) {
 	var runCount int32
 
 	g := New(WithParallel(false))
-	g.AddNode("start", func(ctx context.Context, state State) error {
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&runCount, 1)
-		return nil
+		return state, nil
 	})
-	g.AddNode("finish", func(ctx context.Context, state State) error {
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&runCount, 1)
-		return nil
+		return state, nil
 	})
 	g.AddEdge("start", "finish")
 	g.SetEntryPoint("start")
@@ -631,7 +635,7 @@ func TestCheckpointResumeFromFinished(t *testing.T) {
 	}
 
 	// Capture final checkpoint
-	err = exec.Execute(context.Background(), NewState(), WithCheckpointID(checkpointID))
+	_, err = exec.Execute(context.Background(), State{}, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -649,8 +653,7 @@ func TestCheckpointResumeFromFinished(t *testing.T) {
 	// Reset and resume from finished state
 	atomic.StoreInt32(&runCount, 0)
 
-	state := NewState()
-	err = exec.Resume(context.Background(), state, WithCheckpointID(checkpointID))
+	_, err = exec.Resume(context.Background(), State{}, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
@@ -665,14 +668,14 @@ func TestCheckpointResumeEmptyCheckpoint(t *testing.T) {
 	var runCount int32
 
 	g := New(WithParallel(false))
-	g.AddNode("start", func(ctx context.Context, state State) error {
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&runCount, 1)
-		state.Store(valueKey, 42)
-		return nil
+		state[valueKey] = 42
+		return state, nil
 	})
-	g.AddNode("finish", func(ctx context.Context, state State) error {
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
 		atomic.AddInt32(&runCount, 1)
-		return nil
+		return state, nil
 	})
 	g.AddEdge("start", "finish")
 	g.SetEntryPoint("start")
@@ -694,8 +697,8 @@ func TestCheckpointResumeEmptyCheckpoint(t *testing.T) {
 
 	store.seed(checkpointID, emptyCheckpoint)
 
-	state := NewState()
-	if err := exec.Resume(context.Background(), state, WithCheckpointID(checkpointID)); err != nil {
+	state, err := exec.Resume(context.Background(), State{}, WithCheckpointID(checkpointID))
+	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}
 
@@ -714,12 +717,12 @@ func TestCheckpointResumeMultiLevelFanOut(t *testing.T) {
 	// Graph: start -> (a, b) -> mid -> (c, d) -> finish
 	var order []string
 	var mu sync.Mutex
-	record := func(name string) func(context.Context, State) error {
-		return func(ctx context.Context, state State) error {
+	record := func(name string) func(context.Context, State) (State, error) {
+		return func(ctx context.Context, state State) (State, error) {
 			mu.Lock()
 			order = append(order, name)
 			mu.Unlock()
-			return nil
+			return state, nil
 		}
 	}
 
@@ -751,7 +754,7 @@ func TestCheckpointResumeMultiLevelFanOut(t *testing.T) {
 	}
 
 	// Capture checkpoint after mid completes
-	err = exec.Execute(context.Background(), NewState(), WithCheckpointID(checkpointID))
+	_, err = exec.Execute(context.Background(), State{}, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("execute error: %v", err)
 	}
@@ -775,8 +778,7 @@ func TestCheckpointResumeMultiLevelFanOut(t *testing.T) {
 	order = nil
 	mu.Unlock()
 
-	state := NewState()
-	err = exec.Resume(context.Background(), state, WithCheckpointID(checkpointID))
+	_, err = exec.Resume(context.Background(), State{}, WithCheckpointID(checkpointID))
 	if err != nil {
 		t.Fatalf("resume error: %v", err)
 	}

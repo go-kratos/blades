@@ -31,10 +31,18 @@ import (
 func Retry(attempts int, opts ...retry.Option) Middleware {
 	r := retry.New(attempts, opts...)
 	return func(next Handler) Handler {
-		return func(ctx context.Context, input State) error {
-			return r.Do(ctx, func(ctx context.Context) error {
-				return next(ctx, input)
-			})
+		return func(ctx context.Context, input State) (State, error) {
+			var (
+				err    error
+				output State
+			)
+			if err = r.Do(ctx, func(ctx context.Context) error {
+				output, err = next(ctx, input)
+				return err
+			}); err != nil {
+				return nil, err
+			}
+			return output, nil
 		}
 	}
 }

@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"maps"
 )
 
 // ExecuteOption defines an option for the Execute method.
@@ -74,44 +75,32 @@ func NewExecutor(g *Graph, checkpointer Checkpointer) *Executor {
 }
 
 // Execute runs the graph task starting from the given state.
-func (e *Executor) Execute(ctx context.Context, state State, opts ...ExecuteOption) error {
+func (e *Executor) Execute(ctx context.Context, state State, opts ...ExecuteOption) (State, error) {
 	o := executeOptions{}
 	for _, opt := range opts {
 		opt(&o)
 	}
-	state.ensure()
 	t := newTask(e, state, e.checkpointer, o.CheckpointID)
-	_, err := t.run(ctx, nil)
-	if err != nil {
-		return err
-	}
-	return nil
+	return t.run(ctx, nil)
 }
 
 // Resume continues a previously started task using the configured Checkpointer.
-func (e *Executor) Resume(ctx context.Context, state State, opts ...ExecuteOption) error {
+func (e *Executor) Resume(ctx context.Context, state State, opts ...ExecuteOption) (State, error) {
 	o := executeOptions{}
 	for _, opt := range opts {
 		opt(&o)
 	}
 	if e.checkpointer == nil {
-		return fmt.Errorf("graph: no checkpointer configured")
+		return nil, fmt.Errorf("graph: no checkpointer configured")
 	}
 	checkpoint, err := e.checkpointer.Resume(ctx, o.CheckpointID)
 	if err != nil {
-		return fmt.Errorf("graph: failed to load checkpoint: %w", err)
+		return nil, fmt.Errorf("graph: failed to load checkpoint: %w", err)
 	}
-
 	// Merge checkpoint state with provided state (provided values override checkpoint)
-	for k, v := range checkpoint.State {
-		if _, ok := state.Load(k); !ok {
-			state.Store(k, v)
-		}
-	}
-
-	t := newTask(e, state, e.checkpointer, o.CheckpointID)
-	_, err = t.run(ctx, checkpoint)
-	return err
+	maps.Copy(state, checkpoint.State)
+	task := newTask(e, state, e.checkpointer, o.CheckpointID)
+	return task.run(ctx, checkpoint)
 }
 
 // cloneEdges creates a copy of edge slice to avoid shared state issues.

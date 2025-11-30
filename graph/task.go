@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"maps"
 	"sync"
+
+	syncmap "github.com/go-kratos/kit/container/maps"
 )
 
 // Task coordinates a single execution of the graph using a ready-queue based scheduler.
@@ -13,7 +15,7 @@ import (
 // - Blades' automatic skip propagation for complex routing scenarios
 type Task struct {
 	executor *Executor
-	state    State
+	state    *syncmap.Map[string, any]
 
 	wg sync.WaitGroup
 
@@ -40,11 +42,9 @@ type Task struct {
 }
 
 func newTask(e *Executor, state State, checkpointer Checkpointer, checkpointID string) *Task {
-	// Initialize remaining dependencies count for each node from precomputed nodeInfo
-	state.ensure()
 	task := &Task{
 		executor:     e,
-		state:        state,
+		state:        syncmap.New(state),
 		ready:        make([]string, 0, 4),
 		remaining:    make(map[string]int, len(e.graph.nodes)),
 		received:     make(map[string]int),
@@ -67,8 +67,12 @@ func (t *Task) run(ctx context.Context, checkpoint *Checkpoint) (State, error) {
 	for {
 		t.emitCheckpointIfIdle(ctx)
 		// Check termination conditions
-		if shouldStop, result := t.checkTermination(); shouldStop {
-			return result.state, result.err
+		shouldStop, err := t.checkTermination()
+		if err != nil {
+			return nil, err
+		}
+		if shouldStop {
+			return t.state.ToMap(), nil
 		}
 		// Schedule next ready node
 		if !t.scheduleNext(ctx) {
@@ -76,12 +80,6 @@ func (t *Task) run(ctx context.Context, checkpoint *Checkpoint) (State, error) {
 			continue
 		}
 	}
-}
-
-// terminationResult holds the result when execution terminates
-type terminationResult struct {
-	state State
-	err   error
 }
 
 // prepareEntry seeds the entry node as ready to run.
@@ -101,19 +99,13 @@ func (t *Task) prepareEntry() {
 func (t *Task) restoreCheckpoint(cp Checkpoint) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-
-	t.received = maps.Clone(cp.Received)
-	if t.received == nil {
-		t.received = make(map[string]int)
+	if cp.Received != nil {
+		t.received = cp.Received
 	}
-
-	t.visited = maps.Clone(cp.Visited)
-	if t.visited == nil {
-		t.visited = make(map[string]bool)
+	if cp.Visited != nil {
+		t.visited = cp.Visited
 	}
-
 	t.inFlight = make(map[string]bool, len(t.executor.graph.nodes))
-	t.state.ensure()
 	for key, value := range cp.State {
 		if _, exists := t.state.Load(key); exists {
 			continue
@@ -188,7 +180,12 @@ func (t *Task) emitCheckpointIfIdle(ctx context.Context) {
 		t.mu.Unlock()
 		return
 	}
-	checkpoint := t.buildCheckpointLocked()
+	checkpoint := &Checkpoint{
+		ID:       t.checkpointID,
+		Received: maps.Clone(t.received),
+		Visited:  maps.Clone(t.visited),
+		State:    t.state.ToMap(),
+	}
 	t.progressSinceCheckpoint = false
 	t.mu.Unlock()
 
@@ -198,24 +195,23 @@ func (t *Task) emitCheckpointIfIdle(ctx context.Context) {
 }
 
 // checkTermination checks if execution should terminate and returns the result
-func (t *Task) checkTermination() (bool, terminationResult) {
+func (t *Task) checkTermination() (bool, error) {
 	t.mu.Lock()
 	err := t.err
 	finished := t.finished
-	state := t.state
 	t.mu.Unlock()
 
 	if err != nil {
 		t.wg.Wait()
-		return true, terminationResult{err: err}
+		return true, err
 	}
 
 	if finished {
 		t.wg.Wait()
-		return true, terminationResult{state: state}
+		return true, nil
 	}
 
-	return false, terminationResult{}
+	return false, nil
 }
 
 // scheduleNext attempts to schedule the next ready node for execution.
@@ -261,7 +257,7 @@ func (t *Task) scheduleNext(ctx context.Context) bool {
 	}
 
 	// Mark as in-flight
-	state := t.state
+	state := t.state.ToMap()
 	t.inFlight[node] = true
 	t.wg.Add(1)
 	parallel := t.executor.graph.parallel
@@ -302,7 +298,7 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 	}
 
 	nodeCtx := NewNodeContext(ctx, &NodeContext{Name: node})
-	err := handler(nodeCtx, state)
+	state, err := handler(nodeCtx, state)
 	if err != nil {
 		t.fail(fmt.Errorf("graph: failed to execute node %s: %w", node, err))
 		return
@@ -310,6 +306,9 @@ func (t *Task) executeNode(ctx context.Context, node string, state State) {
 
 	// Mark as visited and get precomputed node info
 	t.mu.Lock()
+	for key, value := range state {
+		t.state.Store(key, value)
+	}
 	t.visited[node] = true
 	t.progressSinceCheckpoint = true
 	info := t.executor.nodeInfos[node]
@@ -421,13 +420,4 @@ func (t *Task) fail(err error) {
 	}
 	t.err = err
 	t.readyCond.Broadcast()
-}
-
-func (t *Task) buildCheckpointLocked() *Checkpoint {
-	return &Checkpoint{
-		ID:       t.checkpointID,
-		Received: maps.Clone(t.received),
-		Visited:  maps.Clone(t.visited),
-		State:    t.state.Snapshot(),
-	}
 }
