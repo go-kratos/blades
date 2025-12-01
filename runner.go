@@ -33,13 +33,6 @@ func WithResumable(resumable bool) RunnerOption {
 	}
 }
 
-// WithResumeHistory configures whether the Runner should resume history.
-func WithResumeHistory(resumeHistory bool) RunnerOption {
-	return func(r *Runner) {
-		r.ResumeHistory = resumeHistory
-	}
-}
-
 // RunOptions holds configuration options for running the agent.
 type RunOptions struct {
 	Session      Session
@@ -48,9 +41,8 @@ type RunOptions struct {
 
 // Runner is responsible for executing a Runnable agent within a session context.
 type Runner struct {
-	Resumable     bool
-	ResumeHistory bool
-	rootAgent     Agent
+	Resumable bool
+	rootAgent Agent
 }
 
 // NewRunner creates a new Runner with the given agent and options.
@@ -73,9 +65,11 @@ func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamab
 		Streamable: streamable,
 		Message:    message,
 	}
-	// Append the new message to the session history if it doesn't already exist.
-	if err := r.appendNewMessage(ctx, invocation, message); err != nil {
-		return nil, err
+	if message != nil {
+		message.Author = "user"
+		if err := r.appendNewMessage(ctx, invocation, message); err != nil {
+			return nil, err
+		}
 	}
 	return invocation, nil
 }
@@ -89,17 +83,17 @@ func (r *Runner) appendNewMessage(ctx context.Context, invocation *Invocation, m
 	return invocation.Session.Append(ctx, message)
 }
 
-// historySets creates a map of message IDs to messages from the session history.
+// historyByInvocation creates a map of message IDs to messages from the session history.
 // This map is used to filter out already processed messages during resume operations.
 // Returns nil if the session is nil.
-func (r *Runner) historySets(ctx context.Context, session Session) map[string]*Message {
+func (r *Runner) historyByInvocation(ctx context.Context, session Session, invocation *Invocation) map[string]*Message {
 	if session == nil {
 		return nil
 	}
 	history := session.History()
 	sets := make(map[string]*Message, len(history))
 	for _, m := range history {
-		if m.ID == "" {
+		if m.InvocationID != invocation.ID {
 			continue
 		}
 		sets[m.ID] = m
@@ -129,6 +123,11 @@ func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (
 		if err != nil {
 			return nil, err
 		}
+		if output.Status == StatusCompleted {
+			if err := r.appendNewMessage(ctx, invocation, output); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if output == nil {
 		return nil, ErrNoFinalResponse
@@ -149,14 +148,20 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 	if err != nil {
 		return stream.Error[*Message](err)
 	}
-	history := r.historySets(ctx, o.Session)
-	return stream.Filter(r.rootAgent.Run(NewSessionContext(ctx, o.Session), invocation), func(msg *Message) bool {
-		// If ResumeHistory is enabled, allow all messages.
-		// Otherwise, filter out messages that already exist in history.
-		if r.ResumeHistory {
-			return true
+	invocationHistory := r.historyByInvocation(ctx, o.Session, invocation)
+	return func(yield func(*Message, error) bool) {
+		iter := r.rootAgent.Run(NewSessionContext(ctx, o.Session), invocation)
+		for output, err := range iter {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			// If the output message ID exists in history, skip yielding it.
+			_, exists := invocationHistory[output.ID]
+			if exists {
+				continue
+			}
+			yield(output, nil)
 		}
-		_, exists := history[msg.ID]
-		return !exists
-	})
+	}
 }

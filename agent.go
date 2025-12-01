@@ -344,9 +344,8 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					yield(nil, err)
 					return
 				}
-				if err := a.appendMessageToSession(ctx, invocation, finalResponse.Message); err != nil {
-					yield(nil, err)
-					return
+				if finalResponse.Message.Author == "" {
+					finalResponse.Message.Author = a.name
 				}
 				if finalResponse.Message.Role == RoleAssistant {
 					if !yield(finalResponse.Message, nil) {
@@ -363,9 +362,8 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 						yield(nil, err)
 						return
 					}
-					if err := a.appendMessageToSession(ctx, invocation, finalResponse.Message); err != nil {
-						yield(nil, err)
-						return
+					if finalResponse.Message.Author == "" {
+						finalResponse.Message.Author = a.name
 					}
 					if finalResponse.Message.Role == RoleTool && finalResponse.Message.Status == StatusCompleted {
 						// Skip yielding tool messages during streaming.
