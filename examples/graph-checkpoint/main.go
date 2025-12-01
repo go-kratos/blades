@@ -42,8 +42,8 @@ func main() {
 	})
 	g.AddNode("process", func(ctx context.Context, state graph.State) (graph.State, error) {
 		state["process"] = true
-		approved, ok := state["approved"].(bool)
-		if !ok || !approved {
+		approved, _ := state["approved"].(bool)
+		if !approved {
 			return nil, ErrProcessApproval
 		}
 		return state, nil
@@ -72,9 +72,6 @@ func main() {
 			log.Fatalf("execute error: %v", err)
 		}
 		log.Printf("execution paused waiting for approval: %v", err)
-	} else {
-		log.Println("task completed without approval, no resume needed")
-		return
 	}
 	log.Println("task paused, waiting for approval...", state)
 
