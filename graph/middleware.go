@@ -2,7 +2,7 @@ package graph
 
 import "context"
 
-// Handler mutates the shared State in place and returns an error on failure.
+// Handler returns a modified State and an error on failure.
 type Handler func(ctx context.Context, state State) (State, error)
 
 // Middleware is a function that wraps a Handler with additional functionality.
