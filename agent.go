@@ -255,32 +255,19 @@ func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
 	return resumeMessages, false
 }
 
-// appendMessageToSession appends the given message to the session associated with the invocation.
-func (a *agent) appendMessageToSession(ctx context.Context, invocation *Invocation, message *Message) error {
-	if invocation.Session == nil {
-		return nil
+func (a *agent) saveOutputState(ctx context.Context, invocation *Invocation, message *Message) error {
+	if message.Author == "" {
+		message.Author = a.name
 	}
 	message.InvocationID = invocation.ID
-	switch message.Role {
-	case RoleUser:
-		message.Author = "user"
-		return invocation.Session.Append(ctx, message)
-	case RoleTool:
-		message.Author = a.name
-		if message.Status != StatusCompleted {
-			return nil
-		}
-		return invocation.Session.Append(ctx, message)
-	case RoleAssistant:
-		message.Author = a.name
-		if message.Status != StatusCompleted {
-			return nil
-		}
-		if a.outputKey != "" {
-			invocation.Session.SetState(a.outputKey, message.Text())
-		}
-		return invocation.Session.Append(ctx, message)
+	// Save output to session state if outputKey is set
+	if invocation.Session == nil || a.outputKey == "" {
+		return nil
 	}
+	if message.Role != RoleAssistant || message.Status != StatusCompleted {
+		return nil
+	}
+	invocation.Session.SetState(a.outputKey, message.Text())
 	return nil
 }
 
@@ -344,8 +331,9 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					yield(nil, err)
 					return
 				}
-				if finalResponse.Message.Author == "" {
-					finalResponse.Message.Author = a.name
+				if err := a.saveOutputState(ctx, invocation, finalResponse.Message); err != nil {
+					yield(nil, err)
+					return
 				}
 				if finalResponse.Message.Role == RoleAssistant {
 					if !yield(finalResponse.Message, nil) {
@@ -359,8 +347,9 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 						yield(nil, err)
 						return
 					}
-					if finalResponse.Message.Author == "" {
-						finalResponse.Message.Author = a.name
+					if err := a.saveOutputState(ctx, invocation, finalResponse.Message); err != nil {
+						yield(nil, err)
+						return
 					}
 					if finalResponse.Message.Role == RoleTool && finalResponse.Message.Status == StatusCompleted {
 						// Skip yielding tool messages during streaming.
