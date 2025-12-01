@@ -11,6 +11,11 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
+var (
+	// ActionHandoffToAgent is the action name for handing off to a sub-agent.
+	ActionHandoffToAgent = "handoff_to_agent"
+)
+
 type handoffTool struct{}
 
 func NewHandoffTool() tools.Tool {
@@ -49,6 +54,6 @@ func (h *handoffTool) Handle(ctx context.Context, input string) (string, error) 
 	if !ok {
 		return "", fmt.Errorf("tool context not found in context")
 	}
-	toolCtx.SetAction(blades.ActionHandoffToAgent, agentName)
+	toolCtx.SetAction(ActionHandoffToAgent, agentName)
 	return "", nil
 }

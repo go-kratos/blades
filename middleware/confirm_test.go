@@ -28,7 +28,7 @@ func TestConfirmMiddleware_Run(t *testing.T) {
 			confirm: func(context.Context, *blades.Message) (bool, error) {
 				return false, nil
 			},
-			wantErr: ErrConfirmDenied,
+			wantErr: blades.ErrInterrupted,
 		},
 		{
 			name: "error",

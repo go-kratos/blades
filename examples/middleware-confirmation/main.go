@@ -51,7 +51,7 @@ func main() {
 	runner := blades.NewRunner(agent)
 	output, err := runner.Run(context.Background(), input)
 	if err != nil {
-		if errors.Is(err, middleware.ErrConfirmDenied) {
+		if errors.Is(err, blades.ErrInterrupted) {
 			log.Println("Confirmation denied. Aborting.")
 			return
 		}

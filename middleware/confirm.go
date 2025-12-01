@@ -2,14 +2,8 @@ package middleware
 
 import (
 	"context"
-	"errors"
 
 	"github.com/go-kratos/blades"
-)
-
-var (
-	// ErrConfirmDenied is returned when confirmation middleware denies execution.
-	ErrConfirmDenied = errors.New("confirmation denied")
 )
 
 // ConfirmFunc is a callback used by the confirmation middleware
@@ -19,7 +13,7 @@ type ConfirmFunc func(context.Context, *blades.Message) (bool, error)
 
 // Confirm returns a Middleware that invokes the provided confirmation
 // callback before delegating to the next Handler. If confirmation is
-// denied, it returns ErrConfirmDenied. If the callback returns an
+// denied, it returns ErrInterrupted. If the callback returns an
 // error, that error is propagated.
 func Confirm(confirm ConfirmFunc) blades.Middleware {
 	return func(next blades.Handler) blades.Handler {
@@ -31,7 +25,7 @@ func Confirm(confirm ConfirmFunc) blades.Middleware {
 					return
 				}
 				if !ok {
-					yield(nil, ErrConfirmDenied)
+					yield(nil, blades.ErrInterrupted)
 					return
 				}
 				for msg, err := range next.Handle(ctx, invocation) {
