@@ -526,9 +526,8 @@ func TestGraphParallelContextTimeout(t *testing.T) {
 		case <-ctx.Done():
 			return state, ctx.Err()
 		case <-time.After(200 * time.Millisecond):
-			next := state.Clone()
-			next[stepsKey] = append(getStringSlice(state[stepsKey]), "slow")
-			return next, nil
+			state[stepsKey] = append(getStringSlice(state[stepsKey]), "slow")
+			return state, nil
 		}
 	})
 	g.SetEntryPoint("slow")
@@ -561,7 +560,7 @@ func TestGraphParallelFanOutBranches(t *testing.T) {
 			mu.Lock()
 			called[name]++
 			mu.Unlock()
-			return state.Clone(), nil
+			return state, nil
 		}
 	}
 
@@ -606,8 +605,7 @@ func TestGraphParallelNestedFanOutConcurrency(t *testing.T) {
 
 	blockingBranch := func(name string) Handler {
 		return func(ctx context.Context, state State) (State, error) {
-			next := state.Clone()
-			next[name] = true
+			state[name] = true
 
 			mu.Lock()
 			started[name] = true
@@ -624,19 +622,17 @@ func TestGraphParallelNestedFanOutConcurrency(t *testing.T) {
 				return nil, ctx.Err()
 			}
 
-			return next, nil
+			return state, nil
 		}
 	}
 
 	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		next["start"] = true
-		return next, nil
+		state["start"] = true
+		return state, nil
 	})
 	g.AddNode("branch_b", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		next["branch_b"] = true
-		return next, nil
+		state["branch_b"] = true
+		return state, nil
 	})
 	g.AddNode("branch_c", blockingBranch("branch_c"))
 	g.AddNode("branch_d", blockingBranch("branch_d"))
@@ -647,9 +643,8 @@ func TestGraphParallelNestedFanOutConcurrency(t *testing.T) {
 		if _, ok := state["branch_d"].(bool); !ok {
 			return nil, fmt.Errorf("join missing branch_d contribution: %#v", state)
 		}
-		next := state.Clone()
-		next["joined"] = true
-		return next, nil
+		state["joined"] = true
+		return state, nil
 	})
 
 	g.AddEdge("start", "branch_b")
@@ -713,7 +708,7 @@ func TestGraphParallelPropagatesBranchError(t *testing.T) {
 
 	record := func(name string) Handler {
 		return func(ctx context.Context, state State) (State, error) {
-			return state.Clone(), nil
+			return state, nil
 		}
 	}
 
@@ -742,22 +737,94 @@ func TestGraphParallelPropagatesBranchError(t *testing.T) {
 	}
 }
 
+func TestGraphParallelStateIsolationNoRace(t *testing.T) {
+	g := New()
+
+	ready := make(chan struct{})
+	wroteA := make(chan struct{})
+
+	var mu sync.Mutex
+	ptrs := make(map[string]uintptr)
+
+	recordPtr := func(name string, state State) {
+		mu.Lock()
+		ptrs[name] = reflect.ValueOf(state).Pointer()
+		mu.Unlock()
+	}
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		state["seed"] = true
+		close(ready)
+		return state, nil
+	})
+	g.AddNode("branch_a", func(ctx context.Context, state State) (State, error) {
+		<-ready
+		recordPtr("branch_a", state)
+		state["fromA"] = true
+		close(wroteA)
+		return state, nil
+	})
+	g.AddNode("branch_b", func(ctx context.Context, state State) (State, error) {
+		<-ready
+		<-wroteA
+		recordPtr("branch_b", state)
+		if _, ok := state["fromA"].(bool); ok {
+			return nil, fmt.Errorf("branch_b saw branch_a state: %#v", state)
+		}
+		state["fromB"] = true
+		return state, nil
+	})
+	g.AddNode("join", func(ctx context.Context, state State) (State, error) {
+		recordPtr("join", state)
+		if _, ok := state["fromA"].(bool); !ok {
+			return nil, fmt.Errorf("join missing fromA: %#v", state)
+		}
+		if _, ok := state["fromB"].(bool); !ok {
+			return nil, fmt.Errorf("join missing fromB: %#v", state)
+		}
+		return state, nil
+	})
+
+	g.AddEdge("start", "branch_a")
+	g.AddEdge("start", "branch_b")
+	g.AddEdge("branch_a", "join")
+	g.AddEdge("branch_b", "join")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("join")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	if _, err := executor.Execute(context.Background(), State{}); err != nil {
+		t.Fatalf("execution error: %v", err)
+	}
+
+	if len(ptrs) != 3 {
+		t.Fatalf("expected branch_a, branch_b and join pointers, got %v", ptrs)
+	}
+	if ptrs["branch_a"] == ptrs["branch_b"] {
+		t.Fatalf("branches shared state map pointer: %v", ptrs)
+	}
+	if ptrs["join"] == ptrs["branch_a"] || ptrs["join"] == ptrs["branch_b"] {
+		t.Fatalf("join state should be isolated from branches: %v", ptrs)
+	}
+}
+
 func TestGraphParallelMergeByKey(t *testing.T) {
 	g := New()
 	_ = g.AddNode("start", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		next["start"] = true
-		return next, nil
+		state["start"] = true
+		return state, nil
 	})
 	_ = g.AddNode("workerA", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		next["branchA"] = "done"
-		return next, nil
+		state["branchA"] = "done"
+		return state, nil
 	})
 	_ = g.AddNode("workerB", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		next["branchB"] = "done"
-		return next, nil
+		state["branchB"] = "done"
+		return state, nil
 	})
 	_ = g.AddNode("join", func(ctx context.Context, state State) (State, error) {
 		return state, nil
@@ -795,18 +862,16 @@ func TestExecutorInitialStatePropagates(t *testing.T) {
 		if got, ok := state["seed"].(string); !ok || got != "value" {
 			return nil, fmt.Errorf("start received unexpected seed: %#v", state["seed"])
 		}
-		next := state.Clone()
-		next["start_seen"] = true
-		return next, nil
+		state["start_seen"] = true
+		return state, nil
 	})
 
 	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
 		if got, ok := state["seed"].(string); !ok || got != "value" {
 			return nil, fmt.Errorf("finish received unexpected seed: %#v", state["seed"])
 		}
-		next := state.Clone()
-		next["finish_seen"] = true
-		return next, nil
+		state["finish_seen"] = true
+		return state, nil
 	})
 
 	g.AddEdge("start", "finish")
@@ -843,18 +908,16 @@ func TestExecutorResetBetweenRuns(t *testing.T) {
 		if !ok {
 			return nil, fmt.Errorf("missing run id in start: %#v", state["run"])
 		}
-		next := state.Clone()
-		next["marker"] = fmt.Sprintf("run-%d", runID)
-		return next, nil
+		state["marker"] = fmt.Sprintf("run-%d", runID)
+		return state, nil
 	})
 
 	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		if _, ok := next["marker"].(string); !ok {
+		if _, ok := state["marker"].(string); !ok {
 			return nil, fmt.Errorf("missing marker in finish: %#v", state)
 		}
-		next["completed"] = true
-		return next, nil
+		state["completed"] = true
+		return state, nil
 	})
 
 	g.AddEdge("start", "finish")
@@ -968,24 +1031,21 @@ func TestExecutorResumeFromCheckpoint(t *testing.T) {
 		g := New(WithParallel(false))
 		g.AddNode("start", func(ctx context.Context, state State) (State, error) {
 			c.start++
-			next := state.Clone()
-			val, _ := next[valueKey].(int)
-			next[valueKey] = val + 1
-			return next, nil
+			val, _ := state[valueKey].(int)
+			state[valueKey] = val + 1
+			return state, nil
 		})
 		g.AddNode("mid", func(ctx context.Context, state State) (State, error) {
 			c.mid++
-			next := state.Clone()
-			val, _ := next[valueKey].(int)
-			next[valueKey] = val + 10
-			return next, nil
+			val, _ := state[valueKey].(int)
+			state[valueKey] = val + 10
+			return state, nil
 		})
 		g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
 			c.finish++
-			next := state.Clone()
-			val, _ := next[valueKey].(int)
-			next[valueKey] = val + 100
-			return next, nil
+			val, _ := state[valueKey].(int)
+			state[valueKey] = val + 100
+			return state, nil
 		})
 		g.AddEdge("start", "mid")
 		g.AddEdge("mid", "finish")
@@ -1075,14 +1135,13 @@ func TestGraphParallelJoinIgnoresInactiveBranches(t *testing.T) {
 			if mutate != nil {
 				return mutate(state), nil
 			}
-			return state.Clone(), nil
+			return state, nil
 		}
 	}
 
 	g.AddNode("start", record("start", func(state State) State {
-		next := state.Clone()
-		next["enable_b"] = false
-		return next
+		state["enable_b"] = false
+		return state
 	}))
 	g.AddNode("branch_a", record("branch_a", nil))
 	g.AddNode("branch_b", record("branch_b", nil))
@@ -1132,16 +1191,15 @@ func TestGraphParallelJoinSkipsUnselectedEdges(t *testing.T) {
 			if mutate != nil {
 				return mutate(state), nil
 			}
-			return state.Clone(), nil
+			return state, nil
 		}
 	}
 
 	g.AddNode("start", record("start", nil))
 	g.AddNode("branch_a", record("branch_a", nil))
 	g.AddNode("branch_b", record("branch_b", func(state State) State {
-		next := state.Clone()
-		next["send_to_join"] = false
-		return next
+		state["send_to_join"] = false
+		return state
 	}))
 	g.AddNode("sink", record("sink", nil))
 	g.AddNode("join", record("join", nil))
@@ -1192,31 +1250,27 @@ func TestGraphJoinRequiresAllInputs(t *testing.T) {
 			executed[name]++
 			mu.Unlock()
 			if mutate != nil {
-				return mutate(state.Clone()), nil
+				return mutate(state), nil
 			}
-			return state.Clone(), nil
+			return state, nil
 		}
 	}
 
 	g.AddNode("start", record("start", func(state State) State {
-		next := state.Clone()
-		next["seed"] = 1
-		return next
+		state["seed"] = 1
+		return state
 	}))
 	g.AddNode("branch_a", record("branch_a", func(state State) State {
-		next := state.Clone()
-		next["a"] = true
-		return next
+		state["a"] = true
+		return state
 	}))
 	g.AddNode("branch_b", record("branch_b", func(state State) State {
-		next := state.Clone()
-		next["b"] = true
-		return next
+		state["b"] = true
+		return state
 	}))
 	g.AddNode("control", record("control", func(state State) State {
-		next := state.Clone()
-		next["control"] = true
-		return next
+		state["control"] = true
+		return state
 	}))
 	var joinExecuted bool
 	g.AddNode("join", func(ctx context.Context, state State) (State, error) {
@@ -1230,9 +1284,8 @@ func TestGraphJoinRequiresAllInputs(t *testing.T) {
 		if _, ok := state["control"].(bool); !ok {
 			return nil, fmt.Errorf("missing control contribution: %#v", state)
 		}
-		next := state.Clone()
-		next["joined"] = true
-		return next, nil
+		state["joined"] = true
+		return state, nil
 	})
 
 	g.AddEdge("start", "branch_a")
@@ -1288,10 +1341,9 @@ func TestGraphDifferentPathLengths(t *testing.T) {
 			executionOrder = append(executionOrder, name)
 			mu.Unlock()
 
-			next := state.Clone()
 			// Each node sets its own key to avoid mergeStates overwriting
-			next[name+"_executed"] = true
-			return next, nil
+			state[name+"_executed"] = true
+			return state, nil
 		}
 	}
 
@@ -1383,9 +1435,8 @@ func TestGraphDifferentPathLengthsMultipleBranches(t *testing.T) {
 			executionOrder = append(executionOrder, name)
 			mu.Unlock()
 
-			next := state.Clone()
-			next[name+"_executed"] = true
-			return next, nil
+			state[name+"_executed"] = true
+			return state, nil
 		}
 	}
 
@@ -1488,19 +1539,17 @@ func TestGraphDifferentPathLengthsConditionalBranches(t *testing.T) {
 			executionOrder = append(executionOrder, name)
 			mu.Unlock()
 
-			next := state.Clone()
-			next[name+"_executed"] = true
+			state[name+"_executed"] = true
 			if mutate != nil {
-				return mutate(next), nil
+				return mutate(state), nil
 			}
-			return next, nil
+			return state, nil
 		}
 	}
 
 	g.AddNode("start", record("start", func(state State) State {
-		next := state.Clone()
-		next["mid_condition"] = true
-		return next
+		state["mid_condition"] = true
+		return state
 	}))
 	g.AddNode("branch_short", record("branch_short", nil))
 	g.AddNode("branch_mid", record("branch_mid", nil))
@@ -1607,7 +1656,7 @@ func TestGraphSerialFanOutOrder(t *testing.T) {
 			mu.Lock()
 			executed = append(executed, name)
 			mu.Unlock()
-			return state.Clone(), nil
+			return state, nil
 		}
 	}
 
@@ -1689,10 +1738,9 @@ func TestGraphSerialFanOutStateIsolation(t *testing.T) {
 		if len(path) != 1 || path[0] != "start" {
 			t.Fatalf("branchA received unexpected path: %v", path)
 		}
-		next := state.Clone()
-		next["path"] = append(path, "branchA")
-		next["fromA"] = true
-		return next, nil
+		state["path"] = append(path, "branchA")
+		state["fromA"] = true
+		return state, nil
 	})
 
 	g.AddNode("branchB", func(ctx context.Context, state State) (State, error) {
@@ -1705,10 +1753,9 @@ func TestGraphSerialFanOutStateIsolation(t *testing.T) {
 			branchBSawFromA = true
 			mu.Unlock()
 		}
-		next := state.Clone()
-		next["path"] = append(path, "branchB")
-		next["fromB"] = true
-		return next, nil
+		state["path"] = append(path, "branchB")
+		state["fromB"] = true
+		return state, nil
 	})
 
 	g.AddNode("join", func(ctx context.Context, state State) (State, error) {
@@ -1721,7 +1768,7 @@ func TestGraphSerialFanOutStateIsolation(t *testing.T) {
 			return nil, fmt.Errorf("join missing fromB flag: %#v", state)
 		}
 		joinVerifiedBoth = true
-		return state.Clone(), nil
+		return state, nil
 	})
 
 	g.SetEntryPoint("start")
@@ -1759,27 +1806,24 @@ func TestGraphSingleEdgeWaitPropagation(t *testing.T) {
 			mu.Lock()
 			executionOrder = append(executionOrder, name)
 			mu.Unlock()
-			next := state.Clone()
-			next[name+"_visited"] = true
+			state[name+"_visited"] = true
 			if transform != nil {
-				return transform(next), nil
+				return transform(state), nil
 			}
-			return next, nil
+			return state, nil
 		}
 	}
 
 	g.AddNode("start", record("start", nil))
 	g.AddNode("branchA", record("branchA", func(state State) State {
-		next := state.Clone()
-		next["fromA"] = true
-		return next
+		state["fromA"] = true
+		return state
 	}))
 	g.AddNode("mid", record("mid", nil))
 	g.AddNode("branchB", record("branchB", nil))
 	g.AddNode("branchB2", record("branchB2", func(state State) State {
-		next := state.Clone()
-		next["fromB"] = true
-		return next
+		state["fromB"] = true
+		return state
 	}))
 	g.AddNode("join", func(ctx context.Context, state State) (State, error) {
 		mu.Lock()
@@ -1791,9 +1835,8 @@ func TestGraphSingleEdgeWaitPropagation(t *testing.T) {
 		if _, ok := state["fromB"].(bool); !ok {
 			return nil, fmt.Errorf("join missing fromB: %#v", state)
 		}
-		next := state.Clone()
-		next["join_verified"] = true
-		return next, nil
+		state["join_verified"] = true
+		return state, nil
 	})
 
 	g.AddEdge("start", "branchA")
@@ -1824,20 +1867,18 @@ func TestExecutorConcurrentRuns(t *testing.T) {
 	g := New()
 
 	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		if _, ok := next["value"].(int); !ok {
-			next["value"] = 0
+		if _, ok := state["value"].(int); !ok {
+			state["value"] = 0
 		}
-		return next, nil
+		return state, nil
 	})
 	g.AddNode("worker", func(ctx context.Context, state State) (State, error) {
-		next := state.Clone()
-		val, _ := next["value"].(int)
-		next["value"] = val + 1
-		return next, nil
+		val, _ := state["value"].(int)
+		state["value"] = val + 1
+		return state, nil
 	})
 	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
-		return state.Clone(), nil
+		return state, nil
 	})
 
 	g.AddEdge("start", "worker")
@@ -1889,6 +1930,56 @@ func TestExecutorConcurrentRuns(t *testing.T) {
 	}
 }
 
+func TestExecutorConcurrentRunsStateIsolation(t *testing.T) {
+	g := New()
+
+	const runs = 8
+	ptrCh := make(chan uintptr, runs)
+
+	g.AddNode("start", func(ctx context.Context, state State) (State, error) {
+		ptrCh <- reflect.ValueOf(state).Pointer()
+		return state, nil
+	})
+	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
+		return state, nil
+	})
+
+	g.AddEdge("start", "finish")
+	g.SetEntryPoint("start")
+	g.SetFinishPoint("finish")
+
+	executor, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(runs)
+	for i := 0; i < runs; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := executor.Execute(context.Background(), State{"value": i}); err != nil {
+				t.Errorf("execution error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	close(ptrCh)
+
+	seen := make(map[uintptr]int, runs)
+	for ptr := range ptrCh {
+		seen[ptr]++
+	}
+	if len(seen) != runs {
+		t.Fatalf("expected %d distinct state pointers, got %d (counts=%v)", runs, len(seen), seen)
+	}
+	for ptr, count := range seen {
+		if count != 1 {
+			t.Fatalf("expected unique state pointer per run, pointer %v seen %d times", ptr, count)
+		}
+	}
+}
+
 // TestGraphAsymmetricConvergence tests a more complex asymmetric DAG
 // similar to the ASR pipeline structure that was failing.
 func TestGraphAsymmetricConvergence(t *testing.T) {
@@ -1913,10 +2004,9 @@ func TestGraphAsymmetricConvergence(t *testing.T) {
 			executionOrder = append(executionOrder, name)
 			mu.Unlock()
 
-			next := state.Clone()
 			// Each node sets its own key to avoid mergeStates overwriting
-			next[name+"_data"] = "processed"
-			return next, nil
+			state[name+"_data"] = "processed"
+			return state, nil
 		}
 	}
 
@@ -2009,12 +2099,11 @@ func TestGraphComplexMixedOrchestration(t *testing.T) {
 			executionOrder = append(executionOrder, name)
 			mu.Unlock()
 
-			next := state.Clone()
-			next[name+"_visited"] = true
+			state[name+"_visited"] = true
 			if stateMutator != nil {
-				return stateMutator(next), nil
+				return stateMutator(state), nil
 			}
-			return next, nil
+			return state, nil
 		}
 	}
 
@@ -2154,9 +2243,8 @@ func TestGraphNestedParallelBranches(t *testing.T) {
 			// Simulate some work
 			time.Sleep(time.Millisecond)
 
-			next := state.Clone()
-			next[name+"_result"] = name + "_done"
-			return next, nil
+			state[name+"_result"] = name + "_done"
+			return state, nil
 		}
 	}
 
@@ -2281,12 +2369,11 @@ func TestGraphComplexConditionalRouting(t *testing.T) {
 			executed[name]++
 			mu.Unlock()
 
-			next := state.Clone()
-			next[name+"_visited"] = true
+			state[name+"_visited"] = true
 			if mutator != nil {
-				return mutator(next), nil
+				return mutator(state), nil
 			}
-			return next, nil
+			return state, nil
 		}
 	}
 
@@ -2486,9 +2573,8 @@ func TestGraphLargeScaleDAG(t *testing.T) {
 			executed[name]++
 			mu.Unlock()
 
-			next := state.Clone()
-			next[name+"_done"] = true
-			return next, nil
+			state[name+"_done"] = true
+			return state, nil
 		}
 	}
 
@@ -2603,9 +2689,8 @@ func TestGraphSerialWithConditionalRouting(t *testing.T) {
 			t.Logf("Executing node: %s", name)
 			mu.Unlock()
 
-			next := state.Clone()
-			next[name] = true
-			return next, nil
+			state[name] = true
+			return state, nil
 		}
 	}
 
@@ -2707,7 +2792,7 @@ func TestNodeNameInContext(t *testing.T) {
 			nodeNames[expectedName] = node.Name
 			mu.Unlock()
 
-			return state.Clone(), nil
+			return state, nil
 		}
 	}
 
@@ -2772,7 +2857,7 @@ func TestNodeNameInMiddleware(t *testing.T) {
 				handlerNodeNames = append(handlerNodeNames, node.Name)
 				mu.Unlock()
 			}
-			return state.Clone(), nil
+			return state, nil
 		}
 	}
 
@@ -2853,7 +2938,7 @@ func TestNodeNameInParallelExecution(t *testing.T) {
 			// Simulate some work
 			time.Sleep(time.Millisecond)
 
-			return state.Clone(), nil
+			return state, nil
 		}
 	}
 
@@ -2968,12 +3053,11 @@ func TestRetryMiddlewareRetriesFailures(t *testing.T) {
 		if attempts < 3 {
 			return nil, fmt.Errorf("attempt %d failed", attempts)
 		}
-		next := state.Clone()
-		next["attempts"] = attempts
-		return next, nil
+		state["attempts"] = attempts
+		return state, nil
 	})
 	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
-		return state.Clone(), nil
+		return state, nil
 	})
 	g.AddEdge("start", "finish")
 	g.SetEntryPoint("start")
@@ -3012,7 +3096,7 @@ func TestRetryMiddlewareRespectsRetryablePredicate(t *testing.T) {
 		return nil, errPermanent
 	})
 	g.AddNode("finish", func(ctx context.Context, state State) (State, error) {
-		return state.Clone(), nil
+		return state, nil
 	})
 	g.AddEdge("start", "finish")
 	g.SetEntryPoint("start")
