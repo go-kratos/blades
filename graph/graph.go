@@ -52,6 +52,20 @@ type Graph struct {
 	middlewares []Middleware
 }
 
+// CompileOption configures Graph compilation.
+type CompileOption func(*compileConfig)
+
+type compileConfig struct {
+	checkpointer Checkpointer
+}
+
+// WithCheckpointer registers a Checkpointer used by the compiled Executor.
+func WithCheckpointer(checkpointer Checkpointer) CompileOption {
+	return func(cfg *compileConfig) {
+		cfg.checkpointer = checkpointer
+	}
+}
+
 // New creates a new Graph instance with the provided options.
 func New(opts ...Option) *Graph {
 	g := &Graph{
@@ -241,7 +255,14 @@ func (g *Graph) ensureAcyclic() error {
 // Compile validates and compiles the graph into an Executor.
 // Nodes wait for all activated incoming edges to complete before executing (join semantics).
 // An edge is "activated" when its source node executes and chooses that edge.
-func (g *Graph) Compile() (*Executor, error) {
+// Provide no WithCheckpointer option to disable checkpoint persistence.
+func (g *Graph) Compile(opts ...CompileOption) (*Executor, error) {
+	cfg := compileConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
 	// First do basic validation
 	if err := g.validate(); err != nil {
 		return nil, err
@@ -258,5 +279,5 @@ func (g *Graph) Compile() (*Executor, error) {
 	if err := g.validateStructure(); err != nil {
 		return nil, err
 	}
-	return NewExecutor(g), nil
+	return NewExecutor(g, cfg.checkpointer), nil
 }

@@ -47,5 +47,5 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("final state:", state)
+	log.Printf("task final state: %+v", state)
 }

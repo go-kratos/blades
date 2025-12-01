@@ -26,10 +26,12 @@ func main() {
 
 	g.AddEdge("start", "decision")
 	g.AddEdge("decision", "positive", graph.WithEdgeCondition(func(_ context.Context, state graph.State) bool {
-		return state["n"].(int) > 0
+		n, _ := state["n"].(int)
+		return n > 0
 	}))
 	g.AddEdge("decision", "negative", graph.WithEdgeCondition(func(_ context.Context, state graph.State) bool {
-		return state["n"].(int) < 0
+		n, _ := state["n"].(int)
+		return n < 0
 	}))
 	g.AddEdge("positive", "finish")
 	g.AddEdge("negative", "finish")
@@ -46,5 +48,5 @@ func main() {
 	if err != nil {
 		log.Fatalf("execution error: %v", err)
 	}
-	log.Println(state)
+	log.Printf("task final state: %+v", state)
 }

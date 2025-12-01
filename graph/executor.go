@@ -2,14 +2,28 @@ package graph
 
 import (
 	"context"
-	"sort"
+	"fmt"
+	"maps"
 )
+
+// ExecuteOption defines an option for the Execute method.
+type ExecuteOption func(*executeOptions)
+
+type executeOptions struct {
+	CheckpointID string
+}
+
+// WithCheckpointID sets a specific CheckpointID for the execution.
+func WithCheckpointID(CheckpointID string) ExecuteOption {
+	return func(cfg *executeOptions) {
+		cfg.CheckpointID = CheckpointID
+	}
+}
 
 // nodeInfo contains precomputed information for a node to avoid runtime lookups.
 type nodeInfo struct {
 	outEdges           []conditionalEdge // Precomputed outgoing edges
 	unconditionalDests []string          // Target names for unconditional edges
-	predecessors       []string          // Ordered list of predecessors
 	dependencies       int               // Number of dependencies (predecessor count)
 	isFinish           bool              // Whether this is the finish node
 	hasConditions      bool              // Whether outgoing edges carry conditions
@@ -18,26 +32,18 @@ type nodeInfo struct {
 // Executor represents a compiled graph ready for execution. It is safe for
 // concurrent use; each Execute call runs on an isolated execution context.
 type Executor struct {
-	graph     *Graph
-	nodeInfos map[string]*nodeInfo // Precomputed node information
+	graph        *Graph
+	nodeInfos    map[string]*nodeInfo // Precomputed node information
+	checkpointer Checkpointer
 }
 
 // NewExecutor creates a new Executor for the given graph.
-func NewExecutor(g *Graph) *Executor {
-	// Build predecessors map for deterministic state aggregation
-	predecessors := make(map[string][]string, len(g.nodes))
+func NewExecutor(g *Graph, checkpointer Checkpointer) *Executor {
 	dependencyCounts := make(map[string]int)
-	for from, edges := range g.edges {
+	for _, edges := range g.edges {
 		for _, edge := range edges {
-			predecessors[edge.to] = append(predecessors[edge.to], from)
 			dependencyCounts[edge.to]++
 		}
-	}
-	predecessors[g.entryPoint] = append([]string{entryContributionParent}, predecessors[g.entryPoint]...)
-	// Sort predecessors for deterministic state aggregation
-	for node, parents := range predecessors {
-		sort.Strings(parents)
-		predecessors[node] = parents
 	}
 	// Build nodeInfo map with precomputed data
 	nodeInfos := make(map[string]*nodeInfo, len(g.nodes))
@@ -55,7 +61,6 @@ func NewExecutor(g *Graph) *Executor {
 		node := &nodeInfo{
 			outEdges:           rawEdges,
 			unconditionalDests: unconditionalDests,
-			predecessors:       predecessors[nodeName],
 			dependencies:       dependencyCounts[nodeName],
 			isFinish:           nodeName == g.finishPoint,
 			hasConditions:      hasConditions,
@@ -63,15 +68,39 @@ func NewExecutor(g *Graph) *Executor {
 		nodeInfos[nodeName] = node
 	}
 	return &Executor{
-		graph:     g,
-		nodeInfos: nodeInfos,
+		graph:        g,
+		nodeInfos:    nodeInfos,
+		checkpointer: checkpointer,
 	}
 }
 
 // Execute runs the graph task starting from the given state.
-func (e *Executor) Execute(ctx context.Context, state State) (State, error) {
-	t := newTask(e)
-	return t.run(ctx, state)
+func (e *Executor) Execute(ctx context.Context, state State, opts ...ExecuteOption) (State, error) {
+	o := executeOptions{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	t := newTask(e, state, e.checkpointer, o.CheckpointID)
+	return t.run(ctx, nil)
+}
+
+// Resume continues a previously started task using the configured Checkpointer.
+func (e *Executor) Resume(ctx context.Context, state State, opts ...ExecuteOption) (State, error) {
+	o := executeOptions{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if e.checkpointer == nil {
+		return nil, fmt.Errorf("graph: no checkpointer configured")
+	}
+	checkpoint, err := e.checkpointer.Resume(ctx, o.CheckpointID)
+	if err != nil {
+		return nil, fmt.Errorf("graph: failed to load checkpoint: %w", err)
+	}
+	// Merge checkpoint state with provided state (provided values override checkpoint)
+	maps.Copy(checkpoint.State, state)
+	task := newTask(e, checkpoint.State, e.checkpointer, o.CheckpointID)
+	return task.run(ctx, checkpoint)
 }
 
 // cloneEdges creates a copy of edge slice to avoid shared state issues.
