@@ -98,8 +98,8 @@ func (e *Executor) Resume(ctx context.Context, state State, opts ...ExecuteOptio
 		return nil, fmt.Errorf("graph: failed to load checkpoint: %w", err)
 	}
 	// Merge checkpoint state with provided state (provided values override checkpoint)
-	maps.Copy(state, checkpoint.State)
-	task := newTask(e, state, e.checkpointer, o.CheckpointID)
+	maps.Copy(checkpoint.State, state)
+	task := newTask(e, checkpoint.State, e.checkpointer, o.CheckpointID)
 	return task.run(ctx, checkpoint)
 }
 
