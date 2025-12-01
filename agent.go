@@ -352,9 +352,6 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 						return
 					}
 				}
-				if Interrupted(finalResponse.Message.Actions) {
-					return
-				}
 			} else {
 				streaming := a.model.NewStreaming(ctx, req)
 				for finalResponse, err = range streaming {
@@ -373,9 +370,6 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					if !yield(finalResponse.Message, nil) {
 						return // early termination
 					}
-					if Interrupted(finalResponse.Message.Actions) {
-						return
-					}
 				}
 			}
 			if finalResponse == nil {
@@ -389,9 +383,6 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					return
 				}
 				if !yield(toolMessage, nil) {
-					return
-				}
-				if Interrupted(toolMessage.Actions) {
 					return
 				}
 				// Append the tool response to the message history for the next iteration

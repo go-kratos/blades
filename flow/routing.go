@@ -58,7 +58,7 @@ func (a *RoutingAgent) Run(ctx context.Context, invocation *blades.Invocation) b
 				yield(nil, err)
 				return
 			}
-			if target, ok := message.Actions[blades.ActionHandoffToAgent]; ok {
+			if target, ok := message.Actions[handoff.ActionHandoffToAgent]; ok {
 				targetAgent, _ = target.(string)
 				break
 			}
