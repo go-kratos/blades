@@ -1,4 +1,4 @@
-package evaluate
+package evaluator
 
 import (
 	"context"
@@ -13,8 +13,8 @@ type Criteria struct {
 	agent blades.Agent
 }
 
-// NewCriteria creates a new Criteria evaluator.
-func NewCriteria(name string, opts ...blades.AgentOption) (Evaluator, error) {
+// New creates a new Criteria evaluator.
+func New(name string, opts ...blades.AgentOption) (Evaluator, error) {
 	schema, err := jsonschema.For[Evaluation](nil)
 	if err != nil {
 		return nil, err

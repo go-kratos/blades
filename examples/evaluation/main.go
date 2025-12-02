@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
-	"github.com/go-kratos/blades/evaluate"
+	"github.com/go-kratos/blades/evaluator"
 )
 
 func buildPrompt(params map[string]any) (string, error) {
@@ -45,7 +45,7 @@ func main() {
 	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	})
-	r, err := evaluate.NewCriteria(
+	r, err := evaluator.New(
 		"Evaluation Agent",
 		blades.WithModel(model),
 	)

@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
-	"github.com/go-kratos/blades/evaluate"
+	"github.com/go-kratos/blades/evaluator"
 )
 
 func buildPrompt(topic, content, feedback string) *blades.Message {
@@ -34,7 +34,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	evaluator, err := evaluate.NewCriteria("story_evaluator",
+	evaluator, err := evaluator.New("story_evaluator",
 		blades.WithModel(model),
 		blades.WithInstruction(`You evaluate a story outline and decide if it's good enough.
 		If it's not good enough, you provide feedback on what needs to be improved.
