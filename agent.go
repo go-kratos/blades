@@ -242,8 +242,9 @@ func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
 	if !invocation.Resumable || invocation.Session == nil {
 		return nil, false
 	}
-	var resumeMessages []*Message
-	for _, m := range invocation.Session.History() {
+	resumeHistory := invocation.Session.History()
+	resumeMessages := make([]*Message, 0, len(resumeHistory))
+	for _, m := range resumeHistory {
 		if m.InvocationID == invocation.ID && m.Author == a.name {
 			resumeMessages = append(resumeMessages, m)
 			// If we find a completed assistant message, we can resume from here.
@@ -256,18 +257,14 @@ func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
 }
 
 func (a *agent) saveOutputState(ctx context.Context, invocation *Invocation, message *Message) error {
-	if message.Author == "" {
-		message.Author = a.name
-	}
-	message.InvocationID = invocation.ID
 	// Save output to session state if outputKey is set
-	if invocation.Session == nil || a.outputKey == "" {
-		return nil
+	if a.outputKey != "" &&
+		invocation.Session != nil &&
+		message.Role == RoleAssistant &&
+		message.Status == StatusCompleted {
+		// Store the text content of the message under the specified output key
+		invocation.Session.SetState(a.outputKey, message.Text())
 	}
-	if message.Role != RoleAssistant || message.Status != StatusCompleted {
-		return nil
-	}
-	invocation.Session.SetState(a.outputKey, message.Text())
 	return nil
 }
 
@@ -331,11 +328,16 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					yield(nil, err)
 					return
 				}
-				if err := a.saveOutputState(ctx, invocation, finalResponse.Message); err != nil {
-					yield(nil, err)
-					return
+				if finalResponse.Message.Author == "" {
+					finalResponse.Message.Author = a.name
 				}
+				finalResponse.Message.InvocationID = invocation.ID
+				// Skip saving tool intermediate states
 				if finalResponse.Message.Role == RoleAssistant {
+					if err := a.saveOutputState(ctx, invocation, finalResponse.Message); err != nil {
+						yield(nil, err)
+						return
+					}
 					if !yield(finalResponse.Message, nil) {
 						return
 					}
@@ -347,14 +349,17 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 						yield(nil, err)
 						return
 					}
+					if finalResponse.Message.Author == "" {
+						finalResponse.Message.Author = a.name
+					}
+					finalResponse.Message.InvocationID = invocation.ID
+					// Skip saving tool intermediate states
+					if finalResponse.Message.Role == RoleTool && finalResponse.Message.Status == StatusCompleted {
+						continue
+					}
 					if err := a.saveOutputState(ctx, invocation, finalResponse.Message); err != nil {
 						yield(nil, err)
 						return
-					}
-					if finalResponse.Message.Role == RoleTool && finalResponse.Message.Status == StatusCompleted {
-						// Skip yielding tool messages during streaming.
-						// Tool messages with StatusCompleted indicate that a tool call has been made,
-						continue
 					}
 					if !yield(finalResponse.Message, nil) {
 						return // early termination

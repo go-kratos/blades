@@ -29,7 +29,7 @@ type RunnerOption func(*Runner)
 // WithResumable configures whether the Runner supports resumable sessions.
 func WithResumable(resumable bool) RunnerOption {
 	return func(r *Runner) {
-		r.Resumable = resumable
+		r.resumable = resumable
 	}
 }
 
@@ -41,7 +41,7 @@ type RunOptions struct {
 
 // Runner is responsible for executing a Runnable agent within a session context.
 type Runner struct {
-	Resumable bool
+	resumable bool
 	rootAgent Agent
 }
 
@@ -61,7 +61,7 @@ func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamab
 	invocation := &Invocation{
 		ID:         o.InvocationID,
 		Session:    o.Session,
-		Resumable:  r.Resumable,
+		Resumable:  r.resumable,
 		Streamable: streamable,
 		Message:    message,
 	}
@@ -83,11 +83,11 @@ func (r *Runner) appendNewMessage(ctx context.Context, invocation *Invocation, m
 	return invocation.Session.Append(ctx, message)
 }
 
-// historyByInvocation creates a map of message IDs to messages from the session history.
+// historyByResume creates a map of message IDs to messages from the session history.
 // This map is used to filter out already processed messages during resume operations.
 // Returns nil if the session is nil.
-func (r *Runner) historyByInvocation(ctx context.Context, session Session, invocation *Invocation) map[string]*Message {
-	if session == nil {
+func (r *Runner) historyByResume(ctx context.Context, session Session, invocation *Invocation) map[string]*Message {
+	if session == nil || !r.resumable {
 		return nil
 	}
 	history := session.History()
@@ -148,7 +148,7 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 	if err != nil {
 		return stream.Error[*Message](err)
 	}
-	invocationHistory := r.historyByInvocation(ctx, o.Session, invocation)
+	invocationHistory := r.historyByResume(ctx, o.Session, invocation)
 	return func(yield func(*Message, error) bool) {
 		iter := r.rootAgent.Run(NewSessionContext(ctx, o.Session), invocation)
 		for output, err := range iter {
@@ -161,7 +161,15 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 			if exists {
 				continue
 			}
-			yield(output, nil)
+			if output.Status == StatusCompleted {
+				if err := r.appendNewMessage(ctx, invocation, output); err != nil {
+					yield(nil, err)
+					return
+				}
+			}
+			if !yield(output, nil) {
+				return
+			}
 		}
 	}
 }
