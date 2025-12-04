@@ -76,7 +76,7 @@ func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamab
 
 // appendNewMessage appends a new message to the session history.
 func (r *Runner) appendNewMessage(ctx context.Context, invocation *Invocation, message *Message) error {
-	if invocation.Session == nil || message == nil {
+	if message == nil {
 		return nil
 	}
 	message.InvocationID = invocation.ID
@@ -87,7 +87,7 @@ func (r *Runner) appendNewMessage(ctx context.Context, invocation *Invocation, m
 // This map is used to filter out already processed messages during resume operations.
 // Returns nil if the session is nil.
 func (r *Runner) historyByResume(ctx context.Context, session Session, invocation *Invocation) map[string]*Message {
-	if session == nil || !r.resumable {
+	if !r.resumable {
 		return nil
 	}
 	history := session.History()
