@@ -18,6 +18,7 @@ type DeepConfig struct {
 	SubAgents                  []blades.Agent
 	MaxIterations              int
 	WithoutGeneralPurposeAgent bool
+	Middlewares                []blades.Middleware
 }
 
 // NewDeepAgent constructs and returns a "deep agent" using the provided configuration.
@@ -55,5 +56,6 @@ func NewDeepAgent(config DeepConfig) (blades.Agent, error) {
 		blades.WithInstruction(strings.Join(tc.Instructions, "\n\n")),
 		blades.WithTools(tc.Tools...),
 		blades.WithMaxIterations(config.MaxIterations),
+		blades.WithMiddleware(config.Middlewares...),
 	)
 }
