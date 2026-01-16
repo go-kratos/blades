@@ -14,6 +14,7 @@ type RoutingConfig struct {
 	Description string
 	Model       blades.ModelProvider
 	SubAgents   []blades.Agent
+	Middlewares []blades.Middleware
 }
 
 type RoutingAgent struct {
@@ -32,6 +33,7 @@ func NewRoutingAgent(config RoutingConfig) (blades.Agent, error) {
 		blades.WithDescription(config.Description),
 		blades.WithInstruction(instruction),
 		blades.WithTools(handoff.NewHandoffTool()),
+		blades.WithMiddleware(config.Middlewares...),
 	)
 	if err != nil {
 		return nil, err
