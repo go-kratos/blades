@@ -53,6 +53,7 @@ func NewAudio(model string, config AudioConfig) blades.ModelProvider {
 		opts = append(opts, option.WithAPIKey(config.APIKey))
 	}
 	return &audioModel{
+		model:  model,
 		config: config,
 		client: openai.NewClient(opts...),
 	}
@@ -89,6 +90,15 @@ func (m *audioModel) buildAudioParams(req *blades.ModelRequest) openai.AudioSpee
 
 // Generate generates audio from text input using the configured OpenAI model.
 func (m *audioModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+	if req == nil {
+		return nil, ErrAudioRequestNil
+	}
+	if m.model == "" {
+		return nil, ErrAudioModelRequired
+	}
+	if m.config.Voice == "" {
+		return nil, ErrAudioVoiceRequired
+	}
 	params := m.buildAudioParams(req)
 	resp, err := m.client.Audio.Speech.New(ctx, params)
 	if err != nil {

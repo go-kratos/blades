@@ -42,7 +42,8 @@ type conditionalEdge struct {
 	condition EdgeCondition // nil means always follow this edge
 }
 
-// Graph represents a directed graph of processing nodes. Cycles are allowed.
+// Graph represents a directed graph of processing nodes.
+// Cycles are rejected at compile time.
 type Graph struct {
 	nodes       map[string]Handler
 	edges       map[string][]conditionalEdge

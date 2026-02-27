@@ -24,7 +24,7 @@ func convertMessageToGenAI(req *blades.ModelRequest) (*genai.Content, []*genai.C
 		case blades.RoleUser:
 			contents = append(contents, &genai.Content{Role: genai.RoleUser, Parts: convertMessagePartsToGenAI(msg.Parts)})
 		case blades.RoleAssistant:
-			contents = append(contents, &genai.Content{Role: genai.RoleUser, Parts: convertMessagePartsToGenAI(msg.Parts)})
+			contents = append(contents, &genai.Content{Role: genai.RoleModel, Parts: convertMessagePartsToGenAI(msg.Parts)})
 		case blades.RoleTool:
 			var parts []*genai.Part
 			for _, part := range msg.Parts {

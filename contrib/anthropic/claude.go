@@ -140,7 +140,7 @@ func (m *Claude) toClaudeParams(req *blades.ModelRequest) (*anthropic.MessageNew
 		case blades.RoleUser:
 			params.Messages = append(params.Messages, anthropic.NewUserMessage(convertPartsToContent(msg.Parts)...))
 		case blades.RoleAssistant:
-			params.Messages = append(params.Messages, anthropic.NewUserMessage(convertPartsToContent(msg.Parts)...))
+			params.Messages = append(params.Messages, anthropic.NewAssistantMessage(convertPartsToContent(msg.Parts)...))
 		case blades.RoleTool:
 			var content []anthropic.ContentBlockParamUnion
 			for _, part := range msg.Parts {

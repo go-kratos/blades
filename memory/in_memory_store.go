@@ -29,10 +29,14 @@ func (s *InMemoryStore) AddMemory(ctx context.Context, m *Memory) error {
 
 // SaveSession saves the session's history as memories in the store.
 func (s *InMemoryStore) SaveSession(ctx context.Context, session blades.Session) error {
+	if session == nil {
+		return nil
+	}
 	s.m.Lock()
 	defer s.m.Unlock()
-	for _, m := range session.History() {
-		s.AddMemory(ctx, &Memory{Content: m})
+	history := session.History()
+	for _, msg := range history {
+		s.memories = append(s.memories, &Memory{Content: msg})
 	}
 	return nil
 }

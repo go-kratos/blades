@@ -55,7 +55,8 @@ func (a *RoutingAgent) Run(ctx context.Context, invocation *blades.Invocation) b
 			targetAgent string
 			message     *blades.Message
 		)
-		for message, err = range a.Agent.Run(ctx, invocation) {
+		routerInvocation := invocation.Clone()
+		for message, err = range a.Agent.Run(ctx, routerInvocation) {
 			if err != nil {
 				yield(nil, err)
 				return
@@ -75,7 +76,8 @@ func (a *RoutingAgent) Run(ctx context.Context, invocation *blades.Invocation) b
 			yield(nil, fmt.Errorf("target agent not found: %s", targetAgent))
 			return
 		}
-		for message, err := range agent.Run(ctx, invocation) {
+		targetInvocation := invocation.Clone()
+		for message, err := range agent.Run(ctx, targetInvocation) {
 			if !yield(message, err) {
 				return
 			}

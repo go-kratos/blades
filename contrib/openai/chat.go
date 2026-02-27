@@ -179,7 +179,7 @@ func (m *chatModel) toChatCompletionParams(isStreaming bool, req *blades.ModelRe
 		case blades.RoleUser:
 			params.Messages = append(params.Messages, openai.UserMessage(toContentParts(msg)))
 		case blades.RoleAssistant:
-			params.Messages = append(params.Messages, openai.UserMessage(toContentParts(msg)))
+			params.Messages = append(params.Messages, openai.AssistantMessage(msg.Text()))
 		case blades.RoleSystem:
 			params.Messages = append(params.Messages, openai.SystemMessage(toTextParts(msg)))
 		case blades.RoleTool:

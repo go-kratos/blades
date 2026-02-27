@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -38,13 +39,13 @@ func NewToolsResolver(configs ...ClientConfig) (*ToolsResolver, error) {
 func (r *ToolsResolver) getTools() []tools.Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.tools
+	return slices.Clone(r.tools)
 }
 
 func (r *ToolsResolver) setTools(tools []tools.Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.tools = tools
+	r.tools = slices.Clone(tools)
 }
 
 // Resolve implements the tools.Resolver interface.
@@ -85,11 +86,11 @@ func (r *ToolsResolver) Resolve(ctx context.Context) ([]tools.Tool, error) {
 		return nil, fmt.Errorf("failed to load any tools: %v", errors)
 	}
 	if len(errors) > 0 {
-		fmt.Printf("Some errors occurred while loading tools: %v\n", errors)
+		// keep partial success behavior: return loaded tools while suppressing noisy stdout logs
 	}
 	r.setTools(allTools)
 	r.loaded.Store(true)
-	return allTools, nil
+	return r.getTools(), nil
 }
 
 // Close closes all client connections.

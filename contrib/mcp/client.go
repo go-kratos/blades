@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,7 @@ type Client struct {
 	connectMutex  sync.Mutex
 	connectCtx    context.Context
 	connectCancel context.CancelFunc
+	reconnecting  atomic.Bool
 }
 
 // NewClient creates a new MCP client.
@@ -50,9 +52,16 @@ func NewClient(config ClientConfig) (*Client, error) {
 
 // Connect establishes connection to the MCP server.
 func (c *Client) Connect(ctx context.Context) error {
+	return c.connect(ctx, true)
+}
+
+func (c *Client) connect(ctx context.Context, startReconnect bool) error {
 	// Ensure only one connection attempt at a time
 	c.connectMutex.Lock()
 	defer c.connectMutex.Unlock()
+	if c.connectCtx == nil || c.connectCtx.Err() != nil {
+		c.connectCtx, c.connectCancel = context.WithCancel(context.Background())
+	}
 	// If already connected, return
 	if c.connected.Load() {
 		return nil
@@ -81,7 +90,9 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.session = session
 	c.connected.Store(true)
-	go c.reconnect(c.connectCtx)
+	if startReconnect && c.reconnecting.CompareAndSwap(false, true) {
+		go c.reconnect(c.connectCtx)
+	}
 	return nil
 }
 
@@ -89,6 +100,7 @@ func (c *Client) Connect(ctx context.Context) error {
 func (c *Client) createStdioTransport() (mcp.Transport, error) {
 	cmd := exec.Command(c.config.Command, c.config.Args...)
 	// Set environment variables
+	cmd.Env = os.Environ()
 	if len(c.config.Env) > 0 {
 		for k, v := range c.config.Env {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
@@ -196,30 +208,62 @@ func (c *Client) Close() error {
 	if c.connectCancel != nil {
 		c.connectCancel()
 	}
-	if !c.connected.Load() {
-		return nil
-	}
-	if c.session != nil {
-		if err := c.session.Close(); err != nil {
+	c.connectMutex.Lock()
+	session := c.session
+	c.session = nil
+	c.connected.Store(false)
+	c.connectMutex.Unlock()
+	if session != nil {
+		if err := session.Close(); err != nil {
 			return fmt.Errorf("mcp [%s] close: %w", c.config.Name, err)
 		}
 	}
-	c.connected.Store(false)
 	return nil
 }
 
 func (c *Client) reconnect(ctx context.Context) {
+	defer c.reconnecting.Store(false)
+	backoff := time.Second
+	const maxBackoff = 30 * time.Second
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("mcp [%s] reconnect routine exiting...\n", c.config.Name)
 			return
 		default:
-			c.session.Wait()
-			fmt.Printf("mcp [%s] disconnected, attempting to reconnect...\n", c.config.Name)
+		}
+
+		c.connectMutex.Lock()
+		session := c.session
+		connected := c.connected.Load()
+		c.connectMutex.Unlock()
+		if session != nil && connected {
+			session.Wait()
 			c.connected.Store(false)
-			c.Connect(ctx)
-			return
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			if err := c.connect(ctx, false); err == nil {
+				backoff = time.Second
+				break
+			}
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			if backoff < maxBackoff {
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+			}
 		}
 	}
 }
