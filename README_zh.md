@@ -120,10 +120,8 @@ func main() {
 
 ### Skills
 
-`Agent` supports skill injection via `WithSkills(...)`.
-You can load skills from a directory (`SKILL.md` + optional `references/`, `assets/`, `scripts/`) or from `embed.FS`.
-Built-in skill tools are `list_skills`, `load_skill`, `load_skill_resource`, and `run_skill_script`.
-Skill loading now enforces strict frontmatter keys and skill-name-to-directory matching.
+`Agent` 支持通过 `WithSkills(...)` 注入 Skills，支持从目录或 `embed.FS` 加载。
+Skill 的包结构与元数据规范请参考 [Agent Skill specification](https://agentskills.io/specification)。
 
 ```go
 package main
