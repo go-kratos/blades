@@ -348,23 +348,27 @@ func (t *loadSkillResourceTool) Handle(ctx context.Context, input string) (strin
 	if !ok {
 		return skillNotFound(req.SkillName), nil
 	}
+	resourceType, resourceName, err := normalizeResourcePath(req.Path)
+	if err != nil {
+		return mustJSON(map[string]any{
+			"error":      "Path must start with 'references/', 'assets/', or 'scripts/' and remain within that directory.",
+			"error_code": "INVALID_RESOURCE_PATH",
+		}), nil
+	}
 	var (
 		content string
 		found   bool
 	)
 	resources := skill.resources
-	switch {
-	case strings.HasPrefix(req.Path, "references/"):
-		content, found = resources.GetReference(strings.TrimPrefix(req.Path, "references/"))
-	case strings.HasPrefix(req.Path, "assets/"):
-		content, found = resources.GetAsset(strings.TrimPrefix(req.Path, "assets/"))
-	case strings.HasPrefix(req.Path, "scripts/"):
-		content, found = resources.GetScript(strings.TrimPrefix(req.Path, "scripts/"))
+	switch resourceType {
+	case "references":
+		content, found = resources.GetReference(resourceName)
+	case "assets":
+		content, found = resources.GetAsset(resourceName)
+	case "scripts":
+		content, found = resources.GetScript(resourceName)
 	default:
-		return mustJSON(map[string]any{
-			"error":      "Path must start with 'references/', 'assets/', or 'scripts/'.",
-			"error_code": "INVALID_RESOURCE_PATH",
-		}), nil
+		return invalidArgs("Invalid resource type"), nil
 	}
 	if !found {
 		return mustJSON(map[string]any{
@@ -473,10 +477,13 @@ func (t *runSkillScriptTool) Handle(ctx context.Context, input string) (string, 
 			"error_code": "INVALID_TIMEOUT",
 		}), nil
 	}
-	for key := range req.Env {
-		if key == "" || strings.Contains(key, "=") {
+	for key, value := range req.Env {
+		if key == "" ||
+			strings.Contains(key, "=") ||
+			strings.ContainsRune(key, 0) ||
+			strings.ContainsRune(value, 0) {
 			return mustJSON(map[string]any{
-				"error":      "Environment variable names must be non-empty and must not contain '='.",
+				"error":      "Environment variable names must be non-empty, must not contain '=', and keys/values must not contain NUL.",
 				"error_code": "INVALID_ENV",
 			}), nil
 		}
@@ -501,6 +508,29 @@ func (t *runSkillScriptTool) Handle(ctx context.Context, input string) (string, 
 	return executeSkillScript(ctx, tmpRoot, req.SkillName, fullScriptPath, req.Args, req.Env, timeoutSeconds), nil
 }
 
+func normalizeResourcePath(resourcePath string) (resourceType string, resourceName string, err error) {
+	resourcePath = strings.TrimSpace(resourcePath)
+	resourcePath = strings.ReplaceAll(resourcePath, "\\", "/")
+	switch {
+	case strings.HasPrefix(resourcePath, "references/"):
+		resourceType = "references"
+		resourcePath = strings.TrimPrefix(resourcePath, "references/")
+	case strings.HasPrefix(resourcePath, "assets/"):
+		resourceType = "assets"
+		resourcePath = strings.TrimPrefix(resourcePath, "assets/")
+	case strings.HasPrefix(resourcePath, "scripts/"):
+		resourceType = "scripts"
+		resourcePath = strings.TrimPrefix(resourcePath, "scripts/")
+	default:
+		return "", "", fmt.Errorf("resource path must start with references/, assets/, or scripts/")
+	}
+	resourceName, err = normalizeSkillRelativePath(resourcePath)
+	if err != nil {
+		return "", "", fmt.Errorf("resource path must be a relative path within %s/", resourceType)
+	}
+	return resourceType, resourceName, nil
+}
+
 func splitAllowedToolPatterns(raw string) []string {
 	items := strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || unicode.IsSpace(r)
@@ -518,9 +548,10 @@ func splitAllowedToolPatterns(raw string) []string {
 
 func normalizeScriptPath(scriptPath string) (scriptName string, fullScriptPath string, err error) {
 	scriptPath = strings.TrimSpace(scriptPath)
+	scriptPath = strings.ReplaceAll(scriptPath, "\\", "/")
 	scriptPath = strings.TrimPrefix(scriptPath, "scripts/")
-	clean := path.Clean(scriptPath)
-	if isInvalidSkillRelativePath(clean) {
+	clean, err := normalizeSkillRelativePath(scriptPath)
+	if err != nil {
 		return "", "", fmt.Errorf("script path must be a relative path under scripts/")
 	}
 	return clean, path.Join("scripts", clean), nil
@@ -546,15 +577,34 @@ func materializeSkillWorkspace(root string, resources Resources) error {
 }
 
 func writeWorkspaceFile(root string, dir string, rel string, content string, mode fs.FileMode) error {
-	clean := path.Clean(rel)
-	if isInvalidSkillRelativePath(clean) {
+	clean, err := normalizeSkillRelativePath(rel)
+	if err != nil {
 		return fmt.Errorf("invalid file path %q", rel)
 	}
-	targetPath := filepath.Join(root, filepath.FromSlash(dir), filepath.FromSlash(clean))
+
+	baseDir := filepath.Join(root, filepath.FromSlash(dir))
+	targetPath := filepath.Join(baseDir, filepath.FromSlash(clean))
+	relToBase, err := filepath.Rel(baseDir, targetPath)
+	if err != nil {
+		return err
+	}
+	if relToBase == ".." || strings.HasPrefix(relToBase, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("invalid file path %q", rel)
+	}
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(targetPath, []byte(content), mode)
+}
+
+func normalizeSkillRelativePath(rel string) (string, error) {
+	rel = strings.TrimSpace(rel)
+	rel = strings.ReplaceAll(rel, "\\", "/")
+	clean := path.Clean(rel)
+	if isInvalidSkillRelativePath(clean) {
+		return "", fmt.Errorf("invalid relative path")
+	}
+	return clean, nil
 }
 
 func isInvalidSkillRelativePath(clean string) bool {
@@ -562,7 +612,43 @@ func isInvalidSkillRelativePath(clean string) bool {
 		clean == "." ||
 		clean == ".." ||
 		strings.HasPrefix(clean, "../") ||
-		path.IsAbs(clean)
+		path.IsAbs(clean) ||
+		hasWindowsVolumePrefix(clean)
+}
+
+func hasWindowsVolumePrefix(p string) bool {
+	if len(p) < 2 {
+		return false
+	}
+	return ((p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z')) && p[1] == ':'
+}
+
+func mergeCommandEnv(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		out := make([]string, len(base))
+		copy(out, base)
+		return out
+	}
+	out := make([]string, 0, len(base)+len(overrides))
+	for _, item := range base {
+		key := item
+		if i := strings.IndexByte(item, '='); i >= 0 {
+			key = item[:i]
+		}
+		if _, overridden := overrides[key]; overridden {
+			continue
+		}
+		out = append(out, item)
+	}
+	keys := make([]string, 0, len(overrides))
+	for key := range overrides {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		out = append(out, key+"="+overrides[key])
+	}
+	return out
 }
 
 func executeSkillScript(
@@ -590,7 +676,7 @@ func executeSkillScript(
 
 	cmd := exec.CommandContext(timeoutCtx, commandName, commandArgs...)
 	cmd.Dir = tmpRoot
-	cmd.Env = os.Environ()
+	cmd.Env = mergeCommandEnv(os.Environ(), env)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -126,6 +126,60 @@ func TestLoadSkillResourceErrors(t *testing.T) {
 	}
 }
 
+func TestLoadSkillResourcePathNormalizationAndTraversal(t *testing.T) {
+	t.Parallel()
+
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "",
+		resources: Resources{
+			References: map[string]string{"ref.md": "ref"},
+		},
+	}
+	toolset, err := NewToolset([]Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	tool := toolset.Tools()[2]
+
+	resp, err := tool.Handle(context.Background(), mustJSON(map[string]any{
+		"skill_name": "skill1",
+		"path":       `references\ref.md`,
+	}))
+	if err != nil {
+		t.Fatalf("tool error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["content"] != "ref" {
+		t.Fatalf("unexpected content: %v", obj["content"])
+	}
+
+	for _, p := range []string{
+		`references\..\secret.md`,
+		`references\..\..\secret.md`,
+		`scripts\..\run.sh`,
+		`C:\secret.txt`,
+		`C:secret.txt`,
+	} {
+		resp, err := tool.Handle(context.Background(), mustJSON(map[string]any{
+			"skill_name": "skill1",
+			"path":       p,
+		}))
+		if err != nil {
+			t.Fatalf("tool error for %q: %v", p, err)
+		}
+		if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+			t.Fatalf("unmarshal for %q: %v", p, err)
+		}
+		if obj["error_code"] != "INVALID_RESOURCE_PATH" {
+			t.Fatalf("unexpected error_code for %q: %v", p, obj["error_code"])
+		}
+	}
+}
+
 func TestToolsetComposeToolsWithAllowedPatterns(t *testing.T) {
 	t.Parallel()
 
@@ -283,10 +337,19 @@ func TestNormalizeScriptPath(t *testing.T) {
 			wantScriptName: "nested/run.sh",
 			wantFullPath:   "scripts/nested/run.sh",
 		},
+		{
+			name:           "windows separator nested",
+			input:          `scripts\nested\run.sh`,
+			wantScriptName: "nested/run.sh",
+			wantFullPath:   "scripts/nested/run.sh",
+		},
 		{name: "dot", input: ".", wantError: true},
 		{name: "dot dot", input: "..", wantError: true},
 		{name: "parent", input: "../x.sh", wantError: true},
+		{name: "windows parent", input: `..\x.sh`, wantError: true},
 		{name: "absolute", input: "/x.sh", wantError: true},
+		{name: "windows drive absolute", input: `C:\x.sh`, wantError: true},
+		{name: "windows drive relative", input: `C:x.sh`, wantError: true},
 		{name: "cleaned parent", input: "a/../..", wantError: true},
 		{name: "scripts dot dot", input: "scripts/..", wantError: true},
 	}
@@ -320,7 +383,14 @@ func TestWriteWorkspaceFilePathValidation(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	for _, rel := range []string{"..", "a/../.."} {
+	for _, rel := range []string{
+		"..",
+		"a/../..",
+		`..\x.sh`,
+		`a\..\..\x.sh`,
+		`C:\x.sh`,
+		`C:x.sh`,
+	} {
 		err := writeWorkspaceFile(root, "scripts", rel, "echo no", 0o755)
 		if err == nil {
 			t.Fatalf("expected error for %q", rel)
@@ -407,6 +477,92 @@ func TestRunSkillScriptToolAnyExecutable(t *testing.T) {
 	}
 	if obj["status"] != "success" {
 		t.Fatalf("unexpected status: %v", obj["status"])
+	}
+}
+
+func TestRunSkillScriptToolEnvAppliedAndOverrides(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("direct executable script test is not supported on windows")
+	}
+
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "",
+		resources: Resources{
+			Scripts: map[string]string{
+				"run": "#!/bin/sh\necho PATH=$PATH\necho FOO=$FOO\n",
+			},
+		},
+	}
+	toolset, err := NewToolset([]Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	tool := toolset.Tools()[3]
+	resp, err := tool.Handle(context.Background(), mustJSON(map[string]any{
+		"skill_name":  "skill1",
+		"script_path": "run",
+		"env": map[string]string{
+			"PATH": "custom-path",
+			"FOO":  "tool-foo",
+		},
+	}))
+	if err != nil {
+		t.Fatalf("tool error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["status"] != "success" {
+		t.Fatalf("unexpected status: %v", obj["status"])
+	}
+	stdout, _ := obj["stdout"].(string)
+	if !strings.Contains(stdout, "PATH=custom-path") {
+		t.Fatalf("expected PATH override, got stdout: %q", stdout)
+	}
+	if !strings.Contains(stdout, "FOO=tool-foo") {
+		t.Fatalf("expected FOO env, got stdout: %q", stdout)
+	}
+}
+
+func TestRunSkillScriptToolInvalidEnvNUL(t *testing.T) {
+	t.Parallel()
+
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "",
+		resources: Resources{
+			Scripts: map[string]string{"run.sh": "echo ok"},
+		},
+	}
+	toolset, err := NewToolset([]Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	tool := toolset.Tools()[3]
+
+	cases := []map[string]string{
+		{string([]byte{'B', 'A', 'D', 0, 'K'}): "ok"},
+		{"BAD": string([]byte{'o', 'k', 0})},
+	}
+	for _, env := range cases {
+		resp, err := tool.Handle(context.Background(), mustJSON(map[string]any{
+			"skill_name":  "skill1",
+			"script_path": "run.sh",
+			"env":         env,
+		}))
+		if err != nil {
+			t.Fatalf("tool error: %v", err)
+		}
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if obj["error_code"] != "INVALID_ENV" {
+			t.Fatalf("unexpected error_code: %v", obj["error_code"])
+		}
 	}
 }
 
