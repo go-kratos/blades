@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/go-kratos/blades/skills"
 	"github.com/go-kratos/blades/tools"
 	"github.com/go-kratos/kit/container/maps"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -75,6 +76,13 @@ func WithTools(tools ...tools.Tool) AgentOption {
 	}
 }
 
+// WithSkills sets skills for the Agent.
+func WithSkills(skillList ...*skills.Skill) AgentOption {
+	return func(a *agent) {
+		a.skills = skillList
+	}
+}
+
 // WithToolsResolver sets a tools resolver for the Agent.
 // The resolver can dynamically provide tools from various sources (e.g., MCP servers, plugins).
 // Tools are resolved lazily on first use.
@@ -112,6 +120,7 @@ type agent struct {
 	outputSchema        *jsonschema.Schema
 	middlewares         []Middleware
 	tools               []tools.Tool
+	skills              []*skills.Skill
 	toolsResolver       tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
 }
 
@@ -164,7 +173,15 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 	}
 	invocation.Model = a.model.Name()
 	invocation.Tools = append(invocation.Tools, resolvedTools...)
-	// order of precedence: static instruction > instruction provider > invocation instruction
+	if len(a.skills) > 0 {
+		toolset, err := skills.NewToolset(a.skills)
+		if err != nil {
+			return err
+		}
+		invocation.Tools = append(invocation.Tools, toolset.Tools()...)
+		invocation.Instruction = MergeParts(SystemMessage(toolset.Instruction()), invocation.Instruction)
+	}
+	// order of precedence: static instruction > instruction provider > skills instruction > invocation instruction
 	if a.instructionProvider != nil {
 		instruction, err := a.instructionProvider(ctx)
 		if err != nil {

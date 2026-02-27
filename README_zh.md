@@ -117,7 +117,51 @@ func main() {
     log.Println(output.Text())
 }
 ```
-更多示例请参见 [examples](./examples) 目录。
+
+### Skills (Experimental)
+
+`Agent` supports skill injection via `WithSkills(...)`.
+You can load skills from a directory (`SKILL.md` + optional `references/`, `assets/`, `scripts/`) or from `embed.FS`.
+
+```go
+package main
+
+import (
+    "embed"
+    "io/fs"
+
+    "github.com/go-kratos/blades"
+    "github.com/go-kratos/blades/skills"
+)
+
+//go:embed example-skill/*
+var skillFS embed.FS
+
+func createAgent(model blades.ModelProvider) (blades.Agent, error) {
+    // Directory-based loading:
+    skillsFromDir, err := skills.NewFromDir("./skills")
+    if err != nil {
+        return nil, err
+    }
+    // Embedded loading:
+    sub, err := fs.Sub(skillFS, "example-skill")
+    if err != nil {
+        return nil, err
+    }
+    skillsFromEmbed, err := skills.NewFromEmbed(sub)
+    if err != nil {
+        return nil, err
+    }
+    allSkills := append(skillsFromDir, skillsFromEmbed...)
+    return blades.NewAgent(
+        "SkillsAgent",
+        blades.WithModel(model),
+        blades.WithSkills(allSkills...),
+    )
+}
+```
+
+For more examples, please refer to the [examples](./examples) directory.
 
 ## 🤝 贡献与社区
 项目当前处于初期阶段，我们正在持续快速地迭代中。我们诚挚地邀请所有 Go 开发者和 AI 爱好者访问我们的 GitHub 仓库，亲自体验 Blades 带来的开发乐趣。
