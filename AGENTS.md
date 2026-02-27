@@ -1,46 +1,30 @@
 # Repository Guidelines
 
-Concise rules for contributing to this Go-based agent framework. Keep changes scoped, documented, and tested.
-
 ## Project Structure & Module Organization
-- Root: core runtime and types in `agent.go`, `message.go`, `mime.go`, `model.go`, `stream.go`.
-- `examples/` runnable demos: `chat/`, `output/`, `tools/`, `server/`, `routing/`, `streaming/`, `translation/`, `chain/`, `reasoning/`, `conversation/`, `template/` (run each via `go run examples/<name>/main.go`).
-- `memory/` memory abstractions and helpers; `memory.go` entry types.
-- `contrib/` provider integrations (e.g., `openai/` with `chat.go`, `image.go`).
-- `flow/` flow orchestration utilities.
-- `docs/` repository docs; `README.md` and `README_zh.md` at root.
-- Tests live beside code as `*_test.go` (add next to source files).
+The root package contains the framework core (`agent.go`, `runner.go`, `message.go`, etc.). Feature areas are split into focused packages such as `flow/`, `graph/`, `memory/`, `middleware/`, `tools/`, `stream/`, and `evaluator/`.  
+`contrib/` contains provider integrations (`openai`, `anthropic`, `gemini`, `mcp`, `otel`), each with its own `go.mod`.  
+`examples/` is a separate module with runnable demos.  
+`cmd/docs/` contains documentation tooling.  
+`internal/` holds non-public implementation details.
 
 ## Build, Test, and Development Commands
-- `go fmt ./...` formats the codebase.
-- `go vet ./...` runs static analysis.
-- `go build ./...` builds all packages.
-- `go test ./... -race -cover` runs tests with race detector and coverage.
-- `go run examples/chat/main.go` runs the chat demo (similar for other examples).
+Use the root `Makefile` (it discovers all `go.mod` directories and runs commands per module):
+
+- `make tidy`: run `go mod tidy` in each module.
+- `make build`: run `go build ./...` in each module.
+- `make test`: run `go test -race ./...` in each module.
+- `make all`: run tidy, build, and test.
+- `make examples`: run a curated set of demos from `examples/`.
+
+For targeted checks during development, run package tests directly, for example:  
+`go test -race ./middleware -run TestConversationBuffered`
 
 ## Coding Style & Naming Conventions
-- Idiomatic Go; code must be `gofmt`-clean and `go vet`-quiet.
-- Package names: short, lowercase, no underscores; files grouped by feature (e.g., `message.go`).
-- Exported APIs require brief doc comments.
-- Wrap errors: `fmt.Errorf("context: %w", err)`; avoid panics in libraries.
+Follow idiomatic Go and keep code `gofmt`-clean before commit. Use `PascalCase` for exported symbols, `camelCase` for internal identifiers, and short lowercase package names. Keep package scope tight and place new model/provider adapters under `contrib/<provider>`. Prefer established option-style APIs (`WithXxx`) for new configuration hooks.
 
 ## Testing Guidelines
-- Use the standard `testing` package; prefer table-driven tests.
-- Keep tests deterministic; avoid network calls and external services.
-- Place tests next to code as `*_test.go`; aim for meaningful coverage.
-- Run with `go test ./... -race -cover` locally.
+Keep tests next to implementation files using `*_test.go`. Prefer table-driven tests, subtests (`t.Run`), and `t.Parallel()` when safe. Always run `make test` before opening a PR. No strict coverage threshold is defined; add tests for each behavior change and optionally verify with `go test -cover ./...`.
 
 ## Commit & Pull Request Guidelines
-- Conventional Commits: `feat(memory): ...`, `fix(contrib/openai): ...`, `docs: ...`.
-- Subject ≤ 50 chars; body explains what and why.
-- PRs include description, rationale, linked issues, tests, and updated examples/docs when APIs change.
-- Call out breaking changes and provide migration notes.
-
-## Security & Configuration Tips
-- Do not commit secrets; use environment variables and keep `.env` untracked.
-- Minimize new dependencies; discuss heavyweight additions in an issue.
-- Document required provider vars in examples (e.g., OpenAI keys).
-
-## Agent-Specific Notes
-- This file applies repo-wide; nested `AGENTS.md` override locally.
-- Keep changes minimal and focused; match existing style and structure.
+Recent history favors Conventional Commit style with scopes, e.g. `feat(flow): ...`, `fix(agent): ...`, `refactor(evaluator): ...`. Keep commits atomic and focused.  
+PRs should include a clear problem statement, change summary, test evidence (commands run), and linked issue/proposal. For larger features, follow the project flow documented in issue templates: Feature Request -> Proposal -> Pull Request.
