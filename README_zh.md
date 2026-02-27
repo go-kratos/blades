@@ -158,7 +158,7 @@ func createAgent(model blades.ModelProvider) (blades.Agent, error) {
 }
 ```
 
-For more examples, please refer to the [examples](./examples) directory.
+更多示例用法，请参考 [examples](./examples) 目录。
 
 ## 🤝 贡献与社区
 项目当前处于初期阶段，我们正在持续快速地迭代中。我们诚挚地邀请所有 Go 开发者和 AI 爱好者访问我们的 GitHub 仓库，亲自体验 Blades 带来的开发乐趣。
