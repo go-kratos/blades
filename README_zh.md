@@ -118,7 +118,7 @@ func main() {
 }
 ```
 
-### Skills (Experimental)
+### Skills
 
 `Agent` supports skill injection via `WithSkills(...)`.
 You can load skills from a directory (`SKILL.md` + optional `references/`, `assets/`, `scripts/`) or from `embed.FS`.
@@ -128,7 +128,6 @@ package main
 
 import (
     "embed"
-    "io/fs"
 
     "github.com/go-kratos/blades"
     "github.com/go-kratos/blades/skills"
@@ -144,11 +143,7 @@ func createAgent(model blades.ModelProvider) (blades.Agent, error) {
         return nil, err
     }
     // Embedded loading:
-    sub, err := fs.Sub(skillFS, "example-skill")
-    if err != nil {
-        return nil, err
-    }
-    skillsFromEmbed, err := skills.NewFromEmbed(sub)
+    skillsFromEmbed, err := skills.NewFromEmbed(skillFS)
     if err != nil {
         return nil, err
     }
