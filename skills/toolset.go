@@ -520,7 +520,7 @@ func normalizeScriptPath(scriptPath string) (scriptName string, fullScriptPath s
 	scriptPath = strings.TrimSpace(scriptPath)
 	scriptPath = strings.TrimPrefix(scriptPath, "scripts/")
 	clean := path.Clean(scriptPath)
-	if clean == "." || clean == "" || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
+	if isInvalidSkillRelativePath(clean) {
 		return "", "", fmt.Errorf("script path must be a relative path under scripts/")
 	}
 	return clean, path.Join("scripts", clean), nil
@@ -547,7 +547,7 @@ func materializeSkillWorkspace(root string, resources Resources) error {
 
 func writeWorkspaceFile(root string, dir string, rel string, content string, mode fs.FileMode) error {
 	clean := path.Clean(rel)
-	if clean == "." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
+	if isInvalidSkillRelativePath(clean) {
 		return fmt.Errorf("invalid file path %q", rel)
 	}
 	targetPath := filepath.Join(root, filepath.FromSlash(dir), filepath.FromSlash(clean))
@@ -555,6 +555,14 @@ func writeWorkspaceFile(root string, dir string, rel string, content string, mod
 		return err
 	}
 	return os.WriteFile(targetPath, []byte(content), mode)
+}
+
+func isInvalidSkillRelativePath(clean string) bool {
+	return clean == "" ||
+		clean == "." ||
+		clean == ".." ||
+		strings.HasPrefix(clean, "../") ||
+		path.IsAbs(clean)
 }
 
 func executeSkillScript(
@@ -582,7 +590,7 @@ func executeSkillScript(
 
 	cmd := exec.CommandContext(timeoutCtx, commandName, commandArgs...)
 	cmd.Dir = tmpRoot
-	cmd.Env = mergeEnv(env)
+	cmd.Env = os.Environ()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -618,28 +626,4 @@ func executeSkillScript(
 		"exit_code":   exitCode,
 		"status":      status,
 	})
-}
-
-func mergeEnv(overrides map[string]string) []string {
-	current := make(map[string]string)
-	for _, item := range os.Environ() {
-		parts := strings.SplitN(item, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		current[parts[0]] = parts[1]
-	}
-	for key, value := range overrides {
-		current[key] = value
-	}
-	keys := make([]string, 0, len(current))
-	for key := range current {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, key+"="+current[key])
-	}
-	return out
 }

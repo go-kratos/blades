@@ -3,6 +3,8 @@ package skills
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -224,19 +226,24 @@ func TestRunSkillScriptToolPathAndLookupErrors(t *testing.T) {
 	}
 	tool := toolset.Tools()[3]
 
-	resp, err := tool.Handle(context.Background(), `{"skill_name":"skill1","script_path":"../hack.sh"}`)
-	if err != nil {
-		t.Fatalf("tool error: %v", err)
-	}
 	var obj map[string]any
-	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if obj["error_code"] != "INVALID_SCRIPT_PATH" {
-		t.Fatalf("unexpected error_code: %v", obj["error_code"])
+	for _, scriptPath := range []string{"../hack.sh", "..", "scripts/..", "a/../.."} {
+		resp, err := tool.Handle(context.Background(), mustJSON(map[string]any{
+			"skill_name":  "skill1",
+			"script_path": scriptPath,
+		}))
+		if err != nil {
+			t.Fatalf("tool error for %q: %v", scriptPath, err)
+		}
+		if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+			t.Fatalf("unmarshal for %q: %v", scriptPath, err)
+		}
+		if obj["error_code"] != "INVALID_SCRIPT_PATH" {
+			t.Fatalf("unexpected error_code for %q: %v", scriptPath, obj["error_code"])
+		}
 	}
 
-	resp, err = tool.Handle(context.Background(), `{"skill_name":"skill1","script_path":"scripts/missing.sh"}`)
+	resp, err := tool.Handle(context.Background(), `{"skill_name":"skill1","script_path":"scripts/missing.sh"}`)
 	if err != nil {
 		t.Fatalf("tool error: %v", err)
 	}
@@ -245,6 +252,91 @@ func TestRunSkillScriptToolPathAndLookupErrors(t *testing.T) {
 	}
 	if obj["error_code"] != "SCRIPT_NOT_FOUND" {
 		t.Fatalf("unexpected error_code: %v", obj["error_code"])
+	}
+}
+
+func TestNormalizeScriptPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		input          string
+		wantScriptName string
+		wantFullPath   string
+		wantError      bool
+	}{
+		{
+			name:           "plain file",
+			input:          "run.sh",
+			wantScriptName: "run.sh",
+			wantFullPath:   "scripts/run.sh",
+		},
+		{
+			name:           "scripts prefix",
+			input:          "scripts/run.sh",
+			wantScriptName: "run.sh",
+			wantFullPath:   "scripts/run.sh",
+		},
+		{
+			name:           "nested",
+			input:          "nested/run.sh",
+			wantScriptName: "nested/run.sh",
+			wantFullPath:   "scripts/nested/run.sh",
+		},
+		{name: "dot", input: ".", wantError: true},
+		{name: "dot dot", input: "..", wantError: true},
+		{name: "parent", input: "../x.sh", wantError: true},
+		{name: "absolute", input: "/x.sh", wantError: true},
+		{name: "cleaned parent", input: "a/../..", wantError: true},
+		{name: "scripts dot dot", input: "scripts/..", wantError: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gotName, gotPath, err := normalizeScriptPath(tt.input)
+			if tt.wantError {
+				if err == nil {
+					t.Fatalf("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeScriptPath: %v", err)
+			}
+			if gotName != tt.wantScriptName {
+				t.Fatalf("unexpected script name: %q", gotName)
+			}
+			if gotPath != tt.wantFullPath {
+				t.Fatalf("unexpected full path: %q", gotPath)
+			}
+		})
+	}
+}
+
+func TestWriteWorkspaceFilePathValidation(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	for _, rel := range []string{"..", "a/../.."} {
+		err := writeWorkspaceFile(root, "scripts", rel, "echo no", 0o755)
+		if err == nil {
+			t.Fatalf("expected error for %q", rel)
+		}
+	}
+
+	const rel = "nested/run.sh"
+	if err := writeWorkspaceFile(root, "scripts", rel, "echo ok", 0o755); err != nil {
+		t.Fatalf("writeWorkspaceFile: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(root, "scripts", "nested", "run.sh"))
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(b) != "echo ok" {
+		t.Fatalf("unexpected file content: %q", string(b))
 	}
 }
 
