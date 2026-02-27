@@ -85,15 +85,8 @@ description: desc
 Body`), 0o644); err != nil {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
-	skills, err := NewFromDir(skillDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(skills) != 1 {
-		t.Fatalf("expected 1 skill, got %d", len(skills))
-	}
-	if skills[0].Name() != "my-skill" {
-		t.Fatalf("unexpected skill name: %s", skills[0].Name())
+	if _, err := NewFromDir(skillDir); err == nil || !strings.Contains(err.Error(), "does not match directory name") {
+		t.Fatalf("expected name mismatch error, got: %v", err)
 	}
 }
 
@@ -180,12 +173,12 @@ func TestNewFromEmbedMultipleSkills(t *testing.T) {
 	t.Parallel()
 
 	skillFS := fstest.MapFS{
-		"bundle/a/SKILL.md": &fstest.MapFile{Data: []byte(`---
+		"bundle/a-skill/SKILL.md": &fstest.MapFile{Data: []byte(`---
 name: a-skill
 description: desc a
 ---
 Body A`)},
-		"bundle/b/skill.md": &fstest.MapFile{Data: []byte(`---
+		"bundle/b-skill/skill.md": &fstest.MapFile{Data: []byte(`---
 name: b-skill
 description: desc b
 ---
@@ -234,8 +227,8 @@ func TestNewFromDirDuplicateName(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	first := filepath.Join(root, "a")
-	second := filepath.Join(root, "b")
+	first := filepath.Join(root, "group-a", "dup-skill")
+	second := filepath.Join(root, "group-b", "dup-skill")
 	if err := os.MkdirAll(first, 0o755); err != nil {
 		t.Fatalf("mkdir first: %v", err)
 	}
@@ -256,5 +249,93 @@ Body`)
 
 	if _, err := NewFromDir(root); err == nil || !strings.Contains(err.Error(), "duplicate skill name") {
 		t.Fatalf("expected duplicate skill name error, got: %v", err)
+	}
+}
+
+func TestNewFromDirRejectsUnknownFrontmatterKey(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "test-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: test-skill
+description: desc
+unknown-key: value
+---
+Body`), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	if _, err := NewFromDir(skillDir); err == nil || !strings.Contains(err.Error(), "unknown frontmatter fields") {
+		t.Fatalf("expected unknown field error, got: %v", err)
+	}
+}
+
+func TestNewFromDirSkipsResourceSubtreeSkillMarkers(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	mainSkillDir := filepath.Join(root, "main-skill")
+	if err := os.MkdirAll(filepath.Join(mainSkillDir, "references", "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir nested: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mainSkillDir, "SKILL.md"), []byte(`---
+name: main-skill
+description: desc
+---
+Main`), 0o644); err != nil {
+		t.Fatalf("write main SKILL.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mainSkillDir, "references", "nested", "SKILL.md"), []byte(`---
+name: nested-skill
+description: desc
+---
+Nested`), 0o644); err != nil {
+		t.Fatalf("write nested SKILL.md: %v", err)
+	}
+
+	skills, err := NewFromDir(root)
+	if err != nil {
+		t.Fatalf("load skills: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	if skills[0].Name() != "main-skill" {
+		t.Fatalf("unexpected skill name: %s", skills[0].Name())
+	}
+}
+
+func TestValidateSkillDirAndReadSkillFrontmatter(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "test-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: test-skill
+description: desc
+allowed_tools: "tool-*"
+---
+Body`), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	if err := ValidateSkillDir(skillDir); err != nil {
+		t.Fatalf("validate skill dir: %v", err)
+	}
+	fm, err := ReadSkillFrontmatter(skillDir)
+	if err != nil {
+		t.Fatalf("read frontmatter: %v", err)
+	}
+	if fm.Name != "test-skill" {
+		t.Fatalf("unexpected name: %s", fm.Name)
+	}
+	if fm.AllowedTools != "tool-*" {
+		t.Fatalf("unexpected allowed tools: %s", fm.AllowedTools)
 	}
 }

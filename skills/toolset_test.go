@@ -3,7 +3,11 @@ package skills
 import (
 	"context"
 	"encoding/json"
+	"runtime"
+	"strings"
 	"testing"
+
+	bladestools "github.com/go-kratos/blades/tools"
 )
 
 func TestNewToolsetDuplicateSkillName(t *testing.T) {
@@ -35,7 +39,7 @@ func TestSkillTools(t *testing.T) {
 		t.Fatalf("new toolset: %v", err)
 	}
 	tools := toolset.Tools()
-	if len(tools) != 3 {
+	if len(tools) != 4 {
 		t.Fatalf("unexpected tool count: %d", len(tools))
 	}
 
@@ -70,6 +74,18 @@ func TestSkillTools(t *testing.T) {
 	if resourceObj["content"] != "ref" {
 		t.Fatalf("unexpected content: %v", resourceObj["content"])
 	}
+
+	scriptResp, err := tools[3].Handle(context.Background(), `{"skill_name":"skill1","script_path":"scripts/run.sh"}`)
+	if err != nil {
+		t.Fatalf("run_skill_script error: %v", err)
+	}
+	var scriptObj map[string]any
+	if err := json.Unmarshal([]byte(scriptResp), &scriptObj); err != nil {
+		t.Fatalf("unmarshal run response: %v", err)
+	}
+	if scriptObj["status"] == "" {
+		t.Fatalf("expected run script status")
+	}
 }
 
 func TestLoadSkillResourceErrors(t *testing.T) {
@@ -93,5 +109,196 @@ func TestLoadSkillResourceErrors(t *testing.T) {
 	}
 	if obj["error_code"] != "INVALID_RESOURCE_PATH" {
 		t.Fatalf("unexpected error_code: %v", obj["error_code"])
+	}
+}
+
+func TestToolsetComposeToolsWithAllowedPatterns(t *testing.T) {
+	t.Parallel()
+
+	toolset, err := NewToolset([]*Skill{
+		{Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1", AllowedTools: "tool-* search-*"}},
+		{Frontmatter: Frontmatter{Name: "skill2", Description: "Skill 2", AllowedTools: "search-* , db-*"}},
+	})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	baseTools := []bladestools.Tool{
+		bladestools.NewTool("tool-foo", "allowed", bladestools.HandleFunc(func(ctx context.Context, input string) (string, error) {
+			return "ok", nil
+		})),
+		bladestools.NewTool("blocked-foo", "blocked", bladestools.HandleFunc(func(ctx context.Context, input string) (string, error) {
+			return "ok", nil
+		})),
+	}
+	composed := toolset.ComposeTools(baseTools)
+	names := make([]string, 0, len(composed))
+	for _, tool := range composed {
+		names = append(names, tool.Name())
+	}
+	if strings.Contains(strings.Join(names, ","), "blocked-foo") {
+		t.Fatalf("blocked tool should be filtered, got: %v", names)
+	}
+	for _, name := range []string{
+		"tool-foo",
+		ToolListSkillsName,
+		ToolLoadSkillName,
+		ToolLoadSkillResourceName,
+		ToolRunSkillScriptName,
+	} {
+		found := false
+		for _, item := range names {
+			if item == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing expected tool %q in composed list: %v", name, names)
+		}
+	}
+}
+
+func TestToolsetComposeToolsNoAllowedPatterns(t *testing.T) {
+	t.Parallel()
+
+	toolset, err := NewToolset([]*Skill{
+		{Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"}},
+	})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	baseTools := []bladestools.Tool{
+		bladestools.NewTool("blocked-foo", "blocked", bladestools.HandleFunc(func(ctx context.Context, input string) (string, error) {
+			return "ok", nil
+		})),
+	}
+	composed := toolset.ComposeTools(baseTools)
+	found := false
+	for _, tool := range composed {
+		if tool.Name() == "blocked-foo" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("base tool should remain when allowed-tools is empty")
+	}
+}
+
+func TestNewToolsetInvalidAllowedToolPattern(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewToolset([]*Skill{
+		{Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1", AllowedTools: "[invalid"}},
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestRunSkillScriptToolPathAndLookupErrors(t *testing.T) {
+	t.Parallel()
+
+	skill := &Skill{
+		Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		Resources: Resources{
+			Scripts: map[string]string{"run.sh": "echo ok"},
+		},
+	}
+	toolset, err := NewToolset([]*Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	tool := toolset.Tools()[3]
+
+	resp, err := tool.Handle(context.Background(), `{"skill_name":"skill1","script_path":"../hack.sh"}`)
+	if err != nil {
+		t.Fatalf("tool error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["error_code"] != "INVALID_SCRIPT_PATH" {
+		t.Fatalf("unexpected error_code: %v", obj["error_code"])
+	}
+
+	resp, err = tool.Handle(context.Background(), `{"skill_name":"skill1","script_path":"scripts/missing.sh"}`)
+	if err != nil {
+		t.Fatalf("tool error: %v", err)
+	}
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["error_code"] != "SCRIPT_NOT_FOUND" {
+		t.Fatalf("unexpected error_code: %v", obj["error_code"])
+	}
+}
+
+func TestRunSkillScriptToolExecutesScript(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script execution is not supported on windows in this test")
+	}
+
+	skill := &Skill{
+		Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		Resources: Resources{
+			Scripts: map[string]string{
+				"run.sh": "#!/bin/sh\necho hello\n",
+			},
+		},
+	}
+	toolset, err := NewToolset([]*Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	tool := toolset.Tools()[3]
+	resp, err := tool.Handle(context.Background(), `{"skill_name":"skill1","script_path":"scripts/run.sh"}`)
+	if err != nil {
+		t.Fatalf("tool error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["status"] != "success" {
+		t.Fatalf("unexpected status: %v", obj["status"])
+	}
+	stdout, _ := obj["stdout"].(string)
+	if !strings.Contains(stdout, "hello") {
+		t.Fatalf("unexpected stdout: %q", stdout)
+	}
+}
+
+func TestRunSkillScriptToolAnyExecutable(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("direct executable script test is not supported on windows")
+	}
+
+	skill := &Skill{
+		Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		Resources: Resources{
+			Scripts: map[string]string{
+				"run": "#!/bin/sh\necho direct\n",
+			},
+		},
+	}
+	toolset, err := NewToolset([]*Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	tool := toolset.Tools()[3]
+	resp, err := tool.Handle(context.Background(), `{"skill_name":"skill1","script_path":"run"}`)
+	if err != nil {
+		t.Fatalf("tool error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["status"] != "success" {
+		t.Fatalf("unexpected status: %v", obj["status"])
 	}
 }

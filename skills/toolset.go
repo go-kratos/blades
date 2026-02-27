@@ -1,10 +1,20 @@
 package skills
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"sort"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -14,13 +24,30 @@ const (
 	ToolListSkillsName        = "list_skills"
 	ToolLoadSkillName         = "load_skill"
 	ToolLoadSkillResourceName = "load_skill_resource"
+	ToolRunSkillScriptName    = "run_skill_script"
+
+	defaultScriptTimeoutSeconds = 300
+	maxScriptTimeoutSeconds     = 1800
 )
+
+var coreSkillToolNames = map[string]struct{}{
+	ToolListSkillsName:        {},
+	ToolLoadSkillName:         {},
+	ToolLoadSkillResourceName: {},
+	ToolRunSkillScriptName:    {},
+}
+
+func isCoreToolName(name string) bool {
+	_, ok := coreSkillToolNames[name]
+	return ok
+}
 
 // Toolset provides tools and instructions for loaded skills.
 type Toolset struct {
-	skills      []*Skill
-	skillByName map[string]*Skill
-	tools       []tools.Tool
+	skills              []*Skill
+	skillByName         map[string]*Skill
+	tools               []tools.Tool
+	allowedToolPatterns []string
 }
 
 // NewToolset creates a new skill toolset.
@@ -42,10 +69,25 @@ func NewToolset(skills []*Skill) (*Toolset, error) {
 		ts.skillByName[skill.Name()] = skill
 		ts.skills = append(ts.skills, skill)
 	}
+	allowedToolPatternSet := make(map[string]struct{})
+	for _, skill := range ts.skills {
+		for _, pattern := range splitAllowedToolPatterns(skill.Frontmatter.AllowedTools) {
+			if _, err := path.Match(pattern, "tool-name"); err != nil {
+				return nil, fmt.Errorf("skills: invalid allowed-tools pattern %q in skill %q: %w", pattern, skill.Name(), err)
+			}
+			if _, exists := allowedToolPatternSet[pattern]; exists {
+				continue
+			}
+			allowedToolPatternSet[pattern] = struct{}{}
+			ts.allowedToolPatterns = append(ts.allowedToolPatterns, pattern)
+		}
+	}
+	sort.Strings(ts.allowedToolPatterns)
 	ts.tools = []tools.Tool{
 		&listSkillsTool{toolset: ts},
 		&loadSkillTool{toolset: ts},
 		&loadSkillResourceTool{toolset: ts},
+		&runSkillScriptTool{toolset: ts},
 	}
 	return ts, nil
 }
@@ -55,6 +97,37 @@ func (t *Toolset) Tools() []tools.Tool {
 	out := make([]tools.Tool, 0, len(t.tools))
 	out = append(out, t.tools...)
 	return out
+}
+
+// ComposeTools merges base tools with skill tools and applies allowed-tools filtering.
+func (t *Toolset) ComposeTools(base []tools.Tool) []tools.Tool {
+	out := make([]tools.Tool, 0, len(base)+len(t.tools))
+	out = append(out, base...)
+	out = append(out, t.tools...)
+	if len(t.allowedToolPatterns) == 0 {
+		return out
+	}
+	filtered := make([]tools.Tool, 0, len(out))
+	for _, tool := range out {
+		name := tool.Name()
+		if isCoreToolName(name) || matchesAllowedPattern(name, t.allowedToolPatterns) {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
+func matchesAllowedPattern(toolName string, patterns []string) bool {
+	for _, pattern := range patterns {
+		match, err := path.Match(pattern, toolName)
+		if err != nil {
+			continue
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 // Instruction returns the instruction block for skills.
@@ -260,4 +333,268 @@ func (t *loadSkillResourceTool) Handle(ctx context.Context, input string) (strin
 		"path":       req.Path,
 		"content":    content,
 	}), nil
+}
+
+type runSkillScriptTool struct {
+	toolset *Toolset
+}
+
+func (t *runSkillScriptTool) Name() string { return ToolRunSkillScriptName }
+
+func (t *runSkillScriptTool) Description() string {
+	return "Executes a script from scripts/ in a skill."
+}
+
+func (t *runSkillScriptTool) InputSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type:     "object",
+		Required: []string{"skill_name", "script_path"},
+		Properties: map[string]*jsonschema.Schema{
+			"skill_name": {
+				Type:        "string",
+				Description: "The name of the skill.",
+			},
+			"script_path": {
+				Type:        "string",
+				Description: "Script path under scripts/.",
+			},
+			"args": {
+				Type:        "array",
+				Description: "Optional script args.",
+				Items:       &jsonschema.Schema{Type: "string"},
+			},
+			"env": {
+				Type:        "object",
+				Description: "Optional environment variables.",
+			},
+			"timeout_seconds": {
+				Type:        "integer",
+				Description: fmt.Sprintf("Optional timeout in seconds. Default: %d, max: %d.", defaultScriptTimeoutSeconds, maxScriptTimeoutSeconds),
+			},
+		},
+	}
+}
+
+func (t *runSkillScriptTool) OutputSchema() *jsonschema.Schema { return nil }
+
+func (t *runSkillScriptTool) Handle(ctx context.Context, input string) (string, error) {
+	var req struct {
+		SkillName      string            `json:"skill_name"`
+		ScriptPath     string            `json:"script_path"`
+		Args           []string          `json:"args"`
+		Env            map[string]string `json:"env"`
+		TimeoutSeconds int               `json:"timeout_seconds"`
+	}
+	if err := json.Unmarshal([]byte(input), &req); err != nil {
+		return invalidArgs(fmt.Sprintf("Invalid tool arguments: %v", err)), nil
+	}
+	if req.SkillName == "" {
+		return mustJSON(map[string]any{
+			"error":      "Skill name is required.",
+			"error_code": "MISSING_SKILL_NAME",
+		}), nil
+	}
+	if req.ScriptPath == "" {
+		return mustJSON(map[string]any{
+			"error":      "Script path is required.",
+			"error_code": "MISSING_SCRIPT_PATH",
+		}), nil
+	}
+	skill, ok := t.toolset.skillByName[req.SkillName]
+	if !ok {
+		return skillNotFound(req.SkillName), nil
+	}
+	scriptName, fullScriptPath, err := normalizeScriptPath(req.ScriptPath)
+	if err != nil {
+		return mustJSON(map[string]any{
+			"error":      err.Error(),
+			"error_code": "INVALID_SCRIPT_PATH",
+		}), nil
+	}
+	if _, found := skill.Resources.GetScript(scriptName); !found {
+		return mustJSON(map[string]any{
+			"error":      fmt.Sprintf("Script %q not found in skill %q.", fullScriptPath, req.SkillName),
+			"error_code": "SCRIPT_NOT_FOUND",
+		}), nil
+	}
+
+	timeoutSeconds := req.TimeoutSeconds
+	if timeoutSeconds == 0 {
+		timeoutSeconds = defaultScriptTimeoutSeconds
+	}
+	if timeoutSeconds < 0 || timeoutSeconds > maxScriptTimeoutSeconds {
+		return mustJSON(map[string]any{
+			"error":      fmt.Sprintf("timeout_seconds must be between 1 and %d.", maxScriptTimeoutSeconds),
+			"error_code": "INVALID_TIMEOUT",
+		}), nil
+	}
+	for key := range req.Env {
+		if key == "" || strings.Contains(key, "=") {
+			return mustJSON(map[string]any{
+				"error":      "Environment variable names must be non-empty and must not contain '='.",
+				"error_code": "INVALID_ENV",
+			}), nil
+		}
+	}
+
+	tmpRoot, err := os.MkdirTemp("", "blades-skill-*")
+	if err != nil {
+		return mustJSON(map[string]any{
+			"error":      fmt.Sprintf("Failed to prepare skill workspace: %v", err),
+			"error_code": "WORKSPACE_ERROR",
+		}), nil
+	}
+	defer os.RemoveAll(tmpRoot)
+
+	if err := materializeSkillWorkspace(tmpRoot, skill); err != nil {
+		return mustJSON(map[string]any{
+			"error":      fmt.Sprintf("Failed to materialize skill workspace: %v", err),
+			"error_code": "WORKSPACE_ERROR",
+		}), nil
+	}
+
+	return executeSkillScript(ctx, tmpRoot, req.SkillName, fullScriptPath, req.Args, req.Env, timeoutSeconds), nil
+}
+
+func splitAllowedToolPatterns(raw string) []string {
+	items := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func normalizeScriptPath(scriptPath string) (scriptName string, fullScriptPath string, err error) {
+	scriptPath = strings.TrimSpace(scriptPath)
+	scriptPath = strings.TrimPrefix(scriptPath, "scripts/")
+	clean := path.Clean(scriptPath)
+	if clean == "." || clean == "" || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
+		return "", "", fmt.Errorf("script path must be a relative path under scripts/")
+	}
+	return clean, path.Join("scripts", clean), nil
+}
+
+func materializeSkillWorkspace(root string, skill *Skill) error {
+	for rel, content := range skill.Resources.References {
+		if err := writeWorkspaceFile(root, "references", rel, content, 0o644); err != nil {
+			return err
+		}
+	}
+	for rel, content := range skill.Resources.Assets {
+		if err := writeWorkspaceFile(root, "assets", rel, content, 0o644); err != nil {
+			return err
+		}
+	}
+	for rel, content := range skill.Resources.Scripts {
+		if err := writeWorkspaceFile(root, "scripts", rel, content, 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeWorkspaceFile(root string, dir string, rel string, content string, mode fs.FileMode) error {
+	clean := path.Clean(rel)
+	if clean == "." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
+		return fmt.Errorf("invalid file path %q", rel)
+	}
+	targetPath := filepath.Join(root, filepath.FromSlash(dir), filepath.FromSlash(clean))
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(targetPath, []byte(content), mode)
+}
+
+func executeSkillScript(
+	ctx context.Context,
+	tmpRoot string,
+	skillName string,
+	scriptPath string,
+	args []string,
+	env map[string]string,
+	timeoutSeconds int,
+) string {
+	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	commandName := scriptPath
+	commandArgs := append([]string{}, args...)
+	switch strings.ToLower(path.Ext(scriptPath)) {
+	case ".py":
+		commandName = "python3"
+		commandArgs = append([]string{scriptPath}, commandArgs...)
+	case ".sh", ".bash":
+		commandName = "bash"
+		commandArgs = append([]string{scriptPath}, commandArgs...)
+	}
+
+	cmd := exec.CommandContext(timeoutCtx, commandName, commandArgs...)
+	cmd.Dir = tmpRoot
+	cmd.Env = mergeEnv(env)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	exitCode := 0
+	status := "success"
+	if err != nil {
+		switch {
+		case errors.Is(timeoutCtx.Err(), context.DeadlineExceeded):
+			exitCode = -1
+			status = "timeout"
+		default:
+			status = "error"
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				exitCode = exitErr.ExitCode()
+			} else {
+				return mustJSON(map[string]any{
+					"error":      fmt.Sprintf("Failed to execute script %q: %v", scriptPath, err),
+					"error_code": "EXECUTION_ERROR",
+				})
+			}
+		}
+	}
+
+	return mustJSON(map[string]any{
+		"skill_name":  skillName,
+		"script_path": scriptPath,
+		"args":        args,
+		"stdout":      stdout.String(),
+		"stderr":      stderr.String(),
+		"exit_code":   exitCode,
+		"status":      status,
+	})
+}
+
+func mergeEnv(overrides map[string]string) []string {
+	current := make(map[string]string)
+	for _, item := range os.Environ() {
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		current[parts[0]] = parts[1]
+	}
+	for key, value := range overrides {
+		current[key] = value
+	}
+	keys := make([]string, 0, len(current))
+	for key := range current {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key+"="+current[key])
+	}
+	return out
 }

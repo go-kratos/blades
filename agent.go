@@ -172,15 +172,16 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 		return err
 	}
 	invocation.Model = a.model.Name()
-	invocation.Tools = append(invocation.Tools, resolvedTools...)
+	finalTools := resolvedTools
 	if len(a.skills) > 0 {
 		toolset, err := skills.NewToolset(a.skills)
 		if err != nil {
 			return err
 		}
-		invocation.Tools = append(invocation.Tools, toolset.Tools()...)
+		finalTools = toolset.ComposeTools(resolvedTools)
 		invocation.Instruction = MergeParts(SystemMessage(toolset.Instruction()), invocation.Instruction)
 	}
+	invocation.Tools = append(invocation.Tools, finalTools...)
 	// order of precedence: static instruction > instruction provider > skills instruction > invocation instruction
 	if a.instructionProvider != nil {
 		instruction, err := a.instructionProvider(ctx)

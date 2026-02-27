@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -13,17 +14,46 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var allowedFrontmatterKeys = map[string]struct{}{
+	"name":          {},
+	"description":   {},
+	"license":       {},
+	"compatibility": {},
+	"allowed-tools": {},
+	"allowed_tools": {},
+	"metadata":      {},
+}
+
 // NewFromDir loads all skills discovered under a local directory.
 func NewFromDir(dir string) ([]*Skill, error) {
-	return loadAllFS(os.DirFS(dir))
+	return loadAllFS(os.DirFS(dir), dirBaseName(dir))
 }
 
 // NewFromEmbed loads all skills discovered from an fs.FS root.
 func NewFromEmbed(fsys fs.FS) ([]*Skill, error) {
-	return loadAllFS(fsys)
+	return loadAllFS(fsys, "")
 }
 
-func loadAllFS(fsys fs.FS) ([]*Skill, error) {
+// ValidateSkillDir validates frontmatter and directory naming for one local skill directory.
+func ValidateSkillDir(dir string) error {
+	_, err := ReadSkillFrontmatter(dir)
+	return err
+}
+
+// ReadSkillFrontmatter reads and validates frontmatter from one local skill directory.
+func ReadSkillFrontmatter(dir string) (Frontmatter, error) {
+	fsys := os.DirFS(dir)
+	frontmatter, _, err := parseSkillMarkdown(fsys, ".")
+	if err != nil {
+		return Frontmatter{}, err
+	}
+	if err := validateSkillRootName(".", dirBaseName(dir), frontmatter.Name); err != nil {
+		return Frontmatter{}, err
+	}
+	return frontmatter, nil
+}
+
+func loadAllFS(fsys fs.FS, dotRootName string) ([]*Skill, error) {
 	roots, err := detectSkillRoots(fsys)
 	if err != nil {
 		return nil, err
@@ -39,6 +69,9 @@ func loadAllFS(fsys fs.FS) ([]*Skill, error) {
 		if err != nil {
 			return nil, fmt.Errorf("skills: load %q: %w", root, err)
 		}
+		if err := validateSkillRootName(root, dotRootName, skill.Name()); err != nil {
+			return nil, fmt.Errorf("skills: load %q: %w", root, err)
+		}
 		if prevRoot, exists := nameToRoot[skill.Name()]; exists {
 			return nil, fmt.Errorf("skills: duplicate skill name %q in %q and %q", skill.Name(), prevRoot, root)
 		}
@@ -49,7 +82,7 @@ func loadAllFS(fsys fs.FS) ([]*Skill, error) {
 }
 
 func detectSkillRoots(fsys fs.FS) ([]string, error) {
-	roots := make(map[string]struct{})
+	candidates := make(map[string]struct{})
 	err := fs.WalkDir(fsys, ".", func(filePath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -59,18 +92,71 @@ func detectSkillRoots(fsys fs.FS) ([]string, error) {
 		}
 		switch d.Name() {
 		case "SKILL.md", "skill.md":
-			roots[path.Dir(filePath)] = struct{}{}
+			candidates[path.Dir(filePath)] = struct{}{}
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	roots := make([]string, 0, len(candidates))
+	for root := range candidates {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
 	out := make([]string, 0, len(roots))
-	for root := range roots {
+	for _, root := range roots {
+		if isNestedInSkillResourceDir(root, out) {
+			continue
+		}
 		out = append(out, root)
 	}
 	return out, nil
+}
+
+func isNestedInSkillResourceDir(candidate string, skillRoots []string) bool {
+	for _, root := range skillRoots {
+		for _, subdir := range []string{"references", "assets", "scripts"} {
+			resourceRoot := path.Clean(path.Join(root, subdir))
+			if candidate == resourceRoot || strings.HasPrefix(candidate, resourceRoot+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validateSkillRootName(root string, dotRootName string, skillName string) error {
+	expectedName, ok := expectedSkillDirName(root, dotRootName)
+	if !ok {
+		return nil
+	}
+	if expectedName != skillName {
+		return fmt.Errorf("skills: skill name %q does not match directory name %q", skillName, expectedName)
+	}
+	return nil
+}
+
+func expectedSkillDirName(root string, dotRootName string) (string, bool) {
+	if root == "." {
+		if dotRootName == "" || dotRootName == "." {
+			return "", false
+		}
+		return dotRootName, true
+	}
+	return path.Base(root), true
+}
+
+func dirBaseName(dir string) string {
+	clean := filepath.Clean(dir)
+	if abs, err := filepath.Abs(clean); err == nil {
+		clean = abs
+	}
+	base := filepath.Base(clean)
+	if base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return base
 }
 
 func loadFS(fsys fs.FS, root string) (*Skill, error) {
@@ -143,6 +229,16 @@ func parseFrontmatter(content string) (Frontmatter, error) {
 	}
 	if raw == nil {
 		return Frontmatter{}, fmt.Errorf("skills: frontmatter must be a mapping")
+	}
+	unknown := make([]string, 0)
+	for key := range raw {
+		if _, ok := allowedFrontmatterKeys[key]; !ok {
+			unknown = append(unknown, key)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return Frontmatter{}, fmt.Errorf("skills: unknown frontmatter fields: %v", unknown)
 	}
 	f := Frontmatter{
 		Metadata: make(map[string]string),
