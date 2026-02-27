@@ -8,9 +8,9 @@ import (
 func TestFormatSkillsAsXML(t *testing.T) {
 	t.Parallel()
 
-	xml := FormatSkillsAsXML([]*Skill{
-		{Frontmatter: Frontmatter{Name: "skill1", Description: "desc1"}},
-		{Frontmatter: Frontmatter{Name: "skill2", Description: "desc<2>"}},
+	xml := FormatSkillsAsXML([]Skill{
+		&staticSkill{frontmatter: Frontmatter{Name: "skill1", Description: "desc1"}},
+		&staticSkill{frontmatter: Frontmatter{Name: "skill2", Description: "desc<2>"}},
 	})
 	if xml == "" {
 		t.Fatalf("expected non-empty xml")

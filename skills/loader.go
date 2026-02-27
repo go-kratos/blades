@@ -25,12 +25,12 @@ var allowedFrontmatterKeys = map[string]struct{}{
 }
 
 // NewFromDir loads all skills discovered under a local directory.
-func NewFromDir(dir string) ([]*Skill, error) {
+func NewFromDir(dir string) ([]Skill, error) {
 	return loadAllFS(os.DirFS(dir), dirBaseName(dir))
 }
 
 // NewFromEmbed loads all skills discovered from an fs.FS root.
-func NewFromEmbed(fsys fs.FS) ([]*Skill, error) {
+func NewFromEmbed(fsys fs.FS) ([]Skill, error) {
 	return loadAllFS(fsys, "")
 }
 
@@ -53,7 +53,7 @@ func ReadSkillFrontmatter(dir string) (Frontmatter, error) {
 	return frontmatter, nil
 }
 
-func loadAllFS(fsys fs.FS, dotRootName string) ([]*Skill, error) {
+func loadAllFS(fsys fs.FS, dotRootName string) ([]Skill, error) {
 	roots, err := detectSkillRoots(fsys)
 	if err != nil {
 		return nil, err
@@ -62,7 +62,7 @@ func loadAllFS(fsys fs.FS, dotRootName string) ([]*Skill, error) {
 		return nil, fmt.Errorf("skills: SKILL.md not found")
 	}
 	sort.Strings(roots)
-	out := make([]*Skill, 0, len(roots))
+	out := make([]Skill, 0, len(roots))
 	nameToRoot := make(map[string]string, len(roots))
 	for _, root := range roots {
 		skill, err := loadFS(fsys, root)
@@ -159,7 +159,7 @@ func dirBaseName(dir string) string {
 	return base
 }
 
-func loadFS(fsys fs.FS, root string) (*Skill, error) {
+func loadFS(fsys fs.FS, root string) (Skill, error) {
 	frontmatter, body, err := parseSkillMarkdown(fsys, root)
 	if err != nil {
 		return nil, err
@@ -176,10 +176,10 @@ func loadFS(fsys fs.FS, root string) (*Skill, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Skill{
-		Frontmatter:  frontmatter,
-		Instructions: body,
-		Resources: Resources{
+	return &staticSkill{
+		frontmatter: frontmatter,
+		instruction: body,
+		resources: Resources{
 			References: references,
 			Assets:     assets,
 			Scripts:    scripts,

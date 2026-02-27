@@ -42,39 +42,50 @@ func isCoreToolName(name string) bool {
 	return ok
 }
 
+type skillEntry struct {
+	skill       Skill
+	frontmatter Frontmatter
+	resources   Resources
+}
+
 // Toolset provides tools and instructions for loaded skills.
 type Toolset struct {
-	skills              []*Skill
-	skillByName         map[string]*Skill
+	skills              []Skill
+	skillByName         map[string]skillEntry
 	tools               []tools.Tool
 	allowedToolPatterns []string
 	instruction         string
 }
 
 // NewToolset creates a new skill toolset.
-func NewToolset(skills []*Skill) (*Toolset, error) {
+func NewToolset(skills []Skill) (*Toolset, error) {
 	ts := &Toolset{
-		skills:      make([]*Skill, 0, len(skills)),
-		skillByName: make(map[string]*Skill, len(skills)),
+		skills:      make([]Skill, 0, len(skills)),
+		skillByName: make(map[string]skillEntry, len(skills)),
 	}
 	for _, skill := range skills {
 		if skill == nil {
 			continue
 		}
-		if err := skill.Frontmatter.Validate(); err != nil {
+		frontmatter := resolveFrontmatter(skill)
+		if err := frontmatter.Validate(); err != nil {
 			return nil, err
 		}
 		if _, exists := ts.skillByName[skill.Name()]; exists {
 			return nil, fmt.Errorf("skills: duplicate skill name %q", skill.Name())
 		}
-		ts.skillByName[skill.Name()] = skill
+		ts.skillByName[skill.Name()] = skillEntry{
+			skill:       skill,
+			frontmatter: frontmatter,
+			resources:   resolveResources(skill),
+		}
 		ts.skills = append(ts.skills, skill)
 	}
 	allowedToolPatternSet := make(map[string]struct{})
-	for _, skill := range ts.skills {
-		for _, pattern := range splitAllowedToolPatterns(skill.Frontmatter.AllowedTools) {
+	for _, entry := range ts.skillByName {
+		for _, pattern := range splitAllowedToolPatterns(entry.frontmatter.AllowedTools) {
 			if _, err := path.Match(pattern, "tool-name"); err != nil {
-				return nil, fmt.Errorf("skills: invalid allowed-tools pattern %q in skill %q: %w", pattern, skill.Name(), err)
+				return nil, fmt.Errorf("skills: invalid allowed-tools pattern %q in skill %q: %w", pattern, entry.skill.Name(), err)
 			}
 			if _, exists := allowedToolPatternSet[pattern]; exists {
 				continue
@@ -95,6 +106,36 @@ func NewToolset(skills []*Skill) (*Toolset, error) {
 		&runSkillScriptTool{toolset: ts},
 	}
 	return ts, nil
+}
+
+func resolveFrontmatter(skill Skill) Frontmatter {
+	f := Frontmatter{
+		Name:        skill.Name(),
+		Description: skill.Description(),
+	}
+	provider, ok := skill.(FrontmatterProvider)
+	if !ok {
+		return f
+	}
+	frontmatter := provider.Frontmatter()
+	f.License = frontmatter.License
+	f.Compatibility = frontmatter.Compatibility
+	f.AllowedTools = frontmatter.AllowedTools
+	if len(frontmatter.Metadata) > 0 {
+		f.Metadata = make(map[string]string, len(frontmatter.Metadata))
+		for key, value := range frontmatter.Metadata {
+			f.Metadata[key] = value
+		}
+	}
+	return f
+}
+
+func resolveResources(skill Skill) Resources {
+	provider, ok := skill.(ResourcesProvider)
+	if !ok {
+		return Resources{}
+	}
+	return provider.Resources()
 }
 
 // Tools returns skill tools.
@@ -248,9 +289,9 @@ func (t *loadSkillTool) Handle(ctx context.Context, input string) (string, error
 		return skillNotFound(req.Name), nil
 	}
 	return mustJSON(map[string]any{
-		"skill_name":   skill.Name(),
-		"instructions": skill.Instructions,
-		"frontmatter":  toFrontmatterMap(skill.Frontmatter),
+		"skill_name":   skill.skill.Name(),
+		"instructions": skill.skill.Instruction(),
+		"frontmatter":  toFrontmatterMap(skill.frontmatter),
 	}), nil
 }
 
@@ -311,13 +352,14 @@ func (t *loadSkillResourceTool) Handle(ctx context.Context, input string) (strin
 		content string
 		found   bool
 	)
+	resources := skill.resources
 	switch {
 	case strings.HasPrefix(req.Path, "references/"):
-		content, found = skill.Resources.GetReference(strings.TrimPrefix(req.Path, "references/"))
+		content, found = resources.GetReference(strings.TrimPrefix(req.Path, "references/"))
 	case strings.HasPrefix(req.Path, "assets/"):
-		content, found = skill.Resources.GetAsset(strings.TrimPrefix(req.Path, "assets/"))
+		content, found = resources.GetAsset(strings.TrimPrefix(req.Path, "assets/"))
 	case strings.HasPrefix(req.Path, "scripts/"):
-		content, found = skill.Resources.GetScript(strings.TrimPrefix(req.Path, "scripts/"))
+		content, found = resources.GetScript(strings.TrimPrefix(req.Path, "scripts/"))
 	default:
 		return mustJSON(map[string]any{
 			"error":      "Path must start with 'references/', 'assets/', or 'scripts/'.",
@@ -413,7 +455,8 @@ func (t *runSkillScriptTool) Handle(ctx context.Context, input string) (string, 
 			"error_code": "INVALID_SCRIPT_PATH",
 		}), nil
 	}
-	if _, found := skill.Resources.GetScript(scriptName); !found {
+	resources := skill.resources
+	if _, found := resources.GetScript(scriptName); !found {
 		return mustJSON(map[string]any{
 			"error":      fmt.Sprintf("Script %q not found in skill %q.", fullScriptPath, req.SkillName),
 			"error_code": "SCRIPT_NOT_FOUND",
@@ -448,7 +491,7 @@ func (t *runSkillScriptTool) Handle(ctx context.Context, input string) (string, 
 	}
 	defer os.RemoveAll(tmpRoot)
 
-	if err := materializeSkillWorkspace(tmpRoot, skill); err != nil {
+	if err := materializeSkillWorkspace(tmpRoot, resources); err != nil {
 		return mustJSON(map[string]any{
 			"error":      fmt.Sprintf("Failed to materialize skill workspace: %v", err),
 			"error_code": "WORKSPACE_ERROR",
@@ -483,18 +526,18 @@ func normalizeScriptPath(scriptPath string) (scriptName string, fullScriptPath s
 	return clean, path.Join("scripts", clean), nil
 }
 
-func materializeSkillWorkspace(root string, skill *Skill) error {
-	for rel, content := range skill.Resources.References {
+func materializeSkillWorkspace(root string, resources Resources) error {
+	for rel, content := range resources.References {
 		if err := writeWorkspaceFile(root, "references", rel, content, 0o644); err != nil {
 			return err
 		}
 	}
-	for rel, content := range skill.Resources.Assets {
+	for rel, content := range resources.Assets {
 		if err := writeWorkspaceFile(root, "assets", rel, content, 0o644); err != nil {
 			return err
 		}
 	}
-	for rel, content := range skill.Resources.Scripts {
+	for rel, content := range resources.Scripts {
 		if err := writeWorkspaceFile(root, "scripts", rel, content, 0o755); err != nil {
 			return err
 		}

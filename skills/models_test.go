@@ -82,3 +82,34 @@ func TestResourcesList(t *testing.T) {
 		t.Fatalf("expected script run.sh")
 	}
 }
+
+func TestStaticSkill(t *testing.T) {
+	t.Parallel()
+
+	skill := &staticSkill{
+		frontmatter: Frontmatter{
+			Name:         "test-skill",
+			Description:  "desc",
+			AllowedTools: "tool-*",
+		},
+		instruction: "instruction",
+		resources: Resources{
+			References: map[string]string{"ref.md": "content"},
+		},
+	}
+	if skill.Name() != "test-skill" {
+		t.Fatalf("unexpected name: %s", skill.Name())
+	}
+	if skill.Description() != "desc" {
+		t.Fatalf("unexpected description: %s", skill.Description())
+	}
+	if skill.Instruction() != "instruction" {
+		t.Fatalf("unexpected instruction: %s", skill.Instruction())
+	}
+	if skill.Frontmatter().AllowedTools != "tool-*" {
+		t.Fatalf("unexpected allowed tools: %s", skill.Frontmatter().AllowedTools)
+	}
+	if _, ok := skill.Resources().GetReference("ref.md"); !ok {
+		t.Fatalf("expected ref.md")
+	}
+}

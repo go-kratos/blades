@@ -26,16 +26,29 @@ func (m *captureModel) NewStreaming(context.Context, *ModelRequest) Generator[*M
 	return nil
 }
 
+type testSkill struct {
+	frontmatter bladeskills.Frontmatter
+	instruction string
+	resources   bladeskills.Resources
+}
+
+func (s testSkill) Name() string                         { return s.frontmatter.Name }
+func (s testSkill) Description() string                  { return s.frontmatter.Description }
+func (s testSkill) Instruction() string                  { return s.instruction }
+func (s testSkill) Frontmatter() bladeskills.Frontmatter { return s.frontmatter }
+func (s testSkill) Resources() bladeskills.Resources     { return s.resources }
+
 func TestAgentWithSkillsInjectsToolsAndInstructions(t *testing.T) {
 	t.Parallel()
 
 	model := &captureModel{}
-	skill := &bladeskills.Skill{
-		Frontmatter: bladeskills.Frontmatter{
+	skill := testSkill{
+		frontmatter: bladeskills.Frontmatter{
 			Name:        "planner-skill",
 			Description: "Plan things",
 		},
-		Instructions: "Follow this checklist.",
+		instruction: "Follow this checklist.",
+		resources:   bladeskills.Resources{},
 	}
 	agent, err := NewAgent("agent", WithModel(model), WithSkills(skill))
 	if err != nil {
@@ -78,12 +91,13 @@ func TestAgentWithSkillsDuplicateToolNameAllowed(t *testing.T) {
 	t.Parallel()
 
 	model := &captureModel{}
-	skill := &bladeskills.Skill{
-		Frontmatter: bladeskills.Frontmatter{
+	skill := testSkill{
+		frontmatter: bladeskills.Frontmatter{
 			Name:        "planner-skill",
 			Description: "Plan things",
 		},
-		Instructions: "Follow this checklist.",
+		instruction: "Follow this checklist.",
+		resources:   bladeskills.Resources{},
 	}
 	dupTool := bladestools.NewTool(
 		bladeskills.ToolListSkillsName,
@@ -106,13 +120,14 @@ func TestAgentWithSkillsAllowedToolsStrictAtStart(t *testing.T) {
 	t.Parallel()
 
 	model := &captureModel{}
-	skill := &bladeskills.Skill{
-		Frontmatter: bladeskills.Frontmatter{
+	skill := testSkill{
+		frontmatter: bladeskills.Frontmatter{
 			Name:         "planner-skill",
 			Description:  "Plan things",
 			AllowedTools: "allowed-*",
 		},
-		Instructions: "Follow this checklist.",
+		instruction: "Follow this checklist.",
+		resources:   bladeskills.Resources{},
 	}
 	allowedTool := bladestools.NewTool(
 		"allowed-tool",
@@ -165,13 +180,14 @@ func TestAgentWithSkillsInvalidAllowedToolsPattern(t *testing.T) {
 	t.Parallel()
 
 	model := &captureModel{}
-	skill := &bladeskills.Skill{
-		Frontmatter: bladeskills.Frontmatter{
+	skill := testSkill{
+		frontmatter: bladeskills.Frontmatter{
 			Name:         "planner-skill",
 			Description:  "Plan things",
 			AllowedTools: "[bad",
 		},
-		Instructions: "Follow this checklist.",
+		instruction: "Follow this checklist.",
+		resources:   bladeskills.Resources{},
 	}
 	if _, err := NewAgent("agent", WithModel(model), WithSkills(skill)); err == nil {
 		t.Fatalf("expected new agent error for invalid allowed-tools pattern")
@@ -182,12 +198,13 @@ func TestAgentWithSkillsInvalidFrontmatterAtConstruction(t *testing.T) {
 	t.Parallel()
 
 	model := &captureModel{}
-	skill := &bladeskills.Skill{
-		Frontmatter: bladeskills.Frontmatter{
+	skill := testSkill{
+		frontmatter: bladeskills.Frontmatter{
 			Name:        "invalid_name",
 			Description: "Plan things",
 		},
-		Instructions: "Follow this checklist.",
+		instruction: "Follow this checklist.",
+		resources:   bladeskills.Resources{},
 	}
 	if _, err := NewAgent("agent", WithModel(model), WithSkills(skill)); err == nil {
 		t.Fatalf("expected new agent error for invalid skill frontmatter")

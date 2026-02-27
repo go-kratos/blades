@@ -77,7 +77,7 @@ func WithTools(tools ...tools.Tool) AgentOption {
 }
 
 // WithSkills sets skills for the Agent.
-func WithSkills(skillList ...*skills.Skill) AgentOption {
+func WithSkills(skillList ...skills.Skill) AgentOption {
 	return func(a *agent) {
 		a.skills = skillList
 	}
@@ -120,7 +120,7 @@ type agent struct {
 	outputSchema        *jsonschema.Schema
 	middlewares         []Middleware
 	tools               []tools.Tool
-	skills              []*skills.Skill
+	skills              []skills.Skill
 	skillToolset        *skills.Toolset
 	toolsResolver       tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
 }

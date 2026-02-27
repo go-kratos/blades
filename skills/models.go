@@ -84,17 +84,61 @@ func listKeys(m map[string]string) []string {
 	return keys
 }
 
-// Skill is an in-memory skill representation.
-type Skill struct {
-	Frontmatter  Frontmatter
-	Instructions string
-	Resources    Resources
+// Skill is the minimal skill contract.
+type Skill interface {
+	Name() string
+	Description() string
+	Instruction() string
 }
 
-func (s *Skill) Name() string {
-	return s.Frontmatter.Name
+// FrontmatterProvider provides skill frontmatter data.
+type FrontmatterProvider interface {
+	Frontmatter() Frontmatter
 }
 
-func (s *Skill) Description() string {
-	return s.Frontmatter.Description
+// ResourcesProvider provides skill resources data.
+type ResourcesProvider interface {
+	Resources() Resources
+}
+
+// staticSkill is the default in-memory skill implementation.
+type staticSkill struct {
+	frontmatter Frontmatter
+	instruction string
+	resources   Resources
+}
+
+func (s *staticSkill) Name() string {
+	if s == nil {
+		return ""
+	}
+	return s.frontmatter.Name
+}
+
+func (s *staticSkill) Description() string {
+	if s == nil {
+		return ""
+	}
+	return s.frontmatter.Description
+}
+
+func (s *staticSkill) Instruction() string {
+	if s == nil {
+		return ""
+	}
+	return s.instruction
+}
+
+func (s *staticSkill) Frontmatter() Frontmatter {
+	if s == nil {
+		return Frontmatter{}
+	}
+	return s.frontmatter
+}
+
+func (s *staticSkill) Resources() Resources {
+	if s == nil {
+		return Resources{}
+	}
+	return s.resources
 }

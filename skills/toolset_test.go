@@ -10,12 +10,22 @@ import (
 	bladestools "github.com/go-kratos/blades/tools"
 )
 
+type minimalSkill struct {
+	name        string
+	description string
+	instruction string
+}
+
+func (s minimalSkill) Name() string        { return s.name }
+func (s minimalSkill) Description() string { return s.description }
+func (s minimalSkill) Instruction() string { return s.instruction }
+
 func TestNewToolsetDuplicateSkillName(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewToolset([]*Skill{
-		{Frontmatter: Frontmatter{Name: "dup", Description: "a"}},
-		{Frontmatter: Frontmatter{Name: "dup", Description: "b"}},
+	_, err := NewToolset([]Skill{
+		&staticSkill{frontmatter: Frontmatter{Name: "dup", Description: "a"}, instruction: "", resources: Resources{}},
+		&staticSkill{frontmatter: Frontmatter{Name: "dup", Description: "b"}, instruction: "", resources: Resources{}},
 	})
 	if err == nil {
 		t.Fatalf("expected duplicate error")
@@ -25,16 +35,16 @@ func TestNewToolsetDuplicateSkillName(t *testing.T) {
 func TestSkillTools(t *testing.T) {
 	t.Parallel()
 
-	skill := &Skill{
-		Frontmatter:  Frontmatter{Name: "skill1", Description: "Skill 1"},
-		Instructions: "Do something",
-		Resources: Resources{
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "Do something",
+		resources: Resources{
 			References: map[string]string{"ref.md": "ref"},
 			Assets:     map[string]string{"asset.txt": "asset"},
 			Scripts:    map[string]string{"run.sh": "echo"},
 		},
 	}
-	toolset, err := NewToolset([]*Skill{skill})
+	toolset, err := NewToolset([]Skill{skill})
 	if err != nil {
 		t.Fatalf("new toolset: %v", err)
 	}
@@ -91,10 +101,12 @@ func TestSkillTools(t *testing.T) {
 func TestLoadSkillResourceErrors(t *testing.T) {
 	t.Parallel()
 
-	skill := &Skill{
-		Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "",
+		resources:   Resources{},
 	}
-	toolset, err := NewToolset([]*Skill{skill})
+	toolset, err := NewToolset([]Skill{skill})
 	if err != nil {
 		t.Fatalf("new toolset: %v", err)
 	}
@@ -115,9 +127,9 @@ func TestLoadSkillResourceErrors(t *testing.T) {
 func TestToolsetComposeToolsWithAllowedPatterns(t *testing.T) {
 	t.Parallel()
 
-	toolset, err := NewToolset([]*Skill{
-		{Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1", AllowedTools: "tool-* search-*"}},
-		{Frontmatter: Frontmatter{Name: "skill2", Description: "Skill 2", AllowedTools: "search-* , db-*"}},
+	toolset, err := NewToolset([]Skill{
+		&staticSkill{frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1", AllowedTools: "tool-* search-*"}, instruction: "", resources: Resources{}},
+		&staticSkill{frontmatter: Frontmatter{Name: "skill2", Description: "Skill 2", AllowedTools: "search-* , db-*"}, instruction: "", resources: Resources{}},
 	})
 	if err != nil {
 		t.Fatalf("new toolset: %v", err)
@@ -161,8 +173,8 @@ func TestToolsetComposeToolsWithAllowedPatterns(t *testing.T) {
 func TestToolsetComposeToolsNoAllowedPatterns(t *testing.T) {
 	t.Parallel()
 
-	toolset, err := NewToolset([]*Skill{
-		{Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"}},
+	toolset, err := NewToolset([]Skill{
+		&staticSkill{frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"}, instruction: "", resources: Resources{}},
 	})
 	if err != nil {
 		t.Fatalf("new toolset: %v", err)
@@ -188,8 +200,8 @@ func TestToolsetComposeToolsNoAllowedPatterns(t *testing.T) {
 func TestNewToolsetInvalidAllowedToolPattern(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewToolset([]*Skill{
-		{Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1", AllowedTools: "[invalid"}},
+	_, err := NewToolset([]Skill{
+		&staticSkill{frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1", AllowedTools: "[invalid"}, instruction: "", resources: Resources{}},
 	})
 	if err == nil {
 		t.Fatalf("expected error")
@@ -199,13 +211,14 @@ func TestNewToolsetInvalidAllowedToolPattern(t *testing.T) {
 func TestRunSkillScriptToolPathAndLookupErrors(t *testing.T) {
 	t.Parallel()
 
-	skill := &Skill{
-		Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
-		Resources: Resources{
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "",
+		resources: Resources{
 			Scripts: map[string]string{"run.sh": "echo ok"},
 		},
 	}
-	toolset, err := NewToolset([]*Skill{skill})
+	toolset, err := NewToolset([]Skill{skill})
 	if err != nil {
 		t.Fatalf("new toolset: %v", err)
 	}
@@ -241,15 +254,16 @@ func TestRunSkillScriptToolExecutesScript(t *testing.T) {
 		t.Skip("shell script execution is not supported on windows in this test")
 	}
 
-	skill := &Skill{
-		Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
-		Resources: Resources{
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "",
+		resources: Resources{
 			Scripts: map[string]string{
 				"run.sh": "#!/bin/sh\necho hello\n",
 			},
 		},
 	}
-	toolset, err := NewToolset([]*Skill{skill})
+	toolset, err := NewToolset([]Skill{skill})
 	if err != nil {
 		t.Fatalf("new toolset: %v", err)
 	}
@@ -277,15 +291,16 @@ func TestRunSkillScriptToolAnyExecutable(t *testing.T) {
 		t.Skip("direct executable script test is not supported on windows")
 	}
 
-	skill := &Skill{
-		Frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
-		Resources: Resources{
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "",
+		resources: Resources{
 			Scripts: map[string]string{
 				"run": "#!/bin/sh\necho direct\n",
 			},
 		},
 	}
-	toolset, err := NewToolset([]*Skill{skill})
+	toolset, err := NewToolset([]Skill{skill})
 	if err != nil {
 		t.Fatalf("new toolset: %v", err)
 	}
@@ -300,5 +315,71 @@ func TestRunSkillScriptToolAnyExecutable(t *testing.T) {
 	}
 	if obj["status"] != "success" {
 		t.Fatalf("unexpected status: %v", obj["status"])
+	}
+}
+
+func TestToolsetMinimalSkillDefaults(t *testing.T) {
+	t.Parallel()
+
+	toolset, err := NewToolset([]Skill{
+		minimalSkill{
+			name:        "minimal-skill",
+			description: "Minimal skill",
+			instruction: "Do something minimal",
+		},
+	})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	tools := toolset.Tools()
+	loadResp, err := tools[1].Handle(context.Background(), `{"name":"minimal-skill"}`)
+	if err != nil {
+		t.Fatalf("load_skill error: %v", err)
+	}
+	var loadObj map[string]any
+	if err := json.Unmarshal([]byte(loadResp), &loadObj); err != nil {
+		t.Fatalf("unmarshal load response: %v", err)
+	}
+	if loadObj["instructions"] != "Do something minimal" {
+		t.Fatalf("unexpected instructions: %v", loadObj["instructions"])
+	}
+
+	resourceResp, err := tools[2].Handle(context.Background(), `{"skill_name":"minimal-skill","path":"references/missing.md"}`)
+	if err != nil {
+		t.Fatalf("load_skill_resource error: %v", err)
+	}
+	var resourceObj map[string]any
+	if err := json.Unmarshal([]byte(resourceResp), &resourceObj); err != nil {
+		t.Fatalf("unmarshal resource response: %v", err)
+	}
+	if resourceObj["error_code"] != "RESOURCE_NOT_FOUND" {
+		t.Fatalf("unexpected resource error_code: %v", resourceObj["error_code"])
+	}
+
+	scriptResp, err := tools[3].Handle(context.Background(), `{"skill_name":"minimal-skill","script_path":"scripts/missing.sh"}`)
+	if err != nil {
+		t.Fatalf("run_skill_script error: %v", err)
+	}
+	var scriptObj map[string]any
+	if err := json.Unmarshal([]byte(scriptResp), &scriptObj); err != nil {
+		t.Fatalf("unmarshal script response: %v", err)
+	}
+	if scriptObj["error_code"] != "SCRIPT_NOT_FOUND" {
+		t.Fatalf("unexpected script error_code: %v", scriptObj["error_code"])
+	}
+}
+
+func TestToolsetMinimalSkillValidation(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewToolset([]Skill{
+		minimalSkill{
+			name:        "Invalid_Name",
+			description: "desc",
+			instruction: "Do something",
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected validation error for minimal skill name")
 	}
 }

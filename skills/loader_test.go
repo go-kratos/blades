@@ -56,16 +56,26 @@ Do this.`), 0o644); err != nil {
 	if skill.Name() != "test-skill" {
 		t.Fatalf("unexpected skill name: %s", skill.Name())
 	}
-	if skill.Frontmatter.AllowedTools != "search-*" {
-		t.Fatalf("unexpected allowed-tools: %s", skill.Frontmatter.AllowedTools)
+	frontmatterProvider, ok := skill.(FrontmatterProvider)
+	if !ok {
+		t.Fatalf("expected frontmatter provider")
 	}
-	if _, ok := skill.Resources.GetReference("ref.md"); !ok {
+	frontmatter := frontmatterProvider.Frontmatter()
+	if frontmatter.AllowedTools != "search-*" {
+		t.Fatalf("unexpected allowed-tools: %s", frontmatter.AllowedTools)
+	}
+	resourcesProvider, ok := skill.(ResourcesProvider)
+	if !ok {
+		t.Fatalf("expected resources provider")
+	}
+	resources := resourcesProvider.Resources()
+	if _, ok := resources.GetReference("ref.md"); !ok {
 		t.Fatalf("expected ref.md")
 	}
-	if _, ok := skill.Resources.GetAsset("asset.txt"); !ok {
+	if _, ok := resources.GetAsset("asset.txt"); !ok {
 		t.Fatalf("expected asset.txt")
 	}
-	if _, ok := skill.Resources.GetScript("run.sh"); !ok {
+	if _, ok := resources.GetScript("run.sh"); !ok {
 		t.Fatalf("expected run.sh")
 	}
 }
@@ -107,7 +117,7 @@ func TestNewFromEmbed(t *testing.T) {
 	if skills[0].Name() != "embedded-skill" {
 		t.Fatalf("unexpected name: %s", skills[0].Name())
 	}
-	if skills[0].Instructions == "" {
+	if skills[0].Instruction() == "" {
 		t.Fatalf("expected instructions")
 	}
 }

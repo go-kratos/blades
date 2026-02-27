@@ -21,7 +21,7 @@ This is very important:
 4. Use run_skill_script for scripts under scripts/ when execution is required.`
 
 // FormatSkillsAsXML formats skills metadata as an XML block.
-func FormatSkillsAsXML(skills []*Skill) string {
+func FormatSkillsAsXML(skills []Skill) string {
 	if len(skills) == 0 {
 		return "<available_skills>\n</available_skills>"
 	}
