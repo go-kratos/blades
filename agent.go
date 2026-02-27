@@ -121,6 +121,7 @@ type agent struct {
 	middlewares         []Middleware
 	tools               []tools.Tool
 	skills              []*skills.Skill
+	skillToolset        *skills.Toolset
 	toolsResolver       tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
 }
 
@@ -135,6 +136,13 @@ func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 	}
 	if a.model == nil {
 		return nil, ErrModelProviderRequired
+	}
+	if len(a.skills) > 0 {
+		toolset, err := skills.NewToolset(a.skills)
+		if err != nil {
+			return nil, err
+		}
+		a.skillToolset = toolset
 	}
 	return a, nil
 }
@@ -173,13 +181,9 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 	}
 	invocation.Model = a.model.Name()
 	finalTools := resolvedTools
-	if len(a.skills) > 0 {
-		toolset, err := skills.NewToolset(a.skills)
-		if err != nil {
-			return err
-		}
-		finalTools = toolset.ComposeTools(resolvedTools)
-		invocation.Instruction = MergeParts(SystemMessage(toolset.Instruction()), invocation.Instruction)
+	if a.skillToolset != nil {
+		finalTools = a.skillToolset.ComposeTools(resolvedTools)
+		invocation.Instruction = MergeParts(SystemMessage(a.skillToolset.Instruction()), invocation.Instruction)
 	}
 	invocation.Tools = append(invocation.Tools, finalTools...)
 	// order of precedence: static instruction > instruction provider > skills instruction > invocation instruction

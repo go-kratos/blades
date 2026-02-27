@@ -48,6 +48,7 @@ type Toolset struct {
 	skillByName         map[string]*Skill
 	tools               []tools.Tool
 	allowedToolPatterns []string
+	instruction         string
 }
 
 // NewToolset creates a new skill toolset.
@@ -83,6 +84,10 @@ func NewToolset(skills []*Skill) (*Toolset, error) {
 		}
 	}
 	sort.Strings(ts.allowedToolPatterns)
+	ts.instruction = strings.Join([]string{
+		DefaultSystemInstruction,
+		FormatSkillsAsXML(ts.skills),
+	}, "\n\n")
 	ts.tools = []tools.Tool{
 		&listSkillsTool{toolset: ts},
 		&loadSkillTool{toolset: ts},
@@ -132,10 +137,7 @@ func matchesAllowedPattern(toolName string, patterns []string) bool {
 
 // Instruction returns the instruction block for skills.
 func (t *Toolset) Instruction() string {
-	return strings.Join([]string{
-		DefaultSystemInstruction,
-		FormatSkillsAsXML(t.skills),
-	}, "\n\n")
+	return t.instruction
 }
 
 func skillNotFound(name string) string {

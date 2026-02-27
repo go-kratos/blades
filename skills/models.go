@@ -92,15 +92,9 @@ type Skill struct {
 }
 
 func (s *Skill) Name() string {
-	if s == nil {
-		return ""
-	}
 	return s.Frontmatter.Name
 }
 
 func (s *Skill) Description() string {
-	if s == nil {
-		return ""
-	}
 	return s.Frontmatter.Description
 }

@@ -173,12 +173,23 @@ func TestAgentWithSkillsInvalidAllowedToolsPattern(t *testing.T) {
 		},
 		Instructions: "Follow this checklist.",
 	}
-	agent, err := NewAgent("agent", WithModel(model), WithSkills(skill))
-	if err != nil {
-		t.Fatalf("new agent: %v", err)
+	if _, err := NewAgent("agent", WithModel(model), WithSkills(skill)); err == nil {
+		t.Fatalf("expected new agent error for invalid allowed-tools pattern")
 	}
-	runner := NewRunner(agent)
-	if _, err := runner.Run(context.Background(), UserMessage("hi")); err == nil {
-		t.Fatalf("expected runner error for invalid allowed-tools pattern")
+}
+
+func TestAgentWithSkillsInvalidFrontmatterAtConstruction(t *testing.T) {
+	t.Parallel()
+
+	model := &captureModel{}
+	skill := &bladeskills.Skill{
+		Frontmatter: bladeskills.Frontmatter{
+			Name:        "invalid_name",
+			Description: "Plan things",
+		},
+		Instructions: "Follow this checklist.",
+	}
+	if _, err := NewAgent("agent", WithModel(model), WithSkills(skill)); err == nil {
+		t.Fatalf("expected new agent error for invalid skill frontmatter")
 	}
 }
