@@ -80,7 +80,7 @@ Do this.`), 0o644); err != nil {
 	}
 }
 
-func TestNewFromDirNameMismatch(t *testing.T) {
+func TestNewFromDirRootNameMismatchAllowed(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -95,8 +95,15 @@ description: desc
 Body`), 0o644); err != nil {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
-	if _, err := NewFromDir(skillDir); err == nil || !strings.Contains(err.Error(), "does not match directory name") {
-		t.Fatalf("expected name mismatch error, got: %v", err)
+	skills, err := NewFromDir(skillDir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	if skills[0].Name() != "my-skill" {
+		t.Fatalf("unexpected skill name: %s", skills[0].Name())
 	}
 }
 

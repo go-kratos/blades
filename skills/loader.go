@@ -26,12 +26,12 @@ var allowedFrontmatterKeys = map[string]struct{}{
 
 // NewFromDir loads all skills discovered under a local directory.
 func NewFromDir(dir string) ([]Skill, error) {
-	return loadAllFS(os.DirFS(dir), dirBaseName(dir))
+	return loadAllFS(os.DirFS(dir))
 }
 
 // NewFromEmbed loads all skills discovered from an fs.FS root.
 func NewFromEmbed(fsys fs.FS) ([]Skill, error) {
-	return loadAllFS(fsys, "")
+	return loadAllFS(fsys)
 }
 
 // ValidateSkillDir validates frontmatter and directory naming for one local skill directory.
@@ -53,7 +53,7 @@ func ReadSkillFrontmatter(dir string) (Frontmatter, error) {
 	return frontmatter, nil
 }
 
-func loadAllFS(fsys fs.FS, dotRootName string) ([]Skill, error) {
+func loadAllFS(fsys fs.FS) ([]Skill, error) {
 	roots, err := detectSkillRoots(fsys)
 	if err != nil {
 		return nil, err
@@ -69,7 +69,7 @@ func loadAllFS(fsys fs.FS, dotRootName string) ([]Skill, error) {
 		if err != nil {
 			return nil, fmt.Errorf("skills: load %q: %w", root, err)
 		}
-		if err := validateSkillRootName(root, dotRootName, skill.Name()); err != nil {
+		if err := validateSkillRootName(root, "", skill.Name()); err != nil {
 			return nil, fmt.Errorf("skills: load %q: %w", root, err)
 		}
 		if prevRoot, exists := nameToRoot[skill.Name()]; exists {
