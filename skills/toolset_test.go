@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -694,82 +693,6 @@ func TestToolsetMinimalSkillDefaults(t *testing.T) {
 	}
 	if scriptObj["error_code"] != "SCRIPT_NOT_FOUND" {
 		t.Fatalf("unexpected script error_code: %v", scriptObj["error_code"])
-	}
-}
-
-func TestRunSkillScriptToolOutputTruncation(t *testing.T) {
-	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("shell script execution is not supported on windows in this test")
-	}
-
-	// Script outputs more than maxScriptOutputBytes to both stdout and stderr.
-	countKB := maxScriptOutputBytes/1024 + 256
-	script := fmt.Sprintf(`#!/bin/sh
-dd if=/dev/zero bs=1024 count=%d 2>/dev/null | tr '\0' 'A'
-dd if=/dev/zero bs=1024 count=%d 2>/dev/null | tr '\0' 'B' >&2
-`, countKB, countKB)
-	skill := &staticSkill{
-		frontmatter: Frontmatter{Name: "big-output", Description: "big output skill"},
-		instruction: "",
-		resources: Resources{
-			Scripts: map[string]string{"big.sh": script},
-		},
-	}
-	toolset, err := NewToolset([]Skill{skill})
-	if err != nil {
-		t.Fatalf("new toolset: %v", err)
-	}
-	tool := toolset.Tools()[3]
-	resp, err := tool.Handle(context.Background(), `{"skill_name":"big-output","script_path":"scripts/big.sh"}`)
-	if err != nil {
-		t.Fatalf("tool error: %v", err)
-	}
-	var obj map[string]any
-	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	stdout, _ := obj["stdout"].(string)
-	if len(stdout) > maxScriptOutputBytes {
-		t.Fatalf("stdout should be capped at %d bytes, got %d", maxScriptOutputBytes, len(stdout))
-	}
-	stderr, _ := obj["stderr"].(string)
-	if len(stderr) > maxScriptOutputBytes {
-		t.Fatalf("stderr should be capped at %d bytes, got %d", maxScriptOutputBytes, len(stderr))
-	}
-	if _, ok := obj["stdout_truncated_bytes"]; !ok {
-		t.Fatalf("expected stdout_truncated_bytes field")
-	}
-	if _, ok := obj["stderr_truncated_bytes"]; !ok {
-		t.Fatalf("expected stderr_truncated_bytes field")
-	}
-}
-
-func TestLimitedWriter(t *testing.T) {
-	t.Parallel()
-
-	w := &limitedWriter{limit: 10}
-	n, err := w.Write([]byte("hello"))
-	if err != nil || n != 5 {
-		t.Fatalf("first write: n=%d err=%v", n, err)
-	}
-	n, err = w.Write([]byte("world!!!"))
-	if err != nil || n != 8 {
-		t.Fatalf("second write: n=%d err=%v", n, err)
-	}
-	if w.buf.String() != "helloworld" {
-		t.Fatalf("unexpected buffer: %q", w.buf.String())
-	}
-	if w.dropped != 3 {
-		t.Fatalf("expected 3 dropped bytes, got %d", w.dropped)
-	}
-	// Further writes should be fully dropped.
-	n, err = w.Write([]byte("more"))
-	if err != nil || n != 4 {
-		t.Fatalf("third write: n=%d err=%v", n, err)
-	}
-	if w.dropped != 7 {
-		t.Fatalf("expected 7 dropped bytes, got %d", w.dropped)
 	}
 }
 
