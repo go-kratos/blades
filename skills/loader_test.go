@@ -269,7 +269,7 @@ Body`)
 	}
 }
 
-func TestNewFromDirRejectsUnknownFrontmatterKey(t *testing.T) {
+func TestNewFromDirAllowsUnknownFrontmatterKey(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -286,8 +286,15 @@ Body`), 0o644); err != nil {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
 
-	if _, err := NewFromDir(skillDir); err == nil || !strings.Contains(err.Error(), "unknown frontmatter fields") {
-		t.Fatalf("expected unknown field error, got: %v", err)
+	skills, err := NewFromDir(skillDir)
+	if err != nil {
+		t.Fatalf("load skills: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	if skills[0].Name() != "test-skill" {
+		t.Fatalf("unexpected skill name: %s", skills[0].Name())
 	}
 }
 
