@@ -13,6 +13,7 @@ replace (
 
 require (
 	github.com/go-kratos/blades v0.0.0
+	github.com/go-kratos/blades/contrib/anthropic v0.0.0-00010101000000-000000000000
 	github.com/go-kratos/blades/contrib/gemini v0.0.0-00010101000000-000000000000
 	github.com/go-kratos/blades/contrib/mcp v0.0.0-20251106103709-242709515a73
 	github.com/go-kratos/blades/contrib/openai v0.0.0-20251106103709-242709515a73
@@ -28,6 +29,7 @@ require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.17.0 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
+	github.com/anthropics/anthropic-sdk-go v1.13.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-kratos/kit v0.0.0-20251121083925-65298ad2aa44 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
