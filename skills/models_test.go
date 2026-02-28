@@ -68,7 +68,7 @@ func TestResourcesList(t *testing.T) {
 
 	r := Resources{
 		References: map[string]string{"b.md": "b", "a.md": "a"},
-		Assets:     map[string]string{"x.txt": "x"},
+		Assets:     map[string][]byte{"x.txt": []byte("x")},
 		Scripts:    map[string]string{"run.sh": "echo hi"},
 	}
 	refs := r.ListReferences()

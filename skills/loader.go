@@ -152,7 +152,7 @@ func loadFS(fsys fs.FS, root string) (Skill, error) {
 	if err != nil {
 		return nil, err
 	}
-	assets, binAssets, err := loadDirFiles(fsys, path.Join(root, "assets"))
+	assets, err := loadDirFiles(fsys, path.Join(root, "assets"))
 	if err != nil {
 		return nil, err
 	}
@@ -164,10 +164,9 @@ func loadFS(fsys fs.FS, root string) (Skill, error) {
 		frontmatter: frontmatter,
 		instruction: body,
 		resources: Resources{
-			References:   references,
-			Assets:       assets,
-			Scripts:      scripts,
-			BinaryAssets: binAssets,
+			References: references,
+			Assets:     assets,
+			Scripts:    scripts,
 		},
 	}, nil
 }
@@ -301,9 +300,8 @@ func loadDirTextFiles(fsys fs.FS, dir string) (map[string]string, error) {
 	return files, nil
 }
 
-func loadDirFiles(fsys fs.FS, dir string) (text map[string]string, binary map[string][]byte, err error) {
-	text = make(map[string]string)
-	binary = make(map[string][]byte)
+func loadDirFiles(fsys fs.FS, dir string) (map[string][]byte, error) {
+	files := make(map[string][]byte)
 	walkErr := fs.WalkDir(fsys, dir, func(filePath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -319,15 +317,11 @@ func loadDirFiles(fsys fs.FS, dir string) (text map[string]string, binary map[st
 		if err != nil {
 			return fmt.Errorf("file %q in %s: %w", rel, dir, err)
 		}
-		if utf8.Valid(b) {
-			text[rel] = string(b)
-		} else {
-			binary[rel] = b
-		}
+		files[rel] = b
 		return nil
 	})
 	if walkErr != nil && !errors.Is(walkErr, fs.ErrNotExist) {
-		return nil, nil, walkErr
+		return nil, walkErr
 	}
-	return text, binary, nil
+	return files, nil
 }

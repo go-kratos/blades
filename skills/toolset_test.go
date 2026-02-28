@@ -44,7 +44,7 @@ func TestSkillTools(t *testing.T) {
 		instruction: "Do something",
 		resources: Resources{
 			References: map[string]string{"ref.md": "ref"},
-			Assets:     map[string]string{"asset.txt": "asset"},
+			Assets:     map[string][]byte{"asset.txt": []byte("asset")},
 			Scripts:    map[string]string{"run.sh": "echo"},
 		},
 	}
@@ -576,7 +576,7 @@ func TestLoadSkillReturnsResourcesList(t *testing.T) {
 		instruction: "Do something",
 		resources: Resources{
 			References: map[string]string{"ref.md": "ref content"},
-			Assets:     map[string]string{"tmpl.txt": "template"},
+			Assets:     map[string][]byte{"tmpl.txt": []byte("template")},
 			Scripts:    map[string]string{"run.sh": "echo ok"},
 		},
 	}
@@ -795,7 +795,7 @@ func TestLoadSkillResourceBinaryAssetBase64(t *testing.T) {
 		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
 		instruction: "",
 		resources: Resources{
-			BinaryAssets: map[string][]byte{"image.png": binData},
+			Assets: map[string][]byte{"image.png": binData},
 		},
 	}
 	toolset, err := NewToolset([]Skill{skill})
@@ -839,8 +839,10 @@ func TestLoadSkillResourceTextAssetPreferredOverBinary(t *testing.T) {
 		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
 		instruction: "",
 		resources: Resources{
-			Assets:       map[string]string{"readme.txt": "hello text"},
-			BinaryAssets: map[string][]byte{"image.png": {0xFF, 0xFE}},
+			Assets: map[string][]byte{
+				"readme.txt": []byte("hello text"),
+				"image.png":  {0xFF, 0xFE},
+			},
 		},
 	}
 	toolset, err := NewToolset([]Skill{skill})
@@ -871,9 +873,11 @@ func TestMaterializeSkillWorkspaceBinaryAssets(t *testing.T) {
 
 	binData := []byte{0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE}
 	resources := Resources{
-		Assets:       map[string]string{"text.txt": "hello"},
-		BinaryAssets: map[string][]byte{"image.png": binData},
-		Scripts:      map[string]string{"run.sh": "echo ok"},
+		Assets: map[string][]byte{
+			"text.txt":  []byte("hello"),
+			"image.png": binData,
+		},
+		Scripts: map[string]string{"run.sh": "echo ok"},
 	}
 	root := t.TempDir()
 	if err := materializeSkillWorkspace(root, resources); err != nil {
@@ -908,10 +912,12 @@ func TestToResourcesListIncludesBinaryAssets(t *testing.T) {
 	t.Parallel()
 
 	resources := Resources{
-		References:   map[string]string{"ref.md": "ref"},
-		Assets:       map[string]string{"text.txt": "text"},
-		BinaryAssets: map[string][]byte{"image.png": {0xFF}},
-		Scripts:      map[string]string{"run.sh": "echo"},
+		References: map[string]string{"ref.md": "ref"},
+		Assets: map[string][]byte{
+			"text.txt":  []byte("text"),
+			"image.png": {0xFF},
+		},
+		Scripts: map[string]string{"run.sh": "echo"},
 	}
 	list := toResourcesList(resources)
 	want := map[string]bool{
@@ -933,12 +939,11 @@ func TestToResourcesListIncludesBinaryAssets(t *testing.T) {
 	}
 }
 
-func TestToResourcesListDeduplicatesAssetPaths(t *testing.T) {
+func TestToResourcesListEachAssetAppearsOnce(t *testing.T) {
 	t.Parallel()
 
 	resources := Resources{
-		Assets:       map[string]string{"same.txt": "text"},
-		BinaryAssets: map[string][]byte{"same.txt": {0xFF}},
+		Assets: map[string][]byte{"same.txt": []byte("text")},
 	}
 	list := toResourcesList(resources)
 	count := 0
@@ -949,27 +954,6 @@ func TestToResourcesListDeduplicatesAssetPaths(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected assets/same.txt exactly once, got %d", count)
-	}
-}
-
-func TestNewToolsetRejectsAssetPathConflictBetweenTextAndBinary(t *testing.T) {
-	t.Parallel()
-
-	_, err := NewToolset([]Skill{
-		&staticSkill{
-			frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
-			instruction: "",
-			resources: Resources{
-				Assets:       map[string]string{"same.txt": "text"},
-				BinaryAssets: map[string][]byte{"same.txt": {0xFF}},
-			},
-		},
-	})
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "exists in both assets and binary assets") {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
