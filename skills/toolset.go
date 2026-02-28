@@ -3,6 +3,7 @@ package skills
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,9 @@ const (
 
 	defaultScriptTimeoutSeconds = 300
 	maxScriptTimeoutSeconds     = 1800
+
+	// maxScriptOutputBytes is the maximum size of stdout/stderr captured from a script.
+	maxScriptOutputBytes = 10 << 20 // 10 MiB
 )
 
 var coreSkillToolNames = map[string]struct{}{
@@ -74,10 +78,14 @@ func NewToolset(skills []Skill) (*Toolset, error) {
 		if _, exists := ts.skillByName[skill.Name()]; exists {
 			return nil, fmt.Errorf("skills: duplicate skill name %q", skill.Name())
 		}
+		resources := resolveResources(skill)
+		if err := validateResources(resources, skill.Name()); err != nil {
+			return nil, err
+		}
 		ts.skillByName[skill.Name()] = skillEntry{
 			skill:       skill,
 			frontmatter: frontmatter,
-			resources:   resolveResources(skill),
+			resources:   resources,
 		}
 		ts.skills = append(ts.skills, skill)
 	}
@@ -136,6 +144,33 @@ func resolveResources(skill Skill) Resources {
 		return Resources{}
 	}
 	return provider.Resources()
+}
+
+func validateResources(resources Resources, skillName string) error {
+	for rel, content := range resources.References {
+		if len(content) > maxSkillResourceBytes {
+			return fmt.Errorf("skills: reference %q in skill %q exceeds %d bytes", rel, skillName, maxSkillResourceBytes)
+		}
+	}
+	for rel, content := range resources.Assets {
+		if len(content) > maxSkillResourceBytes {
+			return fmt.Errorf("skills: asset %q in skill %q exceeds %d bytes", rel, skillName, maxSkillResourceBytes)
+		}
+	}
+	for rel, content := range resources.BinaryAssets {
+		if len(content) > maxSkillResourceBytes {
+			return fmt.Errorf("skills: binary asset %q in skill %q exceeds %d bytes", rel, skillName, maxSkillResourceBytes)
+		}
+		if _, exists := resources.Assets[rel]; exists {
+			return fmt.Errorf("skills: asset %q in skill %q exists in both assets and binary assets", rel, skillName)
+		}
+	}
+	for rel, content := range resources.Scripts {
+		if len(content) > maxSkillResourceBytes {
+			return fmt.Errorf("skills: script %q in skill %q exceeds %d bytes", rel, skillName, maxSkillResourceBytes)
+		}
+	}
+	return nil
 }
 
 // Tools returns skill tools.
@@ -223,6 +258,31 @@ func toFrontmatterMap(f Frontmatter) map[string]any {
 	return out
 }
 
+func toResourcesList(r Resources) []string {
+	seen := make(map[string]struct{})
+	add := func(p string, out []string) []string {
+		if _, exists := seen[p]; exists {
+			return out
+		}
+		seen[p] = struct{}{}
+		return append(out, p)
+	}
+	var out []string
+	for _, name := range r.ListReferences() {
+		out = add("references/"+name, out)
+	}
+	for _, name := range r.ListAssets() {
+		out = add("assets/"+name, out)
+	}
+	for _, name := range r.ListBinaryAssets() {
+		out = add("assets/"+name, out)
+	}
+	for _, name := range r.ListScripts() {
+		out = add("scripts/"+name, out)
+	}
+	return out
+}
+
 type listSkillsTool struct {
 	toolset *Toolset
 }
@@ -288,11 +348,15 @@ func (t *loadSkillTool) Handle(ctx context.Context, input string) (string, error
 	if !ok {
 		return skillNotFound(req.Name), nil
 	}
-	return mustJSON(map[string]any{
+	result := map[string]any{
 		"skill_name":   skill.skill.Name(),
 		"instructions": skill.skill.Instruction(),
 		"frontmatter":  toFrontmatterMap(skill.frontmatter),
-	}), nil
+	}
+	if resources := toResourcesList(skill.resources); len(resources) > 0 {
+		result["resources"] = resources
+	}
+	return mustJSON(result), nil
 }
 
 type loadSkillResourceTool struct {
@@ -355,11 +419,11 @@ func (t *loadSkillResourceTool) Handle(ctx context.Context, input string) (strin
 			"error_code": "INVALID_RESOURCE_PATH",
 		}), nil
 	}
+	resources := skill.resources
 	var (
 		content string
 		found   bool
 	)
-	resources := skill.resources
 	switch resourceType {
 	case "references":
 		content, found = resources.GetReference(resourceName)
@@ -370,16 +434,38 @@ func (t *loadSkillResourceTool) Handle(ctx context.Context, input string) (strin
 	default:
 		return invalidArgs("Invalid resource type"), nil
 	}
-	if !found {
+	if found {
+		if len(content) > maxSkillResourceBytes {
+			return mustJSON(map[string]any{
+				"error":      fmt.Sprintf("Resource %q in skill %q exceeds %d bytes.", req.Path, req.SkillName, maxSkillResourceBytes),
+				"error_code": "RESOURCE_TOO_LARGE",
+			}), nil
+		}
 		return mustJSON(map[string]any{
-			"error":      fmt.Sprintf("Resource %q not found in skill %q.", req.Path, req.SkillName),
-			"error_code": "RESOURCE_NOT_FOUND",
+			"skill_name": req.SkillName,
+			"path":       req.Path,
+			"content":    content,
 		}), nil
 	}
+	if resourceType == "assets" {
+		if binData, ok := resources.GetBinaryAsset(resourceName); ok {
+			if len(binData) > maxSkillResourceBytes {
+				return mustJSON(map[string]any{
+					"error":      fmt.Sprintf("Resource %q in skill %q exceeds %d bytes.", req.Path, req.SkillName, maxSkillResourceBytes),
+					"error_code": "RESOURCE_TOO_LARGE",
+				}), nil
+			}
+			return mustJSON(map[string]any{
+				"skill_name":     req.SkillName,
+				"path":           req.Path,
+				"content_base64": base64.StdEncoding.EncodeToString(binData),
+				"encoding":       "base64",
+			}), nil
+		}
+	}
 	return mustJSON(map[string]any{
-		"skill_name": req.SkillName,
-		"path":       req.Path,
-		"content":    content,
+		"error":      fmt.Sprintf("Resource %q not found in skill %q.", req.Path, req.SkillName),
+		"error_code": "RESOURCE_NOT_FOUND",
 	}), nil
 }
 
@@ -559,24 +645,29 @@ func normalizeScriptPath(scriptPath string) (scriptName string, fullScriptPath s
 
 func materializeSkillWorkspace(root string, resources Resources) error {
 	for rel, content := range resources.References {
-		if err := writeWorkspaceFile(root, "references", rel, content, 0o644); err != nil {
+		if err := writeWorkspaceFile(root, "references", rel, []byte(content), 0o644); err != nil {
 			return err
 		}
 	}
 	for rel, content := range resources.Assets {
+		if err := writeWorkspaceFile(root, "assets", rel, []byte(content), 0o644); err != nil {
+			return err
+		}
+	}
+	for rel, content := range resources.BinaryAssets {
 		if err := writeWorkspaceFile(root, "assets", rel, content, 0o644); err != nil {
 			return err
 		}
 	}
 	for rel, content := range resources.Scripts {
-		if err := writeWorkspaceFile(root, "scripts", rel, content, 0o755); err != nil {
+		if err := writeWorkspaceFile(root, "scripts", rel, []byte(content), 0o755); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeWorkspaceFile(root string, dir string, rel string, content string, mode fs.FileMode) error {
+func writeWorkspaceFile(root string, dir string, rel string, content []byte, mode fs.FileMode) error {
 	clean, err := normalizeSkillRelativePath(rel)
 	if err != nil {
 		return fmt.Errorf("invalid file path %q", rel)
@@ -594,7 +685,7 @@ func writeWorkspaceFile(root string, dir string, rel string, content string, mod
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(targetPath, []byte(content), mode)
+	return os.WriteFile(targetPath, content, mode)
 }
 
 func normalizeSkillRelativePath(rel string) (string, error) {
@@ -651,6 +742,28 @@ func mergeCommandEnv(base []string, overrides map[string]string) []string {
 	return out
 }
 
+// limitedWriter wraps a bytes.Buffer and stops writing after a byte limit.
+type limitedWriter struct {
+	buf     bytes.Buffer
+	limit   int
+	dropped int
+}
+
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	remaining := w.limit - w.buf.Len()
+	if remaining <= 0 {
+		w.dropped += n
+		return n, nil
+	}
+	if n > remaining {
+		w.dropped += n - remaining
+		p = p[:remaining]
+	}
+	w.buf.Write(p)
+	return n, nil
+}
+
 func executeSkillScript(
 	ctx context.Context,
 	tmpRoot string,
@@ -677,9 +790,10 @@ func executeSkillScript(
 	cmd := exec.CommandContext(timeoutCtx, commandName, commandArgs...)
 	cmd.Dir = tmpRoot
 	cmd.Env = mergeCommandEnv(os.Environ(), env)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := &limitedWriter{limit: maxScriptOutputBytes}
+	stderr := &limitedWriter{limit: maxScriptOutputBytes}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	err := cmd.Run()
 	exitCode := 0
@@ -703,13 +817,20 @@ func executeSkillScript(
 		}
 	}
 
-	return mustJSON(map[string]any{
+	result := map[string]any{
 		"skill_name":  skillName,
 		"script_path": scriptPath,
 		"args":        args,
-		"stdout":      stdout.String(),
-		"stderr":      stderr.String(),
+		"stdout":      stdout.buf.String(),
+		"stderr":      stderr.buf.String(),
 		"exit_code":   exitCode,
 		"status":      status,
-	})
+	}
+	if stdout.dropped > 0 {
+		result["stdout_truncated_bytes"] = stdout.dropped
+	}
+	if stderr.dropped > 0 {
+		result["stderr_truncated_bytes"] = stderr.dropped
+	}
+	return mustJSON(result)
 }

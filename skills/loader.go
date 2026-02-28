@@ -3,6 +3,7 @@ package skills
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -13,6 +14,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+const maxSkillResourceBytes = 10 << 20 // 10 MiB
 
 var allowedFrontmatterKeys = map[string]struct{}{
 	"name":          {},
@@ -162,7 +165,7 @@ func loadFS(fsys fs.FS, root string) (Skill, error) {
 	if err != nil {
 		return nil, err
 	}
-	assets, err := loadDirTextFiles(fsys, path.Join(root, "assets"))
+	assets, binAssets, err := loadDirFiles(fsys, path.Join(root, "assets"))
 	if err != nil {
 		return nil, err
 	}
@@ -174,9 +177,10 @@ func loadFS(fsys fs.FS, root string) (Skill, error) {
 		frontmatter: frontmatter,
 		instruction: body,
 		resources: Resources{
-			References: references,
-			Assets:     assets,
-			Scripts:    scripts,
+			References:   references,
+			Assets:       assets,
+			Scripts:      scripts,
+			BinaryAssets: binAssets,
 		},
 	}, nil
 }
@@ -303,14 +307,14 @@ func loadDirTextFiles(fsys fs.FS, dir string) (map[string]string, error) {
 		if d.IsDir() {
 			return nil
 		}
-		b, err := fs.ReadFile(fsys, filePath)
+		rel := strings.TrimPrefix(filePath, dir+"/")
+		b, err := readFileWithLimit(fsys, filePath, maxSkillResourceBytes)
 		if err != nil {
-			return err
+			return fmt.Errorf("file %q in %s: %w", rel, dir, err)
 		}
 		if !utf8.Valid(b) {
-			return nil
+			return fmt.Errorf("file %q in %s is not valid UTF-8", rel, dir)
 		}
-		rel := strings.TrimPrefix(filePath, dir+"/")
 		files[rel] = string(b)
 		return nil
 	})
@@ -318,4 +322,53 @@ func loadDirTextFiles(fsys fs.FS, dir string) (map[string]string, error) {
 		return nil, err
 	}
 	return files, nil
+}
+
+func loadDirFiles(fsys fs.FS, dir string) (text map[string]string, binary map[string][]byte, err error) {
+	text = make(map[string]string)
+	binary = make(map[string][]byte)
+	walkErr := fs.WalkDir(fsys, dir, func(filePath string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return fs.SkipDir
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel := strings.TrimPrefix(filePath, dir+"/")
+		b, err := readFileWithLimit(fsys, filePath, maxSkillResourceBytes)
+		if err != nil {
+			return fmt.Errorf("file %q in %s: %w", rel, dir, err)
+		}
+		if utf8.Valid(b) {
+			text[rel] = string(b)
+		} else {
+			binary[rel] = b
+		}
+		return nil
+	})
+	if walkErr != nil && !errors.Is(walkErr, fs.ErrNotExist) {
+		return nil, nil, walkErr
+	}
+	return text, binary, nil
+}
+
+func readFileWithLimit(fsys fs.FS, filePath string, maxBytes int) ([]byte, error) {
+	f, err := fsys.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	limitedReader := &io.LimitedReader{R: f, N: int64(maxBytes) + 1}
+	b, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxBytes {
+		return nil, fmt.Errorf("size exceeds %d bytes", maxBytes)
+	}
+	return b, nil
 }

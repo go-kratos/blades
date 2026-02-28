@@ -1,8 +1,11 @@
 package skills
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -391,14 +394,14 @@ func TestWriteWorkspaceFilePathValidation(t *testing.T) {
 		`C:\x.sh`,
 		`C:x.sh`,
 	} {
-		err := writeWorkspaceFile(root, "scripts", rel, "echo no", 0o755)
+		err := writeWorkspaceFile(root, "scripts", rel, []byte("echo no"), 0o755)
 		if err == nil {
 			t.Fatalf("expected error for %q", rel)
 		}
 	}
 
 	const rel = "nested/run.sh"
-	if err := writeWorkspaceFile(root, "scripts", rel, "echo ok", 0o755); err != nil {
+	if err := writeWorkspaceFile(root, "scripts", rel, []byte("echo ok"), 0o755); err != nil {
 		t.Fatalf("writeWorkspaceFile: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(root, "scripts", "nested", "run.sh"))
@@ -566,6 +569,83 @@ func TestRunSkillScriptToolInvalidEnvNUL(t *testing.T) {
 	}
 }
 
+func TestLoadSkillReturnsResourcesList(t *testing.T) {
+	t.Parallel()
+
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "Do something",
+		resources: Resources{
+			References: map[string]string{"ref.md": "ref content"},
+			Assets:     map[string]string{"tmpl.txt": "template"},
+			Scripts:    map[string]string{"run.sh": "echo ok"},
+		},
+	}
+	toolset, err := NewToolset([]Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	loadTool := toolset.Tools()[1]
+	resp, err := loadTool.Handle(context.Background(), `{"name":"skill1"}`)
+	if err != nil {
+		t.Fatalf("load_skill error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	resources, ok := obj["resources"].([]any)
+	if !ok {
+		t.Fatalf("expected resources list, got %T", obj["resources"])
+	}
+	want := map[string]bool{
+		"references/ref.md": false,
+		"assets/tmpl.txt":   false,
+		"scripts/run.sh":    false,
+	}
+	for _, r := range resources {
+		s, ok := r.(string)
+		if !ok {
+			t.Fatalf("expected string resource, got %T", r)
+		}
+		if _, exists := want[s]; !exists {
+			t.Fatalf("unexpected resource: %q", s)
+		}
+		want[s] = true
+	}
+	for k, found := range want {
+		if !found {
+			t.Fatalf("missing resource: %q", k)
+		}
+	}
+}
+
+func TestLoadSkillOmitsResourcesWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "Do something",
+		resources:   Resources{},
+	}
+	toolset, err := NewToolset([]Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	loadTool := toolset.Tools()[1]
+	resp, err := loadTool.Handle(context.Background(), `{"name":"skill1"}`)
+	if err != nil {
+		t.Fatalf("load_skill error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := obj["resources"]; ok {
+		t.Fatalf("expected no resources key for empty resources")
+	}
+}
+
 func TestToolsetMinimalSkillDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -617,6 +697,82 @@ func TestToolsetMinimalSkillDefaults(t *testing.T) {
 	}
 }
 
+func TestRunSkillScriptToolOutputTruncation(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script execution is not supported on windows in this test")
+	}
+
+	// Script outputs more than maxScriptOutputBytes to both stdout and stderr.
+	countKB := maxScriptOutputBytes/1024 + 256
+	script := fmt.Sprintf(`#!/bin/sh
+dd if=/dev/zero bs=1024 count=%d 2>/dev/null | tr '\0' 'A'
+dd if=/dev/zero bs=1024 count=%d 2>/dev/null | tr '\0' 'B' >&2
+`, countKB, countKB)
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "big-output", Description: "big output skill"},
+		instruction: "",
+		resources: Resources{
+			Scripts: map[string]string{"big.sh": script},
+		},
+	}
+	toolset, err := NewToolset([]Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	tool := toolset.Tools()[3]
+	resp, err := tool.Handle(context.Background(), `{"skill_name":"big-output","script_path":"scripts/big.sh"}`)
+	if err != nil {
+		t.Fatalf("tool error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	stdout, _ := obj["stdout"].(string)
+	if len(stdout) > maxScriptOutputBytes {
+		t.Fatalf("stdout should be capped at %d bytes, got %d", maxScriptOutputBytes, len(stdout))
+	}
+	stderr, _ := obj["stderr"].(string)
+	if len(stderr) > maxScriptOutputBytes {
+		t.Fatalf("stderr should be capped at %d bytes, got %d", maxScriptOutputBytes, len(stderr))
+	}
+	if _, ok := obj["stdout_truncated_bytes"]; !ok {
+		t.Fatalf("expected stdout_truncated_bytes field")
+	}
+	if _, ok := obj["stderr_truncated_bytes"]; !ok {
+		t.Fatalf("expected stderr_truncated_bytes field")
+	}
+}
+
+func TestLimitedWriter(t *testing.T) {
+	t.Parallel()
+
+	w := &limitedWriter{limit: 10}
+	n, err := w.Write([]byte("hello"))
+	if err != nil || n != 5 {
+		t.Fatalf("first write: n=%d err=%v", n, err)
+	}
+	n, err = w.Write([]byte("world!!!"))
+	if err != nil || n != 8 {
+		t.Fatalf("second write: n=%d err=%v", n, err)
+	}
+	if w.buf.String() != "helloworld" {
+		t.Fatalf("unexpected buffer: %q", w.buf.String())
+	}
+	if w.dropped != 3 {
+		t.Fatalf("expected 3 dropped bytes, got %d", w.dropped)
+	}
+	// Further writes should be fully dropped.
+	n, err = w.Write([]byte("more"))
+	if err != nil || n != 4 {
+		t.Fatalf("third write: n=%d err=%v", n, err)
+	}
+	if w.dropped != 7 {
+		t.Fatalf("expected 7 dropped bytes, got %d", w.dropped)
+	}
+}
+
 func TestToolsetMinimalSkillValidation(t *testing.T) {
 	t.Parallel()
 
@@ -629,5 +785,245 @@ func TestToolsetMinimalSkillValidation(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected validation error for minimal skill name")
+	}
+}
+
+func TestLoadSkillResourceBinaryAssetBase64(t *testing.T) {
+	t.Parallel()
+
+	binData := []byte{0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE}
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "",
+		resources: Resources{
+			BinaryAssets: map[string][]byte{"image.png": binData},
+		},
+	}
+	toolset, err := NewToolset([]Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	tool := toolset.Tools()[2]
+	resp, err := tool.Handle(context.Background(), `{"skill_name":"skill1","path":"assets/image.png"}`)
+	if err != nil {
+		t.Fatalf("tool error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["encoding"] != "base64" {
+		t.Fatalf("expected encoding=base64, got %v", obj["encoding"])
+	}
+	encoded, ok := obj["content_base64"].(string)
+	if !ok {
+		t.Fatalf("expected content_base64 string")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("base64 decode: %v", err)
+	}
+	if len(decoded) != len(binData) {
+		t.Fatalf("unexpected decoded size: %d", len(decoded))
+	}
+	for i, b := range decoded {
+		if b != binData[i] {
+			t.Fatalf("mismatch at byte %d: %x vs %x", i, b, binData[i])
+		}
+	}
+}
+
+func TestLoadSkillResourceTextAssetPreferredOverBinary(t *testing.T) {
+	t.Parallel()
+
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "",
+		resources: Resources{
+			Assets:       map[string]string{"readme.txt": "hello text"},
+			BinaryAssets: map[string][]byte{"image.png": {0xFF, 0xFE}},
+		},
+	}
+	toolset, err := NewToolset([]Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	tool := toolset.Tools()[2]
+
+	// Text asset returns content field.
+	resp, err := tool.Handle(context.Background(), `{"skill_name":"skill1","path":"assets/readme.txt"}`)
+	if err != nil {
+		t.Fatalf("tool error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["content"] != "hello text" {
+		t.Fatalf("unexpected content: %v", obj["content"])
+	}
+	if _, hasEncoding := obj["encoding"]; hasEncoding {
+		t.Fatalf("text asset should not have encoding field")
+	}
+}
+
+func TestMaterializeSkillWorkspaceBinaryAssets(t *testing.T) {
+	t.Parallel()
+
+	binData := []byte{0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE}
+	resources := Resources{
+		Assets:       map[string]string{"text.txt": "hello"},
+		BinaryAssets: map[string][]byte{"image.png": binData},
+		Scripts:      map[string]string{"run.sh": "echo ok"},
+	}
+	root := t.TempDir()
+	if err := materializeSkillWorkspace(root, resources); err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+
+	// Verify text asset.
+	b, err := os.ReadFile(filepath.Join(root, "assets", "text.txt"))
+	if err != nil {
+		t.Fatalf("read text asset: %v", err)
+	}
+	if string(b) != "hello" {
+		t.Fatalf("unexpected text asset: %q", string(b))
+	}
+
+	// Verify binary asset written as raw bytes.
+	b, err = os.ReadFile(filepath.Join(root, "assets", "image.png"))
+	if err != nil {
+		t.Fatalf("read binary asset: %v", err)
+	}
+	if len(b) != len(binData) {
+		t.Fatalf("unexpected binary asset size: %d", len(b))
+	}
+	for i, v := range b {
+		if v != binData[i] {
+			t.Fatalf("binary asset mismatch at byte %d", i)
+		}
+	}
+}
+
+func TestToResourcesListIncludesBinaryAssets(t *testing.T) {
+	t.Parallel()
+
+	resources := Resources{
+		References:   map[string]string{"ref.md": "ref"},
+		Assets:       map[string]string{"text.txt": "text"},
+		BinaryAssets: map[string][]byte{"image.png": {0xFF}},
+		Scripts:      map[string]string{"run.sh": "echo"},
+	}
+	list := toResourcesList(resources)
+	want := map[string]bool{
+		"references/ref.md": false,
+		"assets/text.txt":   false,
+		"assets/image.png":  false,
+		"scripts/run.sh":    false,
+	}
+	for _, item := range list {
+		if _, exists := want[item]; !exists {
+			t.Fatalf("unexpected resource: %q", item)
+		}
+		want[item] = true
+	}
+	for k, found := range want {
+		if !found {
+			t.Fatalf("missing resource: %q", k)
+		}
+	}
+}
+
+func TestToResourcesListDeduplicatesAssetPaths(t *testing.T) {
+	t.Parallel()
+
+	resources := Resources{
+		Assets:       map[string]string{"same.txt": "text"},
+		BinaryAssets: map[string][]byte{"same.txt": {0xFF}},
+	}
+	list := toResourcesList(resources)
+	count := 0
+	for _, item := range list {
+		if item == "assets/same.txt" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected assets/same.txt exactly once, got %d", count)
+	}
+}
+
+func TestNewToolsetRejectsAssetPathConflictBetweenTextAndBinary(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewToolset([]Skill{
+		&staticSkill{
+			frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+			instruction: "",
+			resources: Resources{
+				Assets:       map[string]string{"same.txt": "text"},
+				BinaryAssets: map[string][]byte{"same.txt": {0xFF}},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "exists in both assets and binary assets") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewToolsetRejectsOversizedBinaryAsset(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewToolset([]Skill{
+		&staticSkill{
+			frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+			instruction: "",
+			resources: Resources{
+				BinaryAssets: map[string][]byte{
+					"big.bin": bytes.Repeat([]byte{0x01}, maxSkillResourceBytes+1),
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadSkillResourceRejectsOversizedBinaryAssetAtRuntime(t *testing.T) {
+	t.Parallel()
+
+	binaryAssets := map[string][]byte{"image.png": {0x89, 0x50}}
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "",
+		resources: Resources{
+			BinaryAssets: binaryAssets,
+		},
+	}
+	toolset, err := NewToolset([]Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+
+	// Mutate the resource map after toolset creation to verify runtime defense.
+	binaryAssets["image.png"] = bytes.Repeat([]byte{0xFF}, maxSkillResourceBytes+1)
+
+	resp, err := toolset.Tools()[2].Handle(context.Background(), `{"skill_name":"skill1","path":"assets/image.png"}`)
+	if err != nil {
+		t.Fatalf("tool error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["error_code"] != "RESOURCE_TOO_LARGE" {
+		t.Fatalf("unexpected error_code: %v", obj["error_code"])
 	}
 }

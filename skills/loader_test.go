@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"bytes"
 	"embed"
 	"io/fs"
 	"os"
@@ -351,5 +352,172 @@ Body`), 0o644); err != nil {
 	}
 	if fm.AllowedTools != "tool-*" {
 		t.Fatalf("unexpected allowed tools: %s", fm.AllowedTools)
+	}
+}
+
+func TestNewFromDirBinaryAssets(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "test-skill")
+	if err := os.MkdirAll(filepath.Join(skillDir, "assets"), 0o755); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: test-skill
+description: Test description
+---
+Do this.`), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	// Write a text asset.
+	if err := os.WriteFile(filepath.Join(skillDir, "assets", "text.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write text asset: %v", err)
+	}
+	// Write a binary asset (non-UTF-8).
+	if err := os.WriteFile(filepath.Join(skillDir, "assets", "image.bin"), []byte{0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE}, 0o644); err != nil {
+		t.Fatalf("write binary asset: %v", err)
+	}
+
+	skillList, err := NewFromDir(skillDir)
+	if err != nil {
+		t.Fatalf("load skill: %v", err)
+	}
+	if len(skillList) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skillList))
+	}
+	resources := skillList[0].(ResourcesProvider).Resources()
+	if _, ok := resources.GetAsset("text.txt"); !ok {
+		t.Fatalf("expected text asset text.txt")
+	}
+	binData, ok := resources.GetBinaryAsset("image.bin")
+	if !ok {
+		t.Fatalf("expected binary asset image.bin")
+	}
+	if len(binData) != 6 {
+		t.Fatalf("unexpected binary asset size: %d", len(binData))
+	}
+	if binData[0] != 0x89 || binData[4] != 0xFF {
+		t.Fatalf("unexpected binary asset content")
+	}
+}
+
+func TestNewFromDirRejectsNonUTF8References(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "test-skill")
+	if err := os.MkdirAll(filepath.Join(skillDir, "references"), 0o755); err != nil {
+		t.Fatalf("mkdir references: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: test-skill
+description: Test description
+---
+Do this.`), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "references", "bad.bin"), []byte{0xFF, 0xFE, 0x00}, 0o644); err != nil {
+		t.Fatalf("write binary reference: %v", err)
+	}
+
+	_, err := NewFromDir(skillDir)
+	if err == nil {
+		t.Fatalf("expected error for non-UTF-8 file in references/")
+	}
+	if !strings.Contains(err.Error(), "not valid UTF-8") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewFromDirRejectsNonUTF8Scripts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "test-skill")
+	if err := os.MkdirAll(filepath.Join(skillDir, "scripts"), 0o755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: test-skill
+description: Test description
+---
+Do this.`), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "scripts", "bad.sh"), []byte{0xFF, 0xFE, 0x00}, 0o644); err != nil {
+		t.Fatalf("write binary script: %v", err)
+	}
+
+	_, err := NewFromDir(skillDir)
+	if err == nil {
+		t.Fatalf("expected error for non-UTF-8 file in scripts/")
+	}
+	if !strings.Contains(err.Error(), "not valid UTF-8") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewFromDirRejectsOversizedReference(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "test-skill")
+	if err := os.MkdirAll(filepath.Join(skillDir, "references"), 0o755); err != nil {
+		t.Fatalf("mkdir references: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: test-skill
+description: Test description
+---
+Do this.`), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(skillDir, "references", "big.txt"),
+		bytes.Repeat([]byte("a"), maxSkillResourceBytes+1),
+		0o644,
+	); err != nil {
+		t.Fatalf("write big reference: %v", err)
+	}
+
+	_, err := NewFromDir(skillDir)
+	if err == nil {
+		t.Fatalf("expected error for oversized reference")
+	}
+	if !strings.Contains(err.Error(), "size exceeds") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewFromDirRejectsOversizedBinaryAsset(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "test-skill")
+	if err := os.MkdirAll(filepath.Join(skillDir, "assets"), 0o755); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: test-skill
+description: Test description
+---
+Do this.`), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(skillDir, "assets", "big.bin"),
+		bytes.Repeat([]byte{0xFF}, maxSkillResourceBytes+1),
+		0o644,
+	); err != nil {
+		t.Fatalf("write big binary asset: %v", err)
+	}
+
+	_, err := NewFromDir(skillDir)
+	if err == nil {
+		t.Fatalf("expected error for oversized binary asset")
+	}
+	if !strings.Contains(err.Error(), "size exceeds") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
