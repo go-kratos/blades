@@ -34,12 +34,6 @@ func NewFromEmbed(fsys fs.FS) ([]Skill, error) {
 	return loadAllFS(fsys)
 }
 
-// ValidateSkillDir validates frontmatter and directory naming for one local skill directory.
-func ValidateSkillDir(dir string) error {
-	_, err := ReadSkillFrontmatter(dir)
-	return err
-}
-
 // ReadSkillFrontmatter reads and validates frontmatter from one local skill directory.
 func ReadSkillFrontmatter(dir string) (Frontmatter, error) {
 	fsys := os.DirFS(dir)

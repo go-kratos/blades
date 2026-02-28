@@ -326,7 +326,7 @@ Nested`), 0o644); err != nil {
 	}
 }
 
-func TestValidateSkillDirAndReadSkillFrontmatter(t *testing.T) {
+func TestReadSkillFrontmatter(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -341,9 +341,6 @@ allowed_tools: "tool-*"
 ---
 Body`), 0o644); err != nil {
 		t.Fatalf("write SKILL.md: %v", err)
-	}
-	if err := ValidateSkillDir(skillDir); err != nil {
-		t.Fatalf("validate skill dir: %v", err)
 	}
 	fm, err := ReadSkillFrontmatter(skillDir)
 	if err != nil {
