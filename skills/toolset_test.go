@@ -1,7 +1,6 @@
 package skills
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -974,56 +973,3 @@ func TestNewToolsetRejectsAssetPathConflictBetweenTextAndBinary(t *testing.T) {
 	}
 }
 
-func TestNewToolsetRejectsOversizedBinaryAsset(t *testing.T) {
-	t.Parallel()
-
-	_, err := NewToolset([]Skill{
-		&staticSkill{
-			frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
-			instruction: "",
-			resources: Resources{
-				BinaryAssets: map[string][]byte{
-					"big.bin": bytes.Repeat([]byte{0x01}, maxSkillResourceBytes+1),
-				},
-			},
-		},
-	})
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestLoadSkillResourceRejectsOversizedBinaryAssetAtRuntime(t *testing.T) {
-	t.Parallel()
-
-	binaryAssets := map[string][]byte{"image.png": {0x89, 0x50}}
-	skill := &staticSkill{
-		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
-		instruction: "",
-		resources: Resources{
-			BinaryAssets: binaryAssets,
-		},
-	}
-	toolset, err := NewToolset([]Skill{skill})
-	if err != nil {
-		t.Fatalf("new toolset: %v", err)
-	}
-
-	// Mutate the resource map after toolset creation to verify runtime defense.
-	binaryAssets["image.png"] = bytes.Repeat([]byte{0xFF}, maxSkillResourceBytes+1)
-
-	resp, err := toolset.Tools()[2].Handle(context.Background(), `{"skill_name":"skill1","path":"assets/image.png"}`)
-	if err != nil {
-		t.Fatalf("tool error: %v", err)
-	}
-	var obj map[string]any
-	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if obj["error_code"] != "RESOURCE_TOO_LARGE" {
-		t.Fatalf("unexpected error_code: %v", obj["error_code"])
-	}
-}

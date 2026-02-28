@@ -3,7 +3,6 @@ package skills
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -14,8 +13,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
-
-const maxSkillResourceBytes = 10 << 20 // 10 MiB
 
 // NewFromDir loads all skills discovered under a local directory.
 func NewFromDir(dir string) ([]Skill, error) {
@@ -288,7 +285,7 @@ func loadDirTextFiles(fsys fs.FS, dir string) (map[string]string, error) {
 			return nil
 		}
 		rel := strings.TrimPrefix(filePath, dir+"/")
-		b, err := readFileWithLimit(fsys, filePath, maxSkillResourceBytes)
+		b, err := fs.ReadFile(fsys, filePath)
 		if err != nil {
 			return fmt.Errorf("file %q in %s: %w", rel, dir, err)
 		}
@@ -318,7 +315,7 @@ func loadDirFiles(fsys fs.FS, dir string) (text map[string]string, binary map[st
 			return nil
 		}
 		rel := strings.TrimPrefix(filePath, dir+"/")
-		b, err := readFileWithLimit(fsys, filePath, maxSkillResourceBytes)
+		b, err := fs.ReadFile(fsys, filePath)
 		if err != nil {
 			return fmt.Errorf("file %q in %s: %w", rel, dir, err)
 		}
@@ -333,22 +330,4 @@ func loadDirFiles(fsys fs.FS, dir string) (text map[string]string, binary map[st
 		return nil, nil, walkErr
 	}
 	return text, binary, nil
-}
-
-func readFileWithLimit(fsys fs.FS, filePath string, maxBytes int) ([]byte, error) {
-	f, err := fsys.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	limitedReader := &io.LimitedReader{R: f, N: int64(maxBytes) + 1}
-	b, err := io.ReadAll(limitedReader)
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > maxBytes {
-		return nil, fmt.Errorf("size exceeds %d bytes", maxBytes)
-	}
-	return b, nil
 }
