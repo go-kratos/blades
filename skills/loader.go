@@ -176,21 +176,62 @@ func parseSkillMarkdown(fsys fs.FS, root string) (Frontmatter, string, error) {
 	if err != nil {
 		return Frontmatter{}, "", err
 	}
-	if !strings.HasPrefix(skillMD, "---") {
-		return Frontmatter{}, "", fmt.Errorf("skills: SKILL.md must start with YAML frontmatter")
+	frontmatterContent, body, err := splitFrontmatterBlock(skillMD)
+	if err != nil {
+		return Frontmatter{}, "", err
 	}
-	parts := strings.SplitN(skillMD, "---", 3)
-	if len(parts) < 3 {
-		return Frontmatter{}, "", fmt.Errorf("skills: SKILL.md frontmatter not properly closed with ---")
-	}
-	frontmatter, err := parseFrontmatter(parts[1])
+	frontmatter, err := parseFrontmatter(frontmatterContent)
 	if err != nil {
 		return Frontmatter{}, "", err
 	}
 	if err := frontmatter.Validate(); err != nil {
 		return Frontmatter{}, "", err
 	}
-	return frontmatter, strings.TrimSpace(parts[2]), nil
+	return frontmatter, strings.TrimSpace(body), nil
+}
+
+func splitFrontmatterBlock(skillMD string) (string, string, error) {
+	firstLine, rest, hasMore := cutLine(skillMD)
+	if !isFrontmatterDelimiterLine(firstLine) {
+		return "", "", fmt.Errorf("skills: SKILL.md must start with YAML frontmatter")
+	}
+	if !hasMore {
+		return "", "", fmt.Errorf("skills: SKILL.md frontmatter not properly closed with ---")
+	}
+
+	search := rest
+	frontmatterLen := 0
+	for {
+		line, remaining, hasNext := cutLine(search)
+		if isFrontmatterDelimiterLine(line) {
+			return rest[:frontmatterLen], remaining, nil
+		}
+		if !hasNext {
+			break
+		}
+		frontmatterLen += len(line) + 1
+		search = remaining
+	}
+	return "", "", fmt.Errorf("skills: SKILL.md frontmatter not properly closed with ---")
+}
+
+func cutLine(content string) (line string, rest string, hasMore bool) {
+	idx := strings.IndexByte(content, '\n')
+	if idx < 0 {
+		return content, "", false
+	}
+	return content[:idx], content[idx+1:], true
+}
+
+func isFrontmatterDelimiterLine(line string) bool {
+	return trimTrailingCarriageReturn(line) == "---"
+}
+
+func trimTrailingCarriageReturn(line string) string {
+	if strings.HasSuffix(line, "\r") {
+		return line[:len(line)-1]
+	}
+	return line
 }
 
 func readSkillMarkdown(fsys fs.FS, root string) (string, error) {

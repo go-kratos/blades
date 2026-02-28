@@ -220,6 +220,103 @@ Body B`)},
 	}
 }
 
+func TestNewFromEmbedFrontmatterValueContainsDelimiterText(t *testing.T) {
+	t.Parallel()
+
+	skillFS := fstest.MapFS{
+		"bundle/demo-skill/SKILL.md": &fstest.MapFile{Data: []byte(`---
+name: demo-skill
+description: "desc with --- marker"
+---
+Body`)},
+	}
+	sub, err := fs.Sub(skillFS, "bundle")
+	if err != nil {
+		t.Fatalf("sub fs: %v", err)
+	}
+	skills, err := NewFromEmbed(sub)
+	if err != nil {
+		t.Fatalf("load skills: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	if skills[0].Name() != "demo-skill" {
+		t.Fatalf("unexpected skill name: %s", skills[0].Name())
+	}
+}
+
+func TestNewFromEmbedFrontmatterBlockScalarContainsDelimiterText(t *testing.T) {
+	t.Parallel()
+
+	skillFS := fstest.MapFS{
+		"bundle/demo-skill/SKILL.md": &fstest.MapFile{Data: []byte(`---
+name: demo-skill
+description: |
+  line 1
+  --- still content
+  line 3
+---
+Body`)},
+	}
+	sub, err := fs.Sub(skillFS, "bundle")
+	if err != nil {
+		t.Fatalf("sub fs: %v", err)
+	}
+	skills, err := NewFromEmbed(sub)
+	if err != nil {
+		t.Fatalf("load skills: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	if skills[0].Name() != "demo-skill" {
+		t.Fatalf("unexpected skill name: %s", skills[0].Name())
+	}
+}
+
+func TestNewFromDirRejectsStartDelimiterWithTrailingSpace(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "test-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`--- 
+name: test-skill
+description: desc
+---
+Body`), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	if _, err := NewFromDir(skillDir); err == nil || !strings.Contains(err.Error(), "SKILL.md must start with YAML frontmatter") {
+		t.Fatalf("expected start delimiter error, got: %v", err)
+	}
+}
+
+func TestNewFromDirRejectsEndDelimiterWithTrailingSpace(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "test-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: test-skill
+description: desc
+--- 
+Body`), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	if _, err := NewFromDir(skillDir); err == nil || !strings.Contains(err.Error(), "frontmatter not properly closed with ---") {
+		t.Fatalf("expected closing delimiter error, got: %v", err)
+	}
+}
+
 func TestNewFromDirNoSkill(t *testing.T) {
 	t.Parallel()
 
