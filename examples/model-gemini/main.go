@@ -7,43 +7,75 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/gemini"
+	"github.com/go-kratos/blades/tools"
 	"google.golang.org/genai"
 )
 
-func main() {
-	// Get API key from environment
-	apiKey := os.Getenv("GOOGLE_API_KEY")
-	if apiKey == "" {
-		log.Fatal("Please set GOOGLE_API_KEY environment variable")
+// WeatherReq represents a request for weather information.
+type WeatherReq struct {
+	Location string `json:"location" jsonschema:"Get the current weather for a given city"`
+}
+
+// WeatherRes represents a response containing weather information.
+type WeatherRes struct {
+	Forecast string `json:"forecast" jsonschema:"The weather forecast"`
+}
+
+// weatherHandle is the function that handles weather requests.
+func weatherHandle(ctx context.Context, req WeatherReq) (WeatherRes, error) {
+	log.Println("Fetching weather for:", req.Location)
+	session, ok := blades.FromSessionContext(ctx)
+	if !ok {
+		return WeatherRes{}, blades.ErrNoSessionContext
 	}
+	session.SetState("location", req.Location)
+	return WeatherRes{Forecast: "Sunny, 25°C"}, nil
+}
+
+func main() {
+	apiKey := os.Getenv("GOOGLE_API_KEY")
+	modelName := os.Getenv("GEMINI_MODEL")
+
+	weatherTool, err := tools.NewFunc(
+		"get_weather",
+		"Get the current weather for a given city",
+		weatherHandle,
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	ctx := context.Background()
-	// Create Gemini client with basic configuration
-	config := gemini.Config{
+	model, err := gemini.NewModel(ctx, modelName, gemini.Config{
 		ClientConfig: genai.ClientConfig{
-			APIKey: apiKey,
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
 		},
 		MaxOutputTokens: 1024,
 		Temperature:     0.7,
-	}
-	model, err := gemini.NewModel(ctx, "gemini-2.5-flash-preview-09-2025", config)
+	})
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
-	// Simple text generation
-	request := &blades.ModelRequest{
-		Messages: []*blades.Message{
-			{
-				Role: blades.RoleUser,
-				Parts: []blades.Part{
-					blades.TextPart{Text: "Write a short poem about artificial intelligence."},
-				},
-			},
-		},
-	}
-	// Generate response
-	response, err := model.Generate(ctx, request)
+
+	agent, err := blades.NewAgent(
+		"Weather Agent",
+		blades.WithModel(model),
+		blades.WithInstruction("You are a helpful assistant that provides weather information."),
+		blades.WithTools(weatherTool),
+	)
 	if err != nil {
-		log.Fatalf("Failed to generate response: %v", err)
+		log.Fatal(err)
 	}
-	log.Println("🤖 Response:", response.Message.Text())
+
+	input := blades.UserMessage("What is the weather in New York City?")
+	session := blades.NewSession()
+	runner := blades.NewRunner(agent)
+	output, err := runner.Run(ctx, input, blades.WithSession(session))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Println("state:", session.State())
+	log.Println("output:", output.Text())
 }

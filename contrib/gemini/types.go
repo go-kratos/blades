@@ -99,6 +99,7 @@ func convertBladesToolToGenAI(tool tools.Tool) (*genai.Tool, error) {
 
 func convertGenAIToBlades(resp *genai.GenerateContentResponse, status blades.Status) (*blades.ModelResponse, error) {
 	message := blades.NewAssistantMessage(status)
+	hasToolCall := false
 	for _, candidate := range resp.Candidates {
 		if candidate.Content == nil {
 			continue
@@ -109,13 +110,34 @@ func convertGenAIToBlades(resp *genai.GenerateContentResponse, status blades.Sta
 				return nil, err
 			}
 			message.Parts = append(message.Parts, bladesPart)
+			if _, ok := bladesPart.(blades.ToolPart); ok {
+				hasToolCall = true
+			}
 		}
+	}
+	if hasToolCall {
+		message.Role = blades.RoleTool
 	}
 	return &blades.ModelResponse{Message: message}, nil
 }
 
 // convertGenAIPartToBlades converts a GenAI Part to Blades Part
 func convertGenAIPartToBlades(part *genai.Part) (blades.Part, error) {
+	if part.FunctionCall != nil {
+		request := "{}"
+		if len(part.FunctionCall.Args) > 0 {
+			args, err := json.Marshal(part.FunctionCall.Args)
+			if err != nil {
+				return nil, fmt.Errorf("marshal function call args: %w", err)
+			}
+			request = string(args)
+		}
+		return blades.ToolPart{
+			ID:      part.FunctionCall.ID,
+			Name:    part.FunctionCall.Name,
+			Request: request,
+		}, nil
+	}
 	if part.FileData != nil {
 		return blades.FilePart{
 			URI:      part.FileData.FileURI,

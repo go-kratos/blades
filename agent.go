@@ -388,7 +388,11 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					}
 				}
 			}
-			if finalResponse == nil {
+			if finalResponse == nil || finalResponse.Message == nil {
+				yield(nil, ErrNoFinalResponse)
+				return
+			}
+			if invocation.Streamable && finalResponse.Message.Status != StatusCompleted {
 				yield(nil, ErrNoFinalResponse)
 				return
 			}
