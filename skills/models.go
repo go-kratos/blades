@@ -65,26 +65,14 @@ func (r Resources) ListReferences() []string {
 }
 
 func (r Resources) ListAssets() []string {
-	return listByteKeys(r.Assets)
+	return listKeys(r.Assets)
 }
 
 func (r Resources) ListScripts() []string {
 	return listKeys(r.Scripts)
 }
 
-func listKeys(m map[string]string) []string {
-	if len(m) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func listByteKeys(m map[string][]byte) []string {
+func listKeys[V any](m map[string]V) []string {
 	if len(m) == 0 {
 		return nil
 	}
