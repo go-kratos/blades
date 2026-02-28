@@ -26,7 +26,6 @@ func convertBladesToolsToClaude(tools []tools.Tool) ([]anthropic.ToolUnionParam,
 	var claudeTools []anthropic.ToolUnionParam
 	for _, tool := range tools {
 		var inputSchema anthropic.ToolInputSchemaParam
-		//schemaBytes, err := json.Marshal(tool.InputSchema)
 		schemaBytes, err := json.Marshal(tool.InputSchema())
 		if err != nil {
 			return nil, fmt.Errorf("marshaling tool schema: %w", err)
@@ -51,11 +50,13 @@ func convertBladesToolsToClaude(tools []tools.Tool) ([]anthropic.ToolUnionParam,
 // convertClaudeToBlades converts a Claude Message to Blades ModelResponse.
 func convertClaudeToBlades(message *anthropic.Message, status blades.Status) (*blades.ModelResponse, error) {
 	msg := blades.NewAssistantMessage(status)
+	hasToolUse := false
 	for _, block := range message.Content {
 		switch b := block.AsAny().(type) {
 		case anthropic.TextBlock:
 			msg.Parts = append(msg.Parts, blades.TextPart{Text: b.Text})
 		case anthropic.ToolUseBlock:
+			hasToolUse = true
 			input, err := json.Marshal(b.Input)
 			if err != nil {
 				return nil, err
@@ -66,6 +67,9 @@ func convertClaudeToBlades(message *anthropic.Message, status blades.Status) (*b
 				Request: string(input),
 			})
 		}
+	}
+	if hasToolUse {
+		msg.Role = blades.RoleTool
 	}
 	return &blades.ModelResponse{
 		Message: msg,

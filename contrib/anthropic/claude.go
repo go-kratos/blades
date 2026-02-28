@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -142,14 +143,25 @@ func (m *Claude) toClaudeParams(req *blades.ModelRequest) (*anthropic.MessageNew
 		case blades.RoleAssistant:
 			params.Messages = append(params.Messages, anthropic.NewAssistantMessage(convertPartsToContent(msg.Parts)...))
 		case blades.RoleTool:
-			var content []anthropic.ContentBlockParamUnion
+			var (
+				toolResults      []anthropic.ContentBlockParamUnion
+				assistantContent []anthropic.ContentBlockParamUnion
+			)
 			for _, part := range msg.Parts {
 				switch v := any(part).(type) {
+				case blades.TextPart:
+					assistantContent = append(assistantContent, anthropic.NewTextBlock(v.Text))
 				case blades.ToolPart:
-					content = append(content, anthropic.NewToolResultBlock(v.ID, v.Response, false))
+					toolResults = append(toolResults, anthropic.NewToolResultBlock(v.ID, v.Response, false))
+					assistantContent = append(assistantContent, anthropic.NewToolUseBlock(v.ID, decodeToolRequest(v.Request), v.Name))
 				}
 			}
-			params.Messages = append(params.Messages, anthropic.NewUserMessage(content...))
+			if len(assistantContent) > 0 {
+				params.Messages = append(params.Messages, anthropic.NewAssistantMessage(assistantContent...))
+			}
+			if len(toolResults) > 0 {
+				params.Messages = append(params.Messages, anthropic.NewUserMessage(toolResults...))
+			}
 		}
 	}
 	if len(req.Tools) > 0 {
@@ -160,4 +172,12 @@ func (m *Claude) toClaudeParams(req *blades.ModelRequest) (*anthropic.MessageNew
 		params.Tools = tools
 	}
 	return params, nil
+}
+
+func decodeToolRequest(request string) any {
+	var decoded any
+	if err := json.Unmarshal([]byte(request), &decoded); err == nil {
+		return decoded
+	}
+	return request
 }
