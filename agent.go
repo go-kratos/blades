@@ -336,68 +336,82 @@ func (a *agent) executeTools(ctx context.Context, invocation *Invocation, messag
 	return message, eg.Wait()
 }
 
+func messageFromResponse(response *ModelResponse) (*Message, error) {
+	if response == nil || response.Message == nil {
+		return nil, ErrNoFinalResponse
+	}
+	return response.Message, nil
+}
+
 // handle constructs the default handlers for Run and Stream using the provider.
 func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
-		var (
-			err           error
-			finalResponse *ModelResponse
-		)
 		for i := 0; i < a.maxIterations; i++ {
+			var finalMessage *Message
 			if !invocation.Streamable {
-				finalResponse, err = a.model.Generate(ctx, req)
+				finalResponse, err := a.model.Generate(ctx, req)
 				if err != nil {
 					yield(nil, err)
 					return
 				}
-				if finalResponse.Message.Author == "" {
-					finalResponse.Message.Author = a.name
+				finalMessage, err = messageFromResponse(finalResponse)
+				if err != nil {
+					yield(nil, err)
+					return
 				}
-				finalResponse.Message.InvocationID = invocation.ID
+				if finalMessage.Author == "" {
+					finalMessage.Author = a.name
+				}
+				finalMessage.InvocationID = invocation.ID
 				// Skip saving tool intermediate states
-				if finalResponse.Message.Role == RoleAssistant {
-					if err := a.saveOutputState(ctx, invocation, finalResponse.Message); err != nil {
+				if finalMessage.Role == RoleAssistant {
+					if err := a.saveOutputState(ctx, invocation, finalMessage); err != nil {
 						yield(nil, err)
 						return
 					}
-					if !yield(finalResponse.Message, nil) {
+					if !yield(finalMessage, nil) {
 						return
 					}
 				}
 			} else {
 				streaming := a.model.NewStreaming(ctx, req)
-				for finalResponse, err = range streaming {
+				for response, err := range streaming {
 					if err != nil {
 						yield(nil, err)
 						return
 					}
-					if finalResponse.Message.Author == "" {
-						finalResponse.Message.Author = a.name
-					}
-					finalResponse.Message.InvocationID = invocation.ID
-					// Skip saving tool intermediate states
-					if finalResponse.Message.Role == RoleTool && finalResponse.Message.Status == StatusCompleted {
-						continue
-					}
-					if err := a.saveOutputState(ctx, invocation, finalResponse.Message); err != nil {
+					finalMessage, err = messageFromResponse(response)
+					if err != nil {
 						yield(nil, err)
 						return
 					}
-					if !yield(finalResponse.Message, nil) {
+					if finalMessage.Author == "" {
+						finalMessage.Author = a.name
+					}
+					finalMessage.InvocationID = invocation.ID
+					// Skip saving tool intermediate states
+					if finalMessage.Role == RoleTool && finalMessage.Status == StatusCompleted {
+						continue
+					}
+					if err := a.saveOutputState(ctx, invocation, finalMessage); err != nil {
+						yield(nil, err)
+						return
+					}
+					if !yield(finalMessage, nil) {
 						return // early termination
 					}
 				}
 			}
-			if finalResponse == nil || finalResponse.Message == nil {
+			if finalMessage == nil {
 				yield(nil, ErrNoFinalResponse)
 				return
 			}
-			if invocation.Streamable && finalResponse.Message.Status != StatusCompleted {
+			if invocation.Streamable && finalMessage.Status != StatusCompleted {
 				yield(nil, ErrNoFinalResponse)
 				return
 			}
-			if finalResponse.Message.Role == RoleTool {
-				toolMessage, err := a.executeTools(ctx, invocation, finalResponse.Message)
+			if finalMessage.Role == RoleTool {
+				toolMessage, err := a.executeTools(ctx, invocation, finalMessage)
 				if err != nil {
 					yield(nil, err)
 					return
