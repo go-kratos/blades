@@ -76,9 +76,6 @@ func NewToolset(skills []Skill) (*Toolset, error) {
 			return nil, fmt.Errorf("skills: duplicate skill name %q", skill.Name())
 		}
 		resources := resolveResources(skill)
-		if err := validateResources(resources, skill.Name()); err != nil {
-			return nil, err
-		}
 		ts.skillByName[skill.Name()] = skillEntry{
 			skill:       skill,
 			frontmatter: frontmatter,
@@ -141,15 +138,6 @@ func resolveResources(skill Skill) Resources {
 		return Resources{}
 	}
 	return provider.Resources()
-}
-
-func validateResources(resources Resources, skillName string) error {
-	for rel := range resources.BinaryAssets {
-		if _, exists := resources.Assets[rel]; exists {
-			return fmt.Errorf("skills: asset %q in skill %q exists in both assets and binary assets", rel, skillName)
-		}
-	}
-	return nil
 }
 
 // Tools returns skill tools.
@@ -251,9 +239,6 @@ func toResourcesList(r Resources) []string {
 		out = add("references/"+name, out)
 	}
 	for _, name := range r.ListAssets() {
-		out = add("assets/"+name, out)
-	}
-	for _, name := range r.ListBinaryAssets() {
 		out = add("assets/"+name, out)
 	}
 	for _, name := range r.ListScripts() {
@@ -399,36 +384,40 @@ func (t *loadSkillResourceTool) Handle(ctx context.Context, input string) (strin
 		}), nil
 	}
 	resources := skill.resources
-	var (
-		content string
-		found   bool
-	)
 	switch resourceType {
 	case "references":
-		content, found = resources.GetReference(resourceName)
-	case "assets":
-		content, found = resources.GetAsset(resourceName)
-	case "scripts":
-		content, found = resources.GetScript(resourceName)
-	default:
-		return invalidArgs("Invalid resource type"), nil
-	}
-	if found {
+		content, found := resources.GetReference(resourceName)
+		if !found {
+			break
+		}
 		return mustJSON(map[string]any{
 			"skill_name": req.SkillName,
 			"path":       req.Path,
 			"content":    content,
 		}), nil
-	}
-	if resourceType == "assets" {
-		if binData, ok := resources.GetBinaryAsset(resourceName); ok {
-			return mustJSON(map[string]any{
-				"skill_name":     req.SkillName,
-				"path":           req.Path,
-				"content_base64": base64.StdEncoding.EncodeToString(binData),
-				"encoding":       "base64",
-			}), nil
+	case "assets":
+		data, found := resources.GetAsset(resourceName)
+		if !found {
+			break
 		}
+		return mustJSON(map[string]any{
+			"skill_name":     req.SkillName,
+			"path":           req.Path,
+			"content_base64": base64.StdEncoding.EncodeToString(data),
+			"encoding":       "base64",
+		}), nil
+	case "scripts":
+		content, found := resources.GetScript(resourceName)
+		if !found {
+			break
+		}
+		return mustJSON(map[string]any{
+			"skill_name": req.SkillName,
+			"path":       req.Path,
+			"content":    content,
+		}), nil
+	default:
+		return invalidArgs("Invalid resource type"), nil
 	}
 	return mustJSON(map[string]any{
 		"error":      fmt.Sprintf("Resource %q not found in skill %q.", req.Path, req.SkillName),
@@ -617,11 +606,6 @@ func materializeSkillWorkspace(root string, resources Resources) error {
 		}
 	}
 	for rel, content := range resources.Assets {
-		if err := writeWorkspaceFile(root, "assets", rel, []byte(content), 0o644); err != nil {
-			return err
-		}
-	}
-	for rel, content := range resources.BinaryAssets {
 		if err := writeWorkspaceFile(root, "assets", rel, content, 0o644); err != nil {
 			return err
 		}

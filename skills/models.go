@@ -41,10 +41,8 @@ func (f Frontmatter) Validate() error {
 // Resources keeps skill files by relative path.
 type Resources struct {
 	References map[string]string
-	Assets     map[string]string
+	Assets     map[string][]byte
 	Scripts    map[string]string
-
-	BinaryAssets map[string][]byte
 }
 
 func (r Resources) GetReference(path string) (string, bool) {
@@ -52,7 +50,7 @@ func (r Resources) GetReference(path string) (string, bool) {
 	return v, ok
 }
 
-func (r Resources) GetAsset(path string) (string, bool) {
+func (r Resources) GetAsset(path string) ([]byte, bool) {
 	v, ok := r.Assets[path]
 	return v, ok
 }
@@ -74,28 +72,7 @@ func (r Resources) ListScripts() []string {
 	return listKeys(r.Scripts)
 }
 
-func (r Resources) GetBinaryAsset(path string) ([]byte, bool) {
-	v, ok := r.BinaryAssets[path]
-	return v, ok
-}
-
-func (r Resources) ListBinaryAssets() []string {
-	return listByteKeys(r.BinaryAssets)
-}
-
-func listKeys(m map[string]string) []string {
-	if len(m) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func listByteKeys(m map[string][]byte) []string {
+func listKeys[V any](m map[string]V) []string {
 	if len(m) == 0 {
 		return nil
 	}

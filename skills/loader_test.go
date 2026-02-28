@@ -490,10 +490,14 @@ Do this.`), 0o644); err != nil {
 		t.Fatalf("expected 1 skill, got %d", len(skillList))
 	}
 	resources := skillList[0].(ResourcesProvider).Resources()
-	if _, ok := resources.GetAsset("text.txt"); !ok {
+	assetData, ok := resources.GetAsset("text.txt")
+	if !ok {
 		t.Fatalf("expected text asset text.txt")
 	}
-	binData, ok := resources.GetBinaryAsset("image.bin")
+	if string(assetData) != "hello" {
+		t.Fatalf("unexpected text asset content: %q", string(assetData))
+	}
+	binData, ok := resources.GetAsset("image.bin")
 	if !ok {
 		t.Fatalf("expected binary asset image.bin")
 	}
