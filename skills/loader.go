@@ -17,16 +17,6 @@ import (
 
 const maxSkillResourceBytes = 10 << 20 // 10 MiB
 
-var allowedFrontmatterKeys = map[string]struct{}{
-	"name":          {},
-	"description":   {},
-	"license":       {},
-	"compatibility": {},
-	"allowed-tools": {},
-	"allowed_tools": {},
-	"metadata":      {},
-}
-
 // NewFromDir loads all skills discovered under a local directory.
 func NewFromDir(dir string) ([]Skill, error) {
 	return loadAllFS(os.DirFS(dir))
@@ -227,16 +217,6 @@ func parseFrontmatter(content string) (Frontmatter, error) {
 	}
 	if raw == nil {
 		return Frontmatter{}, fmt.Errorf("skills: frontmatter must be a mapping")
-	}
-	unknown := make([]string, 0)
-	for key := range raw {
-		if _, ok := allowedFrontmatterKeys[key]; !ok {
-			unknown = append(unknown, key)
-		}
-	}
-	if len(unknown) > 0 {
-		sort.Strings(unknown)
-		return Frontmatter{}, fmt.Errorf("skills: unknown frontmatter fields: %v", unknown)
 	}
 	f := Frontmatter{
 		Metadata: make(map[string]string),
