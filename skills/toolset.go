@@ -147,27 +147,9 @@ func resolveResources(skill Skill) Resources {
 }
 
 func validateResources(resources Resources, skillName string) error {
-	for rel, content := range resources.References {
-		if len(content) > maxSkillResourceBytes {
-			return fmt.Errorf("skills: reference %q in skill %q exceeds %d bytes", rel, skillName, maxSkillResourceBytes)
-		}
-	}
-	for rel, content := range resources.Assets {
-		if len(content) > maxSkillResourceBytes {
-			return fmt.Errorf("skills: asset %q in skill %q exceeds %d bytes", rel, skillName, maxSkillResourceBytes)
-		}
-	}
-	for rel, content := range resources.BinaryAssets {
-		if len(content) > maxSkillResourceBytes {
-			return fmt.Errorf("skills: binary asset %q in skill %q exceeds %d bytes", rel, skillName, maxSkillResourceBytes)
-		}
+	for rel := range resources.BinaryAssets {
 		if _, exists := resources.Assets[rel]; exists {
 			return fmt.Errorf("skills: asset %q in skill %q exists in both assets and binary assets", rel, skillName)
-		}
-	}
-	for rel, content := range resources.Scripts {
-		if len(content) > maxSkillResourceBytes {
-			return fmt.Errorf("skills: script %q in skill %q exceeds %d bytes", rel, skillName, maxSkillResourceBytes)
 		}
 	}
 	return nil
@@ -435,12 +417,6 @@ func (t *loadSkillResourceTool) Handle(ctx context.Context, input string) (strin
 		return invalidArgs("Invalid resource type"), nil
 	}
 	if found {
-		if len(content) > maxSkillResourceBytes {
-			return mustJSON(map[string]any{
-				"error":      fmt.Sprintf("Resource %q in skill %q exceeds %d bytes.", req.Path, req.SkillName, maxSkillResourceBytes),
-				"error_code": "RESOURCE_TOO_LARGE",
-			}), nil
-		}
 		return mustJSON(map[string]any{
 			"skill_name": req.SkillName,
 			"path":       req.Path,
@@ -449,12 +425,6 @@ func (t *loadSkillResourceTool) Handle(ctx context.Context, input string) (strin
 	}
 	if resourceType == "assets" {
 		if binData, ok := resources.GetBinaryAsset(resourceName); ok {
-			if len(binData) > maxSkillResourceBytes {
-				return mustJSON(map[string]any{
-					"error":      fmt.Sprintf("Resource %q in skill %q exceeds %d bytes.", req.Path, req.SkillName, maxSkillResourceBytes),
-					"error_code": "RESOURCE_TOO_LARGE",
-				}), nil
-			}
 			return mustJSON(map[string]any{
 				"skill_name":     req.SkillName,
 				"path":           req.Path,

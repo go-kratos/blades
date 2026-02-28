@@ -1,7 +1,6 @@
 package skills
 
 import (
-	"bytes"
 	"embed"
 	"io/fs"
 	"os"
@@ -562,66 +561,3 @@ Do this.`), 0o644); err != nil {
 	}
 }
 
-func TestNewFromDirRejectsOversizedReference(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	skillDir := filepath.Join(root, "test-skill")
-	if err := os.MkdirAll(filepath.Join(skillDir, "references"), 0o755); err != nil {
-		t.Fatalf("mkdir references: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
-name: test-skill
-description: Test description
----
-Do this.`), 0o644); err != nil {
-		t.Fatalf("write SKILL.md: %v", err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(skillDir, "references", "big.txt"),
-		bytes.Repeat([]byte("a"), maxSkillResourceBytes+1),
-		0o644,
-	); err != nil {
-		t.Fatalf("write big reference: %v", err)
-	}
-
-	_, err := NewFromDir(skillDir)
-	if err == nil {
-		t.Fatalf("expected error for oversized reference")
-	}
-	if !strings.Contains(err.Error(), "size exceeds") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestNewFromDirRejectsOversizedBinaryAsset(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	skillDir := filepath.Join(root, "test-skill")
-	if err := os.MkdirAll(filepath.Join(skillDir, "assets"), 0o755); err != nil {
-		t.Fatalf("mkdir assets: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
-name: test-skill
-description: Test description
----
-Do this.`), 0o644); err != nil {
-		t.Fatalf("write SKILL.md: %v", err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(skillDir, "assets", "big.bin"),
-		bytes.Repeat([]byte{0xFF}, maxSkillResourceBytes+1),
-		0o644,
-	); err != nil {
-		t.Fatalf("write big binary asset: %v", err)
-	}
-
-	_, err := NewFromDir(skillDir)
-	if err == nil {
-		t.Fatalf("expected error for oversized binary asset")
-	}
-	if !strings.Contains(err.Error(), "size exceeds") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
