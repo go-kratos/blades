@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -403,13 +402,6 @@ func (t *loadSkillResourceTool) Handle(ctx context.Context, input string) (strin
 		data, found := resources.GetAsset(resourceName)
 		if !found {
 			break
-		}
-		if utf8.Valid(data) {
-			return mustJSON(map[string]any{
-				"skill_name": req.SkillName,
-				"path":       req.Path,
-				"content":    string(data),
-			}), nil
 		}
 		return mustJSON(map[string]any{
 			"skill_name":     req.SkillName,

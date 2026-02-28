@@ -851,7 +851,7 @@ func TestLoadSkillResourceTextAssetPreferredOverBinary(t *testing.T) {
 	}
 	tool := toolset.Tools()[2]
 
-	// Text asset returns content field.
+	// Text asset returns content_base64 field.
 	resp, err := tool.Handle(context.Background(), `{"skill_name":"skill1","path":"assets/readme.txt"}`)
 	if err != nil {
 		t.Fatalf("tool error: %v", err)
@@ -860,11 +860,19 @@ func TestLoadSkillResourceTextAssetPreferredOverBinary(t *testing.T) {
 	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if obj["content"] != "hello text" {
-		t.Fatalf("unexpected content: %v", obj["content"])
+	if obj["encoding"] != "base64" {
+		t.Fatalf("expected encoding=base64, got %v", obj["encoding"])
 	}
-	if _, hasEncoding := obj["encoding"]; hasEncoding {
-		t.Fatalf("text asset should not have encoding field")
+	encoded, ok := obj["content_base64"].(string)
+	if !ok {
+		t.Fatalf("expected content_base64 string")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("base64 decode: %v", err)
+	}
+	if string(decoded) != "hello text" {
+		t.Fatalf("unexpected content: %s", decoded)
 	}
 }
 
