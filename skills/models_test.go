@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -68,15 +69,19 @@ func TestResourcesList(t *testing.T) {
 
 	r := Resources{
 		References: map[string]string{"b.md": "b", "a.md": "a"},
-		Assets:     map[string]string{"x.txt": "x"},
+		Assets:     map[string][]byte{"x.txt": []byte("x")},
 		Scripts:    map[string]string{"run.sh": "echo hi"},
 	}
 	refs := r.ListReferences()
 	if len(refs) != 2 || refs[0] != "a.md" || refs[1] != "b.md" {
 		t.Fatalf("unexpected refs: %v", refs)
 	}
-	if _, ok := r.GetAsset("x.txt"); !ok {
+	asset, ok := r.GetAsset("x.txt")
+	if !ok {
 		t.Fatalf("expected asset x.txt")
+	}
+	if !bytes.Equal(asset, []byte("x")) {
+		t.Fatalf("unexpected asset content: %q", string(asset))
 	}
 	if _, ok := r.GetScript("run.sh"); !ok {
 		t.Fatalf("expected script run.sh")

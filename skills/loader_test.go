@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"bytes"
 	"embed"
 	"io/fs"
 	"os"
@@ -80,6 +81,46 @@ Do this.`), 0o644); err != nil {
 	}
 }
 
+func TestNewFromDirLoadsBinaryAssets(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "binary-skill")
+	if err := os.MkdirAll(filepath.Join(skillDir, "assets"), 0o755); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: binary-skill
+description: Binary asset support
+---
+Use binary assets.`), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+	binary := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff}
+	if err := os.WriteFile(filepath.Join(skillDir, "assets", "image.png"), binary, 0o644); err != nil {
+		t.Fatalf("write binary asset: %v", err)
+	}
+
+	skillList, err := NewFromDir(skillDir)
+	if err != nil {
+		t.Fatalf("load skill: %v", err)
+	}
+	if len(skillList) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skillList))
+	}
+	resourcesProvider, ok := skillList[0].(ResourcesProvider)
+	if !ok {
+		t.Fatalf("expected resources provider")
+	}
+	content, ok := resourcesProvider.Resources().GetAsset("image.png")
+	if !ok {
+		t.Fatalf("expected image.png")
+	}
+	if !bytes.Equal(content, binary) {
+		t.Fatalf("unexpected binary asset content")
+	}
+}
+
 func TestNewFromDirRootNameMismatchAllowed(t *testing.T) {
 	t.Parallel()
 
@@ -126,6 +167,42 @@ func TestNewFromEmbed(t *testing.T) {
 	}
 	if skills[0].Instruction() == "" {
 		t.Fatalf("expected instructions")
+	}
+}
+
+func TestNewFromEmbedLoadsBinaryAsset(t *testing.T) {
+	t.Parallel()
+
+	binary := []byte{0x89, 0x50, 0x4e, 0x47, 0x00, 0xff}
+	skillFS := fstest.MapFS{
+		"bundle/binary-skill/SKILL.md": &fstest.MapFile{Data: []byte(`---
+name: binary-skill
+description: Binary asset support
+---
+Use binary assets.`)},
+		"bundle/binary-skill/assets/image.png": &fstest.MapFile{Data: binary},
+	}
+	sub, err := fs.Sub(skillFS, "bundle")
+	if err != nil {
+		t.Fatalf("sub fs: %v", err)
+	}
+	skillList, err := NewFromEmbed(sub)
+	if err != nil {
+		t.Fatalf("load embedded skill: %v", err)
+	}
+	if len(skillList) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skillList))
+	}
+	resourcesProvider, ok := skillList[0].(ResourcesProvider)
+	if !ok {
+		t.Fatalf("expected resources provider")
+	}
+	content, ok := resourcesProvider.Resources().GetAsset("image.png")
+	if !ok {
+		t.Fatalf("expected image.png")
+	}
+	if !bytes.Equal(content, binary) {
+		t.Fatalf("unexpected embedded binary asset content")
 	}
 }
 

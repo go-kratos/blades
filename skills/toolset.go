@@ -3,6 +3,7 @@ package skills
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -356,17 +357,25 @@ func (t *loadSkillResourceTool) Handle(ctx context.Context, input string) (strin
 		}), nil
 	}
 	var (
-		content string
-		found   bool
+		raw   []byte
+		found bool
 	)
 	resources := skill.resources
 	switch resourceType {
 	case "references":
-		content, found = resources.GetReference(resourceName)
+		content, ok := resources.GetReference(resourceName)
+		found = ok
+		if ok {
+			raw = []byte(content)
+		}
 	case "assets":
-		content, found = resources.GetAsset(resourceName)
+		raw, found = resources.GetAsset(resourceName)
 	case "scripts":
-		content, found = resources.GetScript(resourceName)
+		content, ok := resources.GetScript(resourceName)
+		found = ok
+		if ok {
+			raw = []byte(content)
+		}
 	default:
 		return invalidArgs("Invalid resource type"), nil
 	}
@@ -377,9 +386,10 @@ func (t *loadSkillResourceTool) Handle(ctx context.Context, input string) (strin
 		}), nil
 	}
 	return mustJSON(map[string]any{
-		"skill_name": req.SkillName,
-		"path":       req.Path,
-		"content":    content,
+		"skill_name":     req.SkillName,
+		"path":           req.Path,
+		"encoding":       "base64",
+		"content_base64": base64.StdEncoding.EncodeToString(raw),
 	}), nil
 }
 
@@ -559,7 +569,7 @@ func normalizeScriptPath(scriptPath string) (scriptName string, fullScriptPath s
 
 func materializeSkillWorkspace(root string, resources Resources) error {
 	for rel, content := range resources.References {
-		if err := writeWorkspaceFile(root, "references", rel, content, 0o644); err != nil {
+		if err := writeWorkspaceFile(root, "references", rel, []byte(content), 0o644); err != nil {
 			return err
 		}
 	}
@@ -569,14 +579,14 @@ func materializeSkillWorkspace(root string, resources Resources) error {
 		}
 	}
 	for rel, content := range resources.Scripts {
-		if err := writeWorkspaceFile(root, "scripts", rel, content, 0o755); err != nil {
+		if err := writeWorkspaceFile(root, "scripts", rel, []byte(content), 0o755); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeWorkspaceFile(root string, dir string, rel string, content string, mode fs.FileMode) error {
+func writeWorkspaceFile(root string, dir string, rel string, content []byte, mode fs.FileMode) error {
 	clean, err := normalizeSkillRelativePath(rel)
 	if err != nil {
 		return fmt.Errorf("invalid file path %q", rel)
@@ -594,7 +604,7 @@ func writeWorkspaceFile(root string, dir string, rel string, content string, mod
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(targetPath, []byte(content), mode)
+	return os.WriteFile(targetPath, content, mode)
 }
 
 func normalizeSkillRelativePath(rel string) (string, error) {

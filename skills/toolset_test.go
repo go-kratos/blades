@@ -1,7 +1,9 @@
 package skills
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -42,7 +44,7 @@ func TestSkillTools(t *testing.T) {
 		instruction: "Do something",
 		resources: Resources{
 			References: map[string]string{"ref.md": "ref"},
-			Assets:     map[string]string{"asset.txt": "asset"},
+			Assets:     map[string][]byte{"asset.txt": []byte("asset")},
 			Scripts:    map[string]string{"run.sh": "echo"},
 		},
 	}
@@ -83,8 +85,22 @@ func TestSkillTools(t *testing.T) {
 	if err := json.Unmarshal([]byte(resourceResp), &resourceObj); err != nil {
 		t.Fatalf("unmarshal resource response: %v", err)
 	}
-	if resourceObj["content"] != "ref" {
-		t.Fatalf("unexpected content: %v", resourceObj["content"])
+	if resourceObj["encoding"] != "base64" {
+		t.Fatalf("unexpected encoding: %v", resourceObj["encoding"])
+	}
+	encoded, ok := resourceObj["content_base64"].(string)
+	if !ok {
+		t.Fatalf("missing content_base64: %v", resourceObj["content_base64"])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode content_base64: %v", err)
+	}
+	if string(decoded) != "ref" {
+		t.Fatalf("unexpected decoded content: %q", string(decoded))
+	}
+	if len(resourceObj) != 4 {
+		t.Fatalf("unexpected response fields: %v", resourceObj)
 	}
 
 	scriptResp, err := tools[3].Handle(context.Background(), `{"skill_name":"skill1","script_path":"scripts/run.sh"}`)
@@ -153,8 +169,22 @@ func TestLoadSkillResourcePathNormalizationAndTraversal(t *testing.T) {
 	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if obj["content"] != "ref" {
-		t.Fatalf("unexpected content: %v", obj["content"])
+	if obj["encoding"] != "base64" {
+		t.Fatalf("unexpected encoding: %v", obj["encoding"])
+	}
+	encoded, ok := obj["content_base64"].(string)
+	if !ok {
+		t.Fatalf("missing content_base64: %v", obj["content_base64"])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode content_base64: %v", err)
+	}
+	if string(decoded) != "ref" {
+		t.Fatalf("unexpected decoded content: %q", string(decoded))
+	}
+	if len(obj) != 4 {
+		t.Fatalf("unexpected response fields: %v", obj)
 	}
 
 	for _, p := range []string{
@@ -177,6 +207,61 @@ func TestLoadSkillResourcePathNormalizationAndTraversal(t *testing.T) {
 		if obj["error_code"] != "INVALID_RESOURCE_PATH" {
 			t.Fatalf("unexpected error_code for %q: %v", p, obj["error_code"])
 		}
+	}
+}
+
+func TestLoadSkillResourceReturnsBase64ForBinaryAssets(t *testing.T) {
+	t.Parallel()
+
+	binary := []byte{0x89, 0x50, 0x4e, 0x47, 0x00, 0xff}
+	skill := &staticSkill{
+		frontmatter: Frontmatter{Name: "skill1", Description: "Skill 1"},
+		instruction: "",
+		resources: Resources{
+			Assets: map[string][]byte{
+				"image.png": binary,
+			},
+		},
+	}
+	toolset, err := NewToolset([]Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+	tool := toolset.Tools()[2]
+
+	resp, err := tool.Handle(context.Background(), mustJSON(map[string]any{
+		"skill_name": "skill1",
+		"path":       "assets/image.png",
+	}))
+	if err != nil {
+		t.Fatalf("tool error: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["skill_name"] != "skill1" {
+		t.Fatalf("unexpected skill_name: %v", obj["skill_name"])
+	}
+	if obj["path"] != "assets/image.png" {
+		t.Fatalf("unexpected path: %v", obj["path"])
+	}
+	if obj["encoding"] != "base64" {
+		t.Fatalf("unexpected encoding: %v", obj["encoding"])
+	}
+	encoded, ok := obj["content_base64"].(string)
+	if !ok {
+		t.Fatalf("missing content_base64: %v", obj["content_base64"])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode content_base64: %v", err)
+	}
+	if !bytes.Equal(decoded, binary) {
+		t.Fatalf("unexpected decoded content")
+	}
+	if len(obj) != 4 {
+		t.Fatalf("unexpected response fields: %v", obj)
 	}
 }
 
@@ -391,14 +476,14 @@ func TestWriteWorkspaceFilePathValidation(t *testing.T) {
 		`C:\x.sh`,
 		`C:x.sh`,
 	} {
-		err := writeWorkspaceFile(root, "scripts", rel, "echo no", 0o755)
+		err := writeWorkspaceFile(root, "scripts", rel, []byte("echo no"), 0o755)
 		if err == nil {
 			t.Fatalf("expected error for %q", rel)
 		}
 	}
 
 	const rel = "nested/run.sh"
-	if err := writeWorkspaceFile(root, "scripts", rel, "echo ok", 0o755); err != nil {
+	if err := writeWorkspaceFile(root, "scripts", rel, []byte("echo ok"), 0o755); err != nil {
 		t.Fatalf("writeWorkspaceFile: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(root, "scripts", "nested", "run.sh"))

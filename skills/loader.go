@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -148,15 +147,15 @@ func loadFS(fsys fs.FS, root string) (Skill, error) {
 	if err != nil {
 		return nil, err
 	}
-	references, err := loadDirTextFiles(fsys, path.Join(root, "references"))
+	references, err := loadDirFiles(fsys, path.Join(root, "references"))
 	if err != nil {
 		return nil, err
 	}
-	assets, err := loadDirTextFiles(fsys, path.Join(root, "assets"))
+	assets, err := loadDirBinaryFiles(fsys, path.Join(root, "assets"))
 	if err != nil {
 		return nil, err
 	}
-	scripts, err := loadDirTextFiles(fsys, path.Join(root, "scripts"))
+	scripts, err := loadDirFiles(fsys, path.Join(root, "scripts"))
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +311,7 @@ func parseFrontmatter(content string) (Frontmatter, error) {
 	return f, nil
 }
 
-func loadDirTextFiles(fsys fs.FS, dir string) (map[string]string, error) {
+func loadDirFiles(fsys fs.FS, dir string) (map[string]string, error) {
 	files := make(map[string]string)
 	err := fs.WalkDir(fsys, dir, func(filePath string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -328,11 +327,34 @@ func loadDirTextFiles(fsys fs.FS, dir string) (map[string]string, error) {
 		if err != nil {
 			return err
 		}
-		if !utf8.Valid(b) {
-			return nil
-		}
 		rel := strings.TrimPrefix(filePath, dir+"/")
 		files[rel] = string(b)
+		return nil
+	})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	return files, nil
+}
+
+func loadDirBinaryFiles(fsys fs.FS, dir string) (map[string][]byte, error) {
+	files := make(map[string][]byte)
+	err := fs.WalkDir(fsys, dir, func(filePath string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return fs.SkipDir
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		b, err := fs.ReadFile(fsys, filePath)
+		if err != nil {
+			return err
+		}
+		rel := strings.TrimPrefix(filePath, dir+"/")
+		files[rel] = b
 		return nil
 	})
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
