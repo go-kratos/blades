@@ -29,9 +29,6 @@ const (
 
 	defaultScriptTimeoutSeconds = 300
 	maxScriptTimeoutSeconds     = 1800
-
-	// maxScriptOutputBytes is the maximum size of stdout/stderr captured from a script.
-	maxScriptOutputBytes = 10 << 20 // 10 MiB
 )
 
 var coreSkillToolNames = map[string]struct{}{
@@ -712,28 +709,6 @@ func mergeCommandEnv(base []string, overrides map[string]string) []string {
 	return out
 }
 
-// limitedWriter wraps a bytes.Buffer and stops writing after a byte limit.
-type limitedWriter struct {
-	buf     bytes.Buffer
-	limit   int
-	dropped int
-}
-
-func (w *limitedWriter) Write(p []byte) (int, error) {
-	n := len(p)
-	remaining := w.limit - w.buf.Len()
-	if remaining <= 0 {
-		w.dropped += n
-		return n, nil
-	}
-	if n > remaining {
-		w.dropped += n - remaining
-		p = p[:remaining]
-	}
-	w.buf.Write(p)
-	return n, nil
-}
-
 func executeSkillScript(
 	ctx context.Context,
 	tmpRoot string,
@@ -760,10 +735,9 @@ func executeSkillScript(
 	cmd := exec.CommandContext(timeoutCtx, commandName, commandArgs...)
 	cmd.Dir = tmpRoot
 	cmd.Env = mergeCommandEnv(os.Environ(), env)
-	stdout := &limitedWriter{limit: maxScriptOutputBytes}
-	stderr := &limitedWriter{limit: maxScriptOutputBytes}
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	err := cmd.Run()
 	exitCode := 0
@@ -791,16 +765,10 @@ func executeSkillScript(
 		"skill_name":  skillName,
 		"script_path": scriptPath,
 		"args":        args,
-		"stdout":      stdout.buf.String(),
-		"stderr":      stderr.buf.String(),
+		"stdout":      stdout.String(),
+		"stderr":      stderr.String(),
 		"exit_code":   exitCode,
 		"status":      status,
-	}
-	if stdout.dropped > 0 {
-		result["stdout_truncated_bytes"] = stdout.dropped
-	}
-	if stderr.dropped > 0 {
-		result["stderr_truncated_bytes"] = stderr.dropped
 	}
 	return mustJSON(result)
 }
