@@ -1,10 +1,10 @@
 # Recipe
 
-Recipe 是 Blades 的声明式工作流配置系统。通过 YAML 文件定义 Agent 工作流，无需编写 Go 代码即可描述模型选择、提示词、参数化、多步骤编排等能力。
+Recipe is a declarative workflow configuration system for Blades. Define agent workflows in YAML — model selection, instructions, parameters, and multi-step orchestration — without writing Go code.
 
-## 快速开始
+## Quick Start
 
-### 1. 编写 recipe.yaml
+### 1. Write a recipe.yaml
 
 ```yaml
 version: "1.0"
@@ -21,70 +21,70 @@ instruction: |
   Analyze code for bugs, style issues, and performance.
 ```
 
-### 2. Go 代码加载并运行
+### 2. Load and run in Go
 
 ```go
-// 注册模型
+// Register models
 registry := recipe.NewRegistry()
 registry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
     APIKey: os.Getenv("OPENAI_API_KEY"),
 }))
 
-// 加载 & 构建
+// Load & build
 spec, _ := recipe.LoadFromFile("recipe.yaml")
 agent, _ := recipe.Build(spec,
     recipe.WithModelRegistry(registry),
     recipe.WithParams(map[string]any{"language": "go"}),
 )
 
-// 运行
+// Run
 runner := blades.NewRunner(agent)
 output, _ := runner.Run(ctx, blades.UserMessage("Review this code: ..."))
 ```
 
-## YAML 配置参考
+## YAML Reference
 
-### 顶层字段
+### Top-level Fields
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `version` | string | 是 | 版本号，当前为 `"1.0"` |
-| `name` | string | 是 | Recipe 名称，也是构建出的 Agent 名称 |
-| `description` | string | 否 | 描述信息 |
-| `model` | string | 视情况 | 注册表中的模型名。无 sub_recipes 或 tool 模式时必填 |
-| `instruction` | string | 视情况 | 系统提示词模版。sequential/parallel 模式可省略 |
-| `prompt` | string | 否 | 初始用户消息模版，构建时会作为第一条 user message 注入 |
-| `parameters` | list | 否 | 参数定义，见[参数配置](#参数配置) |
-| `execution` | string | 有 sub_recipes 时必填 | 执行模式：`sequential` / `parallel` / `tool` |
-| `sub_recipes` | list | 否 | 子配方列表，见[子配方](#子配方) |
-| `tools` | list | 否 | 外部工具名列表，需通过 `ToolRegistry` 注册 |
-| `output_key` | string | 否 | 将输出写入 session state 的 key |
-| `max_iterations` | int | 否 | Agent 最大迭代次数 |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `version` | string | Yes | Version number, currently `"1.0"` |
+| `name` | string | Yes | Recipe name, becomes the Agent name |
+| `description` | string | No | Description |
+| `model` | string | Conditional | Model name in the registry. Required when no sub_recipes or in tool mode |
+| `instruction` | string | Conditional | System prompt template. Optional in sequential/parallel mode |
+| `prompt` | string | No | Initial user message template, injected as the first user message |
+| `parameters` | list | No | Parameter definitions, see [Parameters](#parameters) |
+| `execution` | string | When sub_recipes exist | Execution mode: `sequential` / `parallel` / `tool` |
+| `sub_recipes` | list | No | Sub-recipe list, see [Sub-recipes](#sub-recipes) |
+| `tools` | list | No | External tool names, must be registered via `ToolRegistry` |
+| `output_key` | string | No | Key to store output in session state |
+| `max_iterations` | int | No | Max agent iterations |
 
-### 参数配置
+### Parameters
 
-参数在 `instruction` 和 `prompt` 中通过 Go 模版语法 `{{.参数名}}` 引用。
+Parameters are referenced in `instruction` and `prompt` using Go template syntax `{{.param_name}}`.
 
 ```yaml
 parameters:
   - name: language
     type: select          # string / number / boolean / select
-    description: 编程语言
-    required: required    # required / optional（默认 optional）
-    default: go           # 可选，默认值
-    options: [go, python] # select 类型必填
+    description: Programming language
+    required: required    # required / optional (default: optional)
+    default: go           # optional, default value
+    options: [go, python] # required for select type
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `name` | string | 是 | 参数名，不可重复 |
-| `type` | string | 是 | `string` / `number` / `boolean` / `select` |
-| `description` | string | 否 | 参数描述 |
-| `required` | string | 否 | `required` 或 `optional` |
-| `default` | any | 否 | 默认值。select 类型的默认值必须在 options 中 |
-| `options` | list | select 时必填 | 可选值列表 |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Parameter name, must be unique |
+| `type` | string | Yes | `string` / `number` / `boolean` / `select` |
+| `description` | string | No | Description |
+| `required` | string | No | `required` or `optional` |
+| `default` | any | No | Default value. For select type, must be one of the options |
+| `options` | list | For select | Allowed values |
 
-运行时通过 `WithParams` 传入参数值：
+Pass parameter values at build time:
 
 ```go
 recipe.Build(spec,
@@ -93,39 +93,39 @@ recipe.Build(spec,
 )
 ```
 
-### 子配方
+### Sub-recipes
 
-子配方定义在 `sub_recipes` 中，每个子配方会被构建为一个独立的 Agent。
+Sub-recipes are defined under `sub_recipes`. Each one is built into an independent Agent.
 
 ```yaml
 sub_recipes:
   - name: step-name
-    description: 这个步骤做什么
-    model: gpt-4o-mini    # 可选，不填则继承父级 model
+    description: What this step does
+    model: gpt-4o-mini    # optional, inherits parent model if omitted
     instruction: |
-      你的指令...
-    output_key: result     # 可选，输出写入 session state
-    max_iterations: 5      # 可选
-    tools: [my-tool]       # 可选，外部工具
+      Your instruction here...
+    output_key: result     # optional, stores output in session state
+    max_iterations: 5      # optional
+    tools: [my-tool]       # optional, external tools
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `name` | string | 是 | 子配方名称，不可重复。tool 模式下就是工具名 |
-| `description` | string | 否 | 描述。tool 模式下是工具描述，建议填写 |
-| `model` | string | 否 | 覆盖父级模型。不填则继承父级 |
-| `instruction` | string | 是 | 系统提示词 |
-| `prompt` | string | 否 | 初始用户消息模版 |
-| `parameters` | list | 否 | 子配方自己的参数 |
-| `tools` | list | 否 | 外部工具名列表 |
-| `output_key` | string | 否 | 输出 key（tool 模式下不支持） |
-| `max_iterations` | int | 否 | 最大迭代次数 |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Sub-recipe name, must be unique. In tool mode this becomes the tool name |
+| `description` | string | No | Description. In tool mode this becomes the tool description |
+| `model` | string | No | Override parent model. Inherits if omitted |
+| `instruction` | string | Yes | System prompt |
+| `prompt` | string | No | Initial user message template |
+| `parameters` | list | No | Sub-recipe specific parameters |
+| `tools` | list | No | External tool names |
+| `output_key` | string | No | Output key (not supported in tool mode) |
+| `max_iterations` | int | No | Max iterations |
 
-## 执行模式
+## Execution Modes
 
-### sequential — 顺序执行
+### sequential — Sequential Execution
 
-子配方按定义顺序依次执行。前一步通过 `output_key` 写入 session state，后一步通过 `{{.output_key}}` 引用。
+Sub-recipes run one after another in order. Each step can write to session state via `output_key`, and the next step can reference it with `{{.output_key}}`.
 
 ```yaml
 version: "1.0"
@@ -149,9 +149,9 @@ sub_recipes:
     output_key: quality_report
 ```
 
-### parallel — 并发执行
+### parallel — Concurrent Execution
 
-子配方同时执行，互不依赖。
+Sub-recipes run concurrently with no dependencies between them.
 
 ```yaml
 version: "1.0"
@@ -168,9 +168,9 @@ sub_recipes:
     output_key: performance_report
 ```
 
-### tool — 工具调度
+### tool — Tool Dispatch
 
-每个子配方被包装为工具，由父 Agent 的 LLM 自主决定何时调用哪个工具。
+Each sub-recipe is wrapped as a tool. The parent agent's LLM decides when to call which tool.
 
 ```yaml
 version: "1.0"
@@ -198,51 +198,51 @@ sub_recipes:
       and produce clear insights.
 ```
 
-> tool 模式要点：
-> - 父级必须指定 `model`（用于驱动工具调用的 LLM）
-> - 子配方的 `name` 就是工具名，`description` 就是工具描述
-> - 子配方不支持 `output_key`
-> - 子配方名不能与 `tools` 列表中的外部工具重名
+> **Tool mode notes:**
+> - Parent must specify `model` (the LLM that drives tool calls)
+> - Sub-recipe `name` becomes the tool name, `description` becomes the tool description
+> - `output_key` is not supported on sub-recipes
+> - Sub-recipe names must not conflict with names in the `tools` list
 
-## 模型注册
+## Model Registration
 
-YAML 中的 `model` 字段是注册表中的 key，需要在 Go 代码中注册实际的 ModelProvider：
+The `model` field in YAML is a key in the registry. Register actual ModelProvider instances in Go:
 
 ```go
 registry := recipe.NewRegistry()
 
-// 注册 OpenAI 模型
+// OpenAI models
 registry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
     APIKey: os.Getenv("OPENAI_API_KEY"),
 }))
 
-// 注册 OpenAI 协议兼容的模型（如智谱、DeepSeek）
+// OpenAI-compatible models (e.g. Zhipu, DeepSeek)
 registry.Register("glm-5", openai.NewModel("glm-5", openai.Config{
     BaseURL: "https://open.bigmodel.cn/api/paas/v4",
     APIKey:  os.Getenv("ZHIPU_API_KEY"),
 }))
 
-// 注册 Anthropic 模型
+// Anthropic models
 registry.Register("claude-sonnet", anthropic.NewModel("claude-sonnet-4-5-20250514", anthropic.Config{
     APIKey: os.Getenv("ANTHROPIC_API_KEY"),
 }))
 ```
 
-子配方未指定 `model` 时自动继承父级模型。不同子配方可以使用不同模型：
+Sub-recipes without a `model` field inherit the parent model. Different sub-recipes can use different models:
 
 ```yaml
-model: gpt-4o                    # 父级默认模型
+model: gpt-4o                    # parent default
 sub_recipes:
   - name: fast-step
-    model: gpt-4o-mini            # 用便宜的小模型
+    model: gpt-4o-mini            # cheaper model
     instruction: ...
-  - name: deep-step               # 继承父级 gpt-4o
+  - name: deep-step               # inherits gpt-4o
     instruction: ...
 ```
 
-## 工具注册
+## Tool Registration
 
-通过 `ToolRegistry` 注册外部工具，在 YAML 中按名引用：
+Register external tools via `ToolRegistry` and reference them by name in YAML. Tools are application-defined — there are no built-in tools.
 
 ```go
 toolRegistry := recipe.NewStaticToolRegistry()
@@ -261,30 +261,30 @@ tools: [web-search]
 ## API
 
 ```go
-// 加载
-spec, err := recipe.LoadFromFile("recipe.yaml")       // 从文件
-spec, err := recipe.LoadFromFS(fs, "recipe.yaml")     // 从 embed.FS
-spec, err := recipe.Parse(yamlBytes)                   // 从 []byte
+// Load
+spec, err := recipe.LoadFromFile("recipe.yaml")       // from file
+spec, err := recipe.LoadFromFS(fs, "recipe.yaml")     // from embed.FS
+spec, err := recipe.Parse(yamlBytes)                   // from []byte
 
-// 校验
+// Validate
 err := recipe.Validate(spec)
 err := recipe.ValidateParams(spec, params)
 
-// 构建
+// Build
 agent, err := recipe.Build(spec,
-    recipe.WithModelRegistry(registry),       // 必填
-    recipe.WithToolRegistry(toolRegistry),    // 有 tools 时必填
-    recipe.WithParams(map[string]any{...}),   // 有 parameters 时
+    recipe.WithModelRegistry(registry),       // required
+    recipe.WithToolRegistry(toolRegistry),    // required when tools are used
+    recipe.WithParams(map[string]any{...}),   // when parameters are defined
 )
 
-// 构建出的 agent 就是标准的 blades.Agent，正常使用即可
+// The built agent is a standard blades.Agent
 runner := blades.NewRunner(agent)
 output, err := runner.Run(ctx, blades.UserMessage("..."))
 stream := runner.RunStream(ctx, blades.UserMessage("..."))
 ```
 
-## 示例
+## Examples
 
-- [recipe-basic](../examples/recipe-basic/) — 单 Agent，参数化 instruction
-- [recipe-sequential](../examples/recipe-sequential/) — 顺序流水线，output_key 传递
-- [recipe-tool](../examples/recipe-tool/) — 子配方作为工具，LLM 动态调度
+- [recipe-basic](../examples/recipe-basic/) — Single agent with parameterized instruction
+- [recipe-sequential](../examples/recipe-sequential/) — Sequential pipeline with output_key passing
+- [recipe-tool](../examples/recipe-tool/) — Sub-recipes as tools with LLM-driven dispatch
