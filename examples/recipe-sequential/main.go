@@ -1,0 +1,46 @@
+package main
+
+import (
+	"context"
+	"log"
+
+	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/contrib/openai"
+	"github.com/go-kratos/blades/recipe"
+)
+
+func main() {
+	// 1. Register provider — APIKey is read from OPENAI_API_KEY env var
+	registry := recipe.NewStaticModelRegistry()
+	openai.RegisterProvider(registry, openai.Config{})
+
+	// 2. Load recipe
+	spec, err := recipe.LoadFromFile("recipe.yaml")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 3. Build sequential pipeline
+	agent, err := recipe.Build(spec,
+		recipe.WithModelRegistry(registry),
+		recipe.WithParams(map[string]any{"language": "go"}),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 4. Run with streaming to see each step
+	runner := blades.NewRunner(agent)
+	stream := runner.RunStream(context.Background(), blades.UserMessage(`
+		Review this code:
+		func divide(a, b int) int {
+			return a / b
+		}
+	`))
+	for message, err := range stream {
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("[%s] %s\n", message.Author, message.Text())
+	}
+}

@@ -1,0 +1,27 @@
+version: "1.0"
+name: research-assistant
+description: Research topics using specialist sub-agents as tools
+provider: openai
+model: glm-5
+parameters:
+  - name: topic
+    type: string
+    description: The topic to research
+    required: required
+instruction: |
+  You are a research assistant. Your task is to research "{{.topic}}" thoroughly.
+  You MUST call the fact-checker tool and the data-analyst tool at least once each
+  before writing your final summary. Do not ask the user for clarification — start
+  researching immediately using the tools provided.
+execution: tool
+sub_recipes:
+  - name: fact-checker
+    description: Verify claims and provide citations from reliable sources
+    instruction: |
+      You are a fact-checking specialist. Verify the given claim and provide
+      citations from reliable sources. Be thorough and accurate.
+  - name: data-analyst
+    description: Analyze data, statistics, and trends
+    instruction: |
+      You are a data analysis specialist. Analyze the given data or statistics
+      and produce clear insights. Use numbers and comparisons.

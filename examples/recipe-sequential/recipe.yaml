@@ -1,0 +1,25 @@
+version: "1.0"
+name: code-review-pipeline
+description: Multi-step code review with syntax check then quality review
+provider: openai
+model: gpt-4o
+parameters:
+  - name: language
+    type: select
+    description: Programming language to review
+    required: required
+    options: [go, python]
+instruction: Coordinate the review pipeline
+execution: sequential
+sub_recipes:
+  - name: syntax-checker
+    instruction: |
+      Check the {{.language}} code for syntax errors and report any issues found.
+      Be specific about line numbers and error types.
+    output_key: syntax_report
+  - name: quality-reviewer
+    instruction: |
+      Review the code for quality issues. Consider the syntax report below.
+      Syntax report: {{.syntax_report}}
+      Focus on naming, structure, and best practices.
+    output_key: quality_report

@@ -1,0 +1,3 @@
+version: "1.0"
+model: gpt-4o
+instruction: Do something

@@ -1,0 +1,19 @@
+version: "1.0"
+name: multi-review
+description: Run multiple reviewers in parallel
+model: gpt-4o
+parameters:
+  - name: language
+    type: select
+    description: Programming language
+    required: required
+    options: [go, python]
+instruction: Coordinate parallel reviews
+execution: parallel
+sub_recipes:
+  - name: security-reviewer
+    instruction: Check {{.language}} code for security issues
+    output_key: security_report
+  - name: performance-reviewer
+    instruction: Check {{.language}} code for performance issues
+    output_key: performance_report
