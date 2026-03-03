@@ -72,8 +72,8 @@ func (t *mockTool) InputSchema() *jsonschema.Schema                    { return 
 func (t *mockTool) OutputSchema() *jsonschema.Schema                   { return nil }
 func (t *mockTool) Handle(_ context.Context, _ string) (string, error) { return "ok", nil }
 
-func newTestModelRegistry() *StaticModelRegistry {
-	r := NewStaticModelRegistry()
+func newTestModelRegistry() *Registry {
+	r := NewRegistry()
 	r.Register("gpt-4o", &mockModel{name: "gpt-4o"})
 	r.Register("gpt-4o-mini", &mockModel{name: "gpt-4o-mini"})
 	r.Register("claude-sonnet", &mockModel{name: "claude-sonnet"})
@@ -319,8 +319,8 @@ func TestHasTemplateActions(t *testing.T) {
 
 // --- Registry Tests ---
 
-func TestStaticModelRegistry(t *testing.T) {
-	r := NewStaticModelRegistry()
+func TestRegistry(t *testing.T) {
+	r := NewRegistry()
 	r.Register("test-model", &mockModel{name: "test-model"})
 
 	model, err := r.Resolve("test-model")
@@ -458,7 +458,7 @@ func TestBuildWithReferencedToolsRequiresToolRegistry(t *testing.T) {
 
 func TestBuildResolvesExternalTools(t *testing.T) {
 	model := &captureRequestModel{name: "openai"}
-	modelRegistry := NewStaticModelRegistry()
+	modelRegistry := NewRegistry()
 	modelRegistry.Register("openai", model)
 
 	spec := &RecipeSpec{
@@ -524,7 +524,7 @@ func TestBuildInvalidSelectParam(t *testing.T) {
 
 func TestBuildToolModeIncludesSubRecipesAndExternalTools(t *testing.T) {
 	model := &captureRequestModel{name: "openai"}
-	modelRegistry := NewStaticModelRegistry()
+	modelRegistry := NewRegistry()
 	modelRegistry.Register("openai", model)
 	modelRegistry.Register("worker-model", &mockModel{name: "worker-model"})
 
@@ -584,7 +584,7 @@ func TestBuildNilSpec(t *testing.T) {
 
 func TestBuildInjectsPromptAsFirstUserMessage(t *testing.T) {
 	model := &captureRequestModel{name: "openai"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("openai", model)
 
 	spec := &RecipeSpec{
@@ -620,7 +620,7 @@ func TestBuildInjectsPromptAsFirstUserMessage(t *testing.T) {
 
 func TestBuildInjectsSubRecipePromptAsFirstUserMessage(t *testing.T) {
 	model := &captureRequestModel{name: "m1"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m1", model)
 
 	spec := &RecipeSpec{
@@ -698,7 +698,7 @@ func TestBuildFailsWhenSubRecipePromptRenderHasMissingParam(t *testing.T) {
 func TestBuildSequentialRendersParamsAndPreservesOutputTemplate(t *testing.T) {
 	first := &captureRequestModel{name: "m1", response: "syntax-ok"}
 	second := &captureRequestModel{name: "m2", response: "done"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m1", first)
 	registry.Register("m2", second)
 
@@ -1136,8 +1136,8 @@ func TestLoadFromFSInvalidContent(t *testing.T) {
 
 // --- Additional Registry Tests ---
 
-func TestStaticModelRegistryOverwrite(t *testing.T) {
-	r := NewStaticModelRegistry()
+func TestRegistryOverwrite(t *testing.T) {
+	r := NewRegistry()
 	r.Register("m", &mockModel{name: "v1"})
 	r.Register("m", &mockModel{name: "v2"})
 	m, err := r.Resolve("m")
@@ -1171,7 +1171,7 @@ func TestBuildUnresolvableModel(t *testing.T) {
 		Model:       "nonexistent-model",
 		Instruction: "i",
 	}
-	_, err := Build(spec, WithModelRegistry(NewStaticModelRegistry()))
+	_, err := Build(spec, WithModelRegistry(NewRegistry()))
 	if err == nil {
 		t.Fatal("expected error for unresolvable model")
 	}
@@ -1235,7 +1235,7 @@ func TestBuildSubRecipeUnresolvableTool(t *testing.T) {
 
 func TestBuildSingleAgentVerifiesInstruction(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m", model)
 
 	spec := &RecipeSpec{
@@ -1295,7 +1295,7 @@ func TestBuildSingleAgentMaxIterations(t *testing.T) {
 
 func TestBuildSingleAgentOutputKey(t *testing.T) {
 	model := &captureRequestModel{name: "m", response: "hello world"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m", model)
 
 	spec := &RecipeSpec{
@@ -1320,7 +1320,7 @@ func TestBuildSingleAgentOutputKey(t *testing.T) {
 }
 
 func TestBuildParallelAgentRunsSubAgents(t *testing.T) {
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m1", &mockModel{name: "m1"})
 	registry.Register("m2", &mockModel{name: "m2"})
 
@@ -1376,7 +1376,7 @@ func TestBuildToolAgentDescription(t *testing.T) {
 func TestPromptInjectedAgentEmptyPrompt(t *testing.T) {
 	// When prompt is empty, the agent should pass through directly
 	model := &captureRequestModel{name: "m"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m", model)
 
 	base, err := blades.NewAgent("base", blades.WithModel(model), blades.WithInstruction("i"))
@@ -1396,7 +1396,7 @@ func TestPromptInjectedAgentEmptyPrompt(t *testing.T) {
 
 func TestPromptInjectedAgentNoPrompt(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m", model)
 
 	spec := &RecipeSpec{
@@ -1421,7 +1421,7 @@ func TestPromptInjectedAgentNoPrompt(t *testing.T) {
 
 func TestPromptInjectedAgentWithNilMessage(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m", model)
 
 	spec := &RecipeSpec{
@@ -1454,7 +1454,7 @@ func TestPromptInjectedAgentWithNilMessage(t *testing.T) {
 
 func TestE2ESingleAgentRun(t *testing.T) {
 	model := &captureRequestModel{name: "m", response: "reviewed!"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m", model)
 
 	spec := &RecipeSpec{
@@ -1486,7 +1486,7 @@ func TestE2ESingleAgentRun(t *testing.T) {
 func TestE2ESequentialPipelineOutputKeyPropagation(t *testing.T) {
 	step1Model := &captureRequestModel{name: "s1", response: "analysis-result"}
 	step2Model := &captureRequestModel{name: "s2", response: "final-summary"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("s1", step1Model)
 	registry.Register("s2", step2Model)
 
@@ -1535,7 +1535,7 @@ func TestE2ESequentialPipelineOutputKeyPropagation(t *testing.T) {
 func TestE2EToolModeAgentRun(t *testing.T) {
 	model := &captureRequestModel{name: "m", response: "dispatched"}
 	workerModel := &mockModel{name: "w"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m", model)
 	registry.Register("w", workerModel)
 
@@ -1573,7 +1573,7 @@ func TestE2EToolModeAgentRun(t *testing.T) {
 
 func TestE2EWithDefaultParamsNoUserOverride(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m", model)
 
 	spec := &RecipeSpec{
@@ -1600,7 +1600,7 @@ func TestE2EWithDefaultParamsNoUserOverride(t *testing.T) {
 
 func TestE2EWithDefaultParamsPartialOverride(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m", model)
 
 	spec := &RecipeSpec{
@@ -1627,7 +1627,7 @@ func TestE2EWithDefaultParamsPartialOverride(t *testing.T) {
 
 func TestBuildSequentialSubRecipeWithTools(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m", model)
 	toolRegistry := NewStaticToolRegistry()
 	toolRegistry.Register("lint", &mockTool{name: "lint"})
@@ -1656,7 +1656,7 @@ func TestBuildSequentialSubRecipeWithTools(t *testing.T) {
 
 func TestBuildToolModeSubRecipeInheritsModel(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewStaticModelRegistry()
+	registry := NewRegistry()
 	registry.Register("m", model)
 
 	spec := &RecipeSpec{

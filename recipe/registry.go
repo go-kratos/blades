@@ -18,28 +18,28 @@ type ToolRegistry interface {
 	Resolve(name string) (tools.Tool, error)
 }
 
-// StaticModelRegistry is a simple in-memory ModelRegistry.
-type StaticModelRegistry struct {
+// Registry is a simple in-memory ModelRegistry.
+type Registry struct {
 	mu        sync.RWMutex
 	providers map[string]blades.ModelProvider
 }
 
-// NewStaticModelRegistry creates a new empty StaticModelRegistry.
-func NewStaticModelRegistry() *StaticModelRegistry {
-	return &StaticModelRegistry{
+// NewRegistry creates a new empty Registry.
+func NewRegistry() *Registry {
+	return &Registry{
 		providers: make(map[string]blades.ModelProvider),
 	}
 }
 
 // Register adds a model provider under the given name.
-func (r *StaticModelRegistry) Register(name string, provider blades.ModelProvider) {
+func (r *Registry) Register(name string, provider blades.ModelProvider) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.providers[name] = provider
 }
 
 // Resolve returns the ModelProvider registered under the given name.
-func (r *StaticModelRegistry) Resolve(name string) (blades.ModelProvider, error) {
+func (r *Registry) Resolve(name string) (blades.ModelProvider, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	p, ok := r.providers[name]
