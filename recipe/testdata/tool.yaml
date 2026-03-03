@@ -1,0 +1,20 @@
+version: "1.0"
+name: research-assistant
+description: Research topics using specialist agents
+model: gpt-4o
+parameters:
+  - name: topic
+    type: string
+    description: The topic to research
+    required: required
+instruction: |
+  Research {{.topic}}. Use specialist tools when needed.
+execution: tool
+sub_recipes:
+  - name: fact-checker
+    description: Verify claims with citations
+    model: gpt-4o-mini
+    instruction: Verify the claim and provide citations
+  - name: data-analyst
+    description: Analyze data and statistics
+    instruction: Analyze the data and produce insights

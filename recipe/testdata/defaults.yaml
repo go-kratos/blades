@@ -1,0 +1,18 @@
+version: "1.0"
+name: with-defaults
+description: Recipe with default parameter values
+model: gpt-4o
+parameters:
+  - name: language
+    type: string
+    description: Programming language
+    required: optional
+    default: go
+  - name: style
+    type: select
+    description: Review style
+    required: optional
+    default: thorough
+    options: [quick, thorough, detailed]
+instruction: |
+  Review {{.language}} code with {{.style}} approach.

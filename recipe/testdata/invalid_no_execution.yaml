@@ -1,0 +1,7 @@
+version: "1.0"
+name: bad-recipe
+model: gpt-4o
+instruction: Do something
+sub_recipes:
+  - name: sub1
+    instruction: Sub instruction

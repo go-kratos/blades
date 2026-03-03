@@ -1,0 +1,21 @@
+version: "1.0"
+name: code-review-pipeline
+description: Multi-step code review
+model: gpt-4o
+parameters:
+  - name: language
+    type: select
+    description: Programming language to review
+    required: required
+    options: [go, python]
+instruction: Coordinate the review agents
+execution: sequential
+sub_recipes:
+  - name: syntax-checker
+    model: gpt-4o-mini
+    instruction: Check {{.language}} code for syntax errors
+    output_key: syntax_report
+  - name: quality-reviewer
+    instruction: |
+      Review code quality. Syntax report: {{.syntax_report}}
+    output_key: quality_report
