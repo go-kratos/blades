@@ -9,9 +9,18 @@ parameters:
     required: required
 instruction: |
   You are a research assistant. Your task is to research "{{.topic}}" thoroughly.
+  You have the following tools available:
+  - fact-checker: a sub-agent that verifies claims
+  - data-analyst: a sub-agent that analyzes data
+  - extract-emails: extracts email addresses from text
+  - get-weather: gets the current weather for a city
+
   You MUST call the fact-checker tool and the data-analyst tool at least once each
-  before writing your final summary. Do not ask the user for clarification — start
-  researching immediately using the tools provided.
+  before writing your final summary. Use the extract-emails and get-weather tools
+  when relevant. Do not ask the user for clarification — start researching immediately.
+tools:
+  - extract-emails
+  - get-weather
 execution: tool
 sub_recipes:
   - name: fact-checker

@@ -58,8 +58,8 @@ output, _ := runner.Run(ctx, blades.UserMessage("Review this code: ..."))
 | `execution` | string | 有 sub_recipes 时必填 | 执行模式：`sequential` / `parallel` / `tool` |
 | `sub_recipes` | list | 否 | 子配方列表，见[子配方](#子配方) |
 | `tools` | list | 否 | 外部工具名列表，需通过 `ToolRegistry` 注册 |
-| `output_key` | string | 否 | 将输出写入 session state 的 key |
-| `max_iterations` | int | 否 | Agent 最大迭代次数 |
+| `output_key` | string | 否 | 将输出写入 session state 的 key。`sequential` / `parallel` 模式不支持 |
+| `max_iterations` | int | 否 | Agent 最大迭代次数。`sequential` / `parallel` 模式不支持 |
 
 ### 参数配置
 
@@ -170,7 +170,7 @@ sub_recipes:
 
 ### tool — 工具调度
 
-每个子配方被包装为工具，由父 Agent 的 LLM 自主决定何时调用哪个工具。
+每个子配方被包装为工具，由父 Agent 的 LLM 自主决定何时调用哪个工具。也可以混合使用通过 `ToolRegistry` 注册的函数工具。
 
 ```yaml
 version: "1.0"
@@ -183,6 +183,9 @@ parameters:
 instruction: |
   Research "{{.topic}}" thoroughly.
   You MUST call the fact-checker and data-analyst tools.
+  Use extract-emails when you find contact information.
+tools:
+  - extract-emails
 execution: tool
 sub_recipes:
   - name: fact-checker
@@ -203,6 +206,7 @@ sub_recipes:
 > - 子配方的 `name` 就是工具名，`description` 就是工具描述
 > - 子配方不支持 `output_key`
 > - 子配方名不能与 `tools` 列表中的外部工具重名
+> - `tools` 中的函数工具和子配方工具会合并在一起使用
 
 ## 模型注册
 
@@ -242,7 +246,52 @@ sub_recipes:
 
 ## 工具注册
 
-通过 `ToolRegistry` 注册外部工具，在 YAML 中按名引用。工具由应用代码定义，框架不提供内置工具。
+通过 `ToolRegistry` 注册工具，在 YAML 中按名引用。工具由应用代码定义，框架不提供内置工具。
+
+### 使用 `tools.NewFunc`（推荐）
+
+创建强类型的函数工具，自动生成 JSON Schema：
+
+```go
+type ExtractEmailsReq struct {
+    Text string `json:"text" jsonschema:"要提取邮箱地址的文本"`
+}
+
+type ExtractEmailsRes struct {
+    Matches []string `json:"matches" jsonschema:"提取到的邮箱地址"`
+}
+
+var emailPattern = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
+
+func extractEmails(_ context.Context, req ExtractEmailsReq) (ExtractEmailsRes, error) {
+    matches := emailPattern.FindAllString(req.Text, -1)
+    if matches == nil {
+        matches = []string{}
+    }
+    return ExtractEmailsRes{Matches: matches}, nil
+}
+
+// 创建工具
+emailTool, _ := tools.NewFunc("extract-emails", "从文本中提取邮箱地址", extractEmails)
+
+// 注册到 ToolRegistry
+toolRegistry := recipe.NewStaticToolRegistry()
+toolRegistry.Register("extract-emails", emailTool)
+
+// 构建时传入
+agent, _ := recipe.Build(spec,
+    recipe.WithModelRegistry(registry),
+    recipe.WithToolRegistry(toolRegistry),
+)
+```
+
+```yaml
+tools: [extract-emails]
+```
+
+### 使用 `tools.NewTool`（底层接口）
+
+需要更底层控制时，使用 `NewTool` 配合原始 `HandleFunc`：
 
 ```go
 toolRegistry := recipe.NewStaticToolRegistry()
@@ -254,9 +303,7 @@ agent, _ := recipe.Build(spec,
 )
 ```
 
-```yaml
-tools: [web-search]
-```
+函数工具可以和 `tool` 模式下的子配方工具自由组合使用。完整示例见 [recipe-tool](../examples/recipe-tool/)。
 
 ## API
 
@@ -287,4 +334,4 @@ stream := runner.RunStream(ctx, blades.UserMessage("..."))
 
 - [recipe-basic](../examples/recipe-basic/) — 单 Agent，参数化 instruction
 - [recipe-sequential](../examples/recipe-sequential/) — 顺序流水线，output_key 传递
-- [recipe-tool](../examples/recipe-tool/) — 子配方作为工具，LLM 动态调度
+- [recipe-tool](../examples/recipe-tool/) — 子配方 + 函数工具混合使用，LLM 动态调度

@@ -58,8 +58,8 @@ output, _ := runner.Run(ctx, blades.UserMessage("Review this code: ..."))
 | `execution` | string | When sub_recipes exist | Execution mode: `sequential` / `parallel` / `tool` |
 | `sub_recipes` | list | No | Sub-recipe list, see [Sub-recipes](#sub-recipes) |
 | `tools` | list | No | External tool names, must be registered via `ToolRegistry` |
-| `output_key` | string | No | Key to store output in session state |
-| `max_iterations` | int | No | Max agent iterations |
+| `output_key` | string | No | Key to store output in session state. Not supported in `sequential` / `parallel` mode |
+| `max_iterations` | int | No | Max agent iterations. Not supported in `sequential` / `parallel` mode |
 
 ### Parameters
 
@@ -170,7 +170,7 @@ sub_recipes:
 
 ### tool — Tool Dispatch
 
-Each sub-recipe is wrapped as a tool. The parent agent's LLM decides when to call which tool.
+Each sub-recipe is wrapped as a tool. The parent agent's LLM decides when to call which tool. You can also mix in function tools registered via `ToolRegistry`.
 
 ```yaml
 version: "1.0"
@@ -183,6 +183,9 @@ parameters:
 instruction: |
   Research "{{.topic}}" thoroughly.
   You MUST call the fact-checker and data-analyst tools.
+  Use extract-emails when you find contact information.
+tools:
+  - extract-emails
 execution: tool
 sub_recipes:
   - name: fact-checker
@@ -203,6 +206,7 @@ sub_recipes:
 > - Sub-recipe `name` becomes the tool name, `description` becomes the tool description
 > - `output_key` is not supported on sub-recipes
 > - Sub-recipe names must not conflict with names in the `tools` list
+> - Function tools from `tools` list and sub-recipe tools are merged together
 
 ## Model Registration
 
@@ -242,7 +246,52 @@ sub_recipes:
 
 ## Tool Registration
 
-Register external tools via `ToolRegistry` and reference them by name in YAML. Tools are application-defined — there are no built-in tools.
+Register tools via `ToolRegistry` and reference them by name in YAML. Tools are application-defined — there are no built-in tools.
+
+### Using `tools.NewFunc` (recommended)
+
+Create strongly-typed function tools with automatic JSON schema generation:
+
+```go
+type ExtractEmailsReq struct {
+    Text string `json:"text" jsonschema:"The text to extract email addresses from"`
+}
+
+type ExtractEmailsRes struct {
+    Matches []string `json:"matches" jsonschema:"The extracted email addresses"`
+}
+
+var emailPattern = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
+
+func extractEmails(_ context.Context, req ExtractEmailsReq) (ExtractEmailsRes, error) {
+    matches := emailPattern.FindAllString(req.Text, -1)
+    if matches == nil {
+        matches = []string{}
+    }
+    return ExtractEmailsRes{Matches: matches}, nil
+}
+
+// Create the tool
+emailTool, _ := tools.NewFunc("extract-emails", "Extract email addresses from text", extractEmails)
+
+// Register in a ToolRegistry
+toolRegistry := recipe.NewStaticToolRegistry()
+toolRegistry.Register("extract-emails", emailTool)
+
+// Build with the registry
+agent, _ := recipe.Build(spec,
+    recipe.WithModelRegistry(registry),
+    recipe.WithToolRegistry(toolRegistry),
+)
+```
+
+```yaml
+tools: [extract-emails]
+```
+
+### Using `tools.NewTool` (raw handler)
+
+For lower-level control, use `NewTool` with a raw `HandleFunc`:
 
 ```go
 toolRegistry := recipe.NewStaticToolRegistry()
@@ -254,9 +303,7 @@ agent, _ := recipe.Build(spec,
 )
 ```
 
-```yaml
-tools: [web-search]
-```
+Function tools can be freely combined with sub-recipe tools in `tool` execution mode. See [recipe-tool](../examples/recipe-tool/) for a complete example.
 
 ## API
 
@@ -287,4 +334,4 @@ stream := runner.RunStream(ctx, blades.UserMessage("..."))
 
 - [recipe-basic](../examples/recipe-basic/) — Single agent with parameterized instruction
 - [recipe-sequential](../examples/recipe-sequential/) — Sequential pipeline with output_key passing
-- [recipe-tool](../examples/recipe-tool/) — Sub-recipes as tools with LLM-driven dispatch
+- [recipe-tool](../examples/recipe-tool/) — Sub-recipes + function tools with LLM-driven dispatch

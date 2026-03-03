@@ -35,14 +35,23 @@ func Validate(spec *RecipeSpec) error {
 	if spec.Execution == ExecutionTool && spec.Model == "" {
 		return fmt.Errorf("recipe: model is required for tool execution mode")
 	}
+	// sequential/parallel modes use flow agents that don't support these fields.
+	if spec.Execution == ExecutionSequential || spec.Execution == ExecutionParallel {
+		if spec.OutputKey != "" {
+			return fmt.Errorf("recipe %q: output_key is not supported in %s mode", spec.Name, spec.Execution)
+		}
+		if spec.MaxIterations > 0 {
+			return fmt.Errorf("recipe %q: max_iterations is not supported in %s mode", spec.Name, spec.Execution)
+		}
+	}
 	if err := validateParameters(spec.Parameters); err != nil {
 		return fmt.Errorf("recipe %q: %w", spec.Name, err)
 	}
-	subNames := make(map[string]bool, len(spec.SubRecipes))
-	toolNames := make(map[string]bool, len(spec.Tools))
-	for _, t := range spec.Tools {
-		toolNames[t] = true
+	toolNames, err := validateToolNames(fmt.Sprintf("recipe %q", spec.Name), spec.Tools)
+	if err != nil {
+		return err
 	}
+	subNames := make(map[string]bool, len(spec.SubRecipes))
 	for i := range spec.SubRecipes {
 		sub := &spec.SubRecipes[i]
 		if err := validateSubRecipe(sub, i); err != nil {
@@ -87,18 +96,12 @@ func validateParameters(params []ParameterSpec) error {
 		if p.Required != "" && p.Required != ParameterRequired && p.Required != ParameterOptional {
 			return fmt.Errorf("parameter %q: invalid required value %q", p.Name, p.Required)
 		}
-		if p.Type == ParameterSelect {
-			if len(p.Options) == 0 {
-				return fmt.Errorf("parameter %q: select type requires options", p.Name)
-			}
-			if p.Default != nil {
-				def, ok := p.Default.(string)
-				if !ok {
-					return fmt.Errorf("parameter %q: default must be a string for select type", p.Name)
-				}
-				if !slices.Contains(p.Options, def) {
-					return fmt.Errorf("parameter %q: default value %q is not in options %v", p.Name, def, p.Options)
-				}
+		if p.Type == ParameterSelect && len(p.Options) == 0 {
+			return fmt.Errorf("parameter %q: select type requires options", p.Name)
+		}
+		if p.Default != nil {
+			if err := validateParamType("default value", p, p.Default); err != nil {
+				return err
 			}
 		}
 	}
@@ -115,7 +118,24 @@ func validateSubRecipe(sub *SubRecipeSpec, index int) error {
 	if err := validateParameters(sub.Parameters); err != nil {
 		return fmt.Errorf("sub_recipe %q: %w", sub.Name, err)
 	}
+	if _, err := validateToolNames(fmt.Sprintf("sub_recipe %q", sub.Name), sub.Tools); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateToolNames(scope string, toolNames []string) (map[string]bool, error) {
+	seen := make(map[string]bool, len(toolNames))
+	for _, t := range toolNames {
+		if t == "" {
+			return nil, fmt.Errorf("%s: tool name must be non-empty", scope)
+		}
+		if seen[t] {
+			return nil, fmt.Errorf("%s: duplicate tool name %q", scope, t)
+		}
+		seen[t] = true
+	}
+	return seen, nil
 }
 
 // ValidateParams checks that provided parameter values satisfy the spec.
