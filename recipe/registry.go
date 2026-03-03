@@ -82,8 +82,8 @@ func (r *StaticModelRegistry) Resolve(name string) (blades.ModelProvider, error)
 // Create creates a ModelProvider using the named provider factory.
 func (r *StaticModelRegistry) Create(provider, model string) (blades.ModelProvider, error) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 	factory, ok := r.factories[provider]
+	r.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("recipe: provider %q not found in registry", provider)
 	}

@@ -1963,5 +1963,5 @@ func TestBuildWithoutProviderStillWorks(t *testing.T) {
 	}
 }
 
-// Ensure we suppress the "imported and not used" error for the tools package
+// Compile-time check that mockTool implements tools.Tool.
 var _ tools.Tool = (*mockTool)(nil)
