@@ -1,8 +1,7 @@
 version: "1.0"
 name: research-assistant
 description: Research topics using specialist sub-agents as tools
-provider: openai
-model: glm-5
+model: gpt-4o
 parameters:
   - name: topic
     type: string

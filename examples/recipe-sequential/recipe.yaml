@@ -1,7 +1,6 @@
 version: "1.0"
 name: code-review-pipeline
 description: Multi-step code review with syntax check then quality review
-provider: openai
 model: gpt-4o
 parameters:
   - name: language

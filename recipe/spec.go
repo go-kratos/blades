@@ -36,8 +36,7 @@ type RecipeSpec struct {
 	Version       string          `yaml:"version"`
 	Name          string          `yaml:"name"`
 	Description   string          `yaml:"description"`
-	Provider      string          `yaml:"provider,omitempty"`      // provider factory name (e.g. "openai", "zhipu")
-	Model         string          `yaml:"model,omitempty"`         // model name passed to the provider
+	Model         string          `yaml:"model,omitempty"`
 	Instruction   string          `yaml:"instruction"`
 	Prompt        string          `yaml:"prompt,omitempty"`
 	Parameters    []ParameterSpec `yaml:"parameters,omitempty"`
@@ -52,8 +51,7 @@ type RecipeSpec struct {
 type SubRecipeSpec struct {
 	Name          string          `yaml:"name"`
 	Description   string          `yaml:"description,omitempty"`
-	Provider      string          `yaml:"provider,omitempty"`      // overrides parent provider
-	Model         string          `yaml:"model,omitempty"`         // overrides parent model
+	Model         string          `yaml:"model,omitempty"`
 	Instruction   string          `yaml:"instruction"`
 	Prompt        string          `yaml:"prompt,omitempty"`
 	Parameters    []ParameterSpec `yaml:"parameters,omitempty"`

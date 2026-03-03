@@ -1,7 +1,6 @@
 version: "1.0"
 name: code-reviewer
 description: Review code quality
-provider: openai
 model: gpt-4o
 parameters:
   - name: language

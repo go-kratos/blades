@@ -85,7 +85,7 @@ func Build(spec *RecipeSpec, opts ...BuildOption) (blades.Agent, error) {
 
 // buildSingleAgent creates a single blades.Agent from a RecipeSpec with no sub-recipes.
 func buildSingleAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
-	model, err := resolveModel(o.modelRegistry, spec.Provider, spec.Model)
+	model, err := o.modelRegistry.Resolve(spec.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -124,12 +124,8 @@ func buildSingleAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) 
 }
 
 // buildSubAgent creates a blades.Agent from a SubRecipeSpec.
-// parentProvider and parentModel are fallbacks from the parent spec.
-func buildSubAgent(sub *SubRecipeSpec, parentProvider, parentModel string, params map[string]any, o *buildOptions) (blades.Agent, error) {
-	provider := sub.Provider
-	if provider == "" {
-		provider = parentProvider
-	}
+// parentModel is the fallback model name from the parent spec.
+func buildSubAgent(sub *SubRecipeSpec, parentModel string, params map[string]any, o *buildOptions) (blades.Agent, error) {
 	modelName := sub.Model
 	if modelName == "" {
 		modelName = parentModel
@@ -138,7 +134,7 @@ func buildSubAgent(sub *SubRecipeSpec, parentProvider, parentModel string, param
 		return nil, fmt.Errorf("recipe: sub_recipe %q has no model and parent has no model", sub.Name)
 	}
 
-	model, err := resolveModel(o.modelRegistry, provider, modelName)
+	model, err := o.modelRegistry.Resolve(modelName)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +189,7 @@ func buildSubAgent(sub *SubRecipeSpec, parentProvider, parentModel string, param
 func buildSequentialAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
 	subAgents := make([]blades.Agent, 0, len(spec.SubRecipes))
 	for i := range spec.SubRecipes {
-		agent, err := buildSubAgent(&spec.SubRecipes[i], spec.Provider, spec.Model, params, o)
+		agent, err := buildSubAgent(&spec.SubRecipes[i], spec.Model, params, o)
 		if err != nil {
 			return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}
@@ -210,7 +206,7 @@ func buildSequentialAgent(spec *RecipeSpec, params map[string]any, o *buildOptio
 func buildParallelAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
 	subAgents := make([]blades.Agent, 0, len(spec.SubRecipes))
 	for i := range spec.SubRecipes {
-		agent, err := buildSubAgent(&spec.SubRecipes[i], spec.Provider, spec.Model, params, o)
+		agent, err := buildSubAgent(&spec.SubRecipes[i], spec.Model, params, o)
 		if err != nil {
 			return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}
@@ -225,7 +221,7 @@ func buildParallelAgent(spec *RecipeSpec, params map[string]any, o *buildOptions
 
 // buildToolAgent creates a parent agent with sub-recipes wrapped as tools.
 func buildToolAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
-	model, err := resolveModel(o.modelRegistry, spec.Provider, spec.Model)
+	model, err := o.modelRegistry.Resolve(spec.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +229,7 @@ func buildToolAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) (b
 	// Build each sub-recipe as an agent, then wrap as a tool
 	agentTools := make([]tools.Tool, 0, len(spec.SubRecipes))
 	for i := range spec.SubRecipes {
-		subAgent, err := buildSubAgent(&spec.SubRecipes[i], spec.Provider, spec.Model, params, o)
+		subAgent, err := buildSubAgent(&spec.SubRecipes[i], spec.Model, params, o)
 		if err != nil {
 			return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}
@@ -268,19 +264,6 @@ func buildToolAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) (b
 	}
 
 	return blades.NewAgent(spec.Name, agentOpts...)
-}
-
-// resolveModel resolves a ModelProvider from the registry.
-// If provider is set, it uses the ModelCreator interface to create via factory.
-// Otherwise it falls back to exact name lookup.
-func resolveModel(registry ModelRegistry, provider, model string) (blades.ModelProvider, error) {
-	if provider != "" {
-		if creator, ok := registry.(ModelCreator); ok {
-			return creator.Create(provider, model)
-		}
-		return nil, fmt.Errorf("recipe: provider %q specified but registry does not support factory creation", provider)
-	}
-	return registry.Resolve(model)
 }
 
 // resolveTools resolves a list of tool names to actual tools.Tool instances.

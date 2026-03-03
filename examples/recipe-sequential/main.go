@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
@@ -10,9 +11,11 @@ import (
 )
 
 func main() {
-	// 1. Register provider — APIKey is read from OPENAI_API_KEY env var
+	// 1. Register models
 	registry := recipe.NewStaticModelRegistry()
-	openai.RegisterProvider(registry, openai.Config{})
+	registry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
+		APIKey: os.Getenv("OPENAI_API_KEY"),
+	}))
 
 	// 2. Load recipe
 	spec, err := recipe.LoadFromFile("recipe.yaml")
