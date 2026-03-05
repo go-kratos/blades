@@ -53,9 +53,10 @@ func main() {
 		log.Fatal(err)
 	}
 	input := blades.UserMessage(prompt)
+	session := blades.NewSession(params)
 	// Run the agent with the templated prompt
 	runner := blades.NewRunner(agent)
-	output, err := runner.Run(context.Background(), input, blades.WithSession(blades.NewSession(params)))
+	output, err := runner.Run(context.Background(), input, blades.WithSession(session))
 	if err != nil {
 		log.Fatal(err)
 	}
