@@ -23,9 +23,6 @@ func WithInvocationID(invocationID string) RunOption {
 	}
 }
 
-// RunnerOption defines options for configuring the Runner itself.
-type RunnerOption func(*Runner)
-
 // RunOptions holds configuration options for running the agent.
 type RunOptions struct {
 	Session      Session
@@ -38,12 +35,9 @@ type Runner struct {
 }
 
 // NewRunner creates a new Runner with the given agent and options.
-func NewRunner(rootAgent Agent, opts ...RunnerOption) *Runner {
+func NewRunner(rootAgent Agent) *Runner {
 	r := &Runner{
 		rootAgent: rootAgent,
-	}
-	for _, opt := range opts {
-		opt(r)
 	}
 	return r
 }
