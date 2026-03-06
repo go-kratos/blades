@@ -215,16 +215,6 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 // Run runs the agent with the given prompt and options, returning a streamable response.
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
-		// If resumable and a completed message exists, return it directly.
-		resumeMessages, ok := a.findResumeMessages(invocation)
-		if ok {
-			for _, resumeMessage := range resumeMessages {
-				if !yield(resumeMessage, nil) {
-					return
-				}
-			}
-			return
-		}
 		if err := a.prepareInvocation(ctx, invocation); err != nil {
 			yield(nil, err)
 			return
@@ -240,10 +230,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			if len(invocation.History) > 0 {
 				req.Messages = AppendMessages(req.Messages, invocation.History...)
 			}
-			switch {
-			case len(resumeMessages) > 0:
-				req.Messages = AppendMessages(req.Messages, resumeMessages...)
-			case invocation.Message != nil:
+			if invocation.Message != nil {
 				req.Messages = AppendMessages(req.Messages, invocation.Message)
 			}
 			return a.handle(ctx, invocation, req)
@@ -258,24 +245,6 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			}
 		}
 	}
-}
-
-func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
-	if !invocation.Resumable || invocation.Session == nil {
-		return nil, false
-	}
-	resumeHistory := invocation.Session.History()
-	resumeMessages := make([]*Message, 0, len(resumeHistory))
-	for _, m := range resumeHistory {
-		if m.InvocationID == invocation.ID && m.Author == a.name {
-			resumeMessages = append(resumeMessages, m)
-			// If we find a completed assistant message, we can resume from here.
-			if m.Role == RoleAssistant && m.Status == StatusCompleted {
-				return resumeMessages, true
-			}
-		}
-	}
-	return resumeMessages, false
 }
 
 func (a *agent) saveOutputState(ctx context.Context, invocation *Invocation, message *Message) error {

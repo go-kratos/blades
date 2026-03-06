@@ -14,7 +14,6 @@ type Invocation struct {
 	ID          string
 	Model       string
 	Session     Session
-	Resumable   bool
 	Streamable  bool
 	Instruction *Message
 	Message     *Message
@@ -46,7 +45,6 @@ func (inv *Invocation) Clone() *Invocation {
 		ID:          inv.ID,
 		Model:       inv.Model,
 		Session:     inv.Session,
-		Resumable:   inv.Resumable,
 		Streamable:  inv.Streamable,
 		Message:     inv.Message.Clone(),
 		Instruction: inv.Instruction.Clone(),

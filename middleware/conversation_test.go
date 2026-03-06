@@ -101,11 +101,9 @@ func TestConversationBuffered(t *testing.T) {
 
 			// Build invocation with an initial history to check override behavior
 			inv := &blades.Invocation{
-				ID:        "inv-id",
-				Session:   blades.NewSession(),
-				Message:   blades.UserMessage("input"),
-				History:   tt.initialHist,
-				Resumable: false,
+				Session: blades.NewSession(),
+				Message: blades.UserMessage("input"),
+				History: tt.initialHist,
 			}
 
 			// Execute the handler
