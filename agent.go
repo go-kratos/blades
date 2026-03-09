@@ -285,6 +285,9 @@ func (a *agent) executeTools(ctx context.Context, invocation *Invocation, messag
 		switch v := any(part).(type) {
 		case ToolPart:
 			eg.Go(func() error {
+				if v.Status == StatusCompleted {
+					return nil
+				}
 				toolCtx := NewToolContext(ctx, &toolContext{
 					id:      v.ID,
 					name:    v.Name,
@@ -294,6 +297,7 @@ func (a *agent) executeTools(ctx context.Context, invocation *Invocation, messag
 				if err != nil {
 					return err
 				}
+				part.Status = StatusCompleted
 				m.Lock()
 				message.Parts[i] = part
 				message.Actions = MergeActions(message.Actions, actions.ToMap())

@@ -322,11 +322,7 @@ func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []opena
 		if len(choice.Message.ToolCalls) > 0 {
 			for _, call := range choice.Message.ToolCalls {
 				msg.Role = blades.RoleTool
-				msg.Parts = append(msg.Parts, blades.ToolPart{
-					ID:      call.ID,
-					Name:    call.Function.Name,
-					Request: call.Function.Arguments,
-				})
+				msg.Parts = append(msg.Parts, blades.NewToolPart(call.ID, call.Function.Name, call.Function.Arguments))
 			}
 		}
 	}
@@ -362,11 +358,7 @@ func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams
 		}
 		for _, call := range choice.Message.ToolCalls {
 			message.Role = blades.RoleTool
-			message.Parts = append(message.Parts, blades.ToolPart{
-				ID:      call.ID,
-				Name:    call.Function.Name,
-				Request: call.Function.Arguments,
-			})
+			message.Parts = append(message.Parts, blades.NewToolPart(call.ID, call.Function.Name, call.Function.Arguments))
 		}
 	}
 	return &blades.ModelResponse{Message: message}, nil
@@ -387,11 +379,7 @@ func chunkChoiceToResponse(ctx context.Context, choices []openai.ChatCompletionC
 		}
 		for _, call := range choice.Delta.ToolCalls {
 			message.Role = blades.RoleTool
-			message.Parts = append(message.Parts, blades.ToolPart{
-				ID:      call.ID,
-				Name:    call.Function.Name,
-				Request: call.Function.Arguments,
-			})
+			message.Parts = append(message.Parts, blades.NewToolPart(call.ID, call.Function.Name, call.Function.Arguments))
 		}
 	}
 	return &blades.ModelResponse{Message: message}, nil

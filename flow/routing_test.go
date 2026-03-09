@@ -14,11 +14,7 @@ func (m *routeSelectorModel) Name() string { return "selector" }
 func (m *routeSelectorModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
 	msg := blades.NewAssistantMessage(blades.StatusCompleted)
 	msg.Role = blades.RoleTool
-	msg.Parts = append(msg.Parts, blades.ToolPart{
-		ID:      "handoff-1",
-		Name:    "handoff_to_agent",
-		Request: `{"agentName":"worker"}`,
-	})
+	msg.Parts = append(msg.Parts, blades.NewToolPart("handoff-1", "handoff_to_agent", `{"agentName":"worker"}`))
 	return &blades.ModelResponse{Message: msg}, nil
 }
 

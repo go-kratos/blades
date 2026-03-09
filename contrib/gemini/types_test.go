@@ -73,6 +73,9 @@ func TestConvertGenAIToBlades_FunctionCallMappedToToolPart(t *testing.T) {
 	if got, want := toolPart.Name, "get_weather"; got != want {
 		t.Fatalf("tool name = %q, want %q", got, want)
 	}
+	if got, want := toolPart.Status, blades.StatusInProgress; got != want {
+		t.Fatalf("tool status = %q, want %q", got, want)
+	}
 
 	var args map[string]any
 	if err := json.Unmarshal([]byte(toolPart.Request), &args); err != nil {
@@ -126,7 +129,11 @@ func TestConvertGenAIToBlades_MixedTextAndFunctionCallUsesToolRole(t *testing.T)
 	if got, want := textPart.Text, "Let me check that."; got != want {
 		t.Fatalf("text part = %q, want %q", got, want)
 	}
-	if _, ok := converted.Message.Parts[1].(blades.ToolPart); !ok {
+	toolPart, ok := converted.Message.Parts[1].(blades.ToolPart)
+	if !ok {
 		t.Fatalf("second part type = %T, want blades.ToolPart", converted.Message.Parts[1])
+	}
+	if got, want := toolPart.Status, blades.StatusInProgress; got != want {
+		t.Fatalf("tool status = %q, want %q", got, want)
 	}
 }
