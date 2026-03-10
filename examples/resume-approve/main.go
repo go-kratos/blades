@@ -125,10 +125,8 @@ For every leave request:
 		blades.WithSession(session),
 		blades.WithInvocationID(invocationID),
 	)
-	if err != nil {
-		if !errors.Is(err, blades.ErrInterrupted) {
-			log.Fatal(err)
-		}
+	if !errors.Is(err, blades.ErrInterrupted) {
+		log.Fatal(err)
 	}
 	log.Println("leave request paused, waiting for human approval")
 	if err := promptApproval(session); err != nil {
