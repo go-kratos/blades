@@ -52,22 +52,21 @@ type DataPart struct {
 	MIMEType MIMEType `json:"mimeType"`
 }
 
-// ToolPart is a tool call, containing its request, response, and execution state.
+// ToolPart is a tool call, containing its request, response, and completion state.
 type ToolPart struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Request  string `json:"arguments"`
-	Response string `json:"result,omitempty"`
-	Status   Status `json:"status,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Request   string `json:"arguments"`
+	Response  string `json:"result,omitempty"`
+	Completed bool   `json:"completed,omitempty"`
 }
 
-// NewToolPart creates a tool call part with the default in-progress execution state.
+// NewToolPart creates a tool call part that has not completed yet.
 func NewToolPart(id, name, request string) ToolPart {
 	return ToolPart{
 		ID:      id,
 		Name:    name,
 		Request: request,
-		Status:  StatusInProgress,
 	}
 }
 

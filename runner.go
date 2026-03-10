@@ -16,6 +16,13 @@ func WithSession(session Session) RunOption {
 	}
 }
 
+// WithResume indicates whether to resume from the last session state.
+func WithResume(resume bool) RunOption {
+	return func(r *RunOptions) {
+		r.Resume = resume
+	}
+}
+
 // WithInvocationID sets a custom invocation ID for the Runner.
 func WithInvocationID(invocationID string) RunOption {
 	return func(r *RunOptions) {
@@ -26,6 +33,7 @@ func WithInvocationID(invocationID string) RunOption {
 // RunOptions holds configuration options for running the agent.
 type RunOptions struct {
 	Session      Session
+	Resume       bool
 	InvocationID string
 }
 
@@ -43,12 +51,13 @@ func NewRunner(rootAgent Agent) *Runner {
 }
 
 // buildInvocation constructs an Invocation object for the given message and options.
-func (r *Runner) buildInvocation(ctx context.Context, message *Message, streamable bool, o *RunOptions) (*Invocation, error) {
+func (r *Runner) buildInvocation(ctx context.Context, message *Message, stream bool, o *RunOptions) (*Invocation, error) {
 	invocation := &Invocation{
-		ID:         o.InvocationID,
-		Session:    o.Session,
-		Streamable: streamable,
-		Message:    message,
+		ID:      o.InvocationID,
+		Session: o.Session,
+		Resume:  o.Resume,
+		Stream:  stream,
+		Message: message,
 	}
 	if message != nil {
 		message.Author = "user"

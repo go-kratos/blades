@@ -37,7 +37,7 @@ func TestToChatCompletionParamsAssistantRole(t *testing.T) {
 	}
 }
 
-func TestChoiceToResponseMarksToolPartsInProgress(t *testing.T) {
+func TestChoiceToResponseMarksToolPartsIncomplete(t *testing.T) {
 	t.Parallel()
 
 	response, err := choiceToResponse(context.Background(), openaisdk.ChatCompletionNewParams{}, &openaisdk.ChatCompletion{
@@ -66,12 +66,12 @@ func TestChoiceToResponseMarksToolPartsInProgress(t *testing.T) {
 	if !ok {
 		t.Fatalf("part type = %T, want blades.ToolPart", response.Message.Parts[0])
 	}
-	if got, want := toolPart.Status, blades.StatusInProgress; got != want {
-		t.Fatalf("tool status = %q, want %q", got, want)
+	if got, want := toolPart.Completed, false; got != want {
+		t.Fatalf("tool completed = %t, want %t", got, want)
 	}
 }
 
-func TestChunkChoiceToResponseMarksToolPartsInProgress(t *testing.T) {
+func TestChunkChoiceToResponseMarksToolPartsIncomplete(t *testing.T) {
 	t.Parallel()
 
 	response, err := chunkChoiceToResponse(context.Background(), []openaisdk.ChatCompletionChunkChoice{
@@ -98,7 +98,7 @@ func TestChunkChoiceToResponseMarksToolPartsInProgress(t *testing.T) {
 	if !ok {
 		t.Fatalf("part type = %T, want blades.ToolPart", response.Message.Parts[0])
 	}
-	if got, want := toolPart.Status, blades.StatusInProgress; got != want {
-		t.Fatalf("tool status = %q, want %q", got, want)
+	if got, want := toolPart.Completed, false; got != want {
+		t.Fatalf("tool completed = %t, want %t", got, want)
 	}
 }
