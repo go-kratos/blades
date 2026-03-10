@@ -261,7 +261,10 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			if len(invocation.History) > 0 {
 				req.Messages = AppendMessages(req.Messages, invocation.History...)
 			}
-			if invocation.Message != nil {
+			switch {
+			case len(resumeMessages) > 0:
+				req.Messages = AppendMessages(req.Messages, resumeMessages...)
+			case invocation.Message != nil:
 				req.Messages = AppendMessages(req.Messages, invocation.Message)
 			}
 			return a.handle(ctx, invocation, req)
