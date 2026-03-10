@@ -129,18 +129,18 @@ For every leave request:
 		if !errors.Is(err, blades.ErrInterrupted) {
 			log.Fatal(err)
 		}
-		log.Println("leave request paused, waiting for human approval")
-		if err := promptApproval(session); err != nil {
-			log.Fatal(err)
-		}
-		output, err = runner.Run(
-			ctx,
-			input,
-			blades.WithResume(true),
-			blades.WithSession(session),
-			blades.WithInvocationID(invocationID),
-		)
 	}
+	log.Println("leave request paused, waiting for human approval")
+	if err := promptApproval(session); err != nil {
+		log.Fatal(err)
+	}
+	output, err = runner.Run(
+		ctx,
+		input,
+		blades.WithResume(true),
+		blades.WithSession(session),
+		blades.WithInvocationID(invocationID),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
