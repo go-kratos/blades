@@ -132,11 +132,7 @@ func convertGenAIPartToBlades(part *genai.Part) (blades.Part, error) {
 			}
 			request = string(args)
 		}
-		return blades.ToolPart{
-			ID:      part.FunctionCall.ID,
-			Name:    part.FunctionCall.Name,
-			Request: request,
-		}, nil
+		return blades.NewToolPart(part.FunctionCall.ID, part.FunctionCall.Name, request), nil
 	}
 	if part.FileData != nil {
 		return blades.FilePart{

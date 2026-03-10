@@ -26,7 +26,6 @@ func TestRetry_SuccessOnFirstAttempt(t *testing.T) {
 	}))
 
 	invocation := &blades.Invocation{
-		ID:      "test",
 		Message: blades.UserMessage("test"),
 	}
 
@@ -75,7 +74,6 @@ func TestRetry_RetryThenSuccess(t *testing.T) {
 	}))
 
 	invocation := &blades.Invocation{
-		ID:      "test",
 		Message: blades.UserMessage("test"),
 	}
 
@@ -117,7 +115,6 @@ func TestRetry_AllAttemptsFail(t *testing.T) {
 	}))
 
 	invocation := &blades.Invocation{
-		ID:      "test",
 		Message: blades.UserMessage("test"),
 	}
 
@@ -163,7 +160,6 @@ func TestRetry_WithCustomRetryable(t *testing.T) {
 	}))
 
 	invocation := &blades.Invocation{
-		ID:      "test",
 		Message: blades.UserMessage("test"),
 	}
 
@@ -208,7 +204,6 @@ func TestRetry_WithContextCancellation(t *testing.T) {
 	defer cancel()
 
 	invocation := &blades.Invocation{
-		ID:      "test",
 		Message: blades.UserMessage("test"),
 	}
 
@@ -251,7 +246,6 @@ func TestRetry_HandlerReturnsMultipleMessages(t *testing.T) {
 	}))
 
 	invocation := &blades.Invocation{
-		ID:      "test",
 		Message: blades.UserMessage("test"),
 	}
 
@@ -298,7 +292,6 @@ func TestRetry_ReceiverStopsProcessing(t *testing.T) {
 	}))
 
 	invocation := &blades.Invocation{
-		ID:      "test",
 		Message: blades.UserMessage("test"),
 	}
 

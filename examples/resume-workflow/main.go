@@ -15,7 +15,7 @@ import (
 func mockErr() blades.Middleware {
 	return func(next blades.Handler) blades.Handler {
 		return blades.HandleFunc(func(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
-			if !invocation.Resumable {
+			if !invocation.Resume {
 				return stream.Error[*blades.Message](errors.New("[ERROR] Simulated error in ReviewerAgent"))
 			}
 			return next.Handle(ctx, invocation)
@@ -88,10 +88,11 @@ func main() {
 		log.Println("first:", message.Author, message.Text())
 	}
 	// Resume from the previous session
-	resumeRunner := blades.NewRunner(sequentialAgent, blades.WithResumable(true))
+	resumeRunner := blades.NewRunner(sequentialAgent)
 	resumeStream := resumeRunner.RunStream(
 		ctx,
 		input,
+		blades.WithResume(true),
 		blades.WithSession(session),
 		blades.WithInvocationID(invocationID),
 	)

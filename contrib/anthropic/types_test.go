@@ -53,6 +53,9 @@ func TestConvertClaudeToBladesToolUseRole(t *testing.T) {
 	if got, want := toolPart.Name, "get_weather"; got != want {
 		t.Fatalf("tool name = %q, want %q", got, want)
 	}
+	if got, want := toolPart.Completed, false; got != want {
+		t.Fatalf("tool completed = %t, want %t", got, want)
+	}
 	var request map[string]any
 	if err := json.Unmarshal([]byte(toolPart.Request), &request); err != nil {
 		t.Fatalf("unmarshal tool request: %v", err)
@@ -111,6 +114,9 @@ func TestConvertClaudeToBladesTextAndToolUse(t *testing.T) {
 	}
 	if got, want := toolPart.ID, "toolu_2"; got != want {
 		t.Fatalf("tool id = %q, want %q", got, want)
+	}
+	if got, want := toolPart.Completed, false; got != want {
+		t.Fatalf("tool completed = %t, want %t", got, want)
 	}
 }
 

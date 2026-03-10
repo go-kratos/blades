@@ -61,11 +61,7 @@ func convertClaudeToBlades(message *anthropic.Message, status blades.Status) (*b
 			if err != nil {
 				return nil, err
 			}
-			msg.Parts = append(msg.Parts, blades.ToolPart{
-				ID:      b.ID,
-				Name:    b.Name,
-				Request: string(input),
-			})
+			msg.Parts = append(msg.Parts, blades.NewToolPart(b.ID, b.Name, string(input)))
 		}
 	}
 	if hasToolUse {

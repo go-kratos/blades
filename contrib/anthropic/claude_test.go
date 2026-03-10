@@ -42,10 +42,11 @@ func TestToClaudeParamsToolRole(t *testing.T) {
 				Parts: []blades.Part{
 					blades.TextPart{Text: "Let me check that."},
 					blades.ToolPart{
-						ID:       "toolu_123",
-						Name:     "get_weather",
-						Request:  `{"city":"Paris","unit":"C"}`,
-						Response: `{"temperature":21}`,
+						ID:        "toolu_123",
+						Name:      "get_weather",
+						Request:   `{"city":"Paris","unit":"C"}`,
+						Response:  `{"temperature":21}`,
+						Completed: true,
 					},
 				},
 			},

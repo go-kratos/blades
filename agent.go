@@ -212,10 +212,31 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 	return nil
 }
 
+// findResumeMessages checks if the invocation can be resumed from a previous state by looking for completed assistant messages in the session history.
+func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
+	if !invocation.Resume || invocation.Session == nil {
+		return nil, false
+	}
+	resumeHistory := invocation.Session.History()
+	resumeMessages := make([]*Message, 0, len(resumeHistory))
+	for _, m := range resumeHistory {
+		if m.InvocationID != invocation.ID {
+			continue
+		}
+		if m.Author == a.name {
+			resumeMessages = append(resumeMessages, m)
+			// If we find a completed assistant message, we can resume from here.
+			if m.Role == RoleAssistant && m.Status == StatusCompleted {
+				return resumeMessages, true
+			}
+		}
+	}
+	return resumeMessages, false
+}
+
 // Run runs the agent with the given prompt and options, returning a streamable response.
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
-		// If resumable and a completed message exists, return it directly.
 		resumeMessages, ok := a.findResumeMessages(invocation)
 		if ok {
 			for _, resumeMessage := range resumeMessages {
@@ -260,24 +281,6 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 	}
 }
 
-func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
-	if !invocation.Resumable || invocation.Session == nil {
-		return nil, false
-	}
-	resumeHistory := invocation.Session.History()
-	resumeMessages := make([]*Message, 0, len(resumeHistory))
-	for _, m := range resumeHistory {
-		if m.InvocationID == invocation.ID && m.Author == a.name {
-			resumeMessages = append(resumeMessages, m)
-			// If we find a completed assistant message, we can resume from here.
-			if m.Role == RoleAssistant && m.Status == StatusCompleted {
-				return resumeMessages, true
-			}
-		}
-	}
-	return resumeMessages, false
-}
-
 func (a *agent) saveOutputState(ctx context.Context, invocation *Invocation, message *Message) error {
 	// Save output to session state if outputKey is set
 	if a.outputKey != "" &&
@@ -316,6 +319,9 @@ func (a *agent) executeTools(ctx context.Context, invocation *Invocation, messag
 		switch v := any(part).(type) {
 		case ToolPart:
 			eg.Go(func() error {
+				if v.Completed {
+					return nil
+				}
 				toolCtx := NewToolContext(ctx, &toolContext{
 					id:      v.ID,
 					name:    v.Name,
@@ -325,6 +331,7 @@ func (a *agent) executeTools(ctx context.Context, invocation *Invocation, messag
 				if err != nil {
 					return err
 				}
+				part.Completed = true
 				m.Lock()
 				message.Parts[i] = part
 				message.Actions = MergeActions(message.Actions, actions.ToMap())
@@ -348,7 +355,7 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 	return func(yield func(*Message, error) bool) {
 		for i := 0; i < a.maxIterations; i++ {
 			var finalMessage *Message
-			if !invocation.Streamable {
+			if !invocation.Stream {
 				finalResponse, err := a.model.Generate(ctx, req)
 				if err != nil {
 					yield(nil, err)
@@ -406,7 +413,7 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 				yield(nil, ErrNoFinalResponse)
 				return
 			}
-			if invocation.Streamable && finalMessage.Status != StatusCompleted {
+			if invocation.Stream && finalMessage.Status != StatusCompleted {
 				yield(nil, ErrNoFinalResponse)
 				return
 			}

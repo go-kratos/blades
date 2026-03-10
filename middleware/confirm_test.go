@@ -50,10 +50,8 @@ func TestConfirmMiddleware_Run(t *testing.T) {
 			mw := Confirm(tt.confirm)
 			h := mw(next)
 			for got, err := range h.Handle(context.Background(), &blades.Invocation{
-				ID:        "test-invocation-id",
-				Message:   blades.UserMessage("test"),
-				Session:   blades.NewSession(),
-				Resumable: false,
+				Message: blades.UserMessage("test"),
+				Session: blades.NewSession(),
 			}) {
 				if tt.wantErr != nil {
 					if err == nil || err.Error() != tt.wantErr.Error() {
