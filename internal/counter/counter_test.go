@@ -1,20 +1,21 @@
-package memory
+package counter_test
 
 import (
 	"testing"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/internal/counter"
 )
 
 func TestCharBasedCounter_Empty(t *testing.T) {
-	c := NewCharBasedCounter()
+	c := counter.NewCharBasedCounter()
 	if got := c.Count(); got != 0 {
 		t.Errorf("Count() = %d, want 0", got)
 	}
 }
 
 func TestCharBasedCounter_TextPart(t *testing.T) {
-	c := NewCharBasedCounter()
+	c := counter.NewCharBasedCounter()
 	msg := blades.UserMessage("test") // 4 chars → 1 token + overhead
 	got := c.Count(msg)
 	if got <= 0 {
@@ -23,7 +24,7 @@ func TestCharBasedCounter_TextPart(t *testing.T) {
 }
 
 func TestCharBasedCounter_MultipleMessages(t *testing.T) {
-	c := NewCharBasedCounter()
+	c := counter.NewCharBasedCounter()
 	m1 := blades.UserMessage("hello")
 	m2 := blades.AssistantMessage("world response here")
 	single := c.Count(m1)
@@ -34,7 +35,7 @@ func TestCharBasedCounter_MultipleMessages(t *testing.T) {
 }
 
 func TestCharBasedCounter_ToolPart(t *testing.T) {
-	c := NewCharBasedCounter()
+	c := counter.NewCharBasedCounter()
 	msg := &blades.Message{
 		Role: blades.RoleAssistant,
 		Parts: []blades.Part{

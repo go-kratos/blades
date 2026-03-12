@@ -1,4 +1,4 @@
-package memory
+package counter
 
 import "github.com/go-kratos/blades"
 

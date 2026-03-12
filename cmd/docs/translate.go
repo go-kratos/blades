@@ -21,7 +21,7 @@ func translate(from string) error {
 	agent, err := blades.NewAgent(
 		"Document translator",
 		blades.WithModel(provider),
-		blades.WithInstructions(`You are a professional technical translator.
+		blades.WithInstruction(`You are a professional technical translator.
 	Please translate the following Markdown document into **{{.target_language}}**.
 	Follow these strict rules:
 	1. **Preserve all Markdown formatting**, including headings, bold/italic text, lists, quotes, tables, code blocks, links, and images.
@@ -37,8 +37,8 @@ func translate(from string) error {
 	}
 	session := blades.NewSession()
 	session.SetState("target_language", to)
-	runner := blades.NewRunner(agent, blades.WithSession(session))
-	result, err := runner.Run(context.Background(), blades.UserMessage(string(content)))
+	runner := blades.NewRunner(agent)
+	result, err := runner.Run(context.Background(), blades.UserMessage(string(content)), blades.WithSession(session))
 	if err != nil {
 		return err
 	}

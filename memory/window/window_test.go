@@ -1,14 +1,16 @@
-package memory
+package window_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/internal/counter"
+	"github.com/go-kratos/blades/memory/window"
 )
 
-func TestWindowContextManager_NoLimits(t *testing.T) {
-	cm := NewWindowContextManager(WindowConfig{})
+func TestContextManager_NoLimits(t *testing.T) {
+	cm := window.NewContextManager()
 	msgs := makeMessages(5)
 	got, err := cm.Prepare(context.Background(), msgs)
 	if err != nil {
@@ -19,8 +21,8 @@ func TestWindowContextManager_NoLimits(t *testing.T) {
 	}
 }
 
-func TestWindowContextManager_MaxMessages(t *testing.T) {
-	cm := NewWindowContextManager(WindowConfig{MaxMessages: 3})
+func TestContextManager_MaxMessages(t *testing.T) {
+	cm := window.NewContextManager(window.WithMaxMessages(3))
 	msgs := makeMessages(5)
 	got, err := cm.Prepare(context.Background(), msgs)
 	if err != nil {
@@ -29,7 +31,6 @@ func TestWindowContextManager_MaxMessages(t *testing.T) {
 	if len(got) != 3 {
 		t.Errorf("len = %d, want 3", len(got))
 	}
-	// Should be the last 3 messages.
 	for i, m := range got {
 		if m != msgs[2+i] {
 			t.Errorf("got[%d] wrong message", i)
@@ -37,8 +38,8 @@ func TestWindowContextManager_MaxMessages(t *testing.T) {
 	}
 }
 
-func TestWindowContextManager_MaxMessages_BelowLimit(t *testing.T) {
-	cm := NewWindowContextManager(WindowConfig{MaxMessages: 10})
+func TestContextManager_MaxMessages_BelowLimit(t *testing.T) {
+	cm := window.NewContextManager(window.WithMaxMessages(10))
 	msgs := makeMessages(3)
 	got, err := cm.Prepare(context.Background(), msgs)
 	if err != nil {
@@ -49,11 +50,11 @@ func TestWindowContextManager_MaxMessages_BelowLimit(t *testing.T) {
 	}
 }
 
-func TestWindowContextManager_MaxTokens(t *testing.T) {
-	cm := NewWindowContextManager(WindowConfig{
-		Counter:   NewCharBasedCounter(),
-		MaxTokens: 1, // very small budget → keep only the last message
-	})
+func TestContextManager_MaxTokens(t *testing.T) {
+	cm := window.NewContextManager(
+		window.WithTokenCounter(counter.NewCharBasedCounter()),
+		window.WithMaxTokens(1),
+	)
 	msgs := makeMessages(5)
 	got, err := cm.Prepare(context.Background(), msgs)
 	if err != nil {
@@ -67,8 +68,8 @@ func TestWindowContextManager_MaxTokens(t *testing.T) {
 	}
 }
 
-func TestWindowContextManager_Empty(t *testing.T) {
-	cm := NewWindowContextManager(WindowConfig{MaxMessages: 5})
+func TestContextManager_Empty(t *testing.T) {
+	cm := window.NewContextManager(window.WithMaxMessages(5))
 	got, err := cm.Prepare(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +79,17 @@ func TestWindowContextManager_Empty(t *testing.T) {
 	}
 }
 
-// helpers shared by window and summary tests
+func TestContextManager_DefaultMaxMessages(t *testing.T) {
+	cm := window.NewContextManager()
+	msgs := makeMessages(150)
+	got, err := cm.Prepare(context.Background(), msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 100 {
+		t.Errorf("len = %d, want 100 (default MaxMessages)", len(got))
+	}
+}
 
 func makeMessages(n int) []*blades.Message {
 	msgs := make([]*blades.Message, n)
