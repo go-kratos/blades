@@ -3,9 +3,9 @@ package summary
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/internal/counter"
 )
 
 // metaCompressedKey marks summary messages to prevent re-compression.
@@ -93,12 +93,11 @@ func (s *contextManager) Prepare(ctx context.Context, messages []*blades.Message
 	if len(messages) == 0 || s.maxTokens == 0 {
 		return messages, nil
 	}
-	counter := s.tokenCounter()
 
 	result := make([]*blades.Message, len(messages))
 	copy(result, messages)
 
-	for counter.Count(result...) > s.maxTokens {
+	for s.counter.Count(result...) > s.maxTokens {
 		boundary := len(result) - s.keepRecent
 		if boundary <= 0 {
 			break
@@ -140,13 +139,6 @@ func (s *contextManager) Prepare(ctx context.Context, messages []*blades.Message
 	return result, nil
 }
 
-func (s *contextManager) tokenCounter() blades.TokenCounter {
-	if s.counter != nil {
-		return s.counter
-	}
-	return counter.NewCharBasedCounter()
-}
-
 func (s *contextManager) summarize(ctx context.Context, messages []*blades.Message) (*blades.Message, error) {
 	prompt := buildSummaryPrompt(messages)
 	req := &blades.ModelRequest{
@@ -166,11 +158,14 @@ func (s *contextManager) summarize(ctx context.Context, messages []*blades.Messa
 }
 
 func buildSummaryPrompt(messages []*blades.Message) string {
-	var buf []byte
-	buf = append(buf, "Please provide a concise summary of the following conversation transcript. "+
-		"Preserve key facts, decisions, and outcomes. Output only the summary.\n\n"...)
+	var sb strings.Builder
+	sb.WriteString("Please provide a concise summary of the following conversation transcript. " +
+		"Preserve key facts, decisions, and outcomes. Output only the summary.\n\n")
 	for _, m := range messages {
-		buf = append(buf, string(m.Role)+": "+m.Text()+"\n"...)
+		sb.WriteString(string(m.Role))
+		sb.WriteString(": ")
+		sb.WriteString(m.Text())
+		sb.WriteByte('\n')
 	}
-	return string(buf)
+	return sb.String()
 }

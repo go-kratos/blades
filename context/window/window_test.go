@@ -91,6 +91,18 @@ func TestContextManager_DefaultMaxMessages(t *testing.T) {
 	}
 }
 
+func TestContextManager_MaxMessagesZero_NoLimit(t *testing.T) {
+	cm := window.NewContextManager(window.WithMaxMessages(0))
+	msgs := makeMessages(150)
+	got, err := cm.Prepare(context.Background(), msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 150 {
+		t.Errorf("len = %d, want 150 (MaxMessages=0 disables limit)", len(got))
+	}
+}
+
 func makeMessages(n int) []*blades.Message {
 	msgs := make([]*blades.Message, n)
 	for i := range n {

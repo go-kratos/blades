@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/internal/counter"
 )
 
 const defaultMaxMessages = 100
@@ -14,7 +13,7 @@ type Option func(*contextManager)
 
 // WithMaxMessages sets the maximum number of messages to retain.
 // Oldest messages are dropped first when the limit is exceeded.
-// Default is 100.
+// Default is 100. Set to 0 to disable message count limiting.
 func WithMaxMessages(n int) Option {
 	return func(c *contextManager) {
 		c.maxMessages = n
@@ -60,7 +59,6 @@ func (w *contextManager) Prepare(_ context.Context, messages []*blades.Message) 
 	if len(messages) == 0 {
 		return messages, nil
 	}
-	counter := w.tokenCounter()
 
 	result := messages
 	if w.maxMessages > 0 && len(result) > w.maxMessages {
@@ -68,17 +66,12 @@ func (w *contextManager) Prepare(_ context.Context, messages []*blades.Message) 
 	}
 
 	if w.maxTokens > 0 {
-		for len(result) > 1 && counter.Count(result...) > w.maxTokens {
+		total := w.counter.Count(result...)
+		for len(result) > 1 && total > w.maxTokens {
+			total -= w.counter.Count(result[0])
 			result = result[1:]
 		}
 	}
 
 	return result, nil
-}
-
-func (w *contextManager) tokenCounter() blades.TokenCounter {
-	if w.counter != nil {
-		return w.counter
-	}
-	return counter.NewCharBasedCounter()
 }
