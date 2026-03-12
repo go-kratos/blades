@@ -35,9 +35,8 @@ func translate(from string) error {
 	if err != nil {
 		return err
 	}
-	session := blades.NewSession(map[string]any{
-		"target_language": to,
-	})
+	session := blades.NewSession()
+	session.SetState("target_language", to)
 	runner := blades.NewRunner(agent, blades.WithSession(session))
 	result, err := runner.Run(context.Background(), blades.UserMessage(string(content)))
 	if err != nil {

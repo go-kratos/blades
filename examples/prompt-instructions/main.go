@@ -22,9 +22,8 @@ func main() {
 		log.Fatal(err)
 	}
 	// Create a new session
-	session := blades.NewSession(map[string]any{
-		"style": "robot",
-	})
+	session := blades.NewSession()
+	session.SetState("style", "robot")
 	input := blades.UserMessage("Tell me a joke.")
 	ctx := context.Background()
 	runner := blades.NewRunner(agent)

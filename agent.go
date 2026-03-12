@@ -107,6 +107,16 @@ func WithMaxIterations(n int) AgentOption {
 	}
 }
 
+// WithContextManager sets a ContextManager that is applied before each model
+// call within the agent loop. Use this to enforce context window limits via
+// truncation (WindowContextManager) or LLM-based summarization
+// (SummaryContextManager).
+func WithContextManager(cm ContextManager) AgentOption {
+	return func(a *agent) {
+		a.contextManager = cm
+	}
+}
+
 // agent is a struct that represents an AI agent.
 type agent struct {
 	name                string
@@ -123,6 +133,7 @@ type agent struct {
 	skills              []skills.Skill
 	skillToolset        *skills.Toolset
 	toolsResolver       tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
+	contextManager      ContextManager // Optional context window manager
 }
 
 // NewAgent creates a new Agent with the given name and options.
@@ -354,6 +365,17 @@ func messageFromResponse(response *ModelResponse) (*Message, error) {
 func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
 		for i := 0; i < a.maxIterations; i++ {
+			// Apply context window management before each model call.
+			// This handles both the initial history and messages that accumulate
+			// during tool calls across iterations.
+			if a.contextManager != nil {
+				prepared, err := a.contextManager.Prepare(ctx, req.Messages)
+				if err != nil {
+					yield(nil, err)
+					return
+				}
+				req.Messages = prepared
+			}
 			var finalMessage *Message
 			if !invocation.Stream {
 				finalResponse, err := a.model.Generate(ctx, req)
