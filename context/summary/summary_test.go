@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/internal/counter"
-	"github.com/go-kratos/blades/memory/summary"
+	"github.com/go-kratos/blades/context/summary"
 )
 
 func TestContextManager_BelowBudget(t *testing.T) {
