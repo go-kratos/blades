@@ -153,7 +153,6 @@ func (s *contextManager) summarize(ctx context.Context, messages []*blades.Messa
 		msg.Metadata = make(map[string]any)
 	}
 	msg.Metadata[metaCompressedKey] = true
-	msg.Role = blades.RoleUser
 	return msg, nil
 }
 
