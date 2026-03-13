@@ -3,7 +3,6 @@ package summary
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/go-kratos/blades"
 )
@@ -14,6 +13,9 @@ const metaCompressedKey = "summary_compressed"
 const (
 	defaultKeepRecent = 10
 	defaultBatchSize  = 20
+
+	defaultInstruction = "Please provide a concise summary of the following conversation transcript. " +
+		"Preserve key facts, decisions, and outcomes. Output only the summary."
 )
 
 // Option configures a summary ContextManager.
@@ -58,12 +60,21 @@ func WithBatchSize(n int) Option {
 	}
 }
 
+// WithInstruction sets the system-level instruction sent to the summarizer model.
+// Defaults to a built-in English summarization prompt if not set.
+func WithInstruction(instruction string) Option {
+	return func(c *contextManager) {
+		c.instruction = instruction
+	}
+}
+
 type contextManager struct {
-	maxTokens  int64
-	counter    blades.TokenCounter
-	summarizer blades.ModelProvider
-	keepRecent int
-	batchSize  int
+	maxTokens   int64
+	counter     blades.TokenCounter
+	summarizer  blades.ModelProvider
+	keepRecent  int
+	batchSize   int
+	instruction string
 }
 
 // NewContextManager returns a ContextManager that compresses old messages using
@@ -140,31 +151,17 @@ func (s *contextManager) Prepare(ctx context.Context, messages []*blades.Message
 }
 
 func (s *contextManager) summarize(ctx context.Context, messages []*blades.Message) (*blades.Message, error) {
-	prompt := buildSummaryPrompt(messages)
 	req := &blades.ModelRequest{
-		Messages: []*blades.Message{blades.UserMessage(prompt)},
+		Messages:    messages,
+		Instruction: blades.SystemMessage(s.instruction),
 	}
 	resp, err := s.summarizer.Generate(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	msg := resp.Message
-	if msg.Metadata == nil {
-		msg.Metadata = make(map[string]any)
+	if resp.Message.Metadata == nil {
+		resp.Message.Metadata = make(map[string]any)
 	}
-	msg.Metadata[metaCompressedKey] = true
-	return msg, nil
-}
-
-func buildSummaryPrompt(messages []*blades.Message) string {
-	var sb strings.Builder
-	sb.WriteString("Please provide a concise summary of the following conversation transcript. " +
-		"Preserve key facts, decisions, and outcomes. Output only the summary.\n\n")
-	for _, m := range messages {
-		sb.WriteString(string(m.Role))
-		sb.WriteString(": ")
-		sb.WriteString(m.Text())
-		sb.WriteByte('\n')
-	}
-	return sb.String()
+	resp.Message.Metadata[metaCompressedKey] = true
+	return resp.Message, nil
 }

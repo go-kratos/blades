@@ -65,6 +65,33 @@ func TestContextManager_ZeroMaxTokens_NoOp(t *testing.T) {
 	}
 }
 
+func TestContextManager_WithInstruction(t *testing.T) {
+	s := &mockSummarizer{}
+	customInstrText := "Summarize in Chinese. Output only the summary."
+	cm := summary.NewContextManager(
+		summary.WithSummarizer(s),
+		summary.WithMaxTokens(10),
+		summary.WithKeepRecent(2),
+		summary.WithBatchSize(3),
+		summary.WithTokenCounter(counter.NewCharBasedCounter()),
+		summary.WithInstruction(customInstrText),
+	)
+	msgs := makeMessages(8)
+	_, err := cm.Prepare(context.Background(), msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.calls == 0 {
+		t.Fatal("summarizer was not called")
+	}
+	if s.lastReq.Instruction == nil {
+		t.Fatal("expected Instruction to be set on ModelRequest, got nil")
+	}
+	if s.lastReq.Instruction.Text() != customInstrText {
+		t.Errorf("Instruction text = %q, want %q", s.lastReq.Instruction.Text(), customInstrText)
+	}
+}
+
 func makeMessages(n int) []*blades.Message {
 	msgs := make([]*blades.Message, n)
 	for i := range n {
@@ -73,12 +100,16 @@ func makeMessages(n int) []*blades.Message {
 	return msgs
 }
 
-type mockSummarizer struct{ calls int }
+type mockSummarizer struct {
+	calls   int
+	lastReq *blades.ModelRequest
+}
 
 func (m *mockSummarizer) Name() string { return "mock" }
 
 func (m *mockSummarizer) Generate(_ context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
 	m.calls++
+	m.lastReq = req
 	var sb strings.Builder
 	for _, msg := range req.Messages {
 		sb.WriteString(msg.Text())
