@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"log"
-	"strings"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
@@ -63,7 +62,7 @@ func (m *chatModel) Name() string {
 
 // Generate executes a non-streaming chat completion request.
 func (m *chatModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
-	params, err := m.toChatCompletionParams(false, req)
+	params, err := m.toChatCompletionParams(req)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +81,7 @@ func (m *chatModel) Generate(ctx context.Context, req *blades.ModelRequest) (*bl
 // into a ModelResponse for incremental consumption.
 func (m *chatModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
-		params, err := m.toChatCompletionParams(true, req)
+		params, err := m.toChatCompletionParams(req)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -103,19 +102,8 @@ func (m *chatModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) 
 			}
 		}
 		if err := streaming.Err(); err != nil {
-			// Some OpenAI-compatible providers (e.g. DeepSeek) close the SSE
-			// stream with a malformed or empty final chunk.  If we already have
-			// accumulated content the stream completed successfully for the user,
-			// so treat this as a non-fatal warning rather than a hard failure.
-			if acc.ChatCompletion.ID != "" {
-				log.Printf("blades/openai: stream closed with error (content already received, ignoring): %v", err)
-			} else if isStreamEOF(err) {
-				log.Printf("blades/openai: stream closed unexpectedly with no content: %v", err)
-				return
-			} else {
-				yield(nil, err)
-				return
-			}
+			yield(nil, err)
+			return
 		}
 		finalResponse, err := choiceToResponse(ctx, params, &acc.ChatCompletion)
 		if err != nil {
@@ -127,7 +115,7 @@ func (m *chatModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) 
 }
 
 // toChatCompletionParams converts a generic model request into OpenAI params.
-func (m *chatModel) toChatCompletionParams(isStreaming bool, req *blades.ModelRequest) (openai.ChatCompletionNewParams, error) {
+func (m *chatModel) toChatCompletionParams(req *blades.ModelRequest) (openai.ChatCompletionNewParams, error) {
 	tools, err := toTools(req.Tools)
 	if err != nil {
 		return openai.ChatCompletionNewParams{}, err
@@ -178,11 +166,6 @@ func (m *chatModel) toChatCompletionParams(isStreaming bool, req *blades.ModelRe
 			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{JSONSchema: schemaParam},
 		}
 	}
-	if isStreaming {
-		params.StreamOptions = openai.ChatCompletionStreamOptionsParam{
-			IncludeUsage: openai.Bool(true),
-		}
-	}
 	if req.Instruction != nil {
 		params.Messages = append(params.Messages, openai.SystemMessage(toTextParts(req.Instruction)))
 	}
@@ -191,7 +174,7 @@ func (m *chatModel) toChatCompletionParams(isStreaming bool, req *blades.ModelRe
 		case blades.RoleUser:
 			params.Messages = append(params.Messages, openai.UserMessage(toContentParts(msg)))
 		case blades.RoleAssistant:
-			params.Messages = append(params.Messages, openai.AssistantMessage(msg.Text()))
+			params.Messages = append(params.Messages, openai.UserMessage(toContentParts(msg)))
 		case blades.RoleSystem:
 			params.Messages = append(params.Messages, openai.SystemMessage(toTextParts(msg)))
 		case blades.RoleTool:
@@ -334,7 +317,11 @@ func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []opena
 		if len(choice.Message.ToolCalls) > 0 {
 			for _, call := range choice.Message.ToolCalls {
 				msg.Role = blades.RoleTool
-				msg.Parts = append(msg.Parts, blades.NewToolPart(call.ID, call.Function.Name, call.Function.Arguments))
+				msg.Parts = append(msg.Parts, blades.ToolPart{
+					ID:      call.ID,
+					Name:    call.Function.Name,
+					Request: call.Function.Arguments,
+				})
 			}
 		}
 	}
@@ -345,66 +332,71 @@ func choiceToToolCalls(ctx context.Context, tools []*tools.Tool, choices []opena
 
 // choiceToResponse converts a non-streaming choice to a ModelResponse.
 func choiceToResponse(ctx context.Context, params openai.ChatCompletionNewParams, cc *openai.ChatCompletion) (*blades.ModelResponse, error) {
-	message := blades.NewAssistantMessage(blades.StatusCompleted)
-	message.TokenUsage = blades.TokenUsage{
-		InputTokens:  cc.Usage.PromptTokens,
-		OutputTokens: cc.Usage.CompletionTokens,
-		TotalTokens:  cc.Usage.TotalTokens,
+	msg := &blades.Message{
+		Role:   blades.RoleAssistant,
+		Status: blades.StatusCompleted,
+		TokenUsage: blades.TokenUsage{
+			PromptTokens:     cc.Usage.PromptTokens,
+			CompletionTokens: cc.Usage.CompletionTokens,
+			TotalTokens:      cc.Usage.TotalTokens,
+		},
+		Metadata: map[string]any{},
 	}
 	for _, choice := range cc.Choices {
 		if choice.Message.Content != "" {
-			message.Parts = append(message.Parts, blades.TextPart{Text: choice.Message.Content})
+			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Message.Content})
 		}
 		if choice.Message.Audio.Data != "" {
 			bytes, err := base64.StdEncoding.DecodeString(choice.Message.Audio.Data)
 			if err != nil {
 				return nil, err
 			}
-			message.Parts = append(message.Parts, blades.DataPart{Bytes: bytes})
+			msg.Parts = append(msg.Parts, blades.DataPart{Bytes: bytes})
 		}
 		if choice.Message.Refusal != "" {
 			// TODO: map refusal codes to specific error types
 		}
 		if choice.FinishReason != "" {
-			message.FinishReason = choice.FinishReason
+			msg.FinishReason = choice.FinishReason
 		}
 		for _, call := range choice.Message.ToolCalls {
-			message.Role = blades.RoleTool
-			message.Parts = append(message.Parts, blades.NewToolPart(call.ID, call.Function.Name, call.Function.Arguments))
+			msg.Role = blades.RoleTool
+			msg.Parts = append(msg.Parts, blades.ToolPart{
+				ID:      call.ID,
+				Name:    call.Function.Name,
+				Request: call.Function.Arguments,
+			})
 		}
+
 	}
-	return &blades.ModelResponse{Message: message}, nil
+	return &blades.ModelResponse{Message: msg}, nil
 }
 
 // chunkChoiceToResponse converts a streaming chunk choice to a ModelResponse.
 func chunkChoiceToResponse(ctx context.Context, choices []openai.ChatCompletionChunkChoice) (*blades.ModelResponse, error) {
-	message := blades.NewAssistantMessage(blades.StatusIncomplete)
+	msg := &blades.Message{
+		Role:     blades.RoleAssistant,
+		Status:   blades.StatusIncomplete,
+		Metadata: map[string]any{},
+	}
 	for _, choice := range choices {
 		if choice.Delta.Content != "" {
-			message.Parts = append(message.Parts, blades.TextPart{Text: choice.Delta.Content})
+			msg.Parts = append(msg.Parts, blades.TextPart{Text: choice.Delta.Content})
 		}
 		if choice.Delta.Refusal != "" {
 			// TODO: map refusal codes to specific error types
 		}
 		if choice.FinishReason != "" {
-			message.FinishReason = choice.FinishReason
+			msg.FinishReason = choice.FinishReason
 		}
 		for _, call := range choice.Delta.ToolCalls {
-			message.Role = blades.RoleTool
-			message.Parts = append(message.Parts, blades.NewToolPart(call.ID, call.Function.Name, call.Function.Arguments))
+			msg.Role = blades.RoleTool
+			msg.Parts = append(msg.Parts, blades.ToolPart{
+				ID:      call.ID,
+				Name:    call.Function.Name,
+				Request: call.Function.Arguments,
+			})
 		}
 	}
-	return &blades.ModelResponse{Message: message}, nil
-}
-
-// isStreamEOF reports whether err is an EOF-class or JSON-truncation error that
-// can arise when an SSE stream closes without a proper [DONE] terminator.
-func isStreamEOF(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "unexpected end of JSON input") ||
-		strings.Contains(msg, "EOF") ||
-		strings.Contains(msg, "unexpected EOF")
+	return &blades.ModelResponse{Message: msg}, nil
 }

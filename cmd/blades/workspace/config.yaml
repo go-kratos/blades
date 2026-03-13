@@ -1,0 +1,9 @@
+llm:
+  provider: openai
+  model: deepseek-chat
+  apiKey: ${OPENAI_API_KEY}
+  baseUrl: https://api.deepseek.com
+
+defaults:
+  maxIterations: 10
+  compressThreshold: 40000     # character count that triggers truncation
