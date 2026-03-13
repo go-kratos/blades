@@ -15,7 +15,7 @@ func TestSession_SetState(t *testing.T) {
 
 func TestSession_History(t *testing.T) {
 	s := NewSession()
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		s.Append(context.Background(), UserMessage("msg"))
 	}
 	if len(s.History()) != 3 {
