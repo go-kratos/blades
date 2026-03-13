@@ -11,11 +11,11 @@ import (
 // Session state keys used to persist compression state across runs.
 // Values stored are primitive types (string and int) only.
 const (
-	// stateSummaryContentKey holds the rolling summary text (string).
-	stateSummaryContentKey = "__summary_content__"
 	// stateSummaryOffsetKey holds the number of messages from session.History()
 	// that have been folded into the rolling summary (int).
 	stateSummaryOffsetKey = "__summary_offset__"
+	// stateSummaryContentKey holds the rolling summary text (string).
+	stateSummaryContentKey = "__summary_content__"
 )
 
 const (
