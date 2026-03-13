@@ -213,6 +213,9 @@ func NewMessageParts(inputs ...any) []Part {
 
 // MergeParts merges two slices of parts into one.
 func MergeParts(base, extra *Message) *Message {
+	if base == nil {
+		return extra
+	}
 	if extra == nil {
 		return base
 	}
