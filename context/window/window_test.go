@@ -105,7 +105,7 @@ func TestContextManager_MaxMessagesZero_NoLimit(t *testing.T) {
 
 func makeMessages(n int) []*blades.Message {
 	msgs := make([]*blades.Message, n)
-	for i := range n {
+	for i := 0; i < n; i++ {
 		msgs[i] = blades.UserMessage("message content number " + string(rune('0'+i)))
 	}
 	return msgs
