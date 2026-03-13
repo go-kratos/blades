@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"fmt"
@@ -54,7 +54,6 @@ func newInitCmd() *cobra.Command {
 }
 
 // initGit initialises a git repository in dir and creates a .gitignore.
-// Cron-based git backups are added separately via 'blades cron add'.
 func initGit(dir string) error {
 	c := exec.Command("git", "init")
 	c.Dir = dir

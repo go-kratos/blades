@@ -29,4 +29,4 @@
 
 ---
 
-_Updated by the `distill` skill. Run it periodically to consolidate memories/ into this file._
+_Updated by the `distill` skill. Run it periodically to consolidate memory/ into this file._

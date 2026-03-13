@@ -1,18 +1,19 @@
 # blades ⚡
 
 > **A file-system-based personal AI agent CLI**
-> 
+>
 > 中文文档：[README_CN.md](README_CN.md)
 
-`blades` is a local-first command-line AI agent backed by a plain-file workspace (`~/.blades`). It remembers your conversations, loads skills from Markdown, schedules recurring tasks via cron, and supports any LLM provider — Anthropic, OpenAI, or Gemini.
+`blades` is a local-first command-line AI agent backed by a plain-file workspace (`~/.blades`). It remembers your conversations, loads skills from Markdown, connects to MCP tool servers, schedules recurring tasks via cron, and supports any LLM provider — Anthropic, OpenAI, or Gemini.
 
 ---
 
 ## Features
 
 - **Streaming chat** — animated spinner → token-by-token streaming with ANSI colour support
-- **Persistent memory** — `MEMORY.md` (L1), daily session logs (L2), knowledge files (L3)
-- **Skill system** — drop a `SKILL.md` into `skills/<name>/` and the agent picks it up automatically
+- **Persistent memory** — `MEMORY.md` (L1), daily session logs in `memory/` (L2), knowledge files (L3)
+- **Skill system** — drop a `SKILL.md` into any skills directory and the agent picks it up automatically
+- **MCP support** — connect external tool servers via `mcp.json` (stdio, HTTP, WebSocket)
 - **Cron scheduler** — run shell commands or agent turns on a schedule; backed by `cron.json`
 - **Daemon mode** — keep the scheduler running as a long-lived background process
 - **Multi-provider** — Anthropic Claude, OpenAI, Google Gemini; switch in `config.yaml`
@@ -34,7 +35,7 @@ go install .
 ## Quick Start
 
 ```sh
-# 1. Initialise workspace (creates ~/.blades with template files)
+# 1. Initialise workspace (creates ~/.blades with all template files)
 blades init
 
 # 2. Set your API key
@@ -53,20 +54,24 @@ blades chat
 
 ```
 ~/.blades/
-├── config.yaml      ← LLM provider, model, defaults
-├── SOUL.md          ← agent's core personality
-├── IDENTITY.md      ← role and current mission
-├── AGENTS.md        ← behaviour rules (similar to AGENTS.md / CLAUDE.md)
-├── USER.md          ← facts about you the agent should always know
-├── MEMORY.md        ← long-term distilled memory (L1)
-├── skills/
-│   ├── git-backup/SKILL.md
-│   └── distill/SKILL.md
-├── memories/        ← daily session logs (L2) — YYYY-MM-DD.md
-├── knowledges/      ← reference knowledge files the agent can load when needed (L3)
-├── sessions/        ← conversation state per session ID
-├── outputs/         ← agent-produced files
-└── cron.json        ← persistent cron job store
+├── config.yaml          ← LLM provider, model, API key
+├── mcp.json             ← global MCP server connections
+├── cron.json            ← persistent cron job store
+├── skills/              ← global skills (available to all workspaces)
+├── sessions/            ← conversation state per session ID
+└── workspace/           ← agent operating directory (default exec CWD)
+    ├── AGENTS.md        ← behaviour rules loaded at every session start
+    ├── SOUL.md          ← agent's core personality
+    ├── IDENTITY.md      ← role, capabilities, quick-reference card
+    ├── USER.md          ← facts about you the agent should always know
+    ├── MEMORY.md        ← long-term distilled memory (L1)
+    ├── TOOLS.md         ← machine-specific setup notes
+    ├── HEARTBEAT.md     ← proactive check-in task list
+    ├── mcp.json         ← workspace-level MCP server connections
+    ├── skills/          ← workspace-local skills
+    ├── memory/          ← daily session logs (L2) — YYYY-MM-DD.md
+    ├── knowledges/      ← reference knowledge files (L3)
+    └── outputs/         ← agent-produced files
 ```
 
 ### config.yaml
@@ -88,7 +93,7 @@ defaults:
 
 ### `blades init`
 
-Initialise the workspace. Creates `~/.blades` with all template files and built-in skills (`git-backup`, `distill`). Safe to re-run — existing files are never overwritten.
+Initialise the workspace. Creates `~/.blades` with all template files and directories. Safe to re-run — existing files are never overwritten.
 
 ```sh
 blades init
@@ -103,6 +108,7 @@ Start an interactive streaming conversation.
 ```sh
 blades chat
 blades chat --session my-project       # resume or start a named session
+blades chat --simple                   # plain line I/O (fixes Windows IME issues)
 ```
 
 **In-chat slash commands:**
@@ -110,7 +116,7 @@ blades chat --session my-project       # resume or start a named session
 | Command | Description |
 |---|---|
 | `/help` | Show available commands |
-| `/reload` | Hot-reload skills without restarting |
+| `/reload` | Hot-reload skills and config without restarting |
 | `/session <id>` | Switch to a different session |
 | `/clear` | Clear the terminal screen |
 | `/exit` | Quit |
@@ -130,7 +136,7 @@ blades run -m "write morning report" --session reports
 ```sh
 blades memory show                     # print MEMORY.md
 blades memory add "prefer short answers"
-blades memory search "last week"       # search session logs
+blades memory search "last week"       # search session logs in memory/
 ```
 
 ### `blades cron`
@@ -148,7 +154,7 @@ blades cron add --name "morning-brief" \
 # Add a job (shell command every hour)
 blades cron add --name "health-check" --every 1h --command "echo ok"
 
-# Ensure a heartbeat job exists; skip creation if it is already there
+# Ensure a heartbeat job exists; skip creation if already present
 blades cron heartbeat
 
 # Ensure the heartbeat job exists and trigger it immediately once
@@ -186,8 +192,9 @@ blades doctor
 
 | Flag | Default | Description |
 |---|---|---|
-| `--config` | workspace `config.yaml` | Path to a custom config file |
-| `--workspace` | `~/.blades` | Path to workspace root |
+| `--config` | `~/.blades/config.yaml` | Path to a custom config file |
+| `--workspace` | `~/.blades` | Path to the blades root directory |
+| `--debug` | false | Enable verbose debug logging |
 
 ---
 
@@ -212,28 +219,74 @@ description: Does something useful for the agent.
 Instructions for the agent go here…
 ```
 
-Drop the directory into `~/.blades/skills/` and type `/reload` in chat (or restart). The agent will automatically discover and use the new skill.
+Skills are discovered from three directories in order — later directories can shadow earlier ones:
 
-Built-in skills installed by `blades init`:
+| Directory | Scope |
+|---|---|
+| `~/.agents/skills/` | System-wide (shared across tools) |
+| `~/.blades/skills/` | Global blades skills |
+| `~/.blades/workspace/skills/` | Workspace-local skills |
+
+Type `/reload` in chat (or restart) to pick up new skills.
+
+Built-in skill installed by `blades init`:
 
 | Skill | Description |
 |---|---|
-| `git-backup` | Stage, commit, and push all workspace changes |
-| `distill` | Analyse session logs and distill lessons into `MEMORY.md` |
+| `cron` | Schedule shell commands or agent turns from within chat |
+
+---
+
+## MCP (Model Context Protocol)
+
+blades supports connecting to external MCP tool servers. Servers are configured in `mcp.json` files using the same schema as Claude Desktop, so existing configs can be reused directly.
+
+MCP servers are loaded from two files and merged together:
+
+| File | Scope |
+|---|---|
+| `~/.blades/mcp.json` | Global (all workspaces) |
+| `~/.blades/workspace/mcp.json` | This workspace only |
+
+Additional servers can also be declared inline in `config.yaml` under the `mcp:` key.
+
+### mcp.json format
+
+```json
+{
+  "mcpServers": {
+    "time": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-time"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "env": { "DEBUG": "1" }
+    },
+    "my-api": {
+      "transport": "http",
+      "endpoint": "http://localhost:8080/mcp",
+      "headers": { "Authorization": "Bearer ${MY_TOKEN}" },
+      "timeoutSeconds": 15
+    }
+  }
+}
+```
+
+`transport` defaults to `stdio` when omitted. String values support `${ENV_VAR}` expansion.
 
 ---
 
 ## Memory Architecture
 
-By default, blades only injects AGENTS.md into the initial system instruction.
-The agent should follow AGENTS.md to read SOUL.md, USER.md, MEMORY.md,
-recent logs, and knowledges/ at runtime when needed.
+By default, blades injects only `AGENTS.md` into the system instruction. `AGENTS.md` then instructs the agent which files to read at runtime (SOUL.md, USER.md, MEMORY.md, recent logs, knowledges/).
 
-| Layer | File | Description |
+| Layer | Location | Description |
 |---|---|---|
-| L1 | `MEMORY.md` | Manually curated or distilled facts the agent should read in direct sessions |
-| L2 | `memories/YYYY-MM-DD.md` | Append-only daily session logs for recent context |
-| L3 | `knowledges/*.md` | Reference files the agent can load on demand |
+| L1 | `workspace/MEMORY.md` | Curated long-term facts; read in direct sessions |
+| L2 | `workspace/memory/YYYY-MM-DD.md` | Append-only daily session logs |
+| L3 | `workspace/knowledges/*.md` | Reference files loaded on demand |
 
 ---
 

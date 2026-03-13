@@ -12,6 +12,31 @@ type Config struct {
 
 	// Defaults holds agent execution parameters.
 	Defaults DefaultsConfig `yaml:"defaults"`
+
+	// MCP lists MCP server connections whose tools are exposed to the agent.
+	MCP []MCPServerConfig `yaml:"mcp"`
+}
+
+// MCPServerConfig configures a single MCP server connection.
+type MCPServerConfig struct {
+	// Name is a unique identifier for this server.
+	Name string `yaml:"name"`
+	// Transport is one of: stdio, http, websocket.
+	Transport string `yaml:"transport"`
+	// Command is the executable (stdio transport).
+	Command string `yaml:"command"`
+	// Args are the command arguments (stdio transport).
+	Args []string `yaml:"args"`
+	// Env contains extra environment variables (stdio transport).
+	Env map[string]string `yaml:"env"`
+	// WorkDir is the working directory (stdio transport).
+	WorkDir string `yaml:"workDir"`
+	// Endpoint is the server URL (http / websocket transport).
+	Endpoint string `yaml:"endpoint"`
+	// Headers are custom HTTP headers (http transport).
+	Headers map[string]string `yaml:"headers"`
+	// TimeoutSeconds is the request timeout (0 → default 30 s).
+	TimeoutSeconds int `yaml:"timeoutSeconds"`
 }
 
 // LLMConfig specifies the provider and model connection details.

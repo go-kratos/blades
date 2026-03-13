@@ -1,16 +1,17 @@
-package main
+package cmd
 
 import (
 	"context"
 	"fmt"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	blades "github.com/go-kratos/blades"
+	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/cmd/blades/internal/channel"
 	clichi "github.com/go-kratos/blades/cmd/blades/internal/channel/cli"
 	"github.com/go-kratos/blades/cmd/blades/internal/cron"
@@ -20,6 +21,7 @@ import (
 
 func newChatCmd() *cobra.Command {
 	var sessionID string
+	var simpleMode bool
 	cmd := &cobra.Command{
 		Use:   "chat",
 		Short: "Start an interactive conversation",
@@ -47,6 +49,9 @@ func newChatCmd() *cobra.Command {
 			cronTool := bldtools.NewCronTool(cronSvc)
 
 			// Build initial runner; reload rebuilds it on /reload.
+			// mu guards currentRunner: handler holds a read lock while streaming;
+			// reload holds a write lock while replacing the pointer.
+			var mu sync.RWMutex
 			currentRunner, err := buildRunner(cfg, ws, cronTool)
 			if err != nil {
 				return err
@@ -61,6 +66,10 @@ func newChatCmd() *cobra.Command {
 			// handler is called once per user message. It streams text tokens and
 			// tool lifecycle events to w so the channel can render them.
 			handler := func(ctx context.Context, sid, text string, w channel.Writer) (string, error) {
+				mu.RLock()
+				runner := currentRunner
+				mu.RUnlock()
+
 				sess := sessMgr.GetOrNew(sid)
 				msg := blades.UserMessage(text)
 				var buf strings.Builder
@@ -75,14 +84,13 @@ func newChatCmd() *cobra.Command {
 				startedTools := make(map[string]bool)
 				endedTools := make(map[string]bool)
 
-				for m, err := range currentRunner.RunStream(ctx, msg, blades.WithSession(sess)) {
+				for m, err := range runner.RunStream(ctx, msg, blades.WithSession(sess)) {
 					if err != nil {
 						return buf.String(), err
 					}
 					if m == nil {
 						continue
 					}
-					// Stream text chunks.
 					// StatusCompleted is the final assembled message — its text is the
 					// union of all prior InProgress deltas. Don't re-stream it to the
 					// writer (that would show every token twice). Use it only as the
@@ -153,18 +161,25 @@ func newChatCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				mu.Lock()
 				currentRunner = r
-				cronSvc.SetHandler(cron.NewAgentHandler(makeTrigger(currentRunner, sessMgr), 60*time.Second))
+				mu.Unlock()
+				cronSvc.SetHandler(cron.NewAgentHandler(makeTrigger(r, sessMgr), 60*time.Second))
 				return nil
 			}
 
-			ch := clichi.New(sessionID,
+			opts := []clichi.Option{
 				clichi.WithReload(reload),
 				clichi.WithDebug(flagDebug),
-			)
+			}
+			if simpleMode {
+				opts = append(opts, clichi.WithNoAltScreen())
+			}
+			ch := clichi.New(sessionID, opts...)
 			return ch.Start(ctx, handler)
 		},
 	}
 	cmd.Flags().StringVar(&sessionID, "session", "", "session ID (default: auto-generated)")
+	cmd.Flags().BoolVar(&simpleMode, "simple", false, "plain line-based I/O (fixes Windows IME; output is selectable with the mouse)")
 	return cmd
 }

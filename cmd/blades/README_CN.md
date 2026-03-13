@@ -4,15 +4,16 @@
 >
 > English documentation: [README.md](README.md)
 
-`blades` 是一个以本地文件为核心的命令行 AI 智能体，工作空间位于 `~/.blades`。它能记住你的对话、从 Markdown 文件加载技能、通过 cron 调度定时任务，并支持多种 LLM 提供商——Anthropic、OpenAI 和 Gemini。
+`blades` 是一个以本地文件为核心的命令行 AI 智能体，工作空间位于 `~/.blades`。它能记住你的对话、从 Markdown 文件加载技能、通过 MCP 连接外部工具服务器、通过 cron 调度定时任务，并支持多种 LLM 提供商——Anthropic、OpenAI 和 Gemini。
 
 ---
 
 ## 功能特性
 
 - **流式对话** — 带动画 spinner，逐 token 流式输出，支持 ANSI 彩色终端
-- **持久记忆** — `MEMORY.md`（L1）、每日对话日志（L2）、知识文件（L3）
-- **技能系统** — 在 `skills/<name>/` 目录放入 `SKILL.md`，Agent 自动发现并使用
+- **持久记忆** — `MEMORY.md`（L1）、`memory/` 每日对话日志（L2）、知识文件（L3）
+- **技能系统** — 在任意 skills 目录放入 `SKILL.md`，Agent 自动发现并使用
+- **MCP 支持** — 通过 `mcp.json` 连接外部工具服务器（stdio、HTTP、WebSocket）
 - **Cron 调度** — 定时执行 Shell 命令或 Agent 对话，配置存储于 `cron.json`
 - **Daemon 模式** — 作为常驻后台进程运行调度器
 - **多 LLM 支持** — Anthropic Claude、OpenAI、Google Gemini，在 `config.yaml` 中切换
@@ -34,7 +35,7 @@ go install .
 ## 快速开始
 
 ```sh
-# 1. 初始化工作空间（在 ~/.blades 创建模板文件）
+# 1. 初始化工作空间（在 ~/.blades 创建所有模板文件和目录）
 blades init
 
 # 2. 设置 API Key
@@ -53,20 +54,24 @@ blades chat
 
 ```
 ~/.blades/
-├── config.yaml      ← LLM 提供商、模型、默认参数
-├── SOUL.md          ← Agent 的核心人格
-├── IDENTITY.md      ← 角色定义和当前使命
-├── AGENTS.md        ← 行为准则（类似 AGENTS.md / CLAUDE.md）
-├── USER.md          ← 关于你，Agent 应始终了解的事
-├── MEMORY.md        ← 长期浓缩记忆（L1）
-├── skills/
-│   ├── git-backup/SKILL.md
-│   └── distill/SKILL.md
-├── memories/        ← 每日对话日志（L2） — YYYY-MM-DD.md
-├── knowledges/      ← 按需加载的知识文件（L3）
-├── sessions/        ← 按 session ID 保存的对话状态
-├── outputs/         ← Agent 生成的文件
-└── cron.json        ← 持久化的 cron 任务存储
+├── config.yaml          ← LLM 提供商、模型、API Key
+├── mcp.json             ← 全局 MCP 服务器连接配置
+├── cron.json            ← 持久化的 cron 任务存储
+├── skills/              ← 全局技能目录（所有工作空间共享）
+├── sessions/            ← 按 session ID 保存的对话状态
+└── workspace/           ← Agent 工作目录（exec 工具默认在此执行）
+    ├── AGENTS.md        ← 行为准则（每次会话启动时加载）
+    ├── SOUL.md          ← Agent 的核心人格
+    ├── IDENTITY.md      ← 角色定义、能力说明、快速参考卡
+    ├── USER.md          ← 关于你，Agent 应始终了解的事
+    ├── MEMORY.md        ← 长期浓缩记忆（L1）
+    ├── TOOLS.md         ← 本机特定的配置说明
+    ├── HEARTBEAT.md     ← 主动定时检查任务列表
+    ├── mcp.json         ← 工作空间级别的 MCP 服务器配置
+    ├── skills/          ← 工作空间本地技能
+    ├── memory/          ← 每日对话日志（L2） — YYYY-MM-DD.md
+    ├── knowledges/      ← 按需加载的知识文件（L3）
+    └── outputs/         ← Agent 生成的文件
 ```
 
 ### config.yaml
@@ -88,7 +93,7 @@ defaults:
 
 ### `blades init`
 
-初始化工作空间。在 `~/.blades` 创建所有模板文件和内置技能（`git-backup`、`distill`）。可重复执行——已有文件不会被覆盖。
+初始化工作空间。在 `~/.blades` 创建所有模板文件和目录。可重复执行——已有文件不会被覆盖。
 
 ```sh
 blades init
@@ -103,6 +108,7 @@ blades init --git                      # 同时执行 git init 并创建 .gitign
 ```sh
 blades chat
 blades chat --session my-project       # 恢复或创建指定名称的会话
+blades chat --simple                   # 纯文本行模式（解决 Windows 输入法问题）
 ```
 
 **对话内置指令：**
@@ -110,7 +116,7 @@ blades chat --session my-project       # 恢复或创建指定名称的会话
 | 指令 | 说明 |
 |---|---|
 | `/help` | 显示可用指令 |
-| `/reload` | 热重载技能，无需重启 |
+| `/reload` | 热重载技能和配置，无需重启 |
 | `/session <id>` | 切换到不同的会话 |
 | `/clear` | 清空终端屏幕 |
 | `/exit` | 退出 |
@@ -130,7 +136,7 @@ blades run -m "生成晨报" --session reports
 ```sh
 blades memory show                     # 打印 MEMORY.md 内容
 blades memory add "偏好简洁的回答"
-blades memory search "上周"            # 搜索对话日志
+blades memory search "上周"            # 搜索 memory/ 目录下的对话日志
 ```
 
 ### `blades cron`
@@ -186,8 +192,9 @@ blades doctor
 
 | 标志 | 默认值 | 说明 |
 |---|---|---|
-| `--config` | 工作空间内的 `config.yaml` | 自定义配置文件路径 |
-| `--workspace` | `~/.blades` | 工作空间根目录路径 |
+| `--config` | `~/.blades/config.yaml` | 自定义配置文件路径 |
+| `--workspace` | `~/.blades` | blades 根目录路径 |
+| `--debug` | false | 启用详细调试日志 |
 
 ---
 
@@ -212,28 +219,74 @@ description: 为 Agent 提供某种有用的能力。
 此处写 Agent 的操作说明……
 ```
 
-将目录放入 `~/.blades/skills/`，在对话中输入 `/reload`（或重启），Agent 会自动发现并使用新技能。
+技能按以下顺序从三个目录加载并合并：
+
+| 目录 | 作用范围 |
+|---|---|
+| `~/.agents/skills/` | 系统级（跨工具共享） |
+| `~/.blades/skills/` | blades 全局技能 |
+| `~/.blades/workspace/skills/` | 当前工作空间本地技能 |
+
+在对话中输入 `/reload`（或重启），Agent 会自动发现并使用新技能。
 
 `blades init` 安装的内置技能：
 
 | 技能 | 说明 |
 |---|---|
-| `git-backup` | 暂存、提交并推送所有工作空间变更 |
-| `distill` | 分析对话日志，将经验教训提炼写入 `MEMORY.md` |
+| `cron` | 在对话中调度 Shell 命令或 Agent 对话任务 |
+
+---
+
+## MCP（模型上下文协议）
+
+blades 支持连接外部 MCP 工具服务器。服务器配置使用与 Claude Desktop 相同的 `mcp.json` 格式，现有配置可直接复用。
+
+MCP 服务器从两个文件加载并合并：
+
+| 文件 | 作用范围 |
+|---|---|
+| `~/.blades/mcp.json` | 全局（所有工作空间） |
+| `~/.blades/workspace/mcp.json` | 当前工作空间 |
+
+也可在 `config.yaml` 的 `mcp:` 字段中以内联方式声明服务器。
+
+### mcp.json 格式
+
+```json
+{
+  "mcpServers": {
+    "time": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-time"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "env": { "DEBUG": "1" }
+    },
+    "my-api": {
+      "transport": "http",
+      "endpoint": "http://localhost:8080/mcp",
+      "headers": { "Authorization": "Bearer ${MY_TOKEN}" },
+      "timeoutSeconds": 15
+    }
+  }
+}
+```
+
+省略 `transport` 时默认为 `stdio`。字符串值支持 `${ENV_VAR}` 环境变量展开。
 
 ---
 
 ## 记忆架构
 
-默认情况下，blades 只会把 AGENTS.md 注入初始系统提示词。
-Agent 应根据 AGENTS.md 的启动流程，在运行时按需读取 SOUL.md、USER.md、MEMORY.md、
-最近日志以及 knowledges/。
+默认情况下，blades 只会把 `AGENTS.md` 注入初始系统提示词。`AGENTS.md` 会指示 Agent 在运行时按需读取 SOUL.md、USER.md、MEMORY.md、最近日志以及 knowledges/。
 
-| 层级 | 文件 | 说明 |
+| 层级 | 位置 | 说明 |
 |---|---|---|
-| L1 | `MEMORY.md` | 手动维护或提炼的长期记忆，适合在主会话中读取 |
-| L2 | `memories/YYYY-MM-DD.md` | 仅追加的每日对话日志，用于最近上下文 |
-| L3 | `knowledges/*.md` | 需要时再读取的参考文件 |
+| L1 | `workspace/MEMORY.md` | 手动维护或提炼的长期记忆，主会话中读取 |
+| L2 | `workspace/memory/YYYY-MM-DD.md` | 仅追加的每日对话日志 |
+| L3 | `workspace/knowledges/*.md` | 按需加载的参考文件 |
 
 ---
 

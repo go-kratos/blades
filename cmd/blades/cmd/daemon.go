@@ -1,10 +1,9 @@
-package main
+package cmd
 
 import (
 	"context"
 	"fmt"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -30,18 +29,15 @@ func newDaemonCmd() *cobra.Command {
 
 			sessMgr := session.NewManager(ws.SessionsDir())
 
-			// Start cron service first so the cron tool can be passed to the runner.
-			storePath := filepath.Join(cfg.Workspace, "cron.json")
-			svc := cron.NewService(storePath, nil)
-
+			svc := cron.NewService(ws.CronStorePath(), nil)
 			cronTool := bldtools.NewCronTool(svc)
+
 			runner, err := buildRunner(cfg, ws, cronTool)
 			if err != nil {
 				return err
 			}
 
-			trigger := makeTrigger(runner, sessMgr)
-			svc.SetHandler(cron.NewAgentHandler(trigger, 60*time.Second))
+			svc.SetHandler(cron.NewAgentHandler(makeTrigger(runner, sessMgr), 60*time.Second))
 
 			if err := svc.Start(ctx); err != nil {
 				return fmt.Errorf("cron: %w", err)

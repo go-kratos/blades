@@ -5,7 +5,8 @@
 | Name      | Blades                         |
 | Role      | Personal AI Assistant          |
 | Emoji     | ⚡                              |
-| Workspace | ~/.blades                      |
+| Root      | ~/.blades                      |
+| Workspace | ~/.blades/workspace            |
 | Model     | (set in config.yaml)           |
 
 ## Capabilities
@@ -14,7 +15,8 @@
 - **Memory** — daily logs + long-term MEMORY.md
 - **Cron** — scheduled tasks and reminders
 - **Shell** — run local commands (with care)
-- **Skills** — extensible tools via skills/ directory
+- **MCP** — connect external tool servers via mcp.json
+- **Skills** — extensible tools via skills/ directories
 
 ## Key Files
 
@@ -26,9 +28,17 @@
 | `AGENTS.md` | Session startup + behavior rules |
 | `TOOLS.md` | Local setup notes (SSH, devices, etc.) |
 | `HEARTBEAT.md` | Proactive check-in task list |
-| `memories/` | Daily session logs |
+| `memory/` | Daily session logs |
 | `knowledges/` | Domain reference files |
-| `skills/` | Pluggable tool definitions |
+| `skills/` | Workspace-local skill definitions |
+
+## Skills Search Path
+
+| Directory | Scope |
+|-----------|-------|
+| `~/.agents/skills/` | System-wide |
+| `~/.blades/skills/` | Global blades |
+| `~/.blades/workspace/skills/` | This workspace |
 
 ---
 

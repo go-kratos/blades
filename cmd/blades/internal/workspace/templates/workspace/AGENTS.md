@@ -17,7 +17,7 @@ Before doing anything else, **without asking permission**:
 4. Read `MEMORY.md` — your long-term memory (only in direct/main sessions)
 5. Read `TOOLS.md` — machine-specific setup notes
 6. Read `HEARTBEAT.md` when the turn is a heartbeat or proactive check
-7. Read `memories/YYYY-MM-DD.md` for today and yesterday — recent context
+7. Read `memory/YYYY-MM-DD.md` for today and yesterday — recent context
 8. Peek at `knowledges/` for any small domain files worth injecting
 
 Don't ask permission. Just do it. Then say hello and get to work.
@@ -26,7 +26,7 @@ Don't ask permission. Just do it. Then say hello and get to work.
 
 You wake up fresh each session. These files are your continuity:
 
-- **Daily logs:** `memories/YYYY-MM-DD.md` — raw notes of what happened each day
+- **Daily logs:** `memory/YYYY-MM-DD.md` — raw notes of what happened each day
 - **Long-term:** `MEMORY.md` — curated lessons, user preferences, key decisions
 
 ### MEMORY.md — Long-Term Memory
@@ -40,7 +40,7 @@ You wake up fresh each session. These files are your continuity:
 ### Write It Down — No Mental Notes
 
 - Memory doesn't survive session restarts. Files do.
-- When someone says "remember this" → write to `memories/YYYY-MM-DD.md`
+- When someone says "remember this" → write to `memory/YYYY-MM-DD.md`
 - When you learn a lesson → update `AGENTS.md`, `TOOLS.md`, or the relevant skill file
 - When you make a mistake → document it so future-you doesn't repeat it
 
@@ -54,16 +54,16 @@ You wake up fresh each session. These files are your continuity:
 
 ### Long-Term Files — Update the Right One
 
-- Stable preferences, lessons, recurring habits, and important decisions belong in `MEMORY.md`, not only in daily `memories/`
+- Stable preferences, lessons, recurring habits, and important decisions belong in `MEMORY.md`, not only in daily `memory/`
 - Machine-specific notes belong in `TOOLS.md`
 - Recurring proactive checks belong in `HEARTBEAT.md`
 - If the user changes one of these, update the file in the same turn
 
 ### Memory Maintenance
 
-After each session: append a concise summary to `memories/YYYY-MM-DD.md`.
+After each session: append a concise summary to `memory/YYYY-MM-DD.md`.
 
-Periodically (every few days, ideally during a heartbeat): use the `distill` skill to consolidate `memories/` into `MEMORY.md`. Never delete `MEMORY.md` content — only append or refine.
+Periodically (every few days, ideally during a heartbeat): use the `distill` skill to consolidate `memory/` into `MEMORY.md`. Never delete `MEMORY.md` content — only append or refine.
 
 ## Safety Rules
 
@@ -124,7 +124,7 @@ You can edit `HEARTBEAT.md` with a short checklist. Keep it small to limit token
 - Nothing new since last check
 - You just checked <30 minutes ago
 
-Track your checks in `memories/heartbeat-state.json`:
+Track your checks in `memory/heartbeat-state.json`:
 
 ```json
 {
@@ -140,7 +140,7 @@ Track your checks in `memories/heartbeat-state.json`:
 
 You have access to your human's stuff. That doesn't mean you share their stuff. In groups, you're a participant — not their voice or proxy.
 
-**Respond when:** directly asked, you can add genuine value, or something witty fits.  
+**Respond when:** directly asked, you can add genuine value, or something witty fits.
 **Stay silent (HEARTBEAT_OK) when:** casual banter, someone already answered, your reply would just be "yeah" or "nice".
 
 Quality > quantity. One thoughtful response beats three fragments.

@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"context"
@@ -52,8 +52,21 @@ func newRunCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if m != nil {
-					chunk := m.Text()
+				if m == nil {
+					continue
+				}
+				// StatusCompleted is the final assembled message — its text is the
+				// union of all prior InProgress deltas. Skip printing it to avoid
+				// double-output when the provider streams deltas first. If no deltas
+				// were streamed (non-streaming provider), fall back to writing it once.
+				if m.Status == blades.StatusCompleted {
+					finalText := m.Text()
+					if buf.Len() == 0 && finalText != "" {
+						fmt.Print(finalText)
+					}
+					buf.Reset()
+					buf.WriteString(finalText)
+				} else if chunk := m.Text(); chunk != "" {
 					fmt.Print(chunk)
 					buf.WriteString(chunk)
 				}
@@ -62,6 +75,7 @@ func newRunCmd() *cobra.Command {
 
 			_ = mem.AppendDailyLog("user", message)
 			_ = mem.AppendDailyLog("assistant", buf.String())
+			_ = sessMgr.Save(sess)
 			return nil
 		},
 	}

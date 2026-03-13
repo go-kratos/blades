@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"fmt"
@@ -32,19 +32,20 @@ func newDoctorCmd() *cobra.Command {
 				}
 			}
 
-			check("Workspace", ws.Root())
+			check("Workspace root", ws.Root())
+			check("workspace/", ws.WorkspaceDir())
 			check("config.yaml", ws.ConfigPath())
-			check("AGENTS.md", ws.AgentsPath())
-			check("SOUL.md", ws.SoulPath())
-			check("IDENTITY.md", ws.IdentityPath())
-			check("USER.md", ws.UserPath())
-			check("MEMORY.md", ws.MemoryPath())
-			check("TOOLS.md", ws.ToolsPath())
-			check("HEARTBEAT.md", ws.HeartbeatPath())
+			check("workspace/AGENTS.md", ws.AgentsPath())
+			check("workspace/SOUL.md", ws.SoulPath())
+			check("workspace/IDENTITY.md", ws.IdentityPath())
+			check("workspace/USER.md", ws.UserPath())
+			check("workspace/MEMORY.md", ws.MemoryPath())
+			check("workspace/TOOLS.md", ws.ToolsPath())
+			check("workspace/HEARTBEAT.md", ws.HeartbeatPath())
 			check("skills/", ws.SkillsDir())
-			check("memories/", ws.MemoriesDir())
+			check("workspace/skills/", ws.WorkspaceSkillsDir())
+			check("workspace/memory/", ws.MemoriesDir())
 
-			// Cron health.
 			storePath := ws.CronStorePath()
 			if _, err := os.Stat(storePath); err == nil {
 				cronSvc := cron.NewService(storePath, nil)
