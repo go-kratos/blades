@@ -15,7 +15,7 @@ type Frontmatter struct {
 	License       string
 	Compatibility string
 	AllowedTools  string
-	Metadata      map[string]any
+	Metadata      map[string]string
 }
 
 // Validate validates skill frontmatter.

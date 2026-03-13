@@ -123,7 +123,7 @@ func resolveFrontmatter(skill Skill) Frontmatter {
 	f.Compatibility = frontmatter.Compatibility
 	f.AllowedTools = frontmatter.AllowedTools
 	if len(frontmatter.Metadata) > 0 {
-		f.Metadata = make(map[string]any, len(frontmatter.Metadata))
+		f.Metadata = make(map[string]string, len(frontmatter.Metadata))
 		for key, value := range frontmatter.Metadata {
 			f.Metadata[key] = value
 		}
