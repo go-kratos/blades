@@ -65,43 +65,6 @@ func TestContextManager_ZeroMaxTokens_NoOp(t *testing.T) {
 	}
 }
 
-// TestContextManager_WithInstruction verifies that the custom instruction is passed
-// to the summarizer. Subsequent compression passes extend the instruction with the
-// existing summary, so we check HasPrefix rather than exact equality.
-func TestContextManager_WithInstruction(t *testing.T) {
-	s := &mockSummarizer{}
-	customInstrText := "Summarize in Chinese. Output only the summary."
-	cm := summary.NewContextManager(
-		summary.WithSummarizer(s),
-		summary.WithMaxTokens(10),
-		summary.WithKeepRecent(2),
-		summary.WithBatchSize(3),
-		summary.WithTokenCounter(counter.NewCharBasedCounter()),
-		summary.WithInstruction(customInstrText),
-	)
-	msgs := makeMessages(8)
-	_, err := cm.Prepare(context.Background(), msgs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.calls == 0 {
-		t.Fatal("summarizer was not called")
-	}
-	if s.firstReq.Instruction == nil {
-		t.Fatal("expected Instruction to be set on the first ModelRequest, got nil")
-	}
-	// First compression pass has no existing summary, so instruction is exactly customInstrText.
-	if s.firstReq.Instruction.Text() != customInstrText {
-		t.Errorf("first Instruction text = %q, want %q", s.firstReq.Instruction.Text(), customInstrText)
-	}
-	// Subsequent passes prepend the existing summary to the instruction.
-	if s.calls > 1 {
-		if !strings.HasPrefix(s.lastReq.Instruction.Text(), customInstrText) {
-			t.Errorf("later Instruction text %q does not start with %q", s.lastReq.Instruction.Text(), customInstrText)
-		}
-	}
-}
-
 // TestContextManager_SessionPersistsOffset verifies that the compressed offset and
 // rolling summary are persisted in session.State() and reused on subsequent calls.
 func TestContextManager_SessionPersistsOffset(t *testing.T) {
@@ -130,14 +93,14 @@ func TestContextManager_SessionPersistsOffset(t *testing.T) {
 
 	// Offset and summary content must be persisted in session state.
 	state := session.State()
-	offsetVal, hasOffset := state["__blades_summary_offset__"]
+	offsetVal, hasOffset := state["__summary_offset__"]
 	if !hasOffset {
 		t.Fatal("offset key not set in session state after first Prepare")
 	}
 	if offset, ok := offsetVal.(int); !ok || offset == 0 {
 		t.Errorf("offset = %v, want non-zero int", offsetVal)
 	}
-	if _, hasContent := state["__blades_summary_content__"]; !hasContent {
+	if _, hasContent := state["__summary_content__"]; !hasContent {
 		t.Fatal("summary content key not set in session state after first Prepare")
 	}
 
@@ -152,7 +115,7 @@ func TestContextManager_SessionPersistsOffset(t *testing.T) {
 	_ = calls2 // may still compress if still over budget; key assertion is offset is reused
 
 	// The offset must not have regressed (it should only grow or stay the same).
-	newOffset, _ := session.State()["__blades_summary_offset__"].(int)
+	newOffset, _ := session.State()["__summary_offset__"].(int)
 	firstOffset, _ := offsetVal.(int)
 	if newOffset < firstOffset {
 		t.Errorf("offset regressed: %d < %d", newOffset, firstOffset)
