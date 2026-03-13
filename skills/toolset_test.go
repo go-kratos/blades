@@ -116,6 +116,65 @@ func TestSkillTools(t *testing.T) {
 	}
 }
 
+func TestLoadSkillPreservesNestedMetadata(t *testing.T) {
+	t.Parallel()
+
+	skill := &staticSkill{
+		frontmatter: Frontmatter{
+			Name:        "skill1",
+			Description: "Skill 1",
+			Metadata: map[string]any{
+				"source": "registry",
+				"config": map[string]any{
+					"mode":  "strict",
+					"steps": []any{"scan", "patch"},
+				},
+			},
+		},
+		instruction: "Do something",
+		resources:   Resources{},
+	}
+	toolset, err := NewToolset([]Skill{skill})
+	if err != nil {
+		t.Fatalf("new toolset: %v", err)
+	}
+
+	resp, err := toolset.Tools()[1].Handle(context.Background(), `{"name":"skill1"}`)
+	if err != nil {
+		t.Fatalf("load_skill error: %v", err)
+	}
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(resp), &obj); err != nil {
+		t.Fatalf("unmarshal load response: %v", err)
+	}
+	frontmatter, ok := obj["frontmatter"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected frontmatter type: %T", obj["frontmatter"])
+	}
+	metadata, ok := frontmatter["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected metadata type: %T", frontmatter["metadata"])
+	}
+	if metadata["source"] != "registry" {
+		t.Fatalf("unexpected metadata source: %v", metadata["source"])
+	}
+	config, ok := metadata["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected config type: %T", metadata["config"])
+	}
+	if config["mode"] != "strict" {
+		t.Fatalf("unexpected config mode: %v", config["mode"])
+	}
+	steps, ok := config["steps"].([]any)
+	if !ok {
+		t.Fatalf("unexpected config.steps type: %T", config["steps"])
+	}
+	if len(steps) != 2 || steps[0] != "scan" || steps[1] != "patch" {
+		t.Fatalf("unexpected config.steps: %v", steps)
+	}
+}
+
 func TestLoadSkillResourceErrors(t *testing.T) {
 	t.Parallel()
 

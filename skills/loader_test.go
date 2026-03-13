@@ -534,3 +534,66 @@ Body`), 0o644); err != nil {
 		t.Fatalf("unexpected allowed tools: %s", fm.AllowedTools)
 	}
 }
+
+func TestReadSkillFrontmatterNestedMetadata(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "test-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: test-skill
+description: desc
+metadata:
+  source: registry
+  config:
+    timeout: 30
+    enabled: true
+    tags:
+      - fast
+      - safe
+---
+Body`), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	fm, err := ReadSkillFrontmatter(skillDir)
+	if err != nil {
+		t.Fatalf("read frontmatter: %v", err)
+	}
+	if fm.Metadata["source"] != "registry" {
+		t.Fatalf("unexpected metadata source: %v", fm.Metadata["source"])
+	}
+	config, ok := fm.Metadata["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected metadata config type: %T", fm.Metadata["config"])
+	}
+	if enabled, ok := config["enabled"].(bool); !ok || !enabled {
+		t.Fatalf("unexpected metadata config.enabled: %v", config["enabled"])
+	}
+	switch timeout := config["timeout"].(type) {
+	case int:
+		if timeout != 30 {
+			t.Fatalf("unexpected metadata config.timeout: %v", timeout)
+		}
+	case int64:
+		if timeout != 30 {
+			t.Fatalf("unexpected metadata config.timeout: %v", timeout)
+		}
+	case float64:
+		if timeout != 30 {
+			t.Fatalf("unexpected metadata config.timeout: %v", timeout)
+		}
+	default:
+		t.Fatalf("unexpected metadata config.timeout type: %T", config["timeout"])
+	}
+	tags, ok := config["tags"].([]any)
+	if !ok {
+		t.Fatalf("unexpected metadata config.tags type: %T", config["tags"])
+	}
+	if len(tags) != 2 || tags[0] != "fast" || tags[1] != "safe" {
+		t.Fatalf("unexpected metadata config.tags: %v", tags)
+	}
+}

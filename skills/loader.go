@@ -254,9 +254,7 @@ func parseFrontmatter(content string) (Frontmatter, error) {
 	if raw == nil {
 		return Frontmatter{}, fmt.Errorf("skills: frontmatter must be a mapping")
 	}
-	f := Frontmatter{
-		Metadata: make(map[string]string),
-	}
+	f := Frontmatter{}
 	name, ok := raw["name"].(string)
 	if !ok {
 		return Frontmatter{}, fmt.Errorf("skills: name must be a string")
@@ -296,17 +294,11 @@ func parseFrontmatter(content string) (Frontmatter, error) {
 		f.AllowedTools = s
 	}
 	if v, ok := raw["metadata"]; ok {
-		items, ok := v.(map[string]any)
-		if !ok {
-			return Frontmatter{}, fmt.Errorf("skills: metadata must be a map")
+		items, err := normalizeMetadataMap(v)
+		if err != nil {
+			return Frontmatter{}, err
 		}
-		for key, value := range items {
-			s, ok := value.(string)
-			if !ok {
-				return Frontmatter{}, fmt.Errorf("skills: metadata value for %q must be a string", key)
-			}
-			f.Metadata[key] = s
-		}
+		f.Metadata = items
 	}
 	return f, nil
 }
