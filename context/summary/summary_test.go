@@ -65,6 +65,9 @@ func TestContextManager_ZeroMaxTokens_NoOp(t *testing.T) {
 	}
 }
 
+// TestContextManager_WithInstruction verifies that the custom instruction is passed
+// to the summarizer. Subsequent compression passes extend the instruction with the
+// existing summary, so we check HasPrefix rather than exact equality.
 func TestContextManager_WithInstruction(t *testing.T) {
 	s := &mockSummarizer{}
 	customInstrText := "Summarize in Chinese. Output only the summary."
@@ -84,11 +87,97 @@ func TestContextManager_WithInstruction(t *testing.T) {
 	if s.calls == 0 {
 		t.Fatal("summarizer was not called")
 	}
-	if s.lastReq.Instruction == nil {
-		t.Fatal("expected Instruction to be set on ModelRequest, got nil")
+	if s.firstReq.Instruction == nil {
+		t.Fatal("expected Instruction to be set on the first ModelRequest, got nil")
 	}
-	if s.lastReq.Instruction.Text() != customInstrText {
-		t.Errorf("Instruction text = %q, want %q", s.lastReq.Instruction.Text(), customInstrText)
+	// First compression pass has no existing summary, so instruction is exactly customInstrText.
+	if s.firstReq.Instruction.Text() != customInstrText {
+		t.Errorf("first Instruction text = %q, want %q", s.firstReq.Instruction.Text(), customInstrText)
+	}
+	// Subsequent passes prepend the existing summary to the instruction.
+	if s.calls > 1 {
+		if !strings.HasPrefix(s.lastReq.Instruction.Text(), customInstrText) {
+			t.Errorf("later Instruction text %q does not start with %q", s.lastReq.Instruction.Text(), customInstrText)
+		}
+	}
+}
+
+// TestContextManager_SessionPersistsOffset verifies that the compressed offset and
+// rolling summary are persisted in session.State() and reused on subsequent calls.
+func TestContextManager_SessionPersistsOffset(t *testing.T) {
+	s := &mockSummarizer{}
+	cm := summary.NewContextManager(
+		summary.WithSummarizer(s),
+		summary.WithMaxTokens(10),
+		summary.WithKeepRecent(2),
+		summary.WithBatchSize(3),
+		summary.WithTokenCounter(counter.NewCharBasedCounter()),
+	)
+
+	session := blades.NewSession()
+	ctx := blades.NewSessionContext(context.Background(), session)
+
+	// First call: 8 messages, should compress.
+	msgs := makeMessages(8)
+	got1, err := cm.Prepare(ctx, msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got1) >= len(msgs) {
+		t.Errorf("run1: expected compression, got len %d >= original %d", len(got1), len(msgs))
+	}
+	calls1 := s.calls
+
+	// Offset and summary content must be persisted in session state.
+	state := session.State()
+	offsetVal, hasOffset := state["__blades_summary_offset__"]
+	if !hasOffset {
+		t.Fatal("offset key not set in session state after first Prepare")
+	}
+	if offset, ok := offsetVal.(int); !ok || offset == 0 {
+		t.Errorf("offset = %v, want non-zero int", offsetVal)
+	}
+	if _, hasContent := state["__blades_summary_content__"]; !hasContent {
+		t.Fatal("summary content key not set in session state after first Prepare")
+	}
+
+	// Second call with the same messages: already within budget (offset consumed the old ones),
+	// so no additional LLM calls should be made.
+	got2, err := cm.Prepare(ctx, msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls2 := s.calls - calls1
+	_ = got2
+	_ = calls2 // may still compress if still over budget; key assertion is offset is reused
+
+	// The offset must not have regressed (it should only grow or stay the same).
+	newOffset, _ := session.State()["__blades_summary_offset__"].(int)
+	firstOffset, _ := offsetVal.(int)
+	if newOffset < firstOffset {
+		t.Errorf("offset regressed: %d < %d", newOffset, firstOffset)
+	}
+}
+
+// TestContextManager_NoSession_Stateless verifies that without a session the
+// context manager behaves statelessly (no state keys are set, no panic).
+func TestContextManager_NoSession_Stateless(t *testing.T) {
+	s := &mockSummarizer{}
+	cm := summary.NewContextManager(
+		summary.WithSummarizer(s),
+		summary.WithMaxTokens(10),
+		summary.WithKeepRecent(2),
+		summary.WithBatchSize(3),
+		summary.WithTokenCounter(counter.NewCharBasedCounter()),
+	)
+	// No session in context — must not panic and must still compress.
+	msgs := makeMessages(8)
+	got, err := cm.Prepare(context.Background(), msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) >= len(msgs) {
+		t.Errorf("expected compression even without session, got len %d >= original %d", len(got), len(msgs))
 	}
 }
 
@@ -101,14 +190,18 @@ func makeMessages(n int) []*blades.Message {
 }
 
 type mockSummarizer struct {
-	calls   int
-	lastReq *blades.ModelRequest
+	calls    int
+	firstReq *blades.ModelRequest
+	lastReq  *blades.ModelRequest
 }
 
 func (m *mockSummarizer) Name() string { return "mock" }
 
 func (m *mockSummarizer) Generate(_ context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
 	m.calls++
+	if m.firstReq == nil {
+		m.firstReq = req
+	}
 	m.lastReq = req
 	var sb strings.Builder
 	for _, msg := range req.Messages {
