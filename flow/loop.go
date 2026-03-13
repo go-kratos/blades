@@ -2,12 +2,39 @@ package flow
 
 import (
 	"context"
+	"errors"
 
 	"github.com/go-kratos/blades"
 )
 
-// LoopCondition is a function that determines whether to continue looping.
-type LoopCondition func(ctx context.Context, output *blades.Message) (bool, error)
+// ErrLoopEscalated is returned when a LoopCondition returns PhaseEscalate.
+var ErrLoopEscalated = errors.New("loop: escalated by condition")
+
+// LoopPhase is the decision outcome returned by a LoopCondition.
+type LoopPhase int
+
+const (
+	// PhaseContinue runs another iteration.
+	PhaseContinue LoopPhase = iota
+	// PhaseComplete stops the loop successfully.
+	PhaseComplete
+	// PhaseEscalate stops the loop and returns ErrLoopEscalated.
+	PhaseEscalate
+)
+
+// LoopState captures the accumulated context available to a LoopCondition.
+type LoopState struct {
+	// Iteration is the 0-based index of the iteration that just completed.
+	Iteration int
+	// Output is the last message produced in the current iteration.
+	Output *blades.Message
+	// History holds every message emitted across all iterations, in order.
+	History []*blades.Message
+}
+
+// LoopCondition is called once after every complete iteration.
+// It inspects the accumulated LoopState and returns the next LoopPhase.
+type LoopCondition func(ctx context.Context, state LoopState) (LoopPhase, error)
 
 // LoopConfig is the configuration for a LoopAgent.
 type LoopConfig struct {
@@ -26,7 +53,7 @@ type loopAgent struct {
 // NewLoopAgent creates a new LoopAgent.
 func NewLoopAgent(config LoopConfig) blades.Agent {
 	if config.MaxIterations <= 0 {
-		config.MaxIterations = 1
+		config.MaxIterations = 10
 	}
 	return &loopAgent{config: config}
 }
@@ -41,10 +68,12 @@ func (a *loopAgent) Description() string {
 	return a.config.Description
 }
 
-// Run runs the sub-agents loop.
+// Run runs the sub-agents in a loop, evaluating the condition once per
+// complete iteration (after all sub-agents have run).
 func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
-		for iteration := 0; iteration < a.config.MaxIterations; iteration++ {
+		state := LoopState{}
+		for state.Iteration = 0; state.Iteration < a.config.MaxIterations; state.Iteration++ {
 			for _, agent := range a.config.SubAgents {
 				var (
 					err        error
@@ -56,19 +85,25 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 						yield(nil, err)
 						return
 					}
+					state.History = append(state.History, message)
 					if !yield(message, nil) {
 						return
 					}
 				}
-				if a.config.Condition != nil && message != nil {
-					shouldContinue, err := a.config.Condition(ctx, message)
-					if err != nil {
-						yield(nil, err)
-						return
-					}
-					if !shouldContinue {
-						return
-					}
+				state.Output = message
+			}
+			if a.config.Condition != nil {
+				phase, err := a.config.Condition(ctx, state)
+				if err != nil {
+					yield(nil, err)
+					return
+				}
+				switch phase {
+				case PhaseComplete:
+					return
+				case PhaseEscalate:
+					yield(nil, ErrLoopEscalated)
+					return
 				}
 			}
 		}

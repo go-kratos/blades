@@ -50,8 +50,11 @@ func main() {
 		Name:          "WritingReviewFlow",
 		Description:   "An agent that loops between writing and reviewing until the draft is good.",
 		MaxIterations: 3,
-		Condition: func(ctx context.Context, output *blades.Message) (bool, error) {
-			return !strings.Contains(output.Text(), "The draft is good"), nil
+		Condition: func(ctx context.Context, state flow.LoopState) (flow.LoopPhase, error) {
+			if state.Output != nil && strings.Contains(state.Output.Text(), "The draft is good") {
+				return flow.PhaseComplete, nil
+			}
+			return flow.PhaseContinue, nil
 		},
 		SubAgents: []blades.Agent{
 			writerAgent,
