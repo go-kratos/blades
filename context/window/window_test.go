@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/internal/counter"
 	"github.com/go-kratos/blades/context/window"
+	"github.com/go-kratos/blades/internal/counter"
 )
 
 func TestContextManager_NoLimits(t *testing.T) {
