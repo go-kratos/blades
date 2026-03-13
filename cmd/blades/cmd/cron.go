@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	robfigcron "github.com/robfig/cron/v3"
@@ -74,6 +76,7 @@ func newCronAddCmd() *cobra.Command {
 		name        string
 		cronExpr    string
 		everyStr    string
+		delayStr    string
 		message     string
 		command     string
 		deleteAfter bool
@@ -83,7 +86,8 @@ func newCronAddCmd() *cobra.Command {
 		Use:   "add",
 		Short: "Add a scheduled job",
 		Example: `  blades cron add --name "daily-brief" --cron "0 8 * * *" --message "generate morning brief"
-  blades cron add --name "check" --every 1h --command "echo ok"`,
+  blades cron add --name "check" --every 1h --command "echo ok"
+  blades cron add --name "test ls" --delay 10 --command "ls . > outputs/test.txt"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
@@ -103,8 +107,14 @@ func newCronAddCmd() *cobra.Command {
 					return fmt.Errorf("invalid --every duration: %w", err)
 				}
 				sched = cron.Schedule{Kind: cron.ScheduleEvery, EveryMs: d.Milliseconds()}
+			case delayStr != "":
+				d, err := parseDelayValue(delayStr)
+				if err != nil {
+					return err
+				}
+				sched = cron.Schedule{Kind: cron.ScheduleAt, AtMs: time.Now().Add(d).UnixMilli()}
 			default:
-				return fmt.Errorf("one of --cron or --every is required")
+				return fmt.Errorf("one of --cron, --every, or --delay is required")
 			}
 
 			var payload cron.Payload
@@ -132,11 +142,36 @@ func newCronAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "job name")
 	cmd.Flags().StringVar(&cronExpr, "cron", "", "cron expression (5-field)")
 	cmd.Flags().StringVar(&everyStr, "every", "", "repeat interval, e.g. 1h, 30m")
+	cmd.Flags().StringVar(&delayStr, "delay", "", "run once after delay (seconds when unit omitted, e.g. 10 or 10s)")
 	cmd.Flags().StringVar(&message, "message", "", "agent message payload")
 	cmd.Flags().StringVar(&command, "command", "", "shell command payload")
 	cmd.Flags().StringVar(&tz, "tz", "", "timezone for cron expression")
 	cmd.Flags().BoolVar(&deleteAfter, "delete-after-run", false, "delete job after first execution")
 	return cmd
+}
+
+func parseDelayValue(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, fmt.Errorf("--delay must not be empty")
+	}
+
+	if d, err := time.ParseDuration(raw); err == nil {
+		if d <= 0 {
+			return 0, fmt.Errorf("--delay must be > 0")
+		}
+		return d, nil
+	}
+
+	secs, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid --delay value %q: use seconds (e.g. 10) or duration (e.g. 10s, 5m)", raw)
+	}
+	if secs <= 0 {
+		return 0, fmt.Errorf("--delay must be > 0")
+	}
+
+	return time.Duration(secs * float64(time.Second)), nil
 }
 
 func newCronRemoveCmd() *cobra.Command {

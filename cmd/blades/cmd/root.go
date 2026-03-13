@@ -2,8 +2,12 @@
 package cmd
 
 import (
+	"errors"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -34,6 +38,7 @@ Layout:
   ├── mcp.json             global MCP server connections
   ├── skills/              global skills (all workspaces)
   ├── sessions/            conversation history
+	├── log/                 runtime logs (YYYY-MM-DD.log)
   └── workspace/           agent operating directory
       ├── AGENTS.md        behaviour rules (loaded at startup)
       ├── SOUL.md / USER.md / IDENTITY.md / MEMORY.md
@@ -44,12 +49,7 @@ Layout:
       └── outputs/         agent-generated artifacts`,
 		SilenceUsage: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			if flagDebug {
-				log.SetFlags(log.LstdFlags | log.Lshortfile)
-				os.Setenv("BLADES_DEBUG", "1")
-			} else {
-				log.SetOutput(os.Stderr)
-			}
+			configureRootLogger(time.Now())
 		},
 	}
 
@@ -67,4 +67,66 @@ Layout:
 		newDoctorCmd(),
 	)
 	return root
+}
+
+func configureRootLogger(now time.Time) {
+	if flagDebug {
+		log.SetFlags(log.LstdFlags | log.Lshortfile)
+		_ = os.Setenv("BLADES_DEBUG", "1")
+	} else {
+		log.SetFlags(log.LstdFlags)
+	}
+
+	f, path, err := openRootLogFile(now)
+	if err != nil {
+		log.SetOutput(os.Stderr)
+		if path != "" {
+			log.Printf("blades: use stderr logging (open %s failed): %v", path, err)
+		} else {
+			log.Printf("blades: use stderr logging: %v", err)
+		}
+		return
+	}
+
+	if flagDebug {
+		log.SetOutput(io.MultiWriter(os.Stderr, f))
+		return
+	}
+	log.SetOutput(f)
+}
+
+func openRootLogFile(now time.Time) (*os.File, string, error) {
+	root := resolveLogRootDir()
+	if root == "" {
+		return nil, "", errors.New("workspace root is empty")
+	}
+
+	logDir := filepath.Join(root, "log")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return nil, logDir, err
+	}
+
+	logPath := filepath.Join(logDir, now.Format("2006-01-02")+".log")
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, logPath, err
+	}
+	return f, logPath, nil
+}
+
+func resolveLogRootDir() string {
+	cfg, err := loadConfigForFlags()
+	if err == nil && cfg != nil && cfg.Workspace != "" {
+		return cfg.Workspace
+	}
+
+	if flagWorkspace != "" {
+		return flagWorkspace
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".blades")
 }

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/context/window"
 	bladesmcp "github.com/go-kratos/blades/contrib/mcp"
-	bladesmiddleware "github.com/go-kratos/blades/middleware"
 	bladeskills "github.com/go-kratos/blades/skills"
 	bladestools "github.com/go-kratos/blades/tools"
 
@@ -94,9 +94,18 @@ func buildRunner(cfg *config.Config, ws *workspace.Workspace, extraTools ...blad
 		return nil, err
 	}
 
+	maxMessages := 100
+	if cfg.Defaults.MaxTurns > 0 {
+		maxMessages = cfg.Defaults.MaxTurns
+	}
+	windowCM := window.NewContextManager(
+		window.WithMaxMessages(maxMessages),
+		window.WithMaxTokens(int64(cfg.Defaults.CompressThreshold)),
+	)
+
 	agentOpts := []blades.AgentOption{
 		blades.WithModel(provider),
-		blades.WithMiddleware(bladesmiddleware.ConversationBuffered(100)),
+		blades.WithContextManager(windowCM),
 	}
 	if instruction != "" {
 		agentOpts = append(agentOpts, blades.WithInstruction(instruction))
@@ -159,8 +168,8 @@ func loadSkills(ws *workspace.Workspace) ([]bladeskills.Skill, error) {
 	home, _ := os.UserHomeDir()
 	dirs := []string{
 		filepath.Join(home, ".agents", "skills"), // system-wide
-		ws.SkillsDir(),                            // ~/.blades/skills
-		ws.WorkspaceSkillsDir(),                   // workspace/skills
+		ws.SkillsDir(),                           // ~/.blades/skills
+		ws.WorkspaceSkillsDir(),                  // workspace/skills
 	}
 
 	var all []bladeskills.Skill

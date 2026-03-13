@@ -3,11 +3,51 @@ package cmd
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-kratos/blades/cmd/blades/internal/cron"
 )
+
+func TestParseDelayValue(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		raw     string
+		want    time.Duration
+		wantErr string
+	}{
+		{name: "seconds without unit", raw: "10", want: 10 * time.Second},
+		{name: "duration with unit", raw: "1m", want: time.Minute},
+		{name: "fractional seconds", raw: "0.5", want: 500 * time.Millisecond},
+		{name: "invalid value", raw: "abc", wantErr: "invalid --delay value"},
+		{name: "non-positive value", raw: "0", wantErr: "--delay must be > 0"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := parseDelayValue(tt.raw)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("parseDelayValue(%q): %v", tt.raw, err)
+			}
+			if got != tt.want {
+				t.Fatalf("parseDelayValue(%q) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
 
 func TestEnsureHeartbeatJobSkipsExistingJob(t *testing.T) {
 	t.Parallel()
@@ -65,5 +105,43 @@ func TestRunNowReturnsOutput(t *testing.T) {
 	}
 	if jobs[0].State.LastOutput != output {
 		t.Fatalf("expected last output %q, got %q", output, jobs[0].State.LastOutput)
+	}
+}
+
+func TestCronAddSupportsDelayFlag(t *testing.T) {
+	oldWorkspace := flagWorkspace
+	oldConfig := flagConfig
+	t.Cleanup(func() {
+		flagWorkspace = oldWorkspace
+		flagConfig = oldConfig
+	})
+
+	root := t.TempDir()
+	flagWorkspace = root
+	flagConfig = ""
+
+	cmd := newCronAddCmd()
+	cmd.SetArgs([]string{"--name", "test-ls", "--delay", "10", "--command", "echo ok"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("cron add with --delay: %v", err)
+	}
+
+	svc := cron.NewService(filepath.Join(root, "cron.json"), nil)
+	jobs := svc.ListJobs(true)
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+
+	job := jobs[0]
+	if job.Schedule.Kind != cron.ScheduleAt {
+		t.Fatalf("expected schedule kind %q, got %q", cron.ScheduleAt, job.Schedule.Kind)
+	}
+	if job.Payload.Kind != cron.PayloadExec {
+		t.Fatalf("expected payload kind %q, got %q", cron.PayloadExec, job.Payload.Kind)
+	}
+
+	delta := job.Schedule.AtMs - time.Now().UnixMilli()
+	if delta < 8000 || delta > 12000 {
+		t.Fatalf("expected run time around 10s in the future, got delta=%dms", delta)
 	}
 }

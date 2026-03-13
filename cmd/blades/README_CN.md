@@ -154,6 +154,9 @@ blades cron add --name "morning-brief" \
 # 添加 Shell 命令定时任务（每小时执行）
 blades cron add --name "health-check" --every 1h --command "echo ok"
 
+# 添加一次性任务（10 秒后执行）
+blades cron add --name "test ls" --delay 10 --command "ls . > outputs/test.txt"
+
 # 确保心跳任务存在；如果已经存在则跳过创建
 blades cron heartbeat
 

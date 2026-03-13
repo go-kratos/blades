@@ -154,6 +154,9 @@ blades cron add --name "morning-brief" \
 # Add a job (shell command every hour)
 blades cron add --name "health-check" --every 1h --command "echo ok"
 
+# Add a one-shot job after 10 seconds
+blades cron add --name "test ls" --delay 10 --command "ls . > outputs/test.txt"
+
 # Ensure a heartbeat job exists; skip creation if already present
 blades cron heartbeat
 
