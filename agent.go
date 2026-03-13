@@ -109,8 +109,8 @@ func WithMaxIterations(n int) AgentOption {
 
 // WithContextManager sets a ContextManager that is applied before each model
 // call within the agent loop. Use this to enforce context window limits via
-// truncation (WindowContextManager) or LLM-based summarization
-// (SummaryContextManager).
+// truncation (see the context/window package) or LLM-based summarization
+// (see the context/summary package).
 func WithContextManager(cm ContextManager) AgentOption {
 	return func(a *agent) {
 		a.contextManager = cm
