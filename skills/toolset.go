@@ -68,7 +68,10 @@ func NewToolset(skills []Skill) (*Toolset, error) {
 		if skill == nil {
 			continue
 		}
-		frontmatter := resolveFrontmatter(skill)
+		frontmatter, err := resolveFrontmatter(skill)
+		if err != nil {
+			return nil, err
+		}
 		if err := frontmatter.Validate(); err != nil {
 			return nil, err
 		}
@@ -109,26 +112,27 @@ func NewToolset(skills []Skill) (*Toolset, error) {
 	return ts, nil
 }
 
-func resolveFrontmatter(skill Skill) Frontmatter {
+func resolveFrontmatter(skill Skill) (Frontmatter, error) {
 	f := Frontmatter{
 		Name:        skill.Name(),
 		Description: skill.Description(),
 	}
 	provider, ok := skill.(FrontmatterProvider)
 	if !ok {
-		return f
+		return f, nil
 	}
 	frontmatter := provider.Frontmatter()
 	f.License = frontmatter.License
 	f.Compatibility = frontmatter.Compatibility
 	f.AllowedTools = frontmatter.AllowedTools
 	if len(frontmatter.Metadata) > 0 {
-		f.Metadata = make(map[string]string, len(frontmatter.Metadata))
-		for key, value := range frontmatter.Metadata {
-			f.Metadata[key] = value
+		metadata, err := normalizeMetadataMap(frontmatter.Metadata)
+		if err != nil {
+			return Frontmatter{}, err
 		}
+		f.Metadata = metadata
 	}
-	return f
+	return f, nil
 }
 
 func resolveResources(skill Skill) Resources {
