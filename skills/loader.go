@@ -255,7 +255,7 @@ func parseFrontmatter(content string) (Frontmatter, error) {
 		return Frontmatter{}, fmt.Errorf("skills: frontmatter must be a mapping")
 	}
 	f := Frontmatter{
-		Metadata: make(map[string]string),
+		Metadata: make(map[string]any),
 	}
 	name, ok := raw["name"].(string)
 	if !ok {
@@ -301,14 +301,55 @@ func parseFrontmatter(content string) (Frontmatter, error) {
 			return Frontmatter{}, fmt.Errorf("skills: metadata must be a map")
 		}
 		for key, value := range items {
-			s, ok := value.(string)
-			if !ok {
-				return Frontmatter{}, fmt.Errorf("skills: metadata value for %q must be a string", key)
+			normalized, err := normalizeYAMLValue(value)
+			if err != nil {
+				return Frontmatter{}, fmt.Errorf("skills: metadata value for %q is invalid: %w", key, err)
 			}
-			f.Metadata[key] = s
+			f.Metadata[key] = normalized
 		}
 	}
 	return f, nil
+}
+
+func normalizeYAMLValue(v any) (any, error) {
+	switch value := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(value))
+		for k, nested := range value {
+			normalized, err := normalizeYAMLValue(nested)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = normalized
+		}
+		return out, nil
+	case map[any]any:
+		out := make(map[string]any, len(value))
+		for k, nested := range value {
+			ks, ok := k.(string)
+			if !ok {
+				return nil, fmt.Errorf("map keys must be strings")
+			}
+			normalized, err := normalizeYAMLValue(nested)
+			if err != nil {
+				return nil, err
+			}
+			out[ks] = normalized
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(value))
+		for i, nested := range value {
+			normalized, err := normalizeYAMLValue(nested)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = normalized
+		}
+		return out, nil
+	default:
+		return value, nil
+	}
 }
 
 func loadDirFiles(fsys fs.FS, dir string) (map[string]string, error) {
