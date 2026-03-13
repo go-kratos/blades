@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/internal/counter"
 )
 
 const defaultMaxMessages = 100
@@ -47,9 +48,15 @@ type contextManager struct {
 // messages within the configured token or message count limits. Messages are
 // dropped from the front (oldest first) when limits are exceeded.
 func NewContextManager(opts ...Option) blades.ContextManager {
-	cm := &contextManager{maxMessages: defaultMaxMessages}
+	cm := &contextManager{
+		maxMessages: defaultMaxMessages,
+		counter:     counter.NewCharBasedCounter(),
+	}
 	for _, opt := range opts {
 		opt(cm)
+	}
+	if cm.counter == nil {
+		cm.counter = counter.NewCharBasedCounter()
 	}
 	return cm
 }
