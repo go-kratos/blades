@@ -17,9 +17,15 @@ type Session interface {
 	Append(context.Context, *Message) error
 }
 
-// NewSession creates a new Session instance with an auto-generated UUID.
-func NewSession() Session {
-	return &sessionInMemory{id: uuid.NewString()}
+// NewSession creates a new Session instance with an auto-generated UUID and optional initial state maps.
+func NewSession(states ...map[string]any) Session {
+	session := &sessionInMemory{id: uuid.NewString()}
+	for _, state := range states {
+		for k, v := range state {
+			session.SetState(k, v)
+		}
+	}
+	return session
 }
 
 // ctxSessionKey is an unexported type for keys defined in this package.
