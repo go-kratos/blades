@@ -2,6 +2,7 @@ package skills
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"sort"
 )
@@ -15,7 +16,7 @@ type Frontmatter struct {
 	License       string
 	Compatibility string
 	AllowedTools  string
-	Metadata      map[string]string
+	Metadata      map[string]any
 }
 
 // Validate validates skill frontmatter.
@@ -141,4 +142,88 @@ func (s *staticSkill) Resources() Resources {
 		return Resources{}
 	}
 	return s.resources
+}
+
+func normalizeMetadataMap(value any) (map[string]any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	normalized, err := normalizeMetadataValue(value)
+	if err != nil {
+		return nil, err
+	}
+	items, ok := normalized.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("skills: metadata must be a map")
+	}
+	return items, nil
+}
+
+func normalizeMetadataValue(value any) (any, error) {
+	switch v := value.(type) {
+	case nil, string, bool,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
+		return v, nil
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			normalized, err := normalizeMetadataValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[key] = normalized
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			normalized, err := normalizeMetadataValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = normalized
+		}
+		return out, nil
+	}
+
+	rv := reflect.ValueOf(value)
+	if !rv.IsValid() {
+		return nil, nil
+	}
+
+	switch rv.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if rv.IsNil() {
+			return nil, nil
+		}
+		return normalizeMetadataValue(rv.Elem().Interface())
+	case reflect.Map:
+		if rv.Type().Key().Kind() != reflect.String {
+			return nil, fmt.Errorf("skills: metadata map keys must be strings")
+		}
+		out := make(map[string]any, rv.Len())
+		iter := rv.MapRange()
+		for iter.Next() {
+			normalized, err := normalizeMetadataValue(iter.Value().Interface())
+			if err != nil {
+				return nil, err
+			}
+			out[iter.Key().String()] = normalized
+		}
+		return out, nil
+	case reflect.Slice, reflect.Array:
+		out := make([]any, rv.Len())
+		for i := range rv.Len() {
+			normalized, err := normalizeMetadataValue(rv.Index(i).Interface())
+			if err != nil {
+				return nil, err
+			}
+			out[i] = normalized
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("skills: metadata value of type %T is not JSON-compatible", value)
+	}
 }
