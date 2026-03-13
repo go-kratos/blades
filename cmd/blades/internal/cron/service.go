@@ -69,7 +69,7 @@ func NewAgentHandler(trigger TriggerFn, execTimeout time.Duration) Handler {
 		execTimeout = 60 * time.Second
 	}
 	return func(ctx context.Context, job *Job) (string, error) {
-		switch job.Payload.Kind {
+		switch normalizePayloadKind(job.Payload.Kind) {
 		case PayloadExec:
 			ec, cancel := context.WithTimeout(context.Background(), execTimeout)
 			defer cancel()
@@ -88,6 +88,17 @@ func NewAgentHandler(trigger TriggerFn, execTimeout time.Duration) Handler {
 		default:
 			return "", fmt.Errorf("unknown payload kind %q", job.Payload.Kind)
 		}
+	}
+}
+
+func normalizePayloadKind(kind PayloadKind) PayloadKind {
+	switch strings.ToLower(strings.TrimSpace(string(kind))) {
+	case "shell", "command":
+		return PayloadExec
+	case "message", "agent_message":
+		return PayloadAgentTurn
+	default:
+		return kind
 	}
 }
 
@@ -349,6 +360,27 @@ func (s *Service) tick(ctx context.Context) {
 			cp := *j
 			due = append(due, &cp)
 		}
+	}
+	// Pre-advance schedules before releasing the lock and executing, so
+	// that watchFile polling does not re-queue the same job while it is
+	// already in flight (which would cause duplicate execution).
+	if len(due) > 0 {
+		dueSet := make(map[string]bool, len(due))
+		for _, d := range due {
+			dueSet[d.ID] = true
+		}
+		for _, j := range s.st.Jobs {
+			if !dueSet[j.ID] {
+				continue
+			}
+			if j.Schedule.Kind == ScheduleAt {
+				j.Enabled = false
+				j.State.NextRunAtMs = 0
+			} else {
+				j.State.NextRunAtMs = computeNextRun(j.Schedule, now)
+			}
+		}
+		_ = s.saveLocked()
 	}
 	s.mu.Unlock()
 

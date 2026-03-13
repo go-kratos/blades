@@ -95,9 +95,7 @@ func buildRunner(cfg *config.Config, ws *workspace.Workspace, extraTools ...blad
 	}
 
 	maxMessages := 100
-	if cfg.Defaults.MaxTurns > 0 {
-		maxMessages = cfg.Defaults.MaxTurns
-	}
+	maxMessages = contextMessageLimit(cfg)
 	windowCM := window.NewContextManager(
 		window.WithMaxMessages(maxMessages),
 		window.WithMaxTokens(int64(cfg.Defaults.CompressThreshold)),
@@ -208,4 +206,11 @@ func makeTrigger(runner *blades.Runner, sessMgr *session.Manager) cron.TriggerFn
 		}
 		return buf.String(), nil
 	}
+}
+
+func contextMessageLimit(cfg *config.Config) int {
+	if cfg != nil && cfg.Defaults.MaxTurns > 0 {
+		return cfg.Defaults.MaxTurns * 2
+	}
+	return 100
 }

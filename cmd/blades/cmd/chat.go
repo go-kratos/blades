@@ -41,14 +41,11 @@ func newChatCmd() *cobra.Command {
 			// Start cron service so the agent can manage scheduled jobs from chat.
 			// The handler is set (and re-set on /reload) once the runner is built.
 			cronSvc := cron.NewService(ws.CronStorePath(), nil)
-			if err := cronSvc.Start(ctx); err != nil {
-				return fmt.Errorf("cron: %w", err)
-			}
-			defer cronSvc.Stop()
-
 			cronTool := bldtools.NewCronTool(cronSvc)
 
-			// Build initial runner; reload rebuilds it on /reload.
+			// Build runner before starting the cron service so the handler is
+			// always wired when any overdue job fires. Starting first would let
+			// an immediately-due job execute with a nil handler.
 			// mu guards currentRunner: handler holds a read lock while streaming;
 			// reload holds a write lock while replacing the pointer.
 			var mu sync.RWMutex
@@ -59,6 +56,11 @@ func newChatCmd() *cobra.Command {
 
 			// Wire the live runner into the cron handler so agent_turn jobs work.
 			cronSvc.SetHandler(cron.NewAgentHandler(makeTrigger(currentRunner, sessMgr), 60*time.Second))
+
+			if err := cronSvc.Start(ctx); err != nil {
+				return fmt.Errorf("cron: %w", err)
+			}
+			defer cronSvc.Stop()
 			if sessionID == "" {
 				sessionID = fmt.Sprintf("chat-%d", time.Now().Unix())
 			}

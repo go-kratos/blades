@@ -18,7 +18,6 @@ Before doing anything else, **without asking permission**:
 5. Read `TOOLS.md` — machine-specific setup notes
 6. Read `HEARTBEAT.md` when the turn is a heartbeat or proactive check
 7. Read `memory/YYYY-MM-DD.md` for today and yesterday — recent context
-8. Peek at `knowledges/` for any small domain files worth injecting
 
 Don't ask permission. Just do it. Then say hello and get to work.
 

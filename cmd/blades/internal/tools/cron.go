@@ -245,7 +245,7 @@ func normPayloadKind(raw string) cron.PayloadKind {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "":
 		return ""
-	case "command":
+	case "command", "shell":
 		return cron.PayloadExec
 	case "message", "agent_message":
 		return cron.PayloadAgentTurn
