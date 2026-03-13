@@ -1,6 +1,6 @@
 ---
-name: cron
-description: Schedule one-shot or recurring tasks — run a shell command or send a message to the agent on a timer.
+name: blades-cron
+description: Schedule one-shot or recurring tasks - run a shell command or send a message to the agent on a timer.
 ---
 
 # Cron
@@ -28,7 +28,7 @@ Use the `cron` tool to schedule tasks that run automatically.
 | Standard cron expression | `cron` | `cron_expr: "min hr dom mon dow"` |
 
 **Rules:**
-- For "in N minutes/hours" use `delay_seconds` — never call `exec` to get the current timestamp, just pass the number of seconds.
+- For "in N minutes/hours" use `delay_seconds` - never call `exec` to get the current timestamp, just pass the number of seconds.
 - Use `delete_after_run: true` for one-shot jobs that should be removed after firing.
 - For `schedule_kind=cron` use a standard 5-field expression (`min hour dom month dow`). Optional `tz` sets the timezone (IANA name, e.g. `"Asia/Shanghai"`).
 - Valid `schedule_kind` values: `at`, `every`, `cron`. Do **not** use `delay` or other values.

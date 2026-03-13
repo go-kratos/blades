@@ -233,7 +233,7 @@ Built-in skill installed by `blades init`:
 
 | Skill | Description |
 |---|---|
-| `cron` | Schedule shell commands or agent turns from within chat |
+| `blades-cron` | Global skill installed in `~/.blades/skills/` for scheduling shell commands or agent turns from within chat |
 
 ---
 

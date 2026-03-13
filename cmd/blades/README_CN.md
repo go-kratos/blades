@@ -233,7 +233,7 @@ description: 为 Agent 提供某种有用的能力。
 
 | 技能 | 说明 |
 |---|---|
-| `cron` | 在对话中调度 Shell 命令或 Agent 对话任务 |
+| `blades-cron` | 安装在 `~/.blades/skills/` 下的全局技能，用于在对话中调度 Shell 命令或 Agent 对话任务 |
 
 ---
 
