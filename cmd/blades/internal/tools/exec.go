@@ -60,7 +60,22 @@ type execInput struct {
 }
 
 type execTool struct {
-	cfg ExecConfig
+	cfg        ExecConfig
+	denyRegex  []*regexp.Regexp
+	allowRegex []*regexp.Regexp
+	regexErr   error
+}
+
+func compileRegexList(patterns []string) ([]*regexp.Regexp, error) {
+	compiled := make([]*regexp.Regexp, 0, len(patterns))
+	for _, pattern := range patterns {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid regex %q: %w", pattern, err)
+		}
+		compiled = append(compiled, re)
+	}
+	return compiled, nil
 }
 
 // NewExecTool returns a tool that executes shell commands with safety guards.
@@ -69,6 +84,16 @@ func NewExecTool(cfg ExecConfig) bladestools.Tool {
 		cfg.Timeout = 60 * time.Second
 	}
 	t := &execTool{cfg: cfg}
+	if denyRegex, err := compileRegexList(cfg.DenyPatterns); err != nil {
+		t.regexErr = err
+	} else {
+		t.denyRegex = denyRegex
+	}
+	if allowRegex, err := compileRegexList(cfg.AllowPatterns); err != nil {
+		t.regexErr = err
+	} else {
+		t.allowRegex = allowRegex
+	}
 	inputSchema, _ := jsonschema.For[execInput](nil)
 	outputSchema, _ := jsonschema.For[string](nil)
 	return bladestools.NewTool(
@@ -104,7 +129,7 @@ func (t *execTool) handle(ctx context.Context, raw string) (string, error) {
 	}
 
 	if t.cfg.RestrictToWorkspace {
-		if strings.Contains(in.Command, "../") || strings.Contains(in.Command, `..\ `) {
+		if strings.Contains(in.Command, "../") || strings.Contains(in.Command, `..\\`) {
 			return "Error: path traversal blocked by safety guard", nil
 		}
 	}
@@ -132,15 +157,19 @@ func (t *execTool) handle(ctx context.Context, raw string) (string, error) {
 }
 
 func (t *execTool) guard(command string) string {
+	if t.regexErr != nil {
+		return "Error: exec tool misconfigured: " + t.regexErr.Error()
+	}
+
 	lower := strings.ToLower(strings.TrimSpace(command))
-	for _, pattern := range t.cfg.DenyPatterns {
-		if regexp.MustCompile(pattern).MatchString(lower) {
-			return "Error: command blocked by safety guard (matched deny pattern: " + pattern + ")"
+	for _, re := range t.denyRegex {
+		if re.MatchString(lower) {
+			return "Error: command blocked by safety guard (matched deny pattern: " + re.String() + ")"
 		}
 	}
-	if len(t.cfg.AllowPatterns) > 0 {
-		for _, pattern := range t.cfg.AllowPatterns {
-			if regexp.MustCompile(pattern).MatchString(lower) {
+	if len(t.allowRegex) > 0 {
+		for _, re := range t.allowRegex {
+			if re.MatchString(lower) {
 				return ""
 			}
 		}

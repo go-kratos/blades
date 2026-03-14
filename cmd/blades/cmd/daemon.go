@@ -48,7 +48,7 @@ func newDaemonCmd() *cobra.Command {
 			}
 			defer svc.Stop()
 
-			fmt.Printf("blades daemon running (workspace: %s) — Ctrl-C to stop\n", cfg.Workspace)
+			fmt.Printf("blades daemon running (workspace: %s) — Ctrl-C to stop\n", ws.WorkspaceDir())
 			<-ctx.Done()
 			fmt.Println("\nShutting down…")
 			return nil

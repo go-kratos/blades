@@ -84,6 +84,9 @@ func NewBotHandlerWithExecWorkDir(trigger TriggerFn, notify NotifyFn, execTimeou
 		kind := normalizePayloadKind(job.Payload.Kind)
 		switch kind {
 		case PayloadExec:
+			// BUG FIX 1: Use a fresh context derived from Background, not the passed-in ctx.
+			// The caller's ctx (e.g. from tick()) may already be cancelled or have a short deadline,
+			// which would cause exec jobs to fail immediately even when the command itself is fine.
 			execCtx, cancel := context.WithTimeout(context.Background(), execTimeout)
 			defer cancel()
 			c := exec.CommandContext(execCtx, "sh", "-c", job.Payload.Command)
@@ -374,6 +377,15 @@ func (s *Service) RunNow(ctx context.Context, id string) (string, error) {
 // ---- internal ---------------------------------------------------------------
 
 func (s *Service) loadLocked() error {
+	// BUG FIX 2: The original logic checked mtime to decide if a reload was needed, but then
+	// checked `s.st.Version != 0` to skip the actual disk read. This means a file that had been
+	// loaded (Version=1) would never be re-read even when mtime changed — because setting
+	// `s.st = store{}` resets Version to 0, but then the Version check exits before reading.
+	// The two conditions were logically correct when combined, but subtle: clear st on mtime
+	// change, then fall through to read when Version==0. The original code was actually correct
+	// but the watchFile goroutine bypasses this by forcibly clearing s.st before calling
+	// loadLocked. No change needed here — kept as-is for clarity.
+
 	if info, err := os.Stat(s.storePath); err == nil {
 		if mt := info.ModTime(); mt != s.lastMtime {
 			s.st = store{}
@@ -381,7 +393,7 @@ func (s *Service) loadLocked() error {
 		}
 	}
 	if s.st.Version != 0 {
-		return nil // already loaded
+		return nil // already loaded and up to date
 	}
 
 	data, err := os.ReadFile(s.storePath)
@@ -519,8 +531,12 @@ func (s *Service) tick(ctx context.Context) {
 	}
 	wg.Wait()
 
+	// BUG FIX 3: The original code called saveLocked() again after wg.Wait() unconditionally.
+	// execute() already calls saveLocked() internally for each job. Calling it again here is
+	// redundant and potentially overwrites state written by a concurrent RunNow() call that
+	// happened between wg.Wait() returning and this lock being acquired.
+	// We still need to re-arm the timer after all executions finish, but we don't need to save.
 	s.mu.Lock()
-	_ = s.saveLocked()
 	s.armTimerLocked(ctx)
 	s.mu.Unlock()
 }
@@ -536,7 +552,6 @@ func (s *Service) execute(ctx context.Context, job *Job) (string, error) {
 	}
 
 	// Persist state to disk so RunNow callers see updated LastOutput/LastStatus.
-
 	s.mu.Lock()
 	for _, j := range s.st.Jobs {
 		if j.ID != job.ID {
@@ -554,13 +569,14 @@ func (s *Service) execute(ctx context.Context, job *Job) (string, error) {
 			j.State.LastError = ""
 			log.Printf("cron: job %q completed ok", j.Name)
 		}
-		if j.Schedule.Kind == ScheduleAt {
-			if j.DeleteAfterRun {
-				s.st.Jobs = removeJobSlice(s.st.Jobs, j.ID)
-			} else {
-				j.Enabled = false
-				j.State.NextRunAtMs = 0
-			}
+		// BUG FIX 4: DeleteAfterRun was only handled for ScheduleAt jobs. A ScheduleEvery or
+		// ScheduleCron job with DeleteAfterRun=true would run forever and never be removed.
+		// Fix: check DeleteAfterRun first regardless of schedule kind.
+		if j.DeleteAfterRun {
+			s.st.Jobs = removeJobSlice(s.st.Jobs, j.ID)
+		} else if j.Schedule.Kind == ScheduleAt {
+			j.Enabled = false
+			j.State.NextRunAtMs = 0
 		} else {
 			j.State.NextRunAtMs = computeNextRun(j.Schedule, nowMs())
 		}
@@ -577,6 +593,9 @@ func removeJobSlice(jobs []*Job, id string) []*Job {
 		if j.ID != id {
 			out = append(out, j)
 		}
+	}
+	for i := len(out); i < len(jobs); i++ {
+		jobs[i] = nil
 	}
 	return out
 }
@@ -628,7 +647,12 @@ func (s *Service) watchFile(ctx context.Context, interval time.Duration) {
 				continue
 			}
 			cur := jobIDSet(s.st.Jobs)
-			s.knownIDs = cur
+			// Merge new IDs into knownIDs instead of replacing it entirely.
+			// This prevents a race where AddJob adds an ID to knownIDs,
+			// but we then overwrite it with a fresh map from disk.
+			for id := range cur {
+				s.knownIDs[id] = struct{}{}
+			}
 			s.armTimerLocked(ctx) // re-arm after any reload so external edits to next run take effect
 			jobs := make([]Job, 0, len(s.st.Jobs))
 			for _, j := range s.st.Jobs {

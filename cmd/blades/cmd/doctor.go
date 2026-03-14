@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/go-kratos/blades/cmd/blades/internal/config"
 	"github.com/go-kratos/blades/cmd/blades/internal/cron"
+	bladesmcp "github.com/go-kratos/blades/contrib/mcp"
 )
 
 func newDoctorCmd() *cobra.Command {
@@ -57,6 +60,40 @@ func newDoctorCmd() *cobra.Command {
 				}
 			} else {
 				fmt.Printf("  Cron: no cron.json (add jobs with 'blades cron add')\n")
+			}
+
+			// Check MCP servers
+			var allMCP []bladesmcp.ClientConfig
+			for _, path := range []string{ws.MCPPath(), ws.WorkspaceMCPPath()} {
+				servers, err := config.LoadMCPFile(path)
+				if err != nil {
+					fmt.Printf("✗ %-30s %v\n", "mcp: "+path, err)
+					ok = false
+					continue
+				}
+				allMCP = append(allMCP, servers...)
+			}
+			if len(allMCP) == 0 {
+				fmt.Printf("  MCP: no servers configured\n")
+			} else {
+				ctx := context.Background()
+				for _, mc := range allMCP {
+					client, err := bladesmcp.NewClient(mc)
+					if err != nil {
+						fmt.Printf("✗ %-30s %v\n", "mcp: "+mc.Name, err)
+						ok = false
+						continue
+					}
+					if err := client.Connect(ctx); err != nil {
+						fmt.Printf("✗ %-30s %v\n", "mcp: "+mc.Name, err)
+						ok = false
+						_ = client.Close()
+					} else {
+						tools, _ := client.ListTools(ctx)
+						fmt.Printf("✓ %-30s %d tools\n", "mcp: "+mc.Name, len(tools))
+						_ = client.Close()
+					}
+				}
 			}
 
 			if !ok {

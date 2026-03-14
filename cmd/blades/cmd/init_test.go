@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/go-kratos/blades/cmd/blades/internal/config"
 )
 
 func TestResolveInitPathsUsesHomeAndWorkspaceFlag(t *testing.T) {
@@ -109,13 +107,5 @@ func TestInitWithCustomWorkspaceSeparatesHomeAndWorkspace(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(homeDir, "workspace")); err == nil {
 		t.Fatalf("did not expect default workspace dir %q when custom workspace is set", filepath.Join(homeDir, "workspace"))
-	}
-
-	cfg, err := config.Load(filepath.Join(homeDir, "config.yaml"))
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if got, want := cfg.Workspace, workspaceDir; got != want {
-		t.Fatalf("config workspace = %q, want %q", got, want)
 	}
 }

@@ -43,13 +43,6 @@ Examples:
 			}
 			fmt.Printf("✓ Workspace initialised: %s\n", workspaceDir)
 
-			// If using a custom workspace location, update config.yaml with the workspace path
-			if isCustomWorkspace {
-				if err := patchConfigWorkspace(ws.ConfigPath(), workspaceDir); err != nil {
-					fmt.Fprintf(os.Stderr, "warn: could not update config.yaml: %v\n", err)
-				}
-			}
-
 			if gitInit {
 				if err := initGit(workspaceDir); err != nil {
 					fmt.Fprintf(os.Stderr, "warn: git: %v\n", err)
@@ -63,7 +56,6 @@ Examples:
 			fmt.Printf("  4. Run 'blades chat' to start a conversation\n")
 			if isCustomWorkspace {
 				fmt.Printf("\nNote: Using custom workspace at %s\n", workspaceDir)
-				fmt.Printf("  The workspace path has been saved to config.yaml\n")
 			}
 			return nil
 		},
@@ -106,37 +98,6 @@ func expandTilde(path string) string {
 		return filepath.Join(home, path[2:])
 	}
 	return path
-}
-
-// patchConfigWorkspace adds or updates the workspace field in config.yaml.
-// This ensures subsequent commands can find the workspace without --workspace flag.
-func patchConfigWorkspace(configPath, workspaceDir string) error {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
-
-	content := string(data)
-	workspaceLine := fmt.Sprintf("workspace: %s\n", workspaceDir)
-
-	// Check if workspace field already exists
-	if strings.Contains(content, "workspace:") {
-		// Replace existing workspace line
-		lines := strings.Split(content, "\n")
-		for i, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "workspace:") {
-				lines[i] = fmt.Sprintf("workspace: %s", workspaceDir)
-				break
-			}
-		}
-		content = strings.Join(lines, "\n")
-	} else {
-		// Add workspace field at the beginning
-		content = workspaceLine + "\n" + content
-	}
-
-	return os.WriteFile(configPath, []byte(content), 0o644)
 }
 
 // initGit initialises a git repository in dir and creates a .gitignore.

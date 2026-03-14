@@ -151,21 +151,28 @@ func (t *Toolset) Tools() []tools.Tool {
 }
 
 // ComposeTools merges base tools with skill tools and applies allowed-tools filtering.
+// Base tools (passed in from the agent) are always preserved - the filtering only
+// applies to skill tools, allowing skills to restrict which additional tools they need.
 func (t *Toolset) ComposeTools(base []tools.Tool) []tools.Tool {
+	// Base tools are always included - they are core agent capabilities.
 	out := make([]tools.Tool, 0, len(base)+len(t.tools))
 	out = append(out, base...)
-	out = append(out, t.tools...)
+
+	// If no allowed-tools patterns, include all skill tools.
 	if len(t.allowedToolPatterns) == 0 {
+		out = append(out, t.tools...)
 		return out
 	}
-	filtered := make([]tools.Tool, 0, len(out))
-	for _, tool := range out {
+
+	// Filter skill tools based on allowed-tools patterns.
+	// Core skill tools (list_skills, load_skill, etc.) are always included.
+	for _, tool := range t.tools {
 		name := tool.Name()
 		if isCoreToolName(name) || matchesAllowedPattern(name, t.allowedToolPatterns) {
-			filtered = append(filtered, tool)
+			out = append(out, tool)
 		}
 	}
-	return filtered
+	return out
 }
 
 func matchesAllowedPattern(toolName string, patterns []string) bool {

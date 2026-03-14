@@ -19,7 +19,6 @@ import (
 // Default values (when config file missing or fields empty):
 //   - provider: anthropic
 //   - model: claude-sonnet-4-6
-//   - workspace: ~/.blades/workspace (the agent operating directory)
 //   - maxIterations: 10
 //   - compressThreshold: 40000
 func Load(path string) (*Config, error) {
@@ -54,10 +53,7 @@ func Load(path string) (*Config, error) {
 }
 
 func defaultConfig() *Config {
-	home, _ := os.UserHomeDir()
-	ws := filepath.Join(home, ".blades", "workspace")
 	return &Config{
-		Workspace: ws,
 		LLM: LLMConfig{
 			Provider: "anthropic",
 			Model:    "claude-sonnet-4-6",
@@ -83,12 +79,6 @@ func applyDefaults(cfg *Config) {
 	if cfg.Defaults.CompressThreshold == 0 {
 		cfg.Defaults.CompressThreshold = 40000
 	}
-	if cfg.Workspace == "" {
-		home, _ := os.UserHomeDir()
-		cfg.Workspace = filepath.Join(home, ".blades", "workspace")
-	}
-	// Expand tilde in workspace path
-	cfg.Workspace = ExpandTilde(cfg.Workspace)
 }
 
 // ExpandTilde expands ~ to the user's home directory.

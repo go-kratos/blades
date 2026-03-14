@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/context/window"
@@ -29,8 +28,6 @@ import (
 //  1. --config flag: use specified config file directly
 //  2. ~/.blades/config.yaml (default location)
 //  3. Built-in defaults (anthropic, claude-sonnet-4-6)
-//
-// After loading, if --workspace flag is set, it overrides config.Workspace.
 func loadConfigForFlags() (*config.Config, error) {
 	configPath := flagConfig
 
@@ -42,10 +39,6 @@ func loadConfigForFlags() (*config.Config, error) {
 		return nil, err
 	}
 
-	// --workspace flag always overrides config.Workspace
-	if flagWorkspace != "" {
-		cfg.Workspace = config.ExpandTilde(flagWorkspace)
-	}
 	return cfg, nil
 }
 
@@ -59,11 +52,11 @@ func bladesHomeDir() string {
 }
 
 // workspaceForConfig builds a workspace using a fixed home dir (~/.blades)
-// and the active workspace directory from config/flags.
+// and the active workspace directory from the --workspace flag.
 func workspaceForConfig(cfg *config.Config) *workspace.Workspace {
 	workspaceDir := ""
-	if cfg != nil {
-		workspaceDir = strings.TrimSpace(cfg.Workspace)
+	if flagWorkspace != "" {
+		workspaceDir = config.ExpandTilde(flagWorkspace)
 	}
 	return workspace.NewWithWorkspace(bladesHomeDir(), workspaceDir)
 }
@@ -117,8 +110,7 @@ func buildRunner(cfg *config.Config, ws *workspace.Workspace, extraTools ...blad
 		return nil, err
 	}
 
-	maxMessages := 100
-	maxMessages = contextMessageLimit(cfg)
+	maxMessages := contextMessageLimit(cfg)
 	windowCM := window.NewContextManager(
 		window.WithMaxMessages(maxMessages),
 		window.WithMaxTokens(int64(cfg.Defaults.CompressThreshold)),
@@ -145,24 +137,7 @@ func buildRunner(cfg *config.Config, ws *workspace.Workspace, extraTools ...blad
 	allTools := append(builtinTools, extraTools...)
 
 	if len(cfg.MCP) > 0 {
-		mcpConfigs := make([]bladesmcp.ClientConfig, 0, len(cfg.MCP))
-		for _, m := range cfg.MCP {
-			cc := bladesmcp.ClientConfig{
-				Name:      m.Name,
-				Transport: bladesmcp.TransportType(m.Transport),
-				Command:   m.Command,
-				Args:      m.Args,
-				Env:       m.Env,
-				WorkDir:   m.WorkDir,
-				Endpoint:  m.Endpoint,
-				Headers:   m.Headers,
-			}
-			if m.TimeoutSeconds > 0 {
-				cc.Timeout = time.Duration(m.TimeoutSeconds) * time.Second
-			}
-			mcpConfigs = append(mcpConfigs, cc)
-		}
-		resolver, err := bladesmcp.NewToolsResolver(mcpConfigs...)
+		resolver, err := bladesmcp.NewToolsResolver(cfg.MCP...)
 		if err != nil {
 			return nil, fmt.Errorf("mcp: %w", err)
 		}
@@ -223,8 +198,22 @@ func makeTrigger(runner *blades.Runner, sessMgr *session.Manager) cron.TriggerFn
 			if err != nil {
 				return buf.String(), err
 			}
-			if m != nil {
-				buf.WriteString(m.Text())
+			if m == nil {
+				continue
+			}
+
+			// Keep one canonical final response: streamed deltas are accumulated,
+			// and a completed message replaces them when provided by the model.
+			if m.Status == blades.StatusCompleted {
+				if finalText := m.Text(); finalText != "" {
+					buf.Reset()
+					buf.WriteString(finalText)
+				}
+				continue
+			}
+
+			if chunk := m.Text(); chunk != "" {
+				buf.WriteString(chunk)
 			}
 		}
 		return buf.String(), nil

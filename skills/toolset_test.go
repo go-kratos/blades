@@ -338,7 +338,7 @@ func TestToolsetComposeToolsWithAllowedPatterns(t *testing.T) {
 		bladestools.NewTool("tool-foo", "allowed", bladestools.HandleFunc(func(ctx context.Context, input string) (string, error) {
 			return "ok", nil
 		})),
-		bladestools.NewTool("blocked-foo", "blocked", bladestools.HandleFunc(func(ctx context.Context, input string) (string, error) {
+		bladestools.NewTool("other-foo", "other base tool", bladestools.HandleFunc(func(ctx context.Context, input string) (string, error) {
 			return "ok", nil
 		})),
 	}
@@ -347,11 +347,12 @@ func TestToolsetComposeToolsWithAllowedPatterns(t *testing.T) {
 	for _, tool := range composed {
 		names = append(names, tool.Name())
 	}
-	if strings.Contains(strings.Join(names, ","), "blocked-foo") {
-		t.Fatalf("blocked tool should be filtered, got: %v", names)
-	}
+
+	// Base tools are ALWAYS included regardless of allowed-tools patterns.
+	// This ensures core agent capabilities (like exec) are never filtered out.
 	for _, name := range []string{
 		"tool-foo",
+		"other-foo", // base tool that doesn't match patterns - still included
 		ToolListSkillsName,
 		ToolLoadSkillName,
 		ToolLoadSkillResourceName,

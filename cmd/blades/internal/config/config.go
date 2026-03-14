@@ -1,28 +1,34 @@
 package config
 
-import "gopkg.in/yaml.v3"
+import (
+	"time"
+
+	bladesmcp "github.com/go-kratos/blades/contrib/mcp"
+	"gopkg.in/yaml.v3"
+)
 
 // Config is the top-level workspace configuration.
 type Config struct {
-	// Workspace is the agent workspace directory path. Defaults to ~/.blades/workspace.
-	Workspace string `yaml:"workspace"`
-
 	// LLM configures the language model provider.
-	LLM LLMConfig `yaml:"llm"`
+	LLM LLMConfig
 
 	// Defaults holds agent execution parameters.
-	Defaults DefaultsConfig `yaml:"defaults"`
+	Defaults DefaultsConfig
 
 	// MCP lists MCP server connections whose tools are exposed to the agent.
-	MCP []MCPServerConfig `yaml:"mcp"`
+	MCP []bladesmcp.ClientConfig
 }
 
-// MCPServerConfig configures a single MCP server connection.
-type MCPServerConfig struct {
+// mcpEntryYAML is a YAML-friendly struct for MCP server entries in config.yaml.
+// It supports field aliases (type → transport, url → endpoint) for compatibility
+// with various config formats including Claude Desktop's mcp.json style.
+type mcpEntryYAML struct {
 	// Name is a unique identifier for this server.
 	Name string `yaml:"name"`
-	// Transport is one of: stdio, http, websocket.
+	// Transport is one of: stdio (default), http, websocket.
 	Transport string `yaml:"transport"`
+	// Type is an alias for Transport.
+	Type string `yaml:"type"`
 	// Command is the executable (stdio transport).
 	Command string `yaml:"command"`
 	// Args are the command arguments (stdio transport).
@@ -33,10 +39,61 @@ type MCPServerConfig struct {
 	WorkDir string `yaml:"workDir"`
 	// Endpoint is the server URL (http / websocket transport).
 	Endpoint string `yaml:"endpoint"`
+	// URL is an alias for Endpoint.
+	URL string `yaml:"url"`
 	// Headers are custom HTTP headers (http transport).
 	Headers map[string]string `yaml:"headers"`
 	// TimeoutSeconds is the request timeout (0 → default 30 s).
 	TimeoutSeconds int `yaml:"timeoutSeconds"`
+}
+
+func (e mcpEntryYAML) toClientConfig() bladesmcp.ClientConfig {
+	transport := e.Transport
+	if transport == "" {
+		transport = e.Type
+	}
+	if transport == "" {
+		transport = "stdio"
+	}
+	endpoint := e.Endpoint
+	if endpoint == "" {
+		endpoint = e.URL
+	}
+	cc := bladesmcp.ClientConfig{
+		Name:      e.Name,
+		Transport: bladesmcp.TransportType(transport),
+		Command:   e.Command,
+		Args:      e.Args,
+		Env:       e.Env,
+		WorkDir:   e.WorkDir,
+		Endpoint:  endpoint,
+		Headers:   e.Headers,
+	}
+	if e.TimeoutSeconds > 0 {
+		cc.Timeout = time.Duration(e.TimeoutSeconds) * time.Second
+	}
+	return cc
+}
+
+// rawConfig is used internally for YAML unmarshaling to handle MCP entry aliases.
+type rawConfig struct {
+	LLM      LLMConfig      `yaml:"llm"`
+	Defaults DefaultsConfig `yaml:"defaults"`
+	MCP      []mcpEntryYAML `yaml:"mcp"`
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler to convert MCP entries to bladesmcp.ClientConfig.
+func (c *Config) UnmarshalYAML(value *yaml.Node) error {
+	var raw rawConfig
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	c.LLM = raw.LLM
+	c.Defaults = raw.Defaults
+	for _, e := range raw.MCP {
+		c.MCP = append(c.MCP, e.toClientConfig())
+	}
+	return nil
 }
 
 // LLMConfig specifies the provider and model connection details.
