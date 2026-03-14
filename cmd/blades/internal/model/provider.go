@@ -9,6 +9,7 @@ import (
 	bldanthropic "github.com/go-kratos/blades/contrib/anthropic"
 	bldgemini "github.com/go-kratos/blades/contrib/gemini"
 	bldopenai "github.com/go-kratos/blades/contrib/openai"
+	"google.golang.org/genai"
 
 	"github.com/go-kratos/blades/cmd/blades/internal/config"
 )
@@ -31,7 +32,12 @@ func NewProvider(cfg config.LLMConfig) (blades.ModelProvider, error) {
 		return bldopenai.NewModel(cfg.Model, c), nil
 
 	case "gemini":
-		return bldgemini.NewModel(context.Background(), cfg.Model, bldgemini.Config{})
+		c := bldgemini.Config{}
+		if cfg.APIKey != "" {
+			c.ClientConfig.APIKey = cfg.APIKey
+		}
+		c.ClientConfig.Backend = genai.BackendGeminiAPI
+		return bldgemini.NewModel(context.Background(), cfg.Model, c)
 
 	default:
 		return nil, fmt.Errorf("unsupported provider: %q (want anthropic|openai|gemini)", cfg.Provider)

@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/go-kratos/blades/cmd/blades/internal/cron"
-	"github.com/go-kratos/blades/cmd/blades/internal/workspace"
 )
 
 func newDoctorCmd() *cobra.Command {
@@ -20,7 +19,7 @@ func newDoctorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ws := workspace.New(cfg.Workspace)
+			ws := workspaceForConfig(cfg)
 
 			ok := true
 			check := func(label, path string) {

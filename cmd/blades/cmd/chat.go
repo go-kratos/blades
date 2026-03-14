@@ -55,7 +55,11 @@ func newChatCmd() *cobra.Command {
 			}
 
 			// Wire the live runner into the cron handler so agent_turn jobs work.
-			cronSvc.SetHandler(cron.NewAgentHandler(makeTrigger(currentRunner, sessMgr), 60*time.Second))
+			cronSvc.SetHandler(cron.NewAgentHandlerWithExecWorkDir(
+				makeTrigger(currentRunner, sessMgr),
+				60*time.Second,
+				defaultExecWorkingDir(ws),
+			))
 
 			if err := cronSvc.Start(ctx); err != nil {
 				return fmt.Errorf("cron: %w", err)
@@ -166,7 +170,11 @@ func newChatCmd() *cobra.Command {
 				mu.Lock()
 				currentRunner = r
 				mu.Unlock()
-				cronSvc.SetHandler(cron.NewAgentHandler(makeTrigger(r, sessMgr), 60*time.Second))
+				cronSvc.SetHandler(cron.NewAgentHandlerWithExecWorkDir(
+					makeTrigger(r, sessMgr),
+					60*time.Second,
+					defaultExecWorkingDir(ws),
+				))
 				return nil
 			}
 

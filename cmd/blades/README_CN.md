@@ -4,7 +4,7 @@
 >
 > English documentation: [README.md](README.md)
 
-`blades` 是一个以本地文件为核心的命令行 AI 智能体，工作空间位于 `~/.blades`。它能记住你的对话、从 Markdown 文件加载技能、通过 MCP 连接外部工具服务器、通过 cron 调度定时任务，并支持多种 LLM 提供商——Anthropic、OpenAI 和 Gemini。
+`blades` 是一个以本地文件为核心的命令行 AI 智能体：全局 home 目录位于 `~/.blades`，Agent 工作空间默认位于 `~/.blades/workspace`（也可通过 `--workspace` 指向任意目录）。它能记住你的对话、从 Markdown 文件加载技能、通过 MCP 连接外部工具服务器、通过 cron 调度定时任务，并支持多种 LLM 提供商——Anthropic、OpenAI 和 Gemini。
 
 ---
 
@@ -52,6 +52,8 @@ blades chat
 
 ## 工作空间结构
 
+默认结构（未配置自定义 workspace 路径时）：
+
 ```
 ~/.blades/
 ├── config.yaml          ← LLM 提供商、模型、API Key
@@ -93,7 +95,7 @@ defaults:
 
 ### `blades init`
 
-初始化工作空间。在 `~/.blades` 创建所有模板文件和目录。可重复执行——已有文件不会被覆盖。
+初始化 blades 的 home 与 workspace 目录。home 级文件固定创建在 `~/.blades`；workspace 级文件创建在 `~/.blades/workspace`（或 `--workspace` 指定目录）。可重复执行——已有文件不会被覆盖。
 
 ```sh
 blades init
@@ -178,7 +180,7 @@ blades cron run <id>
 blades daemon
 
 # 作为 systemd 服务的示例单元文件：
-# ExecStart=/usr/local/bin/blades daemon --workspace /home/user/.blades
+# ExecStart=/usr/local/bin/blades daemon --workspace /home/user/my-agent
 ```
 
 ### `blades doctor`
@@ -196,7 +198,7 @@ blades doctor
 | 标志 | 默认值 | 说明 |
 |---|---|---|
 | `--config` | `~/.blades/config.yaml` | 自定义配置文件路径 |
-| `--workspace` | `~/.blades` | blades 根目录路径 |
+| `--workspace` | `~/.blades/workspace` | Agent 工作空间目录路径 |
 | `--debug` | false | 启用详细调试日志 |
 
 ---
@@ -228,7 +230,7 @@ description: 为 Agent 提供某种有用的能力。
 |---|---|
 | `~/.agents/skills/` | 系统级（跨工具共享） |
 | `~/.blades/skills/` | blades 全局技能 |
-| `~/.blades/workspace/skills/` | 当前工作空间本地技能 |
+| `<workspace>/skills/`（默认：`~/.blades/workspace/skills/`） | 当前工作空间本地技能 |
 
 在对话中输入 `/reload`（或重启），Agent 会自动发现并使用新技能。
 
@@ -249,7 +251,7 @@ MCP 服务器从两个文件加载并合并：
 | 文件 | 作用范围 |
 |---|---|
 | `~/.blades/mcp.json` | 全局（所有工作空间） |
-| `~/.blades/workspace/mcp.json` | 当前工作空间 |
+| `<workspace>/mcp.json`（默认：`~/.blades/workspace/mcp.json`） | 当前工作空间 |
 
 也可在 `config.yaml` 的 `mcp:` 字段中以内联方式声明服务器。
 

@@ -4,7 +4,7 @@ import "gopkg.in/yaml.v3"
 
 // Config is the top-level workspace configuration.
 type Config struct {
-	// Workspace is the root directory path. Defaults to ~/.blades.
+	// Workspace is the agent workspace directory path. Defaults to ~/.blades/workspace.
 	Workspace string `yaml:"workspace"`
 
 	// LLM configures the language model provider.

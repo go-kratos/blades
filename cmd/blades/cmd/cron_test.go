@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,15 +110,17 @@ func TestRunNowReturnsOutput(t *testing.T) {
 }
 
 func TestCronAddSupportsDelayFlag(t *testing.T) {
-	oldWorkspace := flagWorkspace
-	oldConfig := flagConfig
+	preserveRootState(t)
+
+	oldHome := os.Getenv("HOME")
+	newHome := t.TempDir()
+	_ = os.Setenv("HOME", newHome)
 	t.Cleanup(func() {
-		flagWorkspace = oldWorkspace
-		flagConfig = oldConfig
+		_ = os.Setenv("HOME", oldHome)
 	})
 
-	root := t.TempDir()
-	flagWorkspace = root
+	workspaceDir := t.TempDir()
+	flagWorkspace = workspaceDir
 	flagConfig = ""
 
 	cmd := newCronAddCmd()
@@ -126,7 +129,12 @@ func TestCronAddSupportsDelayFlag(t *testing.T) {
 		t.Fatalf("cron add with --delay: %v", err)
 	}
 
-	svc := cron.NewService(filepath.Join(root, "cron.json"), nil)
+	if _, err := os.Stat(filepath.Join(workspaceDir, "cron.json")); err == nil {
+		t.Fatalf("cron store should not be written to workspace directory %q", workspaceDir)
+	}
+
+	storePath := filepath.Join(newHome, ".blades", "cron.json")
+	svc := cron.NewService(storePath, nil)
 	jobs := svc.ListJobs(true)
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 job, got %d", len(jobs))

@@ -12,7 +12,8 @@ import (
 func TestInitCreatesLoadableBuiltInSkills(t *testing.T) {
 	t.Parallel()
 
-	ws := workspace.New(t.TempDir())
+	homeDir := t.TempDir()
+	ws := workspace.New(homeDir)
 	if err := ws.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -46,5 +47,26 @@ func TestContextMessageLimitUsesTurns(t *testing.T) {
 	cfg.Defaults.MaxTurns = 7
 	if got, want := contextMessageLimit(cfg), 14; got != want {
 		t.Fatalf("turn-based limit = %d, want %d", got, want)
+	}
+}
+
+func TestDefaultExecWorkingDirUsesWorkspaceDir(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	ws := workspace.NewWithWorkspace(homeDir, workspaceDir)
+
+	// defaultExecWorkingDir should return the workspace directory, not the home directory
+	if got, want := defaultExecWorkingDir(ws), workspaceDir; got != want {
+		t.Fatalf("default exec working dir = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultExecWorkingDirFallsBackToDot(t *testing.T) {
+	t.Parallel()
+
+	if got, want := defaultExecWorkingDir(nil), "."; got != want {
+		t.Fatalf("default exec working dir for nil workspace = %q, want %q", got, want)
 	}
 }

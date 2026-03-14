@@ -27,7 +27,10 @@ func runScheduledJobNow(ctx context.Context, id string) (string, error) {
 	}
 	sessMgr := session.NewManager(ws.SessionsDir())
 	trigger := makeTrigger(runner, sessMgr)
-	svc := cron.NewService(ws.CronStorePath(), cron.NewAgentHandler(trigger, 60*time.Second))
+	svc := cron.NewService(
+		ws.CronStorePath(),
+		cron.NewAgentHandlerWithExecWorkDir(trigger, 60*time.Second, defaultExecWorkingDir(ws)),
+	)
 	return svc.RunNow(ctx, id)
 }
 

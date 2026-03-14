@@ -30,23 +30,25 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "blades",
 		Short: "A file-system-based local AI agent",
-		Long: `blades — personal AI assistant backed by your local workspace (~/.blades).
+		Long: `blades — personal AI assistant with configurable workspace.
 
-Layout:
-  ~/.blades/
+Home Directory (~/.blades/):
   ├── config.yaml          LLM provider, model, API key
   ├── mcp.json             global MCP server connections
-  ├── skills/              global skills (all workspaces)
+  ├── skills/              global skills (shared across workspaces)
   ├── sessions/            conversation history
-	├── log/                 runtime logs (YYYY-MM-DD.log)
-  └── workspace/           agent operating directory
-      ├── AGENTS.md        behaviour rules (loaded at startup)
-      ├── SOUL.md / USER.md / IDENTITY.md / MEMORY.md
-      ├── mcp.json         workspace-level MCP servers
-      ├── skills/          workspace-local skills
-      ├── memory/          daily session logs
-      ├── knowledges/      domain reference files
-      └── outputs/         agent-generated artifacts`,
+  └── log/                 runtime logs (YYYY-MM-DD.log)
+
+Workspace Directory (configurable, default: ~/.blades/workspace/):
+  ├── AGENTS.md            behaviour rules (loaded at startup)
+  ├── SOUL.md / USER.md / IDENTITY.md / MEMORY.md
+  ├── mcp.json             workspace-level MCP servers
+  ├── skills/              workspace-local skills
+  ├── memory/              daily session logs
+  ├── knowledges/          domain reference files
+  └── outputs/             agent-generated artifacts
+
+Use --workspace to specify a custom workspace directory (e.g., ~/my-agent).`,
 		SilenceUsage: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			configureRootLogger(time.Now())
@@ -54,7 +56,7 @@ Layout:
 	}
 
 	root.PersistentFlags().StringVar(&flagConfig, "config", "", "path to config.yaml (default: ~/.blades/config.yaml)")
-	root.PersistentFlags().StringVar(&flagWorkspace, "workspace", "", "blades root directory (default: ~/.blades)")
+	root.PersistentFlags().StringVar(&flagWorkspace, "workspace", "", "workspace directory (default: ~/.blades/workspace or config value)")
 	root.PersistentFlags().BoolVar(&flagDebug, "debug", false, "enable verbose debug logging")
 
 	root.AddCommand(
@@ -114,16 +116,10 @@ func openRootLogFile(now time.Time) (*os.File, string, error) {
 	return f, logPath, nil
 }
 
+// resolveLogRootDir determines the home directory for log file placement.
+// Logs are always stored in ~/.blades/log (the home directory, not workspace).
 func resolveLogRootDir() string {
-	cfg, err := loadConfigForFlags()
-	if err == nil && cfg != nil && cfg.Workspace != "" {
-		return cfg.Workspace
-	}
-
-	if flagWorkspace != "" {
-		return flagWorkspace
-	}
-
+	// Logs always go to ~/.blades/log (home directory)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""

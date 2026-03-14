@@ -4,7 +4,7 @@
 >
 > 中文文档：[README_CN.md](README_CN.md)
 
-`blades` is a local-first command-line AI agent backed by a plain-file workspace (`~/.blades`). It remembers your conversations, loads skills from Markdown, connects to MCP tool servers, schedules recurring tasks via cron, and supports any LLM provider — Anthropic, OpenAI, or Gemini.
+`blades` is a local-first command-line AI agent backed by plain files: a global home at `~/.blades` and an agent workspace at `~/.blades/workspace` by default (or any custom path via `--workspace`). It remembers your conversations, loads skills from Markdown, connects to MCP tool servers, schedules recurring tasks via cron, and supports any LLM provider — Anthropic, OpenAI, or Gemini.
 
 ---
 
@@ -52,6 +52,8 @@ blades chat
 
 ## Workspace Layout
 
+Default layout (when no custom workspace path is configured):
+
 ```
 ~/.blades/
 ├── config.yaml          ← LLM provider, model, API key
@@ -93,7 +95,7 @@ defaults:
 
 ### `blades init`
 
-Initialise the workspace. Creates `~/.blades` with all template files and directories. Safe to re-run — existing files are never overwritten.
+Initialise blades home and workspace directories. Home-level files are created in `~/.blades`; workspace files are created in `~/.blades/workspace` (or in `--workspace` when provided). Safe to re-run — existing files are never overwritten.
 
 ```sh
 blades init
@@ -178,7 +180,7 @@ Run the cron scheduler as a persistent process.
 blades daemon
 
 # As a systemd service — example unit file:
-# ExecStart=/usr/local/bin/blades daemon --workspace /home/user/.blades
+# ExecStart=/usr/local/bin/blades daemon --workspace /home/user/my-agent
 ```
 
 ### `blades doctor`
@@ -196,7 +198,7 @@ blades doctor
 | Flag | Default | Description |
 |---|---|---|
 | `--config` | `~/.blades/config.yaml` | Path to a custom config file |
-| `--workspace` | `~/.blades` | Path to the blades root directory |
+| `--workspace` | `~/.blades/workspace` | Path to the agent workspace directory |
 | `--debug` | false | Enable verbose debug logging |
 
 ---
@@ -228,7 +230,7 @@ Skills are discovered from three directories in order — later directories can 
 |---|---|
 | `~/.agents/skills/` | System-wide (shared across tools) |
 | `~/.blades/skills/` | Global blades skills |
-| `~/.blades/workspace/skills/` | Workspace-local skills |
+| `<workspace>/skills/` (default: `~/.blades/workspace/skills/`) | Workspace-local skills |
 
 Type `/reload` in chat (or restart) to pick up new skills.
 
@@ -249,7 +251,7 @@ MCP servers are loaded from two files and merged together:
 | File | Scope |
 |---|---|
 | `~/.blades/mcp.json` | Global (all workspaces) |
-| `~/.blades/workspace/mcp.json` | This workspace only |
+| `<workspace>/mcp.json` (default: `~/.blades/workspace/mcp.json`) | This workspace only |
 
 Additional servers can also be declared inline in `config.yaml` under the `mcp:` key.
 

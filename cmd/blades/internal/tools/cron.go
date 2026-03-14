@@ -33,6 +33,8 @@ type cronInput struct {
 
 	// --- remove / run ---
 	JobID string `json:"job_id,omitempty"`
+	JobId string `json:"jobId,omitempty"`
+	ID    string `json:"id,omitempty"`
 }
 
 type cronTool struct {
@@ -67,11 +69,53 @@ func (t *cronTool) handle(ctx context.Context, raw string) (string, error) {
 	case "list":
 		return t.list()
 	case "remove":
-		return t.remove(ctx, in.JobID)
+		id, err := t.resolveJobID(in)
+		if err != nil {
+			return "", err
+		}
+		return t.remove(ctx, id)
 	case "run":
-		return t.run(ctx, in.JobID)
+		id, err := t.resolveJobID(in)
+		if err != nil {
+			return "", err
+		}
+		return t.run(ctx, id)
 	default:
 		return "", fmt.Errorf("unknown action %q; valid: add, list, remove, run", in.Action)
+	}
+}
+
+func (t *cronTool) resolveJobID(in cronInput) (string, error) {
+	if id := strings.TrimSpace(in.JobID); id != "" {
+		return id, nil
+	}
+	if id := strings.TrimSpace(in.JobId); id != "" {
+		return id, nil
+	}
+	if id := strings.TrimSpace(in.ID); id != "" {
+		return id, nil
+	}
+
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		return "", fmt.Errorf("job_id is required (also accepts jobId, id, or name)")
+	}
+
+	jobs := t.svc.ListJobs(true)
+	matches := make([]string, 0, 1)
+	for _, j := range jobs {
+		if strings.EqualFold(strings.TrimSpace(j.Name), name) {
+			matches = append(matches, j.ID)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("job %q not found", name)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("multiple jobs named %q: %s; use job_id", name, strings.Join(matches, ", "))
 	}
 }
 
@@ -201,7 +245,7 @@ func (t *cronTool) list() (string, error) {
 
 func (t *cronTool) remove(ctx context.Context, id string) (string, error) {
 	if id == "" {
-		return "", fmt.Errorf("job_id is required")
+		return "", fmt.Errorf("job_id is required (also accepts jobId, id, or name)")
 	}
 	if !t.svc.RemoveJob(ctx, id) {
 		return fmt.Sprintf("Job %q not found.", id), nil
@@ -211,16 +255,14 @@ func (t *cronTool) remove(ctx context.Context, id string) (string, error) {
 
 func (t *cronTool) run(ctx context.Context, id string) (string, error) {
 	if id == "" {
-		return "", fmt.Errorf("job_id is required")
+		return "", fmt.Errorf("job_id is required (also accepts jobId, id, or name)")
 	}
-	output, err := t.svc.RunNow(ctx, id)
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(output) == "" {
-		return fmt.Sprintf("Job %q triggered.", id), nil
-	}
-	return fmt.Sprintf("Job %q triggered.\n%s", id, output), nil
+	// Run the job asynchronously so the agent is not blocked waiting for
+	// potentially long-running commands or recursive agent turns.
+	go func() {
+		_, _ = t.svc.RunNow(context.Background(), id)
+	}()
+	return fmt.Sprintf("Job %q triggered (running in background).", id), nil
 }
 
 func truncStr(s string, n int) string {

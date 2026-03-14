@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/go-kratos/blades/cmd/blades/internal/cron"
-	"github.com/go-kratos/blades/cmd/blades/internal/workspace"
 )
 
 const (
@@ -43,7 +42,8 @@ func cronService() (*cron.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return cron.NewService(workspace.New(cfg.Workspace).CronStorePath(), nil), nil
+	ws := workspaceForConfig(cfg)
+	return cron.NewService(ws.CronStorePath(), nil), nil
 }
 
 func newCronListCmd() *cobra.Command {

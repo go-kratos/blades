@@ -34,11 +34,25 @@ func preserveRootState(t *testing.T) {
 	})
 }
 
-func TestOpenRootLogFileUsesWorkspaceFlag(t *testing.T) {
+func TestOpenRootLogFileUsesHomeDir(t *testing.T) {
 	preserveRootState(t)
 
-	root := t.TempDir()
-	flagWorkspace = root
+	// Save and restore HOME environment
+	oldHome := os.Getenv("HOME")
+	newHome := t.TempDir()
+	_ = os.Setenv("HOME", newHome)
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", oldHome)
+	})
+
+	// Create .blades directory
+	homeDir := filepath.Join(newHome, ".blades")
+	if err := os.MkdirAll(homeDir, 0o755); err != nil {
+		t.Fatalf("create home dir: %v", err)
+	}
+
+	// flagWorkspace should NOT affect log location (logs always go to ~/.blades/log)
+	flagWorkspace = t.TempDir()
 	flagConfig = ""
 
 	now := time.Date(2026, time.March, 13, 10, 0, 0, 0, time.UTC)
@@ -48,7 +62,7 @@ func TestOpenRootLogFileUsesWorkspaceFlag(t *testing.T) {
 	}
 	defer f.Close()
 
-	want := filepath.Join(root, "log", "2026-03-13.log")
+	want := filepath.Join(homeDir, "log", "2026-03-13.log")
 	if path != want {
 		t.Fatalf("log path = %q, want %q", path, want)
 	}
@@ -57,9 +71,18 @@ func TestOpenRootLogFileUsesWorkspaceFlag(t *testing.T) {
 	}
 }
 
-func TestResolveLogRootDirUsesConfigWorkspace(t *testing.T) {
+func TestResolveLogRootDirAlwaysUsesHomeBlades(t *testing.T) {
 	preserveRootState(t)
 
+	// Save and restore HOME environment
+	oldHome := os.Getenv("HOME")
+	newHome := t.TempDir()
+	_ = os.Setenv("HOME", newHome)
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", oldHome)
+	})
+
+	// Even with config specifying different workspace, logs go to ~/.blades
 	root := t.TempDir()
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	cfgContent := "workspace: " + root + "\n"
@@ -71,16 +94,30 @@ func TestResolveLogRootDirUsesConfigWorkspace(t *testing.T) {
 	flagConfig = cfgPath
 
 	got := resolveLogRootDir()
-	if got != root {
-		t.Fatalf("resolveLogRootDir() = %q, want %q", got, root)
+	want := filepath.Join(newHome, ".blades")
+	if got != want {
+		t.Fatalf("resolveLogRootDir() = %q, want %q", got, want)
 	}
 }
 
 func TestConfigureRootLoggerWritesToDailyLogFile(t *testing.T) {
 	preserveRootState(t)
 
-	root := t.TempDir()
-	flagWorkspace = root
+	// Save and restore HOME environment
+	oldHome := os.Getenv("HOME")
+	newHome := t.TempDir()
+	_ = os.Setenv("HOME", newHome)
+	t.Cleanup(func() {
+		_ = os.Setenv("HOME", oldHome)
+	})
+
+	// Create .blades directory
+	homeDir := filepath.Join(newHome, ".blades")
+	if err := os.MkdirAll(homeDir, 0o755); err != nil {
+		t.Fatalf("create home dir: %v", err)
+	}
+
+	flagWorkspace = ""
 	flagConfig = ""
 	flagDebug = false
 
@@ -94,7 +131,7 @@ func TestConfigureRootLoggerWritesToDailyLogFile(t *testing.T) {
 		log.SetOutput(io.Discard)
 	}
 
-	logPath := filepath.Join(root, "log", "2026-03-13.log")
+	logPath := filepath.Join(homeDir, "log", "2026-03-13.log")
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read log file: %v", err)

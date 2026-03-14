@@ -4,13 +4,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // Load reads a YAML config file, expanding ${ENV_VAR} references.
-// If path is empty, it searches for config.yaml in the workspace dir
-// (~/.blades/config.yaml), then returns defaults.
+//
+// Resolution order:
+//  1. If path is provided, use it directly
+//  2. If path is empty, search ~/.blades/config.yaml
+//  3. If no config file found, return defaults
+//
+// Default values (when config file missing or fields empty):
+//   - provider: anthropic
+//   - model: claude-sonnet-4-6
+//   - workspace: ~/.blades/workspace (the agent operating directory)
+//   - maxIterations: 10
+//   - compressThreshold: 40000
 func Load(path string) (*Config, error) {
 	cfg := defaultConfig()
 
@@ -44,7 +55,7 @@ func Load(path string) (*Config, error) {
 
 func defaultConfig() *Config {
 	home, _ := os.UserHomeDir()
-	ws := filepath.Join(home, ".blades")
+	ws := filepath.Join(home, ".blades", "workspace")
 	return &Config{
 		Workspace: ws,
 		LLM: LLMConfig{
@@ -74,6 +85,23 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Workspace == "" {
 		home, _ := os.UserHomeDir()
-		cfg.Workspace = filepath.Join(home, ".blades")
+		cfg.Workspace = filepath.Join(home, ".blades", "workspace")
 	}
+	// Expand tilde in workspace path
+	cfg.Workspace = ExpandTilde(cfg.Workspace)
+}
+
+// ExpandTilde expands ~ to the user's home directory.
+func ExpandTilde(path string) string {
+	if strings.HasPrefix(path, "~/") || path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		if path == "~" {
+			return home
+		}
+		return filepath.Join(home, path[2:])
+	}
+	return path
 }

@@ -24,26 +24,48 @@ import (
 )
 
 // loadConfigForFlags loads config using CLI flags.
-// Precedence: --config > --workspace/config.yaml (if exists) > defaults.
+//
+// Configuration precedence (highest to lowest):
+//  1. --config flag: use specified config file directly
+//  2. ~/.blades/config.yaml (default location)
+//  3. Built-in defaults (anthropic, claude-sonnet-4-6)
+//
+// After loading, if --workspace flag is set, it overrides config.Workspace.
 func loadConfigForFlags() (*config.Config, error) {
 	configPath := flagConfig
-	if configPath == "" && flagWorkspace != "" {
-		candidate := filepath.Join(flagWorkspace, "config.yaml")
-		if _, err := os.Stat(candidate); err == nil {
-			configPath = candidate
-		} else if err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("config: stat %q: %w", candidate, err)
-		}
-	}
+
+	// Config is always loaded from --config or ~/.blades/config.yaml
+	// (NOT from workspace directory)
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return nil, err
 	}
+
+	// --workspace flag always overrides config.Workspace
 	if flagWorkspace != "" {
-		cfg.Workspace = flagWorkspace
+		cfg.Workspace = config.ExpandTilde(flagWorkspace)
 	}
 	return cfg, nil
+}
+
+// bladesHomeDir returns the global blades home directory (~/.blades).
+func bladesHomeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return filepath.Join(".", ".blades")
+	}
+	return filepath.Join(home, ".blades")
+}
+
+// workspaceForConfig builds a workspace using a fixed home dir (~/.blades)
+// and the active workspace directory from config/flags.
+func workspaceForConfig(cfg *config.Config) *workspace.Workspace {
+	workspaceDir := ""
+	if cfg != nil {
+		workspaceDir = strings.TrimSpace(cfg.Workspace)
+	}
+	return workspace.NewWithWorkspace(bladesHomeDir(), workspaceDir)
 }
 
 // loadAll loads config + workspace + memory store.
@@ -55,7 +77,8 @@ func loadAll() (*config.Config, *workspace.Workspace, *memory.Store, error) {
 		return nil, nil, nil, fmt.Errorf("config: %w", err)
 	}
 
-	ws := workspace.New(cfg.Workspace)
+	// Create workspace with separated home and workspace directories
+	ws := workspaceForConfig(cfg)
 	if err := ws.Load(); err != nil {
 		return nil, nil, nil, err
 	}
@@ -115,9 +138,9 @@ func buildRunner(cfg *config.Config, ws *workspace.Workspace, extraTools ...blad
 		agentOpts = append(agentOpts, blades.WithMaxIterations(cfg.Defaults.MaxIterations))
 	}
 
-	// Exec tool uses workspace/ as its default working directory.
+	// Exec tool uses the workspace root as its default working directory.
 	builtinTools := []bladestools.Tool{
-		bldtools.NewExecTool(bldtools.DefaultExecConfig(ws.WorkspaceDir())),
+		bldtools.NewExecTool(bldtools.DefaultExecConfig(defaultExecWorkingDir(ws))),
 	}
 	allTools := append(builtinTools, extraTools...)
 
@@ -213,4 +236,16 @@ func contextMessageLimit(cfg *config.Config) int {
 		return cfg.Defaults.MaxTurns * 2
 	}
 	return 100
+}
+
+// defaultExecWorkingDir returns the workspace directory as the exec tool's working directory.
+func defaultExecWorkingDir(ws *workspace.Workspace) string {
+	if ws == nil {
+		return "."
+	}
+	root := strings.TrimSpace(ws.WorkspaceDir())
+	if root == "" {
+		return "."
+	}
+	return root
 }

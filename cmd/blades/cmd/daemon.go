@@ -37,7 +37,11 @@ func newDaemonCmd() *cobra.Command {
 				return err
 			}
 
-			svc.SetHandler(cron.NewAgentHandler(makeTrigger(runner, sessMgr), 60*time.Second))
+			svc.SetHandler(cron.NewAgentHandlerWithExecWorkDir(
+				makeTrigger(runner, sessMgr),
+				60*time.Second,
+				defaultExecWorkingDir(ws),
+			))
 
 			if err := svc.Start(ctx); err != nil {
 				return fmt.Errorf("cron: %w", err)
