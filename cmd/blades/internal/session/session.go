@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,10 +17,11 @@ import (
 
 // persistedSession is the JSON envelope stored on disk.
 type persistedSession struct {
-	ID        string             `json:"id"`
-	CreatedAt time.Time          `json:"createdAt"`
-	State     map[string]any     `json:"state"`
-	History   []persistedMessage `json:"history,omitempty"`
+	ID           string             `json:"id"`
+	CreatedAt    time.Time          `json:"createdAt"`
+	LastAccessAt time.Time          `json:"lastAccessAt,omitempty"`
+	State        map[string]any     `json:"state"`
+	History      []persistedMessage `json:"history,omitempty"`
 }
 
 type persistedMessage struct {
@@ -106,7 +109,8 @@ func (m *Manager) GetOrNew(id string) blades.Session {
 	return sess
 }
 
-// Save persists a session's state to disk.
+// Save persists a session's state to disk and updates LastAccessAt.
+// CreatedAt is preserved when updating an existing file.
 func (m *Manager) Save(sess blades.Session) error {
 	if m.dir == "" {
 		return nil
@@ -115,18 +119,30 @@ func (m *Manager) Save(sess blades.Session) error {
 		return fmt.Errorf("session: mkdir: %w", err)
 	}
 
+	now := time.Now()
+	path := filepath.Join(m.dir, sess.ID()+".json")
+	var createdAt time.Time
+	if data, err := os.ReadFile(path); err == nil {
+		var existing persistedSession
+		if json.Unmarshal(data, &existing) == nil {
+			createdAt = existing.CreatedAt
+		}
+	}
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+
 	ps := persistedSession{
-		ID:        sess.ID(),
-		CreatedAt: time.Now(),
-		State:     sess.State(),
-		History:   makePersistedHistory(sess.History()),
+		ID:           sess.ID(),
+		CreatedAt:    createdAt,
+		LastAccessAt: now,
+		State:        sess.State(),
+		History:      makePersistedHistory(sess.History()),
 	}
 	data, err := json.MarshalIndent(ps, "", "  ")
 	if err != nil {
 		return fmt.Errorf("session: marshal: %w", err)
 	}
-
-	path := filepath.Join(m.dir, sess.ID()+".json")
 	return os.WriteFile(path, data, 0o644)
 }
 
@@ -148,10 +164,75 @@ func (m *Manager) loadFromDisk(id string) (blades.Session, error) {
 	return newManagedSession(id, ps.State, history), nil
 }
 
+// SessionInfo holds metadata for a persisted session (for listing and archival).
+type SessionInfo struct {
+	ID           string
+	CreatedAt    time.Time
+	LastAccessAt time.Time
+}
+
+// List returns metadata for all sessions persisted on disk, sorted by LastAccessAt descending.
+func (m *Manager) List() ([]SessionInfo, error) {
+	if m.dir == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(m.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var infos []SessionInfo
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		path := filepath.Join(m.dir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var ps persistedSession
+		if err := json.Unmarshal(data, &ps); err != nil {
+			continue
+		}
+		infos = append(infos, SessionInfo{
+			ID:           id,
+			CreatedAt:    ps.CreatedAt,
+			LastAccessAt: ps.LastAccessAt,
+		})
+	}
+	sortSessionInfosByLastAccess(infos)
+	return infos, nil
+}
+
+func sortSessionInfosByLastAccess(infos []SessionInfo) {
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].LastAccessAt.After(infos[j].LastAccessAt)
+	})
+}
+
+// Delete removes a session file from disk. The in-memory session is not affected.
+func (m *Manager) Delete(id string) error {
+	if m.dir == "" {
+		return nil
+	}
+	m.mu.Lock()
+	delete(m.sessions, id)
+	m.mu.Unlock()
+	path := filepath.Join(m.dir, id+".json")
+	return os.Remove(path)
+}
+
 func newManagedSession(id string, state map[string]any, history []*blades.Message) blades.Session {
 	base := blades.NewSession(state)
 	for _, message := range history {
-		_ = base.Append(context.Background(), message)
+		if err := base.Append(context.Background(), message); err != nil {
+			// Log the error but continue loading other messages to avoid losing the entire session
+			fmt.Fprintf(os.Stderr, "warn: session %s: failed to append message %s: %v\n", id, message.ID, err)
+		}
 	}
 	return &managedSession{id: id, base: base}
 }

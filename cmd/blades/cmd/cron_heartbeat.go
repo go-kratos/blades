@@ -18,7 +18,11 @@ func findHeartbeatJob(svc *cron.Service, name, message, sessionID string) *cron.
 	trimmedName := strings.TrimSpace(name)
 	trimmedMessage := strings.TrimSpace(message)
 	trimmedSessionID := strings.TrimSpace(sessionID)
-	for _, job := range svc.ListJobs(true) {
+	jobs, err := svc.ListJobs(true)
+	if err != nil {
+		return nil
+	}
+	for _, job := range jobs {
 		if strings.TrimSpace(job.Name) != trimmedName {
 			continue
 		}

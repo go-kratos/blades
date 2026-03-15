@@ -5,8 +5,8 @@
 | Name      | Blades                         |
 | Role      | Personal AI Assistant          |
 | Emoji     | ⚡                              |
-| Root      | ~/.blades                      |
-| Workspace | ~/.blades/workspace            |
+| Home      | (your home directory)          |
+| Workspace | (your workspace directory)     |
 | Model     | (set in config.yaml)           |
 
 ## Capabilities
@@ -36,10 +36,9 @@
 
 | Directory | Scope |
 |-----------|-------|
-| `~/.agents/skills/` | System-wide |
-| `~/.blades/skills/` | Global blades |
-| `~/.blades/workspace/skills/` | This workspace |
+| `(home)/skills/` | Global blades |
+| `(workspace)/skills/` | This workspace |
 
 ---
 
-_Edit this file to reflect your actual setup._
+_Edit this file to reflect your actual setup. Fill in the Home and Workspace paths above._

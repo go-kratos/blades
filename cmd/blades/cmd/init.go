@@ -110,7 +110,9 @@ func initGit(dir string) error {
 
 	ignPath := filepath.Join(dir, ".gitignore")
 	if _, err := os.Stat(ignPath); os.IsNotExist(err) {
-		_ = os.WriteFile(ignPath, []byte("*.tmp\n"), 0o644)
+		if err := os.WriteFile(ignPath, []byte("*.tmp\n"), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "warn: failed to write .gitignore: %v\n", err)
+		}
 	}
 
 	fmt.Printf("✓ git init: %s\n", dir)

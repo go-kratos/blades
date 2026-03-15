@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,40 +62,39 @@ func workspaceForConfig(cfg *config.Config) *workspace.Workspace {
 	return workspace.NewWithWorkspace(bladesHomeDir(), workspaceDir)
 }
 
-// loadAll loads config + workspace + memory store.
-// MCP server lists from ~/.blades/mcp.json and workspace/mcp.json are merged
-// together with any servers declared inline in config.yaml.
-func loadAll() (*config.Config, *workspace.Workspace, *memory.Store, error) {
+// loadAll loads config, workspace, memory store, and MCP servers.
+// MCP servers are loaded only from ~/.blades/mcp.json and workspace/mcp.json (not from config.yaml).
+func loadAll() (*config.Config, *workspace.Workspace, *memory.Store, []bladesmcp.ClientConfig, error) {
 	cfg, err := loadConfigForFlags()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("config: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("config: %w", err)
 	}
 
-	// Create workspace with separated home and workspace directories
 	ws := workspaceForConfig(cfg)
 	if err := ws.Load(); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
-	// Merge MCP servers: config.yaml inline → ~/.blades/mcp.json → workspace/mcp.json.
+	var mcpServers []bladesmcp.ClientConfig
 	for _, path := range []string{ws.MCPPath(), ws.WorkspaceMCPPath()} {
 		servers, err := config.LoadMCPFile(path)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("mcp: %w", err)
+			log.Printf("mcp: load %s: %v (continuing without)", path, err)
+			continue
 		}
-		cfg.MCP = append(cfg.MCP, servers...)
+		mcpServers = append(mcpServers, servers...)
 	}
 
 	mem, err := memory.New(ws.MemoryPath(), ws.MemoriesDir(), ws.KnowledgesDir())
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("memory: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("memory: %w", err)
 	}
-	return cfg, ws, mem, nil
+	return cfg, ws, mem, mcpServers, nil
 }
 
-// buildRunner constructs a blades Agent + Runner from the current config.
-// extraTools are appended to the agent in addition to the built-in exec tool.
-func buildRunner(cfg *config.Config, ws *workspace.Workspace, extraTools ...bladestools.Tool) (*blades.Runner, error) {
+// buildRunner constructs a blades Agent + Runner from config, workspace, and MCP list.
+// extraTools are appended in addition to the built-in exec tool.
+func buildRunner(cfg *config.Config, ws *workspace.Workspace, mcpServers []bladesmcp.ClientConfig, extraTools ...bladestools.Tool) (*blades.Runner, error) {
 	provider, err := model.NewProvider(cfg.LLM)
 	if err != nil {
 		return nil, fmt.Errorf("model: %w", err)
@@ -130,18 +130,19 @@ func buildRunner(cfg *config.Config, ws *workspace.Workspace, extraTools ...blad
 		agentOpts = append(agentOpts, blades.WithMaxIterations(cfg.Defaults.MaxIterations))
 	}
 
-	// Exec tool uses the workspace root as its default working directory.
+	execCfg := execConfigFromDefaults(defaultExecWorkingDir(ws), cfg.Exec)
 	builtinTools := []bladestools.Tool{
-		bldtools.NewExecTool(bldtools.DefaultExecConfig(defaultExecWorkingDir(ws))),
+		bldtools.NewExecTool(execCfg),
 	}
 	allTools := append(builtinTools, extraTools...)
 
-	if len(cfg.MCP) > 0 {
-		resolver, err := bladesmcp.NewToolsResolver(cfg.MCP...)
+	if len(mcpServers) > 0 {
+		resolver, err := bladesmcp.NewToolsResolver(mcpServers...)
 		if err != nil {
-			return nil, fmt.Errorf("mcp: %w", err)
+			log.Printf("mcp: init resolver: %v (continuing without MCP tools)", err)
+		} else {
+			agentOpts = append(agentOpts, blades.WithToolsResolver(resolver))
 		}
-		agentOpts = append(agentOpts, blades.WithToolsResolver(resolver))
 	}
 
 	agentOpts = append(agentOpts, blades.WithTools(allTools...))
@@ -153,13 +154,29 @@ func buildRunner(cfg *config.Config, ws *workspace.Workspace, extraTools ...blad
 	return blades.NewRunner(agent), nil
 }
 
+// execConfigFromDefaults merges config.Exec with built-in defaults.
+func execConfigFromDefaults(workingDir string, exec config.ExecConfig) bldtools.ExecConfig {
+	base := bldtools.DefaultExecConfig(workingDir)
+	base.Timeout = exec.ExecTimeout()
+	if exec.RestrictToWorkspace {
+		base.RestrictToWorkspace = true
+	}
+	if len(exec.DenyPatterns) > 0 {
+		base.DenyPatterns = append(base.DenyPatterns, exec.DenyPatterns...)
+	}
+	if len(exec.AllowPatterns) > 0 {
+		base.AllowPatterns = exec.AllowPatterns
+	}
+	return base
+}
+
 // loadSkills loads skills from three directories in order:
 //  1. ~/.agents/skills  — system-wide skills
 //  2. ~/.blades/skills  — global blades skills
 //  3. workspace/skills  — workspace-local skills
 //
 // All three are merged; later entries override nothing (skills are additive).
-// Missing directories are silently skipped.
+// Missing directories or load errors for one dir are logged and skipped; partial result is returned.
 func loadSkills(ws *workspace.Workspace) ([]bladeskills.Skill, error) {
 	home, _ := os.UserHomeDir()
 	dirs := []string{
@@ -180,7 +197,8 @@ func loadSkills(ws *workspace.Workspace) ([]bladeskills.Skill, error) {
 		}
 		list, err := bladeskills.NewFromDir(dir)
 		if err != nil {
-			return nil, fmt.Errorf("skills: load %s: %w", dir, err)
+			log.Printf("skills: load %s: %v (skipping)", dir, err)
+			continue
 		}
 		all = append(all, list...)
 	}
@@ -189,12 +207,22 @@ func loadSkills(ws *workspace.Workspace) ([]bladeskills.Skill, error) {
 
 // makeTrigger returns a cron.TriggerFn that runs a single agent turn and
 // returns the assembled reply text. Used by chat, daemon, and cron run.
+// If getRunner is nil, runner is used; otherwise getRunner is called each time.
 func makeTrigger(runner *blades.Runner, sessMgr *session.Manager) cron.TriggerFn {
+	return makeTriggerWithGetter(func() *blades.Runner { return runner }, sessMgr)
+}
+
+// makeTriggerWithGetter is like makeTrigger but takes a getter for the current runner (for daemon reload).
+func makeTriggerWithGetter(getRunner func() *blades.Runner, sessMgr *session.Manager) cron.TriggerFn {
 	return func(ctx context.Context, sessionID, text string) (string, error) {
+		r := getRunner()
+		if r == nil {
+			return "", fmt.Errorf("no runner")
+		}
 		sess := sessMgr.GetOrNew(sessionID)
 		msg := blades.UserMessage(text)
 		var buf strings.Builder
-		for m, err := range runner.RunStream(ctx, msg, blades.WithSession(sess)) {
+		for m, err := range r.RunStream(ctx, msg, blades.WithSession(sess)) {
 			if err != nil {
 				return buf.String(), err
 			}

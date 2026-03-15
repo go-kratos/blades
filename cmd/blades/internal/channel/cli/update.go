@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"charm.land/glamour/v2"
 
 	"github.com/go-kratos/blades/cmd/blades/internal/channel"
+	"github.com/go-kratos/blades/cmd/blades/internal/command"
 )
 
 // ── Stream bridge ─────────────────────────────────────────────────────────────
@@ -50,6 +52,28 @@ func (w *chanWriter) WriteEvent(e channel.Event) {
 func waitStream(ch <-chan streamMsg) tea.Cmd {
 	return func() tea.Msg { return <-ch }
 }
+
+// waitStreamOrStop blocks until the next stream message or a stop signal (e.g. user pressed Esc).
+// When stopCh is sent, returns a synthetic done message so we finish the turn without waiting for the handler.
+func waitStreamOrStop(ch <-chan streamMsg, stopCh <-chan struct{}) tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case m := <-ch:
+			return m
+		case <-stopCh:
+			return streamMsg{done: true, err: context.Canceled}
+		}
+	}
+}
+
+// cliHelpSuffix is appended to /help output only in the CLI channel.
+const cliHelpSuffix = `## Keyboard Shortcuts
+
+- **1–9** — toggle tool call details
+- **PgUp / PgDn** — scroll conversation
+- **Esc** — stop current response (agent stops; you can keep chatting)
+- **Ctrl+C** — quit
+`
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 
@@ -158,8 +182,17 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// During streaming only global shortcuts are active.
+	// During streaming: Escape stops the response; other keys only tick spinner.
 	if m.state == stateRunning {
+		if msg.String() == "esc" && m.stop != nil {
+			_ = m.stop()
+			// Unblock the stream wait so we finish turn immediately instead of waiting for the handler (which may never return if the backend ignores context).
+			select {
+			case m.stopCh <- struct{}{}:
+			default:
+			}
+			return m, waitStreamOrStop(m.streamCh, m.stopCh)
+		}
 		var spCmd tea.Cmd
 		m.spinner, spCmd = m.spinner.Update(msg)
 		return m, spCmd
@@ -187,52 +220,38 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // ── Slash commands ────────────────────────────────────────────────────────────
 
 func (m *model) handleSlash(line string) (tea.Model, tea.Cmd) {
-	parts := strings.Fields(line)
-	switch parts[0] {
-	case "/exit", "/quit":
-		return m.quit()
+	env := &command.Environment{
+		SessionID:  m.sessionID,
+		ReloadFunc: m.reload,
+		StopFunc:   m.stop,
+		SwitchSessionFunc: func(sessionID string) error {
+			m.sessionID = sessionID
+			return nil
+		},
+		ClearFunc: func() error {
+			m.turns = nil
+			m.pastContent = ""
+			m.err = nil
+			return nil
+		},
+		Processor: m.cmdProc,
+		Custom: map[string]interface{}{
+			"helpSuffix": cliHelpSuffix,
+		},
+	}
 
-	case "/help":
-		md := "## Commands\n\n" +
-			"| Command | Description |\n" +
-			"|---------|-------------|\n" +
-			"| `/help` | Show this help |\n" +
-			"| `/reload` | Hot-reload skills |\n" +
-			"| `/session [id]` | Show or switch session |\n" +
-			"| `/clear` | Clear conversation |\n" +
-			"| `/exit` | Quit |\n\n" +
-			"## Keyboard shortcuts\n\n" +
-			"- **1–9** — toggle tool call details (works while streaming)\n" +
-			"- **PgUp / PgDn** — scroll conversation\n" +
-			"- **Ctrl+C** — quit\n"
-		m.addMeta(md)
-
-	case "/reload":
-		if m.reload == nil {
-			m.addMetaRaw(m.styles.dim.Render("(reload not configured)"))
-			break
-		}
-		if err := m.reload(); err != nil {
-			m.addMetaRaw(m.styles.err.Render("reload failed: " + err.Error()))
+	result, err := m.cmdProc.Process(m.ctx, line, env)
+	if err != nil {
+		m.addMetaRaw(m.styles.err.Render("Command error: " + err.Error()))
+	} else if result != nil {
+		if result.IsError {
+			m.addMetaRaw(m.styles.err.Render(result.Message))
 		} else {
-			m.addMetaRaw(m.styles.dim.Render("✓ skills reloaded"))
+			m.addMeta(result.Message)
 		}
-
-	case "/session":
-		if len(parts) < 2 {
-			m.addMetaRaw(m.styles.dim.Render("current session: " + m.sessionID))
-		} else {
-			m.sessionID = parts[1]
-			m.addMetaRaw(m.styles.dim.Render("switched to session: " + m.sessionID))
+		if result.ShouldQuit {
+			return m.quit()
 		}
-
-	case "/clear":
-		m.turns = nil
-		m.pastContent = ""
-		m.err = nil
-
-	default:
-		m.addMetaRaw(m.styles.hint.Render(fmt.Sprintf("unknown command %q — type /help", parts[0])))
 	}
 
 	m.rebuildPastContent()
@@ -274,13 +293,21 @@ func (m *model) handleStream(msg streamMsg) (tea.Model, tea.Cmd) {
 	}
 
 	m.refreshViewport(false)
-	return m, waitStream(m.streamCh)
+	return m, waitStreamOrStop(m.streamCh, m.stopCh)
 }
 
 func (m *model) finishTurn(turnErr error) (tea.Model, tea.Cmd) {
 	m.state = stateInput
 	focusCmd := m.input.Focus()
 	m.streamCh = nil
+	if m.cancelTurn != nil {
+		m.cancelTurn()
+		m.cancelTurn = nil
+	}
+	if turnErr != nil && errors.Is(turnErr, context.Canceled) {
+		m.addMeta("⏹ Response stopped. You can continue the conversation.")
+		turnErr = nil
+	}
 	m.err = turnErr
 
 	if len(m.turns) > 0 {
@@ -322,13 +349,21 @@ func (m *model) startTurn(text string) (tea.Model, tea.Cmd) {
 	ch := make(chan streamMsg, 512)
 	m.streamCh = ch
 
+	turnCtx, turnCancel := context.WithCancel(m.ctx)
+	m.cancelTurn = turnCancel
+
 	go func() {
-		w := &chanWriter{ctx: m.ctx, ch: ch}
-		_, err := m.handler(m.ctx, m.sessionID, text, w)
+		defer func() {
+			if r := recover(); r != nil {
+				ch <- streamMsg{done: true, err: fmt.Errorf("handler panic: %v", r)}
+			}
+		}()
+		w := &chanWriter{ctx: turnCtx, ch: ch}
+		_, err := m.handler(turnCtx, m.sessionID, text, w)
 		ch <- streamMsg{done: true, err: err}
 	}()
 
-	return m, tea.Batch(m.spinner.Tick, waitStream(ch))
+	return m, tea.Batch(m.spinner.Tick, waitStreamOrStop(ch, m.stopCh))
 }
 
 func (m *model) quit() (tea.Model, tea.Cmd) {

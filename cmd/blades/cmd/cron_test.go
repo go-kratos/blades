@@ -75,7 +75,10 @@ func TestEnsureHeartbeatJobSkipsExistingJob(t *testing.T) {
 		t.Fatalf("expected existing job %q, got %q", job1.ID, job2.ID)
 	}
 
-	jobs := svc.ListJobs(true)
+	jobs, err := svc.ListJobs(true)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 heartbeat job, got %d", len(jobs))
 	}
@@ -100,7 +103,10 @@ func TestRunNowReturnsOutput(t *testing.T) {
 		t.Fatalf("unexpected output %q", output)
 	}
 
-	jobs := svc.ListJobs(true)
+	jobs, err := svc.ListJobs(true)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 job, got %d", len(jobs))
 	}
@@ -135,7 +141,10 @@ func TestCronAddSupportsDelayFlag(t *testing.T) {
 
 	storePath := filepath.Join(newHome, ".blades", "cron.json")
 	svc := cron.NewService(storePath, nil)
-	jobs := svc.ListJobs(true)
+	jobs, err := svc.ListJobs(true)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 job, got %d", len(jobs))
 	}

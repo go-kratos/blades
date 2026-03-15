@@ -56,7 +56,10 @@ func newCronListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			jobs := svc.ListJobs(all)
+			jobs, err := svc.ListJobs(all)
+			if err != nil {
+				return err
+			}
 			if len(jobs) == 0 {
 				fmt.Println("(no jobs)")
 				return nil
@@ -184,7 +187,11 @@ func newCronRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !svc.RemoveJob(cmd.Context(), args[0]) {
+			found, err := svc.RemoveJob(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			if !found {
 				return fmt.Errorf("job %q not found", args[0])
 			}
 			fmt.Printf("✓ removed job %s\n", args[0])

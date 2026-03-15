@@ -31,6 +31,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/go-kratos/blades/cmd/blades/internal/channel"
+	"github.com/go-kratos/blades/cmd/blades/internal/command"
 )
 
 const channelName = "cli"
@@ -39,8 +40,10 @@ const channelName = "cli"
 type Channel struct {
 	sessionID   string
 	reload      func() error
+	stop        func() error
 	debug       bool
 	noAltScreen bool
+	cmdProc     *command.Processor
 }
 
 // Option configures a Channel.
@@ -49,6 +52,11 @@ type Option func(*Channel)
 // WithReload sets the function called when the user issues /reload.
 func WithReload(fn func() error) Option {
 	return func(c *Channel) { c.reload = fn }
+}
+
+// WithStop sets the function called when the user issues /stop.
+func WithStop(fn func() error) Option {
+	return func(c *Channel) { c.stop = fn }
 }
 
 // WithDebug enables verbose error output.
@@ -67,7 +75,10 @@ func WithNoAltScreen() Option {
 
 // New creates a CLI Channel for the given session ID.
 func New(sessionID string, opts ...Option) *Channel {
-	c := &Channel{sessionID: sessionID}
+	c := &Channel{
+		sessionID: sessionID,
+		cmdProc:   command.NewProcessor(),
+	}
 	for _, o := range opts {
 		o(c)
 	}
@@ -98,7 +109,7 @@ func (c *Channel) Start(ctx context.Context, handler channel.StreamHandler) erro
 	// Detect dark/light BEFORE p.Run() so the OSC 11 query doesn't interfere
 	// with bubbletea's input handling.
 	glamourStyle, isDark := detectGlamourStyle()
-	m := newModel(ctx, handler, c.sessionID, c.reload, c.debug, glamourStyle, isDark)
+	m := newModel(ctx, handler, c.sessionID, c.reload, c.stop, c.debug, glamourStyle, isDark, c.cmdProc)
 	// AltScreen is declared in View() — no program options needed.
 	// Real cursor is used (SetVirtualCursor(false) in newModel) so that
 	// ConPTY/IME can track the physical cursor and position the pre-edit window.
@@ -133,31 +144,30 @@ func (c *Channel) startSimple(ctx context.Context, handler channel.StreamHandler
 		}
 
 		if strings.HasPrefix(line, "/") {
-			parts := strings.Fields(line)
-			switch parts[0] {
-			case "/exit", "/quit":
-				fmt.Println("Bye!")
-				return nil
-			case "/help":
-				fmt.Println("Commands: /help  /reload  /session [id]  /exit")
-				fmt.Println("(simple mode — type a message and press Enter to send)")
-			case "/reload":
-				if c.reload == nil {
-					fmt.Println("(reload not configured)")
-				} else if err := c.reload(); err != nil {
-					fmt.Fprintln(os.Stderr, "reload failed:", err)
+			env := &command.Environment{
+				SessionID:         c.sessionID,
+				ReloadFunc:        c.reload,
+				StopFunc:          c.stop,
+				SwitchSessionFunc: func(sessionID string) error { c.sessionID = sessionID; return nil },
+				ClearFunc:         func() error { return nil }, // Not applicable in simple mode
+				Processor:         c.cmdProc,
+			}
+
+			result, err := c.cmdProc.Process(ctx, line, env)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "command error:", err)
+				continue
+			}
+
+			if result != nil {
+				if result.IsError {
+					fmt.Fprintln(os.Stderr, result.Message)
 				} else {
-					fmt.Println("✓ skills reloaded")
+					fmt.Println(result.Message)
 				}
-			case "/session":
-				if len(parts) < 2 {
-					fmt.Println("current session:", c.sessionID)
-				} else {
-					c.sessionID = parts[1]
-					fmt.Println("switched to session:", c.sessionID)
+				if result.ShouldQuit {
+					return nil
 				}
-			default:
-				fmt.Printf("unknown command %q — /help for commands\n", parts[0])
 			}
 			continue
 		}

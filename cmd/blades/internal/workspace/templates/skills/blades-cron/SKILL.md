@@ -48,9 +48,7 @@ Use the `cron` tool to schedule tasks that run automatically.
 - `message` is a **field** containing the text to inject, not a `payload_kind` value.
 - For `agent_turn` jobs, the agent's reply is stored in the job's `lastOutput` (visible via `action=list`).
 - An optional `session_id` scopes an `agent_turn` job to a specific conversation.
-
-> **Note:** `agent_turn` jobs only execute while the blades daemon is running (`blades daemon`).
-> `exec` jobs are always executed by the daemon in the background.
+- **`reply_session_id`** (optional): when set (e.g. to the current chat/session ID in Feishu), the job's output or agent reply is sent to that session instead of only being logged. Use this when adding cron jobs from a channel (Lark, etc.) so results are delivered back to the same chat.
 
 ---
 

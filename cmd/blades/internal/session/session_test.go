@@ -92,3 +92,27 @@ func TestManagerSaveAndReloadPreservesHistory(t *testing.T) {
 		t.Fatalf("tool part completed = %t, want %t", got, want)
 	}
 }
+
+func TestManager_List_Delete(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	mgr := NewManager(dir)
+	sess := mgr.GetOrNew("list-test")
+	if err := mgr.Save(sess); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	infos, err := mgr.List()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(infos) != 1 || infos[0].ID != "list-test" {
+		t.Fatalf("list = %v", infos)
+	}
+	if err := mgr.Delete("list-test"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	infos, _ = mgr.List()
+	if len(infos) != 0 {
+		t.Fatalf("after delete list = %v", infos)
+	}
+}

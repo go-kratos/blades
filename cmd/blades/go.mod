@@ -14,9 +14,11 @@ require (
 	github.com/go-kratos/blades/contrib/openai v0.3.0
 	github.com/google/jsonschema-go v0.3.0
 	github.com/google/uuid v1.6.0
+	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
 	github.com/rivo/uniseg v0.4.7
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.8.1
+	google.golang.org/genai v1.26.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -39,6 +41,7 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/go-kratos/kit v0.0.0-20251121083925-65298ad2aa44 // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
@@ -67,7 +70,6 @@ require (
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
-	google.golang.org/genai v1.26.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250908214217-97024824d090 // indirect
 	google.golang.org/grpc v1.75.1 // indirect
 	google.golang.org/protobuf v1.36.9 // indirect

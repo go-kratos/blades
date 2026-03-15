@@ -45,3 +45,10 @@ type Channel interface {
 	// Start begins receiving messages and dispatches each one to handler.
 	Start(ctx context.Context, handler StreamHandler) error
 }
+
+// SessionNotifier is an optional interface for channels that can send
+// proactive messages to a session (e.g. cron job results to a Feishu chat).
+// sessionID is the same value passed to the StreamHandler (e.g. Lark chat ID).
+type SessionNotifier interface {
+	SendToSession(ctx context.Context, sessionID, text string) error
+}

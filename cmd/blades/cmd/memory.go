@@ -25,7 +25,7 @@ func newMemoryAddCmd() *cobra.Command {
 		Short: "Append text to MEMORY.md",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _, mem, err := loadAll()
+			_, _, mem, _, err := loadAll()
 			if err != nil {
 				return err
 			}
@@ -43,7 +43,7 @@ func newMemoryShowCmd() *cobra.Command {
 		Use:   "show",
 		Short: "Display MEMORY.md",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _, mem, err := loadAll()
+			_, _, mem, _, err := loadAll()
 			if err != nil {
 				return err
 			}
@@ -63,7 +63,7 @@ func newMemorySearchCmd() *cobra.Command {
 		Short: "Search historical session logs",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _, mem, err := loadAll()
+			_, _, mem, _, err := loadAll()
 			if err != nil {
 				return err
 			}

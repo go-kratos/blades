@@ -23,6 +23,9 @@ func newDoctorCmd() *cobra.Command {
 				return err
 			}
 			ws := workspaceForConfig(cfg)
+			if err := ws.Load(); err != nil {
+				return err
+			}
 
 			ok := true
 			check := func(label, path string) {
@@ -34,8 +37,8 @@ func newDoctorCmd() *cobra.Command {
 				}
 			}
 
-			check("Workspace root", ws.Root())
-			check("workspace/", ws.WorkspaceDir())
+			check("Blades home (root)", ws.Home())
+			check("Workspace directory", ws.WorkspaceDir())
 			check("config.yaml", ws.ConfigPath())
 			check("workspace/AGENTS.md", ws.AgentsPath())
 			check("workspace/SOUL.md", ws.SoulPath())
@@ -51,12 +54,17 @@ func newDoctorCmd() *cobra.Command {
 			storePath := ws.CronStorePath()
 			if _, err := os.Stat(storePath); err == nil {
 				cronSvc := cron.NewService(storePath, nil)
-				jobs := cronSvc.ListJobs(false)
-				stale := cronSvc.StaleJobs(26 * time.Hour)
-				fmt.Printf("✓ %-30s %d jobs, %d stale\n", "Cron", len(jobs), len(stale))
-				for _, j := range stale {
-					fmt.Printf("  ✗ stale: %s\n", cron.FormatJob(j))
+				jobs, err := cronSvc.ListJobs(false)
+				if err != nil {
+					fmt.Printf("✗ %-30s %v\n", "Cron", err)
 					ok = false
+				} else {
+					stale := cronSvc.StaleJobs(26 * time.Hour)
+					fmt.Printf("✓ %-30s %d jobs, %d stale\n", "Cron", len(jobs), len(stale))
+					for _, j := range stale {
+						fmt.Printf("  ✗ stale: %s\n", cron.FormatJob(j))
+						ok = false
+					}
 				}
 			} else {
 				fmt.Printf("  Cron: no cron.json (add jobs with 'blades cron add')\n")
@@ -89,8 +97,13 @@ func newDoctorCmd() *cobra.Command {
 						ok = false
 						_ = client.Close()
 					} else {
-						tools, _ := client.ListTools(ctx)
-						fmt.Printf("✓ %-30s %d tools\n", "mcp: "+mc.Name, len(tools))
+						tools, err := client.ListTools(ctx)
+						if err != nil {
+							fmt.Printf("✗ %-30s %v\n", "mcp: "+mc.Name+" (ListTools)", err)
+							ok = false
+						} else {
+							fmt.Printf("✓ %-30s %d tools\n", "mcp: "+mc.Name, len(tools))
+						}
 						_ = client.Close()
 					}
 				}

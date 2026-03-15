@@ -4,7 +4,7 @@
 >
 > 中文文档：[README_CN.md](README_CN.md)
 
-`blades` is a local-first command-line AI agent backed by plain files: a global home at `~/.blades` and an agent workspace at `~/.blades/workspace` by default (or any custom path via `--workspace`). It remembers your conversations, loads skills from Markdown, connects to MCP tool servers, schedules recurring tasks via cron, and supports any LLM provider — Anthropic, OpenAI, or Gemini.
+`blades` is a local-first command-line AI agent backed by plain files: **blades home (root)** at `~/.blades` and an **agent workspace** at `~/.blades/workspace` by default (or any path via `--workspace`). It remembers your conversations, loads skills from Markdown, connects to MCP tool servers via `mcp.json`, schedules recurring tasks via cron, and supports multiple LLM providers.
 
 ---
 
@@ -13,7 +13,7 @@
 - **Streaming chat** — animated spinner → token-by-token streaming with ANSI colour support
 - **Persistent memory** — `MEMORY.md` (L1), daily session logs in `memory/` (L2), knowledge files (L3)
 - **Skill system** — drop a `SKILL.md` into any skills directory and the agent picks it up automatically
-- **MCP support** — connect external tool servers via `mcp.json` (stdio, HTTP, WebSocket)
+- **MCP support** — connect external tool servers via `mcp.json` only (stdio, HTTP, WebSocket)
 - **Cron scheduler** — run shell commands or agent turns on a schedule; backed by `cron.json`
 - **Daemon mode** — keep the scheduler running as a long-lived background process
 - **Multi-provider** — Anthropic Claude, OpenAI, Google Gemini; switch in `config.yaml`
@@ -50,31 +50,35 @@ blades chat
 
 ---
 
-## Workspace Layout
+## Directory layout
 
-Default layout (when no custom workspace path is configured):
+- **Blades home (root)** — `~/.blades`. Holds config, global MCP, cron, skills, sessions, and **runtime logs**.
+- **Workspace** — `~/.blades/workspace` by default, or `--workspace <path>`. The agent’s working directory (exec CWD, workspace-level MCP, **memory**, skills, outputs).
+
+Default layout when no custom `--workspace` is set:
 
 ```
-~/.blades/
-├── config.yaml          ← LLM provider, model, API key
-├── mcp.json             ← global MCP server connections
-├── cron.json            ← persistent cron job store
-├── skills/              ← global skills (available to all workspaces)
-├── sessions/            ← conversation state per session ID
-└── workspace/           ← agent operating directory (default exec CWD)
-    ├── AGENTS.md        ← behaviour rules loaded at every session start
-    ├── SOUL.md          ← agent's core personality
-    ├── IDENTITY.md      ← role, capabilities, quick-reference card
-    ├── USER.md          ← facts about you the agent should always know
-    ├── MEMORY.md        ← long-term distilled memory (L1)
-    ├── TOOLS.md         ← machine-specific setup notes
-    ├── HEARTBEAT.md     ← proactive check-in task list
-    ├── mcp.json         ← workspace-level MCP server connections
-    ├── skills/          ← workspace-local skills
-    ├── memory/          ← daily session logs (L2) — YYYY-MM-DD.md
-    ├── knowledges/      ← reference knowledge files (L3)
-    └── outputs/         ← agent-produced files
+~/.blades/                    ← home (root)
+├── config.yaml               ← LLM provider, model, API key
+├── mcp.json                  ← global MCP server connections
+├── cron.json                 ← persistent cron job store
+├── skills/                   ← global skills (all workspaces)
+├── sessions/                 ← conversation state per session ID
+├── log/                      ← runtime logs (YYYY-MM-DD.log)
+└── workspace/                ← agent workspace (default)
+    ├── AGENTS.md             ← behaviour rules (loaded at startup)
+    ├── SOUL.md, IDENTITY.md, USER.md, MEMORY.md, TOOLS.md, HEARTBEAT.md
+    ├── mcp.json              ← workspace-level MCP servers
+    ├── skills/               ← workspace-local skills
+    ├── memory/               ← daily session logs (L2) — YYYY-MM-DD.md
+    ├── knowledges/           ← reference knowledge (L3)
+    └── outputs/              ← agent-produced files
 ```
+
+### Log vs memory
+
+- **Log** — runtime/audit logs go to `~/.blades/log/YYYY-MM-DD.log` (daemon channel traffic, errors).
+- **Memory** — when `logConversation: true` in config, user/assistant turns are appended to **workspace** `memory/YYYY-MM-DD.md` for long-term context.
 
 ### config.yaml
 
@@ -87,6 +91,18 @@ llm:
 defaults:
   maxIterations: 10
   compressThreshold: 40000
+  logConversation: false      # when true, append turns to workspace/memory/YYYY-MM-DD.md
+
+# Optional: exec tool overrides (see template)
+# exec:
+#   timeoutSeconds: 60
+#   restrictToWorkspace: true
+
+# Optional: Lark/Feishu channel (WebSocket only) for `blades daemon`
+# lark:
+#   enabled: true
+#   appID: ${LARK_APP_ID}
+#   appSecret: ${LARK_APP_SECRET}
 ```
 
 ---
@@ -95,12 +111,12 @@ defaults:
 
 ### `blades init`
 
-Initialise blades home and workspace directories. Home-level files are created in `~/.blades`; workspace files are created in `~/.blades/workspace` (or in `--workspace` when provided). Safe to re-run — existing files are never overwritten.
+Initialise blades home and workspace. Home is always `~/.blades`; workspace is `~/.blades/workspace` or `--workspace <path>`. Safe to re-run — existing files are never overwritten.
 
 ```sh
 blades init
-blades init --workspace ~/work-agent   # custom workspace path
-blades init --git                      # also run git init + create .gitignore
+blades init --workspace ~/work-agent
+blades init --git
 ```
 
 ### `blades chat`
@@ -109,83 +125,57 @@ Start an interactive streaming conversation.
 
 ```sh
 blades chat
-blades chat --session my-project       # resume or start a named session
-blades chat --simple                   # plain line I/O (fixes Windows IME issues)
+blades chat --session my-project
+blades chat --simple
 ```
 
-**In-chat slash commands:**
-
-| Command | Description |
-|---|---|
-| `/help` | Show available commands |
-| `/reload` | Hot-reload skills and config without restarting |
-| `/session <id>` | Switch to a different session |
-| `/clear` | Clear the terminal screen |
-| `/exit` | Quit |
+**In-chat slash commands:** `/help`, `/reload`, `/session <id>`, `/clear`, `/exit`.
 
 ### `blades run`
 
-Execute a single agent turn and exit (useful for scripts and cron).
+Execute a single agent turn and exit.
 
 ```sh
 blades run --message "summarise today's notes"
-blades run -m "@distill"
-blades run -m "write morning report" --session reports
+blades run -m "@distill" --session reports
 ```
 
 ### `blades memory`
 
 ```sh
-blades memory show                     # print MEMORY.md
+blades memory show
 blades memory add "prefer short answers"
-blades memory search "last week"       # search session logs in memory/
+blades memory search "last week"
 ```
 
 ### `blades cron`
 
 ```sh
-# List all active jobs
 blades cron list
-blades cron list --all                 # include disabled jobs
-
-# Add a job (agent turn on schedule)
-blades cron add --name "morning-brief" \
-  --cron "0 8 * * *" \
-  --message "generate my morning brief"
-
-# Add a job (shell command every hour)
+blades cron list --all
+blades cron add --name "morning-brief" --cron "0 8 * * *" --message "generate my morning brief"
 blades cron add --name "health-check" --every 1h --command "echo ok"
-
-# Add a one-shot job after 10 seconds
 blades cron add --name "test ls" --delay 10 --command "ls . > outputs/test.txt"
-
-# Ensure a heartbeat job exists; skip creation if already present
 blades cron heartbeat
-
-# Ensure the heartbeat job exists and trigger it immediately once
 blades cron heartbeat --run-now
-
-# Remove a job by ID
 blades cron remove <id>
-
-# Run a job immediately
 blades cron run <id>
 ```
 
 ### `blades daemon`
 
-Run the cron scheduler as a persistent process.
+Run the cron scheduler and optional channels (e.g. Lark) as a long-lived process.
 
 ```sh
 blades daemon
-
-# As a systemd service — example unit file:
-# ExecStart=/usr/local/bin/blades daemon --workspace /home/user/my-agent
+# systemd example: ExecStart=/usr/local/bin/blades daemon --workspace /home/user/my-agent
 ```
+
+Lark uses **WebSocket only**. In Feishu, choose “Receive events through persistent connection” (no request URL).
 
 ### `blades doctor`
 
-Check workspace health: verify required files exist, report stale cron jobs.
+Check health: blades home, workspace directory, required files, stale cron jobs.
 
 ```sh
 blades doctor
@@ -193,105 +183,50 @@ blades doctor
 
 ---
 
-## Global Flags
+## Global flags
 
 | Flag | Default | Description |
-|---|---|---|
-| `--config` | `~/.blades/config.yaml` | Path to a custom config file |
-| `--workspace` | `~/.blades/workspace` | Path to the agent workspace directory |
-| `--debug` | false | Enable verbose debug logging |
+|------|---------|-------------|
+| `--config` | `~/.blades/config.yaml` | Path to config file |
+| `--workspace` | `~/.blades/workspace` | Agent workspace directory |
+| `--debug` | false | Verbose debug logging |
 
 ---
 
-## Skill System
+## Skill system
 
-A skill is a directory containing a `SKILL.md` file with a YAML front-matter header:
-
-```
-skills/
-└── my-skill/
-    └── SKILL.md
-```
-
-```markdown
----
-name: my-skill
-description: Does something useful for the agent.
----
-
-# My Skill
-
-Instructions for the agent go here…
-```
-
-Skills are discovered from three directories in order — later directories can shadow earlier ones:
+Skills are discovered from three directories in order (later does not override; all are merged):
 
 | Directory | Scope |
-|---|---|
-| `~/.agents/skills/` | System-wide (shared across tools) |
-| `~/.blades/skills/` | Global blades skills |
-| `<workspace>/skills/` (default: `~/.blades/workspace/skills/`) | Workspace-local skills |
+|-----------|--------|
+| `~/.agents/skills/` | System-wide |
+| `~/.blades/skills/` | Global blades |
+| `<workspace>/skills/` | Workspace-local |
 
-Type `/reload` in chat (or restart) to pick up new skills.
-
-Built-in skill installed by `blades init`:
-
-| Skill | Description |
-|---|---|
-| `blades-cron` | Global skill installed in `~/.blades/skills/` for scheduling shell commands or agent turns from within chat |
+Each skill is a directory with a `SKILL.md` (YAML front-matter + body). Type `/reload` in chat to pick up changes.
 
 ---
 
 ## MCP (Model Context Protocol)
 
-blades supports connecting to external MCP tool servers. Servers are configured in `mcp.json` files using the same schema as Claude Desktop, so existing configs can be reused directly.
-
-MCP servers are loaded from two files and merged together:
+MCP servers are configured **only in `mcp.json`** (not in `config.yaml`). Two files are merged:
 
 | File | Scope |
-|---|---|
-| `~/.blades/mcp.json` | Global (all workspaces) |
-| `<workspace>/mcp.json` (default: `~/.blades/workspace/mcp.json`) | This workspace only |
+|------|--------|
+| `~/.blades/mcp.json` | Global |
+| `<workspace>/mcp.json` | Workspace |
 
-Additional servers can also be declared inline in `config.yaml` under the `mcp:` key.
-
-### mcp.json format
-
-```json
-{
-  "mcpServers": {
-    "time": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-time"]
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-      "env": { "DEBUG": "1" }
-    },
-    "my-api": {
-      "transport": "http",
-      "endpoint": "http://localhost:8080/mcp",
-      "headers": { "Authorization": "Bearer ${MY_TOKEN}" },
-      "timeoutSeconds": 15
-    }
-  }
-}
-```
-
-`transport` defaults to `stdio` when omitted. String values support `${ENV_VAR}` expansion.
+Same schema as Claude Desktop. String values support `${ENV_VAR}` expansion.
 
 ---
 
-## Memory Architecture
-
-By default, blades injects only `AGENTS.md` into the system instruction. `AGENTS.md` then instructs the agent which files to read at runtime (SOUL.md, USER.md, MEMORY.md, recent logs, knowledges/).
+## Memory architecture
 
 | Layer | Location | Description |
-|---|---|---|
-| L1 | `workspace/MEMORY.md` | Curated long-term facts; read in direct sessions |
-| L2 | `workspace/memory/YYYY-MM-DD.md` | Append-only daily session logs |
-| L3 | `workspace/knowledges/*.md` | Reference files loaded on demand |
+|-------|----------|-------------|
+| L1 | `workspace/MEMORY.md` | Long-term facts |
+| L2 | `workspace/memory/YYYY-MM-DD.md` | Daily session logs (and optional conversation when `logConversation: true`) |
+| L3 | `workspace/knowledges/*.md` | Reference files on demand |
 
 ---
 

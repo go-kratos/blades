@@ -43,7 +43,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
 
-	expanded := os.ExpandEnv(string(data))
+	expanded := ExpandEnv(string(data))
 	if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
 		return nil, fmt.Errorf("parse config %q: %w", path, err)
 	}

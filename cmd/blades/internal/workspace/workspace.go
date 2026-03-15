@@ -16,7 +16,7 @@ var templateFS embed.FS
 
 // Workspace manages both the global home directory and the active workspace directory.
 //
-// Home directory (~/.blades/):
+// Home directory (e.g., ~/.blades/):
 //
 //	├── config.yaml          LLM provider, model, API key
 //	├── mcp.json             global MCP server connections
@@ -25,7 +25,7 @@ var templateFS embed.FS
 //	├── sessions/            conversation session files
 //	└── log/                 runtime logs
 //
-// Workspace directory (~/my-agent/ or ~/.blades/workspace/):
+// Workspace directory (e.g., ~/my-agent/ or ~/.blades/workspace/):
 //
 //	├── AGENTS.md            behaviour rules
 //	├── SOUL.md / USER.md / IDENTITY.md / MEMORY.md / HEARTBEAT.md / TOOLS.md

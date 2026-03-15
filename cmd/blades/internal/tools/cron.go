@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
+	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/cmd/blades/internal/cron"
 	bladestools "github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -23,6 +25,7 @@ type cronInput struct {
 	Command        string  `json:"command,omitempty"`      // exec payload
 	Message        string  `json:"message,omitempty"`      // agent_turn payload
 	SessionID      string  `json:"session_id,omitempty"`
+	ReplySessionID string  `json:"reply_session_id,omitempty"` // where to send job output (e.g. Feishu chat)
 	ScheduleKind   string  `json:"schedule_kind,omitempty"`
 	AtMs           int64   `json:"at_ms,omitempty"`
 	DelaySeconds   float64 `json:"delay_seconds,omitempty"`
@@ -65,7 +68,7 @@ func (t *cronTool) handle(ctx context.Context, raw string) (string, error) {
 	}
 	switch strings.ToLower(strings.TrimSpace(in.Action)) {
 	case "add":
-		return t.add(in)
+		return t.add(ctx, in)
 	case "list":
 		return t.list()
 	case "remove":
@@ -101,7 +104,10 @@ func (t *cronTool) resolveJobID(in cronInput) (string, error) {
 		return "", fmt.Errorf("job_id is required (also accepts jobId, id, or name)")
 	}
 
-	jobs := t.svc.ListJobs(true)
+	jobs, err := t.svc.ListJobs(true)
+	if err != nil {
+		return "", fmt.Errorf("list jobs: %w", err)
+	}
 	matches := make([]string, 0, 1)
 	for _, j := range jobs {
 		if strings.EqualFold(strings.TrimSpace(j.Name), name) {
@@ -119,7 +125,19 @@ func (t *cronTool) resolveJobID(in cronInput) (string, error) {
 	}
 }
 
-func (t *cronTool) add(a cronInput) (string, error) {
+func (t *cronTool) add(ctx context.Context, a cronInput) (string, error) {
+	// When reply_session_id is not set, use current channel session so cron results
+	// are sent back to the same chat (e.g. Feishu) when daemon runs with a notifier.
+	if strings.TrimSpace(a.ReplySessionID) == "" {
+		if sess, ok := blades.FromSessionContext(ctx); ok && sess != nil && sess.ID() != "" {
+			a.ReplySessionID = sess.ID()
+			log.Printf("cron add: reply_session_id filled from context session_id=%s", a.ReplySessionID)
+		} else {
+			log.Printf("cron add: no reply_session_id (no session in context or empty session ID)")
+		}
+	} else {
+		log.Printf("cron add: reply_session_id provided by caller: %s", a.ReplySessionID)
+	}
 	// delay_seconds shorthand.
 	if a.DelaySeconds > 0 && a.AtMs == 0 {
 		a.AtMs = time.Now().UnixMilli() + int64(a.DelaySeconds*1000)
@@ -175,7 +193,7 @@ func (t *cronTool) add(a cronInput) (string, error) {
 		}
 	}
 
-	payload := cron.Payload{Kind: pk, SessionID: a.SessionID}
+	payload := cron.Payload{Kind: pk, SessionID: a.SessionID, ReplySessionID: strings.TrimSpace(a.ReplySessionID)}
 	switch pk {
 	case cron.PayloadExec:
 		if a.Command == "" {
@@ -212,7 +230,10 @@ func (t *cronTool) add(a cronInput) (string, error) {
 }
 
 func (t *cronTool) list() (string, error) {
-	jobs := t.svc.ListJobs(true)
+	jobs, err := t.svc.ListJobs(true)
+	if err != nil {
+		return "", fmt.Errorf("list jobs: %w", err)
+	}
 	if len(jobs) == 0 {
 		return "No scheduled jobs.", nil
 	}
@@ -247,7 +268,11 @@ func (t *cronTool) remove(ctx context.Context, id string) (string, error) {
 	if id == "" {
 		return "", fmt.Errorf("job_id is required (also accepts jobId, id, or name)")
 	}
-	if !t.svc.RemoveJob(ctx, id) {
+	found, err := t.svc.RemoveJob(ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("remove job: %w", err)
+	}
+	if !found {
 		return fmt.Sprintf("Job %q not found.", id), nil
 	}
 	return fmt.Sprintf("Job %q removed.", id), nil
@@ -276,7 +301,7 @@ func normScheduleKind(raw string) cron.ScheduleKind {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "":
 		return ""
-	case "delay":
+	case "delay", "once":
 		return cron.ScheduleAt
 	default:
 		return cron.ScheduleKind(strings.ToLower(strings.TrimSpace(raw)))

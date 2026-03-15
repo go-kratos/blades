@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/go-kratos/blades/cmd/blades/internal/channel"
+	"github.com/go-kratos/blades/cmd/blades/internal/command"
 )
 
 type appState int
@@ -50,9 +51,11 @@ type model struct {
 	handler      channel.StreamHandler
 	sessionID    string
 	reload       func() error
+	stop         func() error
 	debug        bool
 	glamourStyle string // "dark" or "light"
 	isDark       bool
+	cmdProc      *command.Processor
 
 	// Styles (built once from isDark)
 	styles appStyles
@@ -73,6 +76,8 @@ type model struct {
 	streamBuf   strings.Builder
 	streamTools []toolSection
 	toolCounter int
+	cancelTurn  context.CancelFunc // cancels the current turn's context when /stop or Escape
+	stopCh      chan struct{}      // sent on when user stops; unblocks wait so we can finish turn without waiting for handler
 
 	// Glamour renderer (recreated on resize, uses fixed glamourStyle)
 	glamour *glamour.TermRenderer
@@ -91,9 +96,11 @@ func newModel(
 	handler channel.StreamHandler,
 	sessionID string,
 	reload func() error,
+	stop func() error,
 	debug bool,
 	glamourStyle string,
 	isDark bool,
+	cmdProc *command.Processor,
 ) *model {
 	ctx, cancel := context.WithCancel(ctx)
 	st := newStyles(isDark)
@@ -116,12 +123,13 @@ func newModel(
 	ti.SetVirtualCursor(false)
 	_ = ti.Focus()
 
-	return &model{
+	mod := &model{
 		ctx:          ctx,
 		cancel:       cancel,
 		handler:      handler,
 		sessionID:    sessionID,
 		reload:       reload,
+		stop:         stop,
 		debug:        debug,
 		glamourStyle: glamourStyle,
 		isDark:       isDark,
@@ -129,5 +137,17 @@ func newModel(
 		state:        stateInput,
 		spinner:      sp,
 		input:        ti,
+		cmdProc:      cmdProc,
+		stopCh:       make(chan struct{}, 1),
 	}
+	if stop == nil {
+		mod.stop = func() error {
+			if mod.cancelTurn != nil {
+				mod.cancelTurn()
+				mod.cancelTurn = nil
+			}
+			return nil
+		}
+	}
+	return mod
 }

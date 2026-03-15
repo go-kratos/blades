@@ -24,7 +24,12 @@ func nowMs() int64 { return time.Now().UnixMilli() }
 // computeNextRun returns the next fire time in ms for a given schedule, relative to base.
 // Returns 0 if the schedule cannot produce a future run.
 func computeNextRun(s Schedule, baseMs int64) int64 {
-	switch s.Kind {
+	// Normalize legacy "once" to "at" so one-shot jobs get a valid next run.
+	kind := s.Kind
+	if kind == ScheduleKind("once") {
+		kind = ScheduleAt
+	}
+	switch kind {
 	case ScheduleAt:
 		if s.AtMs > baseMs {
 			return s.AtMs
@@ -100,9 +105,16 @@ func NewBotHandlerWithExecWorkDir(trigger TriggerFn, notify NotifyFn, execTimeou
 				return output, fmt.Errorf("command execution failed: %w", err)
 			}
 			log.Printf("cron exec %q output: %s", job.Name, strings.TrimSpace(output))
-			if notify != nil && job.Payload.ReplySessionID != "" {
+			if notify == nil {
+				log.Printf("cron exec %q: notify is nil, skip sending result to channel", job.Name)
+			} else if job.Payload.ReplySessionID == "" {
+				log.Printf("cron exec %q: reply_session_id empty, skip sending result to channel", job.Name)
+			} else {
+				log.Printf("cron exec %q: sending result to session_id=%s (len=%d)", job.Name, job.Payload.ReplySessionID, len(output))
 				if nerr := notify(ctx, job.Payload.ReplySessionID, output); nerr != nil {
 					log.Printf("cron: notify exec result failed: %v", nerr)
+				} else {
+					log.Printf("cron exec %q: notify ok", job.Name)
 				}
 			}
 			return output, nil
@@ -119,9 +131,16 @@ func NewBotHandlerWithExecWorkDir(trigger TriggerFn, notify NotifyFn, execTimeou
 				return "", err
 			}
 			log.Printf("cron agent_turn %q reply: %s", job.Name, reply)
-			if notify != nil && job.Payload.ReplySessionID != "" {
+			if notify == nil {
+				log.Printf("cron agent_turn %q: notify is nil, skip sending to channel", job.Name)
+			} else if job.Payload.ReplySessionID == "" {
+				log.Printf("cron agent_turn %q: reply_session_id empty, skip sending to channel", job.Name)
+			} else {
+				log.Printf("cron agent_turn %q: sending to session_id=%s", job.Name, job.Payload.ReplySessionID)
 				if nerr := notify(ctx, job.Payload.ReplySessionID, reply); nerr != nil {
 					log.Printf("cron: notify agent_turn result failed: %v", nerr)
+				} else {
+					log.Printf("cron agent_turn %q: notify ok", job.Name)
 				}
 			}
 			return reply, nil
@@ -235,6 +254,7 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 // Stop cancels the background timer and file watcher.
+// It is idempotent and safe to call multiple times.
 func (s *Service) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -281,35 +301,41 @@ func (s *Service) AddJob(ctx context.Context, name string, schedule Schedule, pa
 		s.knownIDs[job.ID] = struct{}{}
 	}
 	s.armTimerLocked(ctx)
-	log.Printf("cron: added job %q (%s) next=%s", name, job.ID, msToTime(next))
+	log.Printf("cron: added job %q (%s) schedule_kind=%s next=%s", name, job.ID, schedule.Kind, msToTime(next))
 	return job, nil
 }
 
 // RemoveJob deletes a job by ID and returns true if found.
-func (s *Service) RemoveJob(ctx context.Context, id string) bool {
+func (s *Service) RemoveJob(ctx context.Context, id string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_ = s.loadLocked()
+	if err := s.loadLocked(); err != nil {
+		return false, err
+	}
 	before := len(s.st.Jobs)
 	s.st.Jobs = removeJobSlice(s.st.Jobs, id)
 	if len(s.st.Jobs) == before {
-		return false
+		return false, nil
 	}
 	if s.knownIDs != nil {
 		delete(s.knownIDs, id)
 	}
-	_ = s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		return false, err
+	}
 	s.armTimerLocked(ctx)
 	log.Printf("cron: removed job %s", id)
-	return true
+	return true, nil
 }
 
 // EnableJob enables or disables a job. Returns true if the job was found.
-func (s *Service) EnableJob(ctx context.Context, id string, enable bool) bool {
+func (s *Service) EnableJob(ctx context.Context, id string, enable bool) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = s.loadLocked()
+	if err := s.loadLocked(); err != nil {
+		return false, err
+	}
 	for _, j := range s.st.Jobs {
 		if j.ID == id {
 			j.Enabled = enable
@@ -319,19 +345,23 @@ func (s *Service) EnableJob(ctx context.Context, id string, enable bool) bool {
 			} else {
 				j.State.NextRunAtMs = 0
 			}
-			_ = s.saveLocked()
+			if err := s.saveLocked(); err != nil {
+				return false, err
+			}
 			s.armTimerLocked(ctx)
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // ListJobs returns a snapshot of all jobs, sorted by next run time.
-func (s *Service) ListJobs(includeDisabled bool) []*Job {
+func (s *Service) ListJobs(includeDisabled bool) ([]*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = s.loadLocked()
+	if err := s.loadLocked(); err != nil {
+		return nil, err
+	}
 
 	out := make([]*Job, 0, len(s.st.Jobs))
 	for _, j := range s.st.Jobs {
@@ -351,14 +381,17 @@ func (s *Service) ListJobs(includeDisabled bool) []*Job {
 		}
 		return a < b
 	})
-	return out
+	return out, nil
 }
 
 // RunNow immediately executes a job regardless of schedule and returns its output.
 func (s *Service) RunNow(ctx context.Context, id string) (string, error) {
 	s.mu.Lock()
 	var target *Job
-	_ = s.loadLocked()
+	if err := s.loadLocked(); err != nil {
+		s.mu.Unlock()
+		return "", err
+	}
 	for _, j := range s.st.Jobs {
 		if j.ID == id {
 			cp := *j
@@ -412,6 +445,18 @@ func (s *Service) loadLocked() error {
 	if err := json.Unmarshal(data, &s.st); err != nil {
 		log.Printf("cron: corrupt store, starting fresh: %v", err)
 		s.st = store{Version: 1}
+		return nil
+	}
+	// Normalize legacy "once" jobs so they get a valid next run time.
+	now := nowMs()
+	for _, j := range s.st.Jobs {
+		if j.Schedule.Kind == ScheduleKind("once") {
+			j.Schedule.Kind = ScheduleAt
+			if j.State.NextRunAtMs == 0 && j.Schedule.AtMs > 0 && j.Schedule.AtMs > now {
+				j.State.NextRunAtMs = j.Schedule.AtMs
+				log.Printf("cron load: job %q (once) fixed nextRunAtMs=%d", j.Name, j.State.NextRunAtMs)
+			}
+		}
 	}
 	return nil
 }
@@ -489,7 +534,11 @@ func (s *Service) armTimerLocked(ctx context.Context) {
 
 func (s *Service) tick(ctx context.Context) {
 	s.mu.Lock()
-	_ = s.loadLocked()
+	if err := s.loadLocked(); err != nil {
+		log.Printf("cron: tick load error: %v", err)
+		s.mu.Unlock()
+		return
+	}
 	now := nowMs()
 
 	var due []*Job
@@ -516,7 +565,9 @@ func (s *Service) tick(ctx context.Context) {
 				j.State.NextRunAtMs = computeNextRun(j.Schedule, now)
 			}
 		}
-		_ = s.saveLocked()
+		if err := s.saveLocked(); err != nil {
+			log.Printf("cron: tick save error: %v", err)
+		}
 	}
 	s.mu.Unlock()
 
@@ -675,7 +726,11 @@ func (s *Service) watchFile(ctx context.Context, interval time.Duration) {
 // StaleJobs returns jobs whose last run was more than threshold ago. Used by doctor.
 func (s *Service) StaleJobs(threshold time.Duration) []*Job {
 	cutoff := time.Now().Add(-threshold).UnixMilli()
-	jobs := s.ListJobs(false)
+	jobs, err := s.ListJobs(false)
+	if err != nil {
+		log.Printf("cron: StaleJobs: list jobs failed: %v", err)
+		return nil
+	}
 	var stale []*Job
 	for _, j := range jobs {
 		if j.State.LastRunAtMs > 0 && j.State.LastRunAtMs < cutoff {

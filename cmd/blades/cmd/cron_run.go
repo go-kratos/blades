@@ -17,11 +17,11 @@ import (
 // runScheduledJobNow loads a full runner and triggers job id immediately,
 // returning the assembled output. Used by "cron run" and "cron heartbeat --run-now".
 func runScheduledJobNow(ctx context.Context, id string) (string, error) {
-	cfg, ws, _, err := loadAll()
+	cfg, ws, _, mcpServers, err := loadAll()
 	if err != nil {
 		return "", err
 	}
-	runner, err := buildRunner(cfg, ws)
+	runner, err := buildRunner(cfg, ws, mcpServers)
 	if err != nil {
 		return "", err
 	}

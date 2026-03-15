@@ -17,7 +17,7 @@ func TestCronToolAddAcceptsLegacyShellPayloadKind(t *testing.T) {
 	svc := cron.NewService(filepath.Join(t.TempDir(), "cron.json"), nil)
 	tool := &cronTool{svc: svc}
 
-	result, err := tool.add(cronInput{
+	result, err := tool.add(context.Background(), cronInput{
 		Name:         "legacy-shell",
 		PayloadKind:  "shell",
 		Command:      "ls .",
@@ -31,7 +31,10 @@ func TestCronToolAddAcceptsLegacyShellPayloadKind(t *testing.T) {
 		t.Fatalf("unexpected add result %q", result)
 	}
 
-	jobs := svc.ListJobs(true)
+	jobs, err := svc.ListJobs(true)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 job, got %d", len(jobs))
 	}
@@ -94,7 +97,10 @@ func TestCronToolRemoveSupportsName(t *testing.T) {
 		t.Fatalf("remove output %q does not include removed job id %q", out, job.ID)
 	}
 
-	jobs := svc.ListJobs(true)
+	jobs, err := svc.ListJobs(true)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
 	if len(jobs) != 0 {
 		t.Fatalf("expected 0 jobs after remove by name, got %d", len(jobs))
 	}

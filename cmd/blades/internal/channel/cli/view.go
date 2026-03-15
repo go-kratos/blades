@@ -63,7 +63,7 @@ func (m *model) View() tea.View {
 
 func (m *model) statusBar() string {
 	if m.state == stateRunning {
-		return m.styles.statusBar.Render(m.spinner.View() + " thinking…")
+		return m.styles.statusBar.Render(m.spinner.View() + " thinking…  Esc to stop")
 	}
 	if m.err != nil {
 		return m.styles.statusBar.Render(m.styles.err.Render("⚠  " + m.err.Error()))

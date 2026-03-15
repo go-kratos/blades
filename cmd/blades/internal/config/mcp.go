@@ -61,7 +61,7 @@ type mcpServerEntry struct {
 	URL string `json:"url"`
 	// Headers are custom HTTP headers (http transport).
 	Headers map[string]string `json:"headers"`
-	// TimeoutSeconds overrides the default 30-second request timeout.
+	// TimeoutSeconds overrides the default 10-second request timeout.
 	TimeoutSeconds int `json:"timeoutSeconds"`
 }
 
@@ -89,6 +89,8 @@ func (e mcpServerEntry) toClientConfig(name string) bladesmcp.ClientConfig {
 	}
 	if e.TimeoutSeconds > 0 {
 		cc.Timeout = time.Duration(e.TimeoutSeconds) * time.Second
+	} else {
+		cc.Timeout = 10 * time.Second
 	}
 	return cc
 }
@@ -106,7 +108,7 @@ func LoadMCPFile(path string) ([]bladesmcp.ClientConfig, error) {
 		return nil, fmt.Errorf("mcp: read %q: %w", path, err)
 	}
 
-	expanded := os.ExpandEnv(string(data))
+	expanded := ExpandEnv(string(data))
 
 	var f mcpFile
 	if err := json.Unmarshal([]byte(expanded), &f); err != nil {
