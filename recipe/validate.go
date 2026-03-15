@@ -43,6 +43,9 @@ func Validate(spec *RecipeSpec) error {
 		if spec.MaxIterations > 0 {
 			return fmt.Errorf("recipe %q: max_iterations is not supported in %s mode", spec.Name, spec.Execution)
 		}
+		if spec.Context != nil {
+			return fmt.Errorf("recipe %q: context is not supported in %s mode", spec.Name, spec.Execution)
+		}
 	}
 	if err := validateParameters(spec.Parameters); err != nil {
 		return fmt.Errorf("recipe %q: %w", spec.Name, err)
@@ -72,6 +75,121 @@ func Validate(spec *RecipeSpec) error {
 			spec.Model == "" && sub.Model == "" {
 			return fmt.Errorf("recipe %q: sub_recipe %q: model is required when parent has no model", spec.Name, sub.Name)
 		}
+	}
+	if err := validateContext(spec.Context); err != nil {
+		return fmt.Errorf("recipe %q: context: %w", spec.Name, err)
+	}
+	if err := validateApproval(spec.Approval); err != nil {
+		return fmt.Errorf("recipe %q: approval: %w", spec.Name, err)
+	}
+	if err := validateObservability(spec.Observability); err != nil {
+		return fmt.Errorf("recipe %q: observability: %w", spec.Name, err)
+	}
+	if err := validateHooks(spec.Hooks); err != nil {
+		return fmt.Errorf("recipe %q: hooks: %w", spec.Name, err)
+	}
+	return nil
+}
+
+// validateContext checks a ContextSpec for required and valid fields.
+func validateContext(spec *ContextSpec) error {
+	if spec == nil {
+		return nil
+	}
+	if spec.Strategy != ContextTruncate && spec.Strategy != ContextSummarize {
+		return fmt.Errorf("strategy must be %q or %q, got %q", ContextTruncate, ContextSummarize, spec.Strategy)
+	}
+	if spec.Strategy == ContextSummarize && spec.Model == "" {
+		return fmt.Errorf("strategy=summarize requires model to be set")
+	}
+	return nil
+}
+
+// validateApproval checks an ApprovalSpec for valid fields.
+func validateApproval(spec *ApprovalSpec) error {
+	if spec == nil {
+		return nil
+	}
+	for _, name := range spec.OnTools {
+		if name == "" {
+			return fmt.Errorf("on_tools: tool name must be non-empty")
+		}
+	}
+	return nil
+}
+
+// validateObservability checks an ObservabilitySpec for valid fields.
+func validateObservability(spec *ObservabilitySpec) error {
+	if spec == nil {
+		return nil
+	}
+	if spec.Tracing != "" && spec.Tracing != "otel" {
+		return fmt.Errorf("tracing must be %q or empty, got %q", "otel", spec.Tracing)
+	}
+	return nil
+}
+
+// validateHooks checks a HooksSpec for valid fields.
+func validateHooks(spec *HooksSpec) error {
+	if spec == nil {
+		return nil
+	}
+	for _, name := range spec.OnStart {
+		if name == "" {
+			return fmt.Errorf("on_start: hook name must be non-empty")
+		}
+	}
+	for _, name := range spec.OnComplete {
+		if name == "" {
+			return fmt.Errorf("on_complete: hook name must be non-empty")
+		}
+	}
+	for _, name := range spec.OnError {
+		if name == "" {
+			return fmt.Errorf("on_error: hook name must be non-empty")
+		}
+	}
+	return nil
+}
+
+// validateAgentSpec checks an AgentSpec for required and valid fields.
+// It mirrors what Validate(RecipeSpec) would catch after ToRecipeSpec(), so that
+// ParseAgentSpec callers can trust the returned spec is immediately usable for Build.
+func validateAgentSpec(spec *AgentSpec) error {
+	if spec == nil {
+		return fmt.Errorf("recipe: agent spec is required")
+	}
+	if spec.Kind != "AgentSpec" {
+		return fmt.Errorf("recipe: agent spec kind must be %q, got %q", "AgentSpec", spec.Kind)
+	}
+	if spec.Version == "" {
+		return fmt.Errorf("recipe: agent spec version is required")
+	}
+	if spec.Name == "" {
+		return fmt.Errorf("recipe: agent spec name is required")
+	}
+	if spec.Model.Primary == "" {
+		return fmt.Errorf("recipe: agent spec %q: model.primary is required", spec.Name)
+	}
+	// identity.persona maps to RecipeSpec.Instruction which is required for single agents.
+	if spec.Identity.Persona == "" {
+		return fmt.Errorf("recipe: agent spec %q: identity.persona is required", spec.Name)
+	}
+	// Validate tool names for the same constraints as RecipeSpec.
+	if _, err := validateToolNames(fmt.Sprintf("agent spec %q", spec.Name), spec.Tools); err != nil {
+		return err
+	}
+	if err := validateContext(spec.Context); err != nil {
+		return fmt.Errorf("recipe: agent spec %q: context: %w", spec.Name, err)
+	}
+	if err := validateApproval(spec.Approval); err != nil {
+		return fmt.Errorf("recipe: agent spec %q: approval: %w", spec.Name, err)
+	}
+	if err := validateObservability(spec.Observability); err != nil {
+		return fmt.Errorf("recipe: agent spec %q: observability: %w", spec.Name, err)
+	}
+	if err := validateHooks(spec.Hooks); err != nil {
+		return fmt.Errorf("recipe: agent spec %q: hooks: %w", spec.Name, err)
 	}
 	return nil
 }

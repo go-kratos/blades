@@ -8,6 +8,43 @@ import (
 	"github.com/go-kratos/blades/tools"
 )
 
+// MiddlewareRegistry resolves middleware names to blades.Middleware instances.
+// It is used to look up named hooks defined in HooksSpec.
+type MiddlewareRegistry interface {
+	Resolve(name string) (blades.Middleware, error)
+}
+
+// StaticMiddlewareRegistry is a simple in-memory MiddlewareRegistry.
+type StaticMiddlewareRegistry struct {
+	mu          sync.RWMutex
+	middlewares map[string]blades.Middleware
+}
+
+// NewStaticMiddlewareRegistry creates a new empty StaticMiddlewareRegistry.
+func NewStaticMiddlewareRegistry() *StaticMiddlewareRegistry {
+	return &StaticMiddlewareRegistry{
+		middlewares: make(map[string]blades.Middleware),
+	}
+}
+
+// Register adds a middleware under the given name.
+func (r *StaticMiddlewareRegistry) Register(name string, mw blades.Middleware) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.middlewares[name] = mw
+}
+
+// Resolve returns the Middleware registered under the given name.
+func (r *StaticMiddlewareRegistry) Resolve(name string) (blades.Middleware, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	mw, ok := r.middlewares[name]
+	if !ok {
+		return nil, fmt.Errorf("recipe: middleware %q not found in registry", name)
+	}
+	return mw, nil
+}
+
 // ModelRegistry resolves model names from YAML to actual ModelProvider instances.
 type ModelRegistry interface {
 	Resolve(name string) (blades.ModelProvider, error)
