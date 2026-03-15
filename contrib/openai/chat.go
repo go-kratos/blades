@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
@@ -102,8 +103,19 @@ func (m *chatModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) 
 			}
 		}
 		if err := streaming.Err(); err != nil {
-			yield(nil, err)
-			return
+			// Some OpenAI-compatible providers (e.g. DeepSeek) close the SSE
+			// stream with a malformed or empty final chunk.  If we already have
+			// accumulated content the stream completed successfully for the user,
+			// so treat this as a non-fatal warning rather than a hard failure.
+			if acc.ChatCompletion.ID != "" {
+				log.Printf("blades/openai: stream closed with error (content already received, ignoring): %v", err)
+			} else if isStreamEOF(err) {
+				log.Printf("blades/openai: stream closed unexpectedly with no content: %v", err)
+				return
+			} else {
+				yield(nil, err)
+				return
+			}
 		}
 		finalResponse, err := choiceToResponse(ctx, params, &acc.ChatCompletion)
 		if err != nil {
@@ -383,4 +395,16 @@ func chunkChoiceToResponse(ctx context.Context, choices []openai.ChatCompletionC
 		}
 	}
 	return &blades.ModelResponse{Message: message}, nil
+}
+
+// isStreamEOF reports whether err is an EOF-class or JSON-truncation error that
+// can arise when an SSE stream closes without a proper [DONE] terminator.
+func isStreamEOF(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "unexpected end of JSON input") ||
+		strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "unexpected EOF")
 }

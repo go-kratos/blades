@@ -1,0 +1,23 @@
+llm:
+  provider: openai
+  model: deepseek-chat
+  apiKey: ${OPENAI_API_KEY}
+  baseUrl: https://api.deepseek.com
+
+defaults:
+  maxIterations: 10
+  compressThreshold: 40000     # character count that triggers truncation
+  logConversation: false       # when true, append user/assistant to workspace/memory/YYYY-MM-DD.md
+
+# Optional: exec tool overrides (denyPatterns/allowPatterns are appended to built-in)
+# exec:
+#   timeoutSeconds: 60
+#   restrictToWorkspace: true
+#   denyPatterns: []
+#   allowPatterns: []
+
+# Optional: Lark/Feishu channel (WebSocket only) for `blades daemon`
+# lark:
+#   enabled: true
+#   appID: ${LARK_APP_ID}
+#   appSecret: ${LARK_APP_SECRET}
