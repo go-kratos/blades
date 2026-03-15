@@ -1705,6 +1705,707 @@ instruction: "val={{.x}}"
 	}
 }
 
-
 // Compile-time check that mockTool implements tools.Tool.
 var _ tools.Tool = (*mockTool)(nil)
+
+// --- AgentSpec.ToRecipeSpec() Tests ---
+
+func TestAgentSpecToRecipeSpec(t *testing.T) {
+	spec := &AgentSpec{
+		Kind:        "AgentSpec",
+		Version:     "v1",
+		Name:        "reviewer",
+		Description: "code review agent",
+		Identity:    IdentitySpec{Persona: "You are a senior engineer."},
+		Model:       AgentModelSpec{Primary: "gpt-4o", Fallback: "gpt-4o-mini"},
+		Tools:       []string{"web-search"},
+		Policy:      &PolicySpec{MaxTurns: 15},
+		Context: &ContextSpec{
+			Strategy:  ContextTruncate,
+			MaxTokens: 50000,
+		},
+		Approval: &ApprovalSpec{OnTools: []string{"bash"}},
+		Observability: &ObservabilitySpec{
+			Tracing: "otel",
+			System:  "openai",
+		},
+		Hooks: &HooksSpec{
+			OnStart: []string{"logging"},
+		},
+	}
+
+	rs := spec.ToRecipeSpec()
+
+	if rs.Version != "v1" {
+		t.Errorf("Version: got %q, want %q", rs.Version, "v1")
+	}
+	if rs.Name != "reviewer" {
+		t.Errorf("Name: got %q, want %q", rs.Name, "reviewer")
+	}
+	if rs.Description != "code review agent" {
+		t.Errorf("Description: got %q, want %q", rs.Description, "code review agent")
+	}
+	if rs.Model != "gpt-4o" {
+		t.Errorf("Model: got %q, want %q", rs.Model, "gpt-4o")
+	}
+	if rs.Instruction != "You are a senior engineer." {
+		t.Errorf("Instruction: got %q", rs.Instruction)
+	}
+	if len(rs.Tools) != 1 || rs.Tools[0] != "web-search" {
+		t.Errorf("Tools: got %v", rs.Tools)
+	}
+	if rs.MaxIterations != 15 {
+		t.Errorf("MaxIterations: got %d, want 15", rs.MaxIterations)
+	}
+	if rs.Context == nil || rs.Context.Strategy != ContextTruncate {
+		t.Errorf("Context not propagated: %+v", rs.Context)
+	}
+	if rs.Approval == nil || len(rs.Approval.OnTools) != 1 {
+		t.Errorf("Approval not propagated: %+v", rs.Approval)
+	}
+	if rs.Observability == nil || rs.Observability.Tracing != "otel" {
+		t.Errorf("Observability not propagated: %+v", rs.Observability)
+	}
+	if rs.Hooks == nil || len(rs.Hooks.OnStart) != 1 {
+		t.Errorf("Hooks not propagated: %+v", rs.Hooks)
+	}
+}
+
+func TestAgentSpecToRecipeSpecNilPolicy(t *testing.T) {
+	spec := &AgentSpec{
+		Kind:    "AgentSpec",
+		Version: "v1",
+		Name:    "simple",
+		Model:   AgentModelSpec{Primary: "gpt-4o"},
+		Policy:  nil,
+	}
+	rs := spec.ToRecipeSpec()
+	if rs.MaxIterations != 0 {
+		t.Errorf("expected MaxIterations=0 for nil policy, got %d", rs.MaxIterations)
+	}
+}
+
+// --- buildContextManager Tests ---
+
+func TestBuildContextManagerNil(t *testing.T) {
+	o := &buildOptions{modelRegistry: newTestModelRegistry()}
+	cm, err := buildContextManager(nil, o)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cm != nil {
+		t.Errorf("expected nil ContextManager for nil spec")
+	}
+}
+
+func TestBuildContextManagerTruncate(t *testing.T) {
+	o := &buildOptions{modelRegistry: newTestModelRegistry()}
+	spec := &ContextSpec{
+		Strategy:    ContextTruncate,
+		MaxTokens:   10000,
+		MaxMessages: 50,
+	}
+	cm, err := buildContextManager(spec, o)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cm == nil {
+		t.Error("expected non-nil ContextManager for truncate strategy")
+	}
+}
+
+func TestBuildContextManagerSummarize(t *testing.T) {
+	o := &buildOptions{modelRegistry: newTestModelRegistry()}
+	spec := &ContextSpec{
+		Strategy:   ContextSummarize,
+		MaxTokens:  80000,
+		KeepRecent: 5,
+		BatchSize:  10,
+		Model:      "gpt-4o-mini",
+	}
+	cm, err := buildContextManager(spec, o)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cm == nil {
+		t.Error("expected non-nil ContextManager for summarize strategy")
+	}
+}
+
+func TestBuildContextManagerSummarizeMissingModel(t *testing.T) {
+	o := &buildOptions{modelRegistry: newTestModelRegistry()}
+	spec := &ContextSpec{
+		Strategy:  ContextSummarize,
+		MaxTokens: 80000,
+		// Model intentionally missing
+	}
+	_, err := buildContextManager(spec, o)
+	if err == nil {
+		t.Error("expected error when summarize strategy is missing model")
+	}
+}
+
+func TestBuildContextManagerUnknownStrategy(t *testing.T) {
+	o := &buildOptions{modelRegistry: newTestModelRegistry()}
+	spec := &ContextSpec{Strategy: "unknown"}
+	_, err := buildContextManager(spec, o)
+	if err == nil {
+		t.Error("expected error for unknown context strategy")
+	}
+}
+
+// --- buildAgentMiddlewares Tests ---
+
+func newBaseSpec() *RecipeSpec {
+	return &RecipeSpec{
+		Version:     "1.0",
+		Name:        "test",
+		Model:       "gpt-4o",
+		Instruction: "test instruction",
+	}
+}
+
+func TestBuildAgentMiddlewaresEmpty(t *testing.T) {
+	o := &buildOptions{}
+	mws, err := buildAgentMiddlewares(newBaseSpec(), o)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mws) != 0 {
+		t.Errorf("expected 0 middlewares, got %d", len(mws))
+	}
+}
+
+func TestBuildAgentMiddlewaresApprovalEveryInvocation(t *testing.T) {
+	confirmed := false
+	spec := newBaseSpec()
+	spec.Approval = &ApprovalSpec{}
+	o := &buildOptions{
+		approvalHandler: func(_ context.Context, _ *blades.Message) (bool, error) {
+			confirmed = true
+			return true, nil
+		},
+	}
+	mws, err := buildAgentMiddlewares(spec, o)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mws) != 1 {
+		t.Fatalf("expected 1 middleware (approval), got %d", len(mws))
+	}
+	// Verify the middleware calls the confirm func.
+	handler := blades.ChainMiddlewares(mws...)(blades.HandleFunc(func(_ context.Context, _ *blades.Invocation) blades.Generator[*blades.Message, error] {
+		return func(yield func(*blades.Message, error) bool) {
+			yield(&blades.Message{}, nil)
+		}
+	}))
+	for range handler.Handle(context.Background(), &blades.Invocation{Message: blades.UserMessage("hi")}) {
+	}
+	if !confirmed {
+		t.Error("expected approval handler to be called")
+	}
+}
+
+func TestBuildAgentMiddlewaresApprovalMissingHandler(t *testing.T) {
+	spec := newBaseSpec()
+	spec.Approval = &ApprovalSpec{}
+	o := &buildOptions{} // no approvalHandler
+	_, err := buildAgentMiddlewares(spec, o)
+	if err == nil {
+		t.Error("expected error when approval is configured but no handler is provided")
+	}
+}
+
+func TestBuildAgentMiddlewaresApprovalOnToolsMatch(t *testing.T) {
+	confirmed := false
+	spec := newBaseSpec()
+	spec.Approval = &ApprovalSpec{OnTools: []string{"bash"}}
+	o := &buildOptions{
+		approvalHandler: func(_ context.Context, _ *blades.Message) (bool, error) {
+			confirmed = true
+			return true, nil
+		},
+	}
+	mws, err := buildAgentMiddlewares(spec, o)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	bashTool := &mockTool{name: "bash"}
+	inv := &blades.Invocation{
+		Message: blades.UserMessage("hi"),
+		Tools:   []tools.Tool{bashTool},
+	}
+	handler := blades.ChainMiddlewares(mws...)(blades.HandleFunc(func(_ context.Context, _ *blades.Invocation) blades.Generator[*blades.Message, error] {
+		return func(yield func(*blades.Message, error) bool) {
+			yield(&blades.Message{}, nil)
+		}
+	}))
+	for range handler.Handle(context.Background(), inv) {
+	}
+	if !confirmed {
+		t.Error("expected approval handler to be called when bash tool is present")
+	}
+}
+
+func TestBuildAgentMiddlewaresApprovalOnToolsNoMatch(t *testing.T) {
+	confirmed := false
+	spec := newBaseSpec()
+	spec.Approval = &ApprovalSpec{OnTools: []string{"bash"}}
+	o := &buildOptions{
+		approvalHandler: func(_ context.Context, _ *blades.Message) (bool, error) {
+			confirmed = true
+			return true, nil
+		},
+	}
+	mws, err := buildAgentMiddlewares(spec, o)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	otherTool := &mockTool{name: "list-files"}
+	inv := &blades.Invocation{
+		Message: blades.UserMessage("hi"),
+		Tools:   []tools.Tool{otherTool},
+	}
+	handler := blades.ChainMiddlewares(mws...)(blades.HandleFunc(func(_ context.Context, _ *blades.Invocation) blades.Generator[*blades.Message, error] {
+		return func(yield func(*blades.Message, error) bool) {
+			yield(&blades.Message{}, nil)
+		}
+	}))
+	for range handler.Handle(context.Background(), inv) {
+	}
+	if confirmed {
+		t.Error("expected approval handler NOT to be called when bash tool is absent")
+	}
+}
+
+func TestBuildAgentMiddlewaresTracingFactory(t *testing.T) {
+	factoryCalled := false
+	spec := newBaseSpec()
+	spec.Observability = &ObservabilitySpec{Tracing: "otel", System: "openai"}
+	o := &buildOptions{
+		tracingMiddlewareFactory: func(obs *ObservabilitySpec) blades.Middleware {
+			factoryCalled = true
+			if obs.System != "openai" {
+				t.Errorf("expected system=openai, got %q", obs.System)
+			}
+			// Return a no-op middleware
+			return func(next blades.Handler) blades.Handler { return next }
+		},
+	}
+	mws, err := buildAgentMiddlewares(spec, o)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !factoryCalled {
+		t.Error("expected tracing factory to be called")
+	}
+	if len(mws) != 1 {
+		t.Errorf("expected 1 tracing middleware, got %d", len(mws))
+	}
+}
+
+func TestBuildAgentMiddlewaresTracingMissingFactory(t *testing.T) {
+	spec := newBaseSpec()
+	spec.Observability = &ObservabilitySpec{Tracing: "otel"}
+	o := &buildOptions{} // no factory
+	_, err := buildAgentMiddlewares(spec, o)
+	if err == nil {
+		t.Error("expected error when tracing is configured but no factory is provided")
+	}
+}
+
+func newHookRegistry(t *testing.T, fired *[]string) *StaticMiddlewareRegistry {
+	t.Helper()
+	r := NewStaticMiddlewareRegistry()
+	for _, name := range []string{"start-hook", "complete-hook", "error-hook"} {
+		hookName := name
+		r.Register(hookName, func(next blades.Handler) blades.Handler {
+			return blades.HandleFunc(func(ctx context.Context, inv *blades.Invocation) blades.Generator[*blades.Message, error] {
+				*fired = append(*fired, hookName)
+				return next.Handle(ctx, inv)
+			})
+		})
+	}
+	return r
+}
+
+func TestBuildAgentMiddlewaresHooksOnSuccessPath(t *testing.T) {
+	var fired []string
+	spec := newBaseSpec()
+	spec.Hooks = &HooksSpec{
+		OnStart:    []string{"start-hook"},
+		OnComplete: []string{"complete-hook"},
+		OnError:    []string{"error-hook"},
+	}
+	o := &buildOptions{middlewareRegistry: newHookRegistry(t, &fired)}
+	mws, err := buildAgentMiddlewares(spec, o)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Successful inner handler: on_start + on_complete should fire; on_error must NOT.
+	successHandler := blades.HandleFunc(func(_ context.Context, _ *blades.Invocation) blades.Generator[*blades.Message, error] {
+		return func(yield func(*blades.Message, error) bool) { yield(&blades.Message{}, nil) }
+	})
+	for range blades.ChainMiddlewares(mws...)(successHandler).Handle(context.Background(), &blades.Invocation{}) {
+	}
+	if !slices.Contains(fired, "start-hook") {
+		t.Error("on_start hook should fire on success")
+	}
+	if !slices.Contains(fired, "complete-hook") {
+		t.Error("on_complete hook should fire on success")
+	}
+	if slices.Contains(fired, "error-hook") {
+		t.Error("on_error hook must NOT fire on success")
+	}
+}
+
+func TestBuildAgentMiddlewaresHooksOnErrorPath(t *testing.T) {
+	var fired []string
+	spec := newBaseSpec()
+	spec.Hooks = &HooksSpec{
+		OnStart:    []string{"start-hook"},
+		OnComplete: []string{"complete-hook"},
+		OnError:    []string{"error-hook"},
+	}
+	o := &buildOptions{middlewareRegistry: newHookRegistry(t, &fired)}
+	mws, err := buildAgentMiddlewares(spec, o)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Failing inner handler: on_start + on_error should fire; on_complete must NOT.
+	errHandler := blades.HandleFunc(func(_ context.Context, _ *blades.Invocation) blades.Generator[*blades.Message, error] {
+		return func(yield func(*blades.Message, error) bool) { yield(nil, fmt.Errorf("boom")) }
+	})
+	for range blades.ChainMiddlewares(mws...)(errHandler).Handle(context.Background(), &blades.Invocation{}) {
+	}
+	if !slices.Contains(fired, "start-hook") {
+		t.Error("on_start hook should fire on error")
+	}
+	if slices.Contains(fired, "complete-hook") {
+		t.Error("on_complete hook must NOT fire on error")
+	}
+	if !slices.Contains(fired, "error-hook") {
+		t.Error("on_error hook should fire on error")
+	}
+}
+
+func TestBuildAgentMiddlewaresHooksOnErrorPathRunnerStyleConsumer(t *testing.T) {
+	hookSawError := false
+	spec := newBaseSpec()
+	spec.Hooks = &HooksSpec{OnError: []string{"error-hook"}}
+
+	mwRegistry := NewStaticMiddlewareRegistry()
+	mwRegistry.Register("error-hook", func(next blades.Handler) blades.Handler {
+		return blades.HandleFunc(func(ctx context.Context, inv *blades.Invocation) blades.Generator[*blades.Message, error] {
+			return func(yield func(*blades.Message, error) bool) {
+				for _, err := range next.Handle(ctx, inv) {
+					if err != nil {
+						hookSawError = true
+					}
+				}
+			}
+		})
+	})
+
+	mws, err := buildAgentMiddlewares(spec, &buildOptions{middlewareRegistry: mwRegistry})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	errHandler := blades.HandleFunc(func(_ context.Context, _ *blades.Invocation) blades.Generator[*blades.Message, error] {
+		return func(yield func(*blades.Message, error) bool) {
+			yield(&blades.Message{}, nil)
+			yield(nil, fmt.Errorf("boom"))
+		}
+	})
+	handler := blades.ChainMiddlewares(mws...)(errHandler)
+
+	for _, err := range handler.Handle(context.Background(), &blades.Invocation{}) {
+		if err != nil {
+			break
+		}
+	}
+
+	if !hookSawError {
+		t.Error("on_error hook should run before the caller stops at the surfaced error")
+	}
+}
+
+func TestBuildAgentMiddlewaresHooksMissingRegistry(t *testing.T) {
+	spec := newBaseSpec()
+	spec.Hooks = &HooksSpec{OnStart: []string{"some-hook"}}
+	o := &buildOptions{} // no middlewareRegistry
+	_, err := buildAgentMiddlewares(spec, o)
+	if err == nil {
+		t.Error("expected error when hooks are configured but no middleware registry is provided")
+	}
+}
+
+// --- ParseAny Tests ---
+
+func TestParseAnyRecipeSpec(t *testing.T) {
+	yaml := `
+version: "1.0"
+name: my-recipe
+model: gpt-4o
+instruction: "Do stuff"
+`
+	agentSpec, recipeSpec, err := ParseAny([]byte(yaml))
+	if err != nil {
+		t.Fatalf("ParseAny failed: %v", err)
+	}
+	if agentSpec != nil {
+		t.Error("expected agentSpec to be nil for a RecipeSpec YAML")
+	}
+	if recipeSpec == nil {
+		t.Fatal("expected non-nil recipeSpec")
+	}
+	if recipeSpec.Name != "my-recipe" {
+		t.Errorf("expected name %q, got %q", "my-recipe", recipeSpec.Name)
+	}
+}
+
+func TestParseAnyAgentSpec(t *testing.T) {
+	yaml := `
+kind: AgentSpec
+version: v1
+name: my-agent
+identity:
+  persona: "You are helpful."
+model:
+  primary: gpt-4o
+`
+	agentSpec, recipeSpec, err := ParseAny([]byte(yaml))
+	if err != nil {
+		t.Fatalf("ParseAny failed: %v", err)
+	}
+	if recipeSpec != nil {
+		t.Error("expected recipeSpec to be nil for an AgentSpec YAML")
+	}
+	if agentSpec == nil {
+		t.Fatal("expected non-nil agentSpec")
+	}
+	if agentSpec.Name != "my-agent" {
+		t.Errorf("expected name %q, got %q", "my-agent", agentSpec.Name)
+	}
+}
+
+func TestParseAgentSpecValid(t *testing.T) {
+	yaml := `
+kind: AgentSpec
+version: v1
+name: reviewer
+identity:
+  persona: "Review code carefully."
+model:
+  primary: gpt-4o
+tools:
+  - web-search
+policy:
+  max_turns: 10
+context:
+  strategy: truncate
+  max_tokens: 50000
+`
+	spec, err := ParseAgentSpec([]byte(yaml))
+	if err != nil {
+		t.Fatalf("ParseAgentSpec failed: %v", err)
+	}
+	if spec.Name != "reviewer" {
+		t.Errorf("expected name %q, got %q", "reviewer", spec.Name)
+	}
+	if spec.Model.Primary != "gpt-4o" {
+		t.Errorf("expected model %q, got %q", "gpt-4o", spec.Model.Primary)
+	}
+	if spec.Context.Strategy != ContextTruncate {
+		t.Errorf("expected truncate strategy, got %q", spec.Context.Strategy)
+	}
+}
+
+func TestParseAgentSpecMissingKind(t *testing.T) {
+	yaml := `
+version: v1
+name: reviewer
+model:
+  primary: gpt-4o
+`
+	_, err := ParseAgentSpec([]byte(yaml))
+	if err == nil {
+		t.Error("expected error for AgentSpec with wrong kind")
+	}
+}
+
+func TestParseAgentSpecInvalidContext(t *testing.T) {
+	yaml := `
+kind: AgentSpec
+version: v1
+name: reviewer
+identity:
+  persona: "Review code carefully."
+model:
+  primary: gpt-4o
+context:
+  strategy: bad-strategy
+`
+	_, err := ParseAgentSpec([]byte(yaml))
+	if err == nil {
+		t.Error("expected error for invalid context strategy")
+	}
+}
+
+func TestParseAgentSpecMissingPersona(t *testing.T) {
+	yaml := `
+kind: AgentSpec
+version: v1
+name: reviewer
+model:
+  primary: gpt-4o
+`
+	_, err := ParseAgentSpec([]byte(yaml))
+	if err == nil {
+		t.Error("expected error when identity.persona is missing")
+	}
+}
+
+// --- StaticMiddlewareRegistry Tests ---
+
+func TestStaticMiddlewareRegistry(t *testing.T) {
+	r := NewStaticMiddlewareRegistry()
+	noop := func(next blades.Handler) blades.Handler { return next }
+	r.Register("noop", noop)
+
+	mw, err := r.Resolve("noop")
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if mw == nil {
+		t.Error("expected non-nil middleware")
+	}
+}
+
+func TestStaticMiddlewareRegistryNotFound(t *testing.T) {
+	r := NewStaticMiddlewareRegistry()
+	_, err := r.Resolve("missing")
+	if err == nil {
+		t.Error("expected error for missing middleware name")
+	}
+}
+
+// --- Validate new spec fields Tests ---
+
+func TestValidateContextTruncate(t *testing.T) {
+	if err := validateContext(&ContextSpec{Strategy: ContextTruncate}); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateContextSummarizeWithModel(t *testing.T) {
+	if err := validateContext(&ContextSpec{Strategy: ContextSummarize, Model: "gpt-4o-mini"}); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateContextSummarizeMissingModel(t *testing.T) {
+	if err := validateContext(&ContextSpec{Strategy: ContextSummarize}); err == nil {
+		t.Error("expected error when summarize is missing model")
+	}
+}
+
+func TestValidateContextInvalidStrategy(t *testing.T) {
+	if err := validateContext(&ContextSpec{Strategy: "bad"}); err == nil {
+		t.Error("expected error for invalid strategy")
+	}
+}
+
+func TestValidateObservabilityOtel(t *testing.T) {
+	if err := validateObservability(&ObservabilitySpec{Tracing: "otel"}); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateObservabilityInvalid(t *testing.T) {
+	if err := validateObservability(&ObservabilitySpec{Tracing: "jaeger"}); err == nil {
+		t.Error("expected error for invalid tracing value")
+	}
+}
+
+func TestValidateHooksEmptyNames(t *testing.T) {
+	if err := validateHooks(&HooksSpec{OnStart: []string{""}}); err == nil {
+		t.Error("expected error for empty hook name")
+	}
+}
+
+func TestValidateApprovalEmptyOnTools(t *testing.T) {
+	if err := validateApproval(&ApprovalSpec{OnTools: []string{""}}); err == nil {
+		t.Error("expected error for empty on_tools name")
+	}
+}
+
+// --- BuildFromAgentSpec Integration Test ---
+
+func TestBuildFromAgentSpec(t *testing.T) {
+	model := &captureRequestModel{name: "gpt-4o", response: "looks good!"}
+	registry := NewRegistry()
+	registry.Register("gpt-4o", model)
+	registry.Register("gpt-4o-mini", &mockModel{name: "gpt-4o-mini"})
+
+	spec := &AgentSpec{
+		Kind:     "AgentSpec",
+		Version:  "v1",
+		Name:     "code-reviewer",
+		Identity: IdentitySpec{Persona: "You are a reviewer."},
+		Model:    AgentModelSpec{Primary: "gpt-4o"},
+	}
+
+	agent, err := BuildFromAgentSpec(spec, WithModelRegistry(registry))
+	if err != nil {
+		t.Fatalf("BuildFromAgentSpec failed: %v", err)
+	}
+	if agent.Name() != "code-reviewer" {
+		t.Errorf("unexpected name: %q", agent.Name())
+	}
+	msg, err := blades.NewRunner(agent).Run(context.Background(), blades.UserMessage("review this"))
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if msg.Text() != "looks good!" {
+		t.Errorf("unexpected output: %q", msg.Text())
+	}
+}
+
+func TestBuildFromAgentSpecWithContextManager(t *testing.T) {
+	model := &captureRequestModel{name: "gpt-4o", response: "ok"}
+	registry := NewRegistry()
+	registry.Register("gpt-4o", model)
+
+	spec := &AgentSpec{
+		Kind:     "AgentSpec",
+		Version:  "v1",
+		Name:     "agent-with-ctx",
+		Identity: IdentitySpec{Persona: "Be helpful."},
+		Model:    AgentModelSpec{Primary: "gpt-4o"},
+		Context: &ContextSpec{
+			Strategy:    ContextTruncate,
+			MaxMessages: 10,
+		},
+	}
+
+	agent, err := BuildFromAgentSpec(spec, WithModelRegistry(registry))
+	if err != nil {
+		t.Fatalf("BuildFromAgentSpec failed: %v", err)
+	}
+	if _, err := blades.NewRunner(agent).Run(context.Background(), blades.UserMessage("hello")); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+}
+
+func TestBuildFromAgentSpecNil(t *testing.T) {
+	_, err := BuildFromAgentSpec(nil)
+	if err == nil {
+		t.Error("expected error for nil AgentSpec")
+	}
+}
