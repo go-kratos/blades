@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -175,7 +176,7 @@ func toChatMessages(msg *blades.Message) ([]chatMessage, error) {
 	}
 
 	if msg.Role == blades.RoleTool {
-		return toToolResponseMessages(msg)
+		return toToolResponseMessages(msg), nil
 	}
 
 	out := chatMessage{Role: role}
@@ -212,7 +213,7 @@ func toChatMessages(msg *blades.Message) ([]chatMessage, error) {
 	return []chatMessage{out}, nil
 }
 
-func toToolResponseMessages(msg *blades.Message) ([]chatMessage, error) {
+func toToolResponseMessages(msg *blades.Message) []chatMessage {
 	messages := make([]chatMessage, 0, len(msg.Parts))
 	for _, part := range msg.Parts {
 		toolPart, ok := part.(blades.ToolPart)
@@ -230,7 +231,7 @@ func toToolResponseMessages(msg *blades.Message) ([]chatMessage, error) {
 		})
 	}
 	if len(messages) > 0 {
-		return messages, nil
+		return messages
 	}
 	fallback := chatMessage{Role: string(blades.RoleTool)}
 	for _, part := range msg.Parts {
@@ -239,7 +240,7 @@ func toToolResponseMessages(msg *blades.Message) ([]chatMessage, error) {
 			break
 		}
 	}
-	return []chatMessage{fallback}, nil
+	return []chatMessage{fallback}
 }
 
 func fromChatResponse(resp chatResponse) *blades.ModelResponse {
@@ -292,13 +293,22 @@ func toTools(in []tools.Tool) ([]chatTool, error) {
 }
 
 func encodeImageFromURI(uri string) (string, error) {
+	if strings.HasPrefix(uri, "data:") {
+		parts := strings.SplitN(uri, ",", 2)
+		if len(parts) != 2 {
+			return "", errors.New("invalid data URI")
+		}
+		if strings.Contains(parts[0], ";base64") {
+			return parts[1], nil
+		}
+		return base64.StdEncoding.EncodeToString([]byte(parts[1])), nil
+	}
+
 	path := strings.TrimPrefix(uri, "file://")
 	if path == "" {
 		path = uri
 	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Clean(path)
-	}
+	path = filepath.Clean(path)
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -310,6 +320,10 @@ func rawJSON(v string) json.RawMessage {
 	trimmed := strings.TrimSpace(v)
 	if trimmed == "" {
 		return json.RawMessage("{}")
+	}
+	if !json.Valid([]byte(trimmed)) {
+		b, _ := json.Marshal(trimmed)
+		return json.RawMessage(b)
 	}
 	return json.RawMessage(trimmed)
 }

@@ -181,3 +181,27 @@ func TestFromChatResponse_DefaultToolArguments(t *testing.T) {
 		t.Fatalf("request = %q, want %q", got, want)
 	}
 }
+
+func TestEncodeImageFromURI_DataURI(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := encodeImageFromURI("data:image/png;base64,dGVzdA==")
+	if err != nil {
+		t.Fatalf("encodeImageFromURI error = %v", err)
+	}
+	if got, want := encoded, "dGVzdA=="; got != want {
+		t.Fatalf("encoded = %q, want %q", got, want)
+	}
+}
+
+func TestRawJSON_InvalidInput(t *testing.T) {
+	t.Parallel()
+
+	got := rawJSON("city=Paris")
+	if !json.Valid(got) {
+		t.Fatalf("rawJSON output is not valid json: %s", got)
+	}
+	if string(got) != `"city=Paris"` {
+		t.Fatalf("rawJSON quoted result = %s", got)
+	}
+}
