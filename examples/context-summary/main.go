@@ -10,7 +10,7 @@ import (
 	"github.com/go-kratos/blades/contrib/openai"
 )
 
-// This example demonstrates the summary Manager, which compresses old
+// This example demonstrates the summary ContextManager, which compresses old
 // conversation history into a rolling LLM-generated summary whenever the
 // token budget is exceeded. The most recent messages are always kept verbatim,
 // while earlier ones are folded into a concise summary, giving the model a

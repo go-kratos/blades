@@ -22,7 +22,7 @@ func NewContext(ctx context.Context, tool ToolContext) context.Context {
 	return context.WithValue(ctx, ctxToolKey{}, tool)
 }
 
-// FromContext retrieves the ToolContext stored by NewToolContext.
+// FromContext retrieves the ToolContext stored by NewContext.
 func FromContext(ctx context.Context) (ToolContext, bool) {
 	tool, ok := ctx.Value(ctxToolKey{}).(ToolContext)
 	return tool, ok

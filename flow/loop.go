@@ -29,6 +29,7 @@ type LoopState struct {
 	// Output is the last message produced in the current iteration.
 	Output *blades.Message
 	// Phase is the implicit phase signal set by ExitTool. It is overridden by
+	// the explicit phase returned from the LoopCondition.
 	Phase LoopPhase
 }
 
