@@ -134,6 +134,55 @@ func TestCacheControlSlidingWindowEvictsEarliest(t *testing.T) {
 	}
 }
 
+func TestCacheControlSlidingWindowTrimsExcessTags(t *testing.T) {
+	t.Parallel()
+
+	// Pre-seed more than maxCacheBreakpoints messages (limit is 4) each already
+	// carrying a cache_control tag so that the sliding window must trim the
+	// total tag count back down to the limit.
+	makeTaggedUserMsg := func(text string) anthropic.MessageParam {
+		block := anthropic.NewTextBlock(text)
+		block.OfText.CacheControl = anthropic.NewCacheControlEphemeralParam()
+		return anthropic.NewUserMessage(block)
+	}
+
+	messages := []anthropic.MessageParam{
+		makeTaggedUserMsg("msg-a"),
+		makeTaggedUserMsg("msg-b"),
+		makeTaggedUserMsg("msg-c"),
+		makeTaggedUserMsg("msg-d"),
+		makeTaggedUserMsg("msg-e"),
+		makeTaggedUserMsg("msg-f"),
+	}
+
+	// Sanity check: we start above the configured limit of 4.
+	if got := countCacheControlTags(messages); got != 6 {
+		t.Fatalf("pre-condition: tags = %d, want 6", got)
+	}
+
+	// Run the sliding window logic on an already-overfull set of tags.
+	applyCacheControlSliding(messages)
+
+	// The helper must reduce the tag count back down to the limit (4).
+	if got := countCacheControlTags(messages); got != maxCacheBreakpoints {
+		t.Fatalf("after sliding: tags = %d, want %d", got, maxCacheBreakpoints)
+	}
+
+	// The earliest two messages (msg-a, msg-b) must have lost their tags.
+	for i := 0; i < 2; i++ {
+		if cc := messages[i].Content[0].GetCacheControl(); cc != nil && cc.Type != "" {
+			t.Fatalf("message %d still has cache_control after trimming", i)
+		}
+	}
+
+	// The newest message (msg-f) must still carry an ephemeral tag.
+	last := messages[len(messages)-1]
+	cc := last.Content[len(last.Content)-1].GetCacheControl()
+	if cc == nil || cc.Type != "ephemeral" {
+		t.Fatalf("newest message cache_control = %v, want ephemeral", cc)
+	}
+}
+
 func TestCacheControlSlidingWindowPreservesMessages(t *testing.T) {
 	t.Parallel()
 

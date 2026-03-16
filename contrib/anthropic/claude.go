@@ -193,8 +193,9 @@ func (m *Claude) toClaudeParams(req *blades.ModelRequest) (*anthropic.MessageNew
 //
 // If the tag count is already at the limit the earliest tag is removed first
 // (only the cache_control field is cleared; the message and content block are
-// left intact). The new tag is then placed on the last block regardless of its
-// type (text, tool_use, tool_result, …).
+// left intact). The new tag is then placed on the last block if that block
+// exposes a cache_control field via GetCacheControl; blocks that do not
+// support cache_control are left unchanged.
 func applyCacheControlSliding(messages []anthropic.MessageParam) {
 	if len(messages) == 0 {
 		return
