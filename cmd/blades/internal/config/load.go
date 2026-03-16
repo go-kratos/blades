@@ -13,7 +13,7 @@ import (
 //
 // Resolution order:
 //  1. If path is provided, use it directly
-//  2. If path is empty, search ~/.blades/config.yaml
+//  2. If path is empty, search ~/.blades/agent.yaml
 //  3. If no config file found, return defaults
 //
 // Default values (when config file missing or fields empty):
@@ -27,7 +27,7 @@ func Load(path string) (*Config, error) {
 	if path == "" {
 		home, err := os.UserHomeDir()
 		if err == nil {
-			candidate := filepath.Join(home, ".blades", "config.yaml")
+			candidate := filepath.Join(home, ".blades", "agent.yaml")
 			if _, err2 := os.Stat(candidate); err2 == nil {
 				path = candidate
 			}

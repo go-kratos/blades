@@ -18,19 +18,17 @@ var templateFS embed.FS
 //
 // Home directory (e.g., ~/.blades/):
 //
-//	├── config.yaml          LLM provider, model, API key
+//	├── agent.yaml           LLM provider, model, API key
 //	├── mcp.json             global MCP server connections
 //	├── cron.json            scheduled tasks
 //	├── skills/              global skills (shared across workspaces)
 //	├── sessions/            conversation session files
-//	└── log/                 runtime logs
+//	└── logs/                runtime logs
 //
 // Workspace directory (e.g., ~/my-agent/ or ~/.blades/workspace/):
 //
 //	├── AGENTS.md            behaviour rules
 //	├── SOUL.md / USER.md / IDENTITY.md / MEMORY.md / HEARTBEAT.md / TOOLS.md
-//	├── mcp.json             workspace-level MCP servers
-//	├── skills/              workspace-local skills
 //	├── memory/              daily session logs
 //	├── knowledges/          domain knowledge files
 //	└── outputs/             agent-generated artifacts
@@ -80,8 +78,8 @@ func (w *Workspace) IsCustomWorkspace() bool {
 
 // --- Home-level paths (global config) ---
 
-// ConfigPath returns the path to config.yaml.
-func (w *Workspace) ConfigPath() string { return filepath.Join(w.home, "config.yaml") }
+// ConfigPath returns the path to agent.yaml.
+func (w *Workspace) ConfigPath() string { return filepath.Join(w.home, "agent.yaml") }
 
 // MCPPath returns the path to the global mcp.json.
 func (w *Workspace) MCPPath() string { return filepath.Join(w.home, "mcp.json") }
@@ -96,7 +94,7 @@ func (w *Workspace) SkillsDir() string { return filepath.Join(w.home, "skills") 
 func (w *Workspace) SessionsDir() string { return filepath.Join(w.home, "sessions") }
 
 // LogDir returns the log directory.
-func (w *Workspace) LogDir() string { return filepath.Join(w.home, "log") }
+func (w *Workspace) LogDir() string { return filepath.Join(w.home, "logs") }
 
 // --- Workspace-level paths ---
 
@@ -120,12 +118,6 @@ func (w *Workspace) HeartbeatPath() string { return filepath.Join(w.workspace, "
 
 // ToolsPath returns the path to TOOLS.md.
 func (w *Workspace) ToolsPath() string { return filepath.Join(w.workspace, "TOOLS.md") }
-
-// WorkspaceMCPPath returns the path to workspace mcp.json.
-func (w *Workspace) WorkspaceMCPPath() string { return filepath.Join(w.workspace, "mcp.json") }
-
-// WorkspaceSkillsDir returns the workspace-local skills directory.
-func (w *Workspace) WorkspaceSkillsDir() string { return filepath.Join(w.workspace, "skills") }
 
 // MemoriesDir returns the daily session logs directory.
 func (w *Workspace) MemoriesDir() string { return filepath.Join(w.workspace, "memory") }
@@ -160,7 +152,6 @@ func (w *Workspace) Init() error {
 	// Create workspace directories
 	workspaceDirs := []string{
 		w.workspace,
-		w.WorkspaceSkillsDir(),
 		w.MemoriesDir(),
 		w.KnowledgesDir(),
 		w.OutputsDir(),
@@ -171,7 +162,7 @@ func (w *Workspace) Init() error {
 		}
 	}
 
-	// Copy home-level templates (config.yaml, mcp.json, skills/)
+	// Copy home-level templates (agent.yaml, mcp.json, skills/)
 	if err := w.copyTemplates("templates", w.home, true); err != nil {
 		return err
 	}
@@ -251,7 +242,6 @@ func (w *Workspace) InitHome() error {
 func (w *Workspace) InitWorkspace() error {
 	dirs := []string{
 		w.workspace,
-		w.WorkspaceSkillsDir(),
 		w.MemoriesDir(),
 		w.KnowledgesDir(),
 		w.OutputsDir(),

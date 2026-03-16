@@ -1,4 +1,4 @@
-// Package logger provides runtime logging to the blades log directory (~/.blades/log/).
+// Package logger provides runtime logging to the blades log directory (~/.blades/logs/).
 // Log entries are written to YYYY-MM-DD.log; use memory.Store for conversation
 // persistence to workspace/memory/ when logConversation is enabled.
 package logger
@@ -11,20 +11,20 @@ import (
 	"time"
 )
 
-// Runtime writes runtime/audit log lines to ~/.blades/log/YYYY-MM-DD.log.
+// Runtime writes runtime/audit log lines to ~/.blades/logs/YYYY-MM-DD.log.
 // It is safe for concurrent use.
 type Runtime struct {
 	homeDir string
 }
 
-// NewRuntime returns a Runtime that writes to logDir (e.g. ~/.blades/log).
+// NewRuntime returns a Runtime that writes to logDir (e.g. ~/.blades/logs).
 func NewRuntime(logDir string) *Runtime {
 	return &Runtime{homeDir: logDir}
 }
 
 // Write appends a single log line (with newline) to today's log file.
 func (r *Runtime) Write(format string, args ...any) {
-	dir := filepath.Join(r.homeDir, "log")
+	dir := filepath.Join(r.homeDir, "logs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}

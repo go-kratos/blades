@@ -77,11 +77,11 @@ func TestInitWithCustomWorkspaceSeparatesHomeAndWorkspace(t *testing.T) {
 	}
 
 	homePaths := []string{
-		filepath.Join(homeDir, "config.yaml"),
+		filepath.Join(homeDir, "agent.yaml"),
 		filepath.Join(homeDir, "mcp.json"),
 		filepath.Join(homeDir, "skills"),
 		filepath.Join(homeDir, "sessions"),
-		filepath.Join(homeDir, "log"),
+		filepath.Join(homeDir, "logs"),
 	}
 	for _, p := range homePaths {
 		if _, err := os.Stat(p); err != nil {
@@ -94,7 +94,6 @@ func TestInitWithCustomWorkspaceSeparatesHomeAndWorkspace(t *testing.T) {
 		filepath.Join(workspaceDir, "SOUL.md"),
 		filepath.Join(workspaceDir, "USER.md"),
 		filepath.Join(workspaceDir, "MEMORY.md"),
-		filepath.Join(workspaceDir, "skills"),
 		filepath.Join(workspaceDir, "memory"),
 		filepath.Join(workspaceDir, "knowledges"),
 		filepath.Join(workspaceDir, "outputs"),

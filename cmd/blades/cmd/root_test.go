@@ -51,7 +51,7 @@ func TestOpenRootLogFileUsesHomeDir(t *testing.T) {
 		t.Fatalf("create home dir: %v", err)
 	}
 
-	// flagWorkspace should NOT affect log location (logs always go to ~/.blades/log)
+	// flagWorkspace should NOT affect log location (logs always go to ~/.blades/logs)
 	flagWorkspace = t.TempDir()
 	flagConfig = ""
 
@@ -62,7 +62,7 @@ func TestOpenRootLogFileUsesHomeDir(t *testing.T) {
 	}
 	defer f.Close()
 
-	want := filepath.Join(homeDir, "log", "2026-03-13.log")
+	want := filepath.Join(homeDir, "logs", "2026-03-13.log")
 	if path != want {
 		t.Fatalf("log path = %q, want %q", path, want)
 	}
@@ -84,7 +84,7 @@ func TestResolveLogRootDirAlwaysUsesHomeBlades(t *testing.T) {
 
 	// Even with config specifying different workspace, logs go to ~/.blades
 	root := t.TempDir()
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	cfgPath := filepath.Join(t.TempDir(), "agent.yaml")
 	cfgContent := "workspace: " + root + "\n"
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -131,7 +131,7 @@ func TestConfigureRootLoggerWritesToDailyLogFile(t *testing.T) {
 		log.SetOutput(io.Discard)
 	}
 
-	logPath := filepath.Join(homeDir, "log", "2026-03-13.log")
+	logPath := filepath.Join(homeDir, "logs", "2026-03-13.log")
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read log file: %v", err)

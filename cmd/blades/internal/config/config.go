@@ -6,7 +6,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config is the top-level configuration (config.yaml).
+// Config is the top-level configuration (agent.yaml).
 // MCP servers are loaded only from mcp.json files, not from config.
 type Config struct {
 	LLM      LLMConfig      `yaml:"llm"`

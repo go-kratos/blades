@@ -27,12 +27,12 @@ import (
 //
 // Configuration precedence (highest to lowest):
 //  1. --config flag: use specified config file directly
-//  2. ~/.blades/config.yaml (default location)
+//  2. ~/.blades/agent.yaml (default location)
 //  3. Built-in defaults (anthropic, claude-sonnet-4-6)
 func loadConfigForFlags() (*config.Config, error) {
 	configPath := flagConfig
 
-	// Config is always loaded from --config or ~/.blades/config.yaml
+	// Config is always loaded from --config or ~/.blades/agent.yaml
 	// (NOT from workspace directory)
 
 	cfg, err := config.Load(configPath)
@@ -63,7 +63,7 @@ func workspaceForConfig(cfg *config.Config) *workspace.Workspace {
 }
 
 // loadAll loads config, workspace, memory store, and MCP servers.
-// MCP servers are loaded only from ~/.blades/mcp.json and workspace/mcp.json (not from config.yaml).
+// MCP servers are loaded only from ~/.blades/mcp.json (not from agent.yaml).
 func loadAll() (*config.Config, *workspace.Workspace, *memory.Store, []bladesmcp.ClientConfig, error) {
 	cfg, err := loadConfigForFlags()
 	if err != nil {
@@ -76,12 +76,10 @@ func loadAll() (*config.Config, *workspace.Workspace, *memory.Store, []bladesmcp
 	}
 
 	var mcpServers []bladesmcp.ClientConfig
-	for _, path := range []string{ws.MCPPath(), ws.WorkspaceMCPPath()} {
-		servers, err := config.LoadMCPFile(path)
-		if err != nil {
-			log.Printf("mcp: load %s: %v (continuing without)", path, err)
-			continue
-		}
+	servers, err := config.LoadMCPFile(ws.MCPPath())
+	if err != nil {
+		log.Printf("mcp: load %s: %v (continuing without)", ws.MCPPath(), err)
+	} else {
 		mcpServers = append(mcpServers, servers...)
 	}
 
@@ -170,39 +168,24 @@ func execConfigFromDefaults(workingDir string, exec config.ExecConfig) bldtools.
 	return base
 }
 
-// loadSkills loads skills from three directories in order:
-//  1. ~/.agents/skills  — system-wide skills
-//  2. ~/.blades/skills  — global blades skills
-//  3. workspace/skills  — workspace-local skills
-//
-// All three are merged; later entries override nothing (skills are additive).
-// Missing directories or load errors for one dir are logged and skipped; partial result is returned.
+// loadSkills loads skills from ~/.blades/skills.
+// Missing directory or load errors are logged and skipped.
 func loadSkills(ws *workspace.Workspace) ([]bladeskills.Skill, error) {
-	home, _ := os.UserHomeDir()
-	dirs := []string{
-		filepath.Join(home, ".agents", "skills"), // system-wide
-		ws.SkillsDir(),                           // ~/.blades/skills
-		ws.WorkspaceSkillsDir(),                  // workspace/skills
-	}
+	dir := ws.SkillsDir() // ~/.blades/skills
 
-	var all []bladeskills.Skill
-	for _, dir := range dirs {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			continue
-		}
-		// Skip directories that have no entries — NewFromDir errors on empty dirs.
-		entries, err := os.ReadDir(dir)
-		if err != nil || len(entries) == 0 {
-			continue
-		}
-		list, err := bladeskills.NewFromDir(dir)
-		if err != nil {
-			log.Printf("skills: load %s: %v (skipping)", dir, err)
-			continue
-		}
-		all = append(all, list...)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil, nil
 	}
-	return all, nil
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return nil, nil
+	}
+	list, err := bladeskills.NewFromDir(dir)
+	if err != nil {
+		log.Printf("skills: load %s: %v (skipping)", dir, err)
+		return nil, nil
+	}
+	return list, nil
 }
 
 // makeTrigger returns a cron.TriggerFn that runs a single agent turn and

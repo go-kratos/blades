@@ -115,11 +115,11 @@ func newDaemonCmd() *cobra.Command {
 			// Setup logging based on foreground flag
 			var rtLog *logger.Runtime
 			if !daemonForeground {
-				// Background mode: all logs go to ~/.blades/log/
+				// Background mode: all logs go to ~/.blades/logs/
 				rtLog = logger.NewRuntime(ws.Home())
 				// Redirect log package output to file
 				logFile, err := os.OpenFile(
-					filepath.Join(ws.Home(), "log", time.Now().Format("2006-01-02")+".log"),
+					filepath.Join(ws.Home(), "logs", time.Now().Format("2006-01-02")+".log"),
 					os.O_APPEND|os.O_CREATE|os.O_WRONLY,
 					0o644,
 				)
@@ -234,7 +234,7 @@ func newDaemonCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().BoolVar(&daemonForeground, "foreground", false, "if true, block terminal and print all logs to stdout/stderr; if false, run in background with logs to ~/.blades/log/")
+	c.Flags().BoolVar(&daemonForeground, "foreground", false, "if true, block terminal and print all logs to stdout/stderr; if false, run in background with logs to ~/.blades/logs/")
 	return c
 }
 
@@ -291,7 +291,7 @@ func wrapChannelCommands(delegate channel.StreamHandler, reload func() error) ch
 }
 
 // createStreamHandlerWithGetter creates a StreamHandler that uses getRunner to get the current runner (for reload).
-// If writeAuditLog is false, audit logs are not written to ~/.blades/log/ (foreground mode).
+// If writeAuditLog is false, audit logs are not written to ~/.blades/logs/ (foreground mode).
 func createStreamHandlerWithGetter(getRunner func() *blades.Runner, sessMgr *session.Manager, mem *memory.Store, rtLog *logger.Runtime, logConversation bool, writeAuditLog bool) channel.StreamHandler {
 	return func(ctx context.Context, sid, text string, w channel.Writer) (string, error) {
 		r := getRunner()

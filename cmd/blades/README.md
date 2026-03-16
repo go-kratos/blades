@@ -16,7 +16,7 @@
 - **MCP support** — connect external tool servers via `mcp.json` only (stdio, HTTP, WebSocket)
 - **Cron scheduler** — run shell commands or agent turns on a schedule; backed by `cron.json`
 - **Daemon mode** — keep the scheduler running as a long-lived background process
-- **Multi-provider** — Anthropic Claude, OpenAI, Google Gemini; switch in `config.yaml`
+- **Multi-provider** — Anthropic Claude, OpenAI, Google Gemini; switch in `agent.yaml`
 - **Hot reload** — type `/reload` in chat to pick up skill or config changes without restarting
 
 ---
@@ -42,7 +42,7 @@ blades init
 export ANTHROPIC_API_KEY=sk-...     # or OPENAI_API_KEY / GEMINI_API_KEY
 
 # 3. Edit config (choose provider + model)
-$EDITOR ~/.blades/config.yaml
+$EDITOR ~/.blades/agent.yaml
 
 # 4. Start chatting
 blades chat
@@ -59,17 +59,15 @@ Default layout when no custom `--workspace` is set:
 
 ```
 ~/.blades/                    ← home (root)
-├── config.yaml               ← LLM provider, model, API key
+├── agent.yaml                ← LLM provider, model, API key
 ├── mcp.json                  ← global MCP server connections
 ├── cron.json                 ← persistent cron job store
 ├── skills/                   ← global skills (all workspaces)
 ├── sessions/                 ← conversation state per session ID
-├── log/                      ← runtime logs (YYYY-MM-DD.log)
+├── logs/                     ← runtime logs (YYYY-MM-DD.log)
 └── workspace/                ← agent workspace (default)
     ├── AGENTS.md             ← behaviour rules (loaded at startup)
     ├── SOUL.md, IDENTITY.md, USER.md, MEMORY.md, TOOLS.md, HEARTBEAT.md
-    ├── mcp.json              ← workspace-level MCP servers
-    ├── skills/               ← workspace-local skills
     ├── memory/               ← daily session logs (L2) — YYYY-MM-DD.md
     ├── knowledges/           ← reference knowledge (L3)
     └── outputs/              ← agent-produced files
@@ -77,10 +75,10 @@ Default layout when no custom `--workspace` is set:
 
 ### Log vs memory
 
-- **Log** — runtime/audit logs go to `~/.blades/log/YYYY-MM-DD.log` (daemon channel traffic, errors).
+- **Log** — runtime/audit logs go to `~/.blades/logs/YYYY-MM-DD.log` (daemon channel traffic, errors).
 - **Memory** — when `logConversation: true` in config, user/assistant turns are appended to **workspace** `memory/YYYY-MM-DD.md` for long-term context.
 
-### config.yaml
+### agent.yaml
 
 ```yaml
 llm:
@@ -187,7 +185,7 @@ blades doctor
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `~/.blades/config.yaml` | Path to config file |
+| `--config` | `~/.blades/agent.yaml` | Path to config file |
 | `--workspace` | `~/.blades/workspace` | Agent workspace directory |
 | `--debug` | false | Verbose debug logging |
 
@@ -195,13 +193,11 @@ blades doctor
 
 ## Skill system
 
-Skills are discovered from three directories in order (later does not override; all are merged):
+Skills are discovered from `~/.blades/skills/` (global):
 
 | Directory | Scope |
 |-----------|--------|
-| `~/.agents/skills/` | System-wide |
 | `~/.blades/skills/` | Global blades |
-| `<workspace>/skills/` | Workspace-local |
 
 Each skill is a directory with a `SKILL.md` (YAML front-matter + body). Type `/reload` in chat to pick up changes.
 
@@ -209,12 +205,11 @@ Each skill is a directory with a `SKILL.md` (YAML front-matter + body). Type `/r
 
 ## MCP (Model Context Protocol)
 
-MCP servers are configured **only in `mcp.json`** (not in `config.yaml`). Two files are merged:
+MCP servers are configured **only in `~/.blades/mcp.json`** (not in `agent.yaml`):
 
 | File | Scope |
 |------|--------|
 | `~/.blades/mcp.json` | Global |
-| `<workspace>/mcp.json` | Workspace |
 
 Same schema as Claude Desktop. String values support `${ENV_VAR}` expansion.
 

@@ -16,7 +16,7 @@
 - **MCP 支持** — 仅通过 `mcp.json` 连接外部工具（stdio、HTTP、WebSocket）
 - **Cron 调度** — 定时执行 Shell 或 Agent 对话，配置存于 `cron.json`
 - **Daemon 模式** — 常驻进程运行调度器与可选通道（如 Lark）
-- **多 LLM** — Anthropic、OpenAI、Google Gemini，在 `config.yaml` 中切换
+- **多 LLM** — Anthropic、OpenAI、Google Gemini，在 `agent.yaml` 中切换
 - **热重载** — 对话中输入 `/reload` 即可加载新技能或配置
 
 ---
@@ -36,7 +36,7 @@ go install .
 ```sh
 blades init
 export ANTHROPIC_API_KEY=sk-...
-$EDITOR ~/.blades/config.yaml
+$EDITOR ~/.blades/agent.yaml
 blades chat
 ```
 
@@ -51,16 +51,14 @@ blades chat
 
 ```
 ~/.blades/                    ← 根目录（home）
-├── config.yaml
+├── agent.yaml
 ├── mcp.json
 ├── cron.json
 ├── skills/
 ├── sessions/
-├── log/                      ← 运行日志 YYYY-MM-DD.log
+├── logs/                     ← 运行日志 YYYY-MM-DD.log
 └── workspace/                 ← 默认工作空间
     ├── AGENTS.md, SOUL.md, IDENTITY.md, USER.md, MEMORY.md, TOOLS.md, HEARTBEAT.md
-    ├── mcp.json
-    ├── skills/
     ├── memory/                ← 每日会话日志（L2）YYYY-MM-DD.md
     ├── knowledges/
     └── outputs/
@@ -68,10 +66,10 @@ blades chat
 
 ### 日志与记忆
 
-- **日志** — 运行/审计日志写入 `~/.blades/log/YYYY-MM-DD.log`（daemon 通道流量、错误等）。
+- **日志** — 运行/审计日志写入 `~/.blades/logs/YYYY-MM-DD.log`（daemon 通道流量、错误等）。
 - **记忆** — 当配置中 `logConversation: true` 时，用户/助手轮次会追加到**工作空间**的 `memory/YYYY-MM-DD.md`，用于长期上下文。
 
-### config.yaml
+### agent.yaml
 
 ```yaml
 llm:
@@ -122,7 +120,7 @@ defaults:
 
 | 标志 | 默认值 | 说明 |
 |------|--------|------|
-| `--config` | `~/.blades/config.yaml` | 配置文件路径 |
+| `--config` | `~/.blades/agent.yaml` | 配置文件路径 |
 | `--workspace` | `~/.blades/workspace` | 工作空间路径 |
 | `--debug` | false | 详细调试日志 |
 
@@ -130,8 +128,8 @@ defaults:
 
 ## 技能与 MCP
 
-- **技能**：按顺序从 `~/.agents/skills/`、`~/.blades/skills/`、`<workspace>/skills/` 合并加载。
-- **MCP**：仅通过 **mcp.json** 配置（不支持在 config.yaml 内联）。合并顺序：`~/.blades/mcp.json` → `<workspace>/mcp.json`。格式与 Claude Desktop 兼容，支持 `${ENV_VAR}` 展开。
+- **技能**：从 `~/.blades/skills/` 加载（全局）。
+- **MCP**：仅通过 **`~/.blades/mcp.json`** 配置（不支持在 agent.yaml 内联）。格式与 Claude Desktop 兼容，支持 `${ENV_VAR}` 展开。
 
 ---
 

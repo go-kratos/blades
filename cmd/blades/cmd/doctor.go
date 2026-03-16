@@ -39,7 +39,7 @@ func newDoctorCmd() *cobra.Command {
 
 			check("Blades home (root)", ws.Home())
 			check("Workspace directory", ws.WorkspaceDir())
-			check("config.yaml", ws.ConfigPath())
+			check("agent.yaml", ws.ConfigPath())
 			check("workspace/AGENTS.md", ws.AgentsPath())
 			check("workspace/SOUL.md", ws.SoulPath())
 			check("workspace/IDENTITY.md", ws.IdentityPath())
@@ -48,7 +48,6 @@ func newDoctorCmd() *cobra.Command {
 			check("workspace/TOOLS.md", ws.ToolsPath())
 			check("workspace/HEARTBEAT.md", ws.HeartbeatPath())
 			check("skills/", ws.SkillsDir())
-			check("workspace/skills/", ws.WorkspaceSkillsDir())
 			check("workspace/memory/", ws.MemoriesDir())
 
 			storePath := ws.CronStorePath()
@@ -72,13 +71,11 @@ func newDoctorCmd() *cobra.Command {
 
 			// Check MCP servers
 			var allMCP []bladesmcp.ClientConfig
-			for _, path := range []string{ws.MCPPath(), ws.WorkspaceMCPPath()} {
-				servers, err := config.LoadMCPFile(path)
-				if err != nil {
-					fmt.Printf("✗ %-30s %v\n", "mcp: "+path, err)
-					ok = false
-					continue
-				}
+			servers, err := config.LoadMCPFile(ws.MCPPath())
+			if err != nil {
+				fmt.Printf("✗ %-30s %v\n", "mcp: "+ws.MCPPath(), err)
+				ok = false
+			} else {
 				allMCP = append(allMCP, servers...)
 			}
 			if len(allMCP) == 0 {

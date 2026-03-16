@@ -33,17 +33,15 @@ func newRootCmd() *cobra.Command {
 		Long: `blades — personal AI assistant with configurable workspace.
 
 Home Directory (~/.blades/):
-  ├── config.yaml          LLM provider, model, API key
+  ├── agent.yaml           LLM provider, model, API key
   ├── mcp.json             global MCP server connections
   ├── skills/              global skills (shared across workspaces)
   ├── sessions/            conversation history
-  └── log/                 runtime logs (YYYY-MM-DD.log)
+  └── logs/                runtime logs (YYYY-MM-DD.log)
 
 Workspace Directory (configurable, default: ~/.blades/workspace/):
   ├── AGENTS.md            behaviour rules (loaded at startup)
   ├── SOUL.md / USER.md / IDENTITY.md / MEMORY.md
-  ├── mcp.json             workspace-level MCP servers
-  ├── skills/              workspace-local skills
   ├── memory/              daily session logs
   ├── knowledges/          domain reference files
   └── outputs/             agent-generated artifacts
@@ -55,7 +53,7 @@ Use --workspace to specify a custom workspace directory (e.g., ~/my-agent).`,
 		},
 	}
 
-	root.PersistentFlags().StringVar(&flagConfig, "config", "", "path to config.yaml (default: ~/.blades/config.yaml)")
+	root.PersistentFlags().StringVar(&flagConfig, "config", "", "path to agent.yaml (default: ~/.blades/agent.yaml)")
 	root.PersistentFlags().StringVar(&flagWorkspace, "workspace", "", "workspace directory (default: ~/.blades/workspace or config value)")
 	root.PersistentFlags().BoolVar(&flagDebug, "debug", false, "enable verbose debug logging")
 
@@ -103,7 +101,7 @@ func openRootLogFile(now time.Time) (*os.File, string, error) {
 		return nil, "", errors.New("workspace root is empty")
 	}
 
-	logDir := filepath.Join(root, "log")
+	logDir := filepath.Join(root, "logs")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return nil, logDir, err
 	}
@@ -117,9 +115,9 @@ func openRootLogFile(now time.Time) (*os.File, string, error) {
 }
 
 // resolveLogRootDir determines the home directory for log file placement.
-// Logs are always stored in ~/.blades/log (the home directory, not workspace).
+// Logs are always stored in ~/.blades/logs (the home directory, not workspace).
 func resolveLogRootDir() string {
-	// Logs always go to ~/.blades/log (home directory)
+	// Logs always go to ~/.blades/logs (home directory)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
