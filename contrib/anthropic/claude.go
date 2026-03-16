@@ -28,9 +28,9 @@ type Config struct {
 	Thinking        *anthropic.ThinkingConfigParamUnion
 	// CacheControl enables prompt caching. When true, an ephemeral
 	// cache_control breakpoint is added to the last content block of the last
-	// message on every request. A sliding window of maxCacheBreakpoints (4)
-	// tags is maintained across the message list: if the limit is already
-	// reached the earliest tag is removed first. Disabled by default.
+	// message on every request. A sliding window of maxCacheBreakpoints tags
+	// is maintained across the message list: if the limit is already reached,
+	// the earliest tag is removed first. Disabled by default.
 	CacheControl bool
 }
 
