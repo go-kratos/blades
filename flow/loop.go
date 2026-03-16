@@ -2,13 +2,9 @@ package flow
 
 import (
 	"context"
-	"errors"
 
 	"github.com/go-kratos/blades"
 )
-
-// ErrLoopEscalated is returned when a LoopCondition returns PhaseEscalate.
-var ErrLoopEscalated = errors.New("loop: escalated by condition")
 
 // LoopPhase is the decision outcome returned by a LoopCondition.
 type LoopPhase int
@@ -18,18 +14,16 @@ const (
 	PhaseContinue LoopPhase = iota
 	// PhaseComplete stops the loop successfully.
 	PhaseComplete
-	// PhaseEscalate stops the loop and returns ErrLoopEscalated.
-	PhaseEscalate
 )
 
 // LoopState captures the accumulated context available to a LoopCondition.
 type LoopState struct {
 	// Iteration is the 0-based index of the iteration that just completed.
 	Iteration int
+	// Input is the original input message to the LoopAgent.
+	Input *blades.Message
 	// Output is the last message produced in the current iteration.
 	Output *blades.Message
-	// History holds every message emitted across all iterations, in order.
-	History []*blades.Message
 }
 
 // LoopCondition is called once after every complete iteration.
@@ -80,12 +74,12 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 					message    *blades.Message
 					invocation = input.Clone()
 				)
+				state.Input = invocation.Message
 				for message, err = range agent.Run(ctx, invocation) {
 					if err != nil {
 						yield(nil, err)
 						return
 					}
-					state.History = append(state.History, message)
 					if !yield(message, nil) {
 						return
 					}
@@ -100,9 +94,6 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 				}
 				switch phase {
 				case PhaseComplete:
-					return
-				case PhaseEscalate:
-					yield(nil, ErrLoopEscalated)
 					return
 				}
 			}
