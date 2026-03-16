@@ -46,7 +46,7 @@ func (t *ExitTool) Handle(ctx context.Context, input string) (string, error) {
 		return "", err
 	}
 	if tc, ok := FromContext(ctx); ok {
-		tc.SetAction(ActionLoopExit, req)
+		tc.SetAction(ActionLoopExit, &req)
 	}
 	return `{"ok":true}`, nil
 }

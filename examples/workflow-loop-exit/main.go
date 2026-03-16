@@ -38,8 +38,6 @@ If conversation history contains reviewer feedback, revise accordingly.`),
 		log.Fatal(err)
 	}
 
-	exitTool := tools.NewExitTool()
-
 	reviewerAgent, err := blades.NewAgent(
 		"ReviewerAgent",
 		blades.WithModel(model),
@@ -48,7 +46,7 @@ Review the most recent draft in the conversation history and decide:
 - If it meets a high standard, call the exit tool with a brief reason.
 - If it needs minor improvement, provide concise feedback as plain text.
 - If it has fundamental problems requiring human judgement, call exit with escalate=true.`),
-		blades.WithTools(exitTool),
+		blades.WithTools(tools.NewExitTool()),
 	)
 	if err != nil {
 		log.Fatal(err)

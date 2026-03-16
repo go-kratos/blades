@@ -26,6 +26,23 @@ func ctxWithToolContext(tc tools.ToolContext) context.Context {
 	return tools.NewContext(context.Background(), tc)
 }
 
+func requireExitInput(t *testing.T, got any) tools.ExitInput {
+	t.Helper()
+
+	switch v := got.(type) {
+	case tools.ExitInput:
+		return v
+	case *tools.ExitInput:
+		if v == nil {
+			t.Fatal("expected non-nil *tools.ExitInput")
+		}
+		return *v
+	default:
+		t.Fatalf("expected ExitInput payload, got %T", got)
+		return tools.ExitInput{}
+	}
+}
+
 func TestExitTool_Name(t *testing.T) {
 	et := tools.NewExitTool()
 	if et.Name() != "exit" {
@@ -53,10 +70,7 @@ func TestExitTool_HandleSetsAction(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected %q action to be set", tools.ActionLoopExit)
 	}
-	ei, ok := got.(tools.ExitInput)
-	if !ok {
-		t.Fatalf("expected ExitInput value, got %T", got)
-	}
+	ei := requireExitInput(t, got)
 	if ei.Reason != "done" {
 		t.Errorf("expected reason %q, got %q", "done", ei.Reason)
 	}
@@ -76,10 +90,7 @@ func TestExitTool_HandleSetsActionEscalate(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected %q action to be set", tools.ActionLoopExit)
 	}
-	ei, ok := got.(tools.ExitInput)
-	if !ok {
-		t.Fatalf("expected ExitInput value, got %T", got)
-	}
+	ei := requireExitInput(t, got)
 	if !ei.Escalate {
 		t.Error("expected escalate=true")
 	}

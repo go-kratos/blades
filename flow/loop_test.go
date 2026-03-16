@@ -30,8 +30,9 @@ func (m *echoModel) NewStreaming(context.Context, *blades.ModelRequest) blades.G
 // exitOnNthAgent is a sub-agent that yields one message per Run call, setting
 // ActionLoopExit on the Nth call to simulate ExitTool being invoked by the LLM.
 type exitOnNthAgent struct {
-	target int
-	calls  int
+	target   int
+	calls    int
+	escalate bool
 }
 
 func (a *exitOnNthAgent) Name() string        { return "exit-on-nth" }
@@ -44,7 +45,7 @@ func (a *exitOnNthAgent) Run(_ context.Context, _ *blades.Invocation) blades.Gen
 		msg.Parts = append(msg.Parts, blades.TextPart{Text: "output"})
 		if a.calls >= a.target {
 			msg.Actions = map[string]any{
-				tools.ActionLoopExit: tools.ExitInput{Reason: "done"},
+				tools.ActionLoopExit: tools.ExitInput{Reason: "done", Escalate: a.escalate},
 			}
 		}
 		yield(msg, nil)
@@ -82,7 +83,7 @@ func drainLoop(ctx context.Context, loop blades.Agent, msg *blades.Message) ([]*
 func TestLoopState_ExitSignal(t *testing.T) {
 	t.Parallel()
 	var (
-		capturedPhase  LoopPhase
+		capturedExit   bool
 		capturedOutput *blades.Message
 	)
 	exiter := &exitOnNthAgent{target: 1}
@@ -90,17 +91,17 @@ func TestLoopState_ExitSignal(t *testing.T) {
 		Name:          "test",
 		MaxIterations: 5,
 		SubAgents:     []blades.Agent{exiter},
-		Condition: func(_ context.Context, state LoopState) (LoopPhase, error) {
-			capturedPhase = state.Phase
+		Condition: func(_ context.Context, state LoopState) (bool, error) {
+			capturedExit = state.ExitRequested
 			capturedOutput = state.Output
-			return PhaseComplete, nil
+			return false, nil
 		},
 	})
 	if _, err := drainLoop(context.Background(), loop, blades.UserMessage("go")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if capturedPhase != PhaseComplete {
-		t.Fatalf("expected phase %v, got %v", PhaseComplete, capturedPhase)
+	if !capturedExit {
+		t.Fatal("expected ExitRequested to be true when ExitTool fires")
 	}
 	if capturedOutput == nil {
 		t.Fatal("expected loop state to capture the last output message")
@@ -155,19 +156,34 @@ func TestLoopAgent_ExitSignal(t *testing.T) {
 	}
 }
 
+func TestLoopAgent_ExitSignal_Escalate_NoCondition(t *testing.T) {
+	t.Parallel()
+	// Without a Condition, ExitTool with Escalate=true should yield ErrLoopEscalated.
+	exiter := &exitOnNthAgent{target: 1, escalate: true}
+	loop := NewLoopAgent(LoopConfig{
+		Name:          "test",
+		MaxIterations: 5,
+		SubAgents:     []blades.Agent{exiter},
+	})
+	_, err := drainLoop(context.Background(), loop, blades.UserMessage("go"))
+	if !errors.Is(err, blades.ErrLoopEscalated) {
+		t.Errorf("expected ErrLoopEscalated, got %v", err)
+	}
+}
+
 func TestLoopAgent_ExitSignal_Escalate(t *testing.T) {
 	t.Parallel()
-	// Use a Condition that escalates on the first iteration.
+	// With a Condition, escalation is expressed by returning ErrLoopEscalated directly.
 	a := newEchoAgent(t, "worker", "output")
 	loop := NewLoopAgent(LoopConfig{
 		Name:          "test",
 		MaxIterations: 5,
 		SubAgents:     []blades.Agent{a},
-		Condition: func(_ context.Context, state LoopState) (LoopPhase, error) {
+		Condition: func(_ context.Context, state LoopState) (bool, error) {
 			if state.Iteration == 0 {
-				return PhaseEscalate, nil
+				return false, blades.ErrLoopEscalated
 			}
-			return PhaseContinue, nil
+			return true, nil
 		},
 	})
 	_, err := drainLoop(context.Background(), loop, blades.UserMessage("go"))
@@ -178,15 +194,15 @@ func TestLoopAgent_ExitSignal_Escalate(t *testing.T) {
 
 func TestLoopAgent_Condition_Overrides_ExitTool(t *testing.T) {
 	t.Parallel()
-	// ExitTool signals PhaseComplete on iteration 0, but Condition always returns Continue.
+	// ExitTool fires on iteration 0, but Condition always returns true (continue).
 	exiter := &exitOnNthAgent{target: 1}
 	const maxIter = 3
 	loop := NewLoopAgent(LoopConfig{
 		Name:          "test",
 		MaxIterations: maxIter,
 		SubAgents:     []blades.Agent{exiter},
-		Condition: func(_ context.Context, _ LoopState) (LoopPhase, error) {
-			return PhaseContinue, nil // always continue, overriding ExitTool
+		Condition: func(_ context.Context, _ LoopState) (bool, error) {
+			return true, nil // always continue, overriding ExitTool
 		},
 	})
 	msgs, err := drainLoop(context.Background(), loop, blades.UserMessage("go"))
