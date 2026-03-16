@@ -79,23 +79,42 @@ func drainLoop(ctx context.Context, loop blades.Agent, msg *blades.Message) ([]*
 
 // --- LoopState unit tests ---
 
-func TestLoopState_Reason(t *testing.T) {
+func TestLoopState_ExitSignal(t *testing.T) {
 	t.Parallel()
-	// Reason is populated when the loop reads ActionLoopExit from a message.
-	var capturedReason string
+	var (
+		capturedPhase  LoopPhase
+		capturedOutput *blades.Message
+	)
 	exiter := &exitOnNthAgent{target: 1}
 	loop := NewLoopAgent(LoopConfig{
 		Name:          "test",
 		MaxIterations: 5,
 		SubAgents:     []blades.Agent{exiter},
 		Condition: func(_ context.Context, state LoopState) (LoopPhase, error) {
-			capturedReason = state.Reason()
+			capturedPhase = state.Phase
+			capturedOutput = state.Output
 			return PhaseComplete, nil
 		},
 	})
-	drainLoop(context.Background(), loop, blades.UserMessage("go")) //nolint:errcheck
-	if capturedReason != "done" {
-		t.Errorf("expected reason %q, got %q", "done", capturedReason)
+	if _, err := drainLoop(context.Background(), loop, blades.UserMessage("go")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedPhase != PhaseComplete {
+		t.Fatalf("expected phase %v, got %v", PhaseComplete, capturedPhase)
+	}
+	if capturedOutput == nil {
+		t.Fatal("expected loop state to capture the last output message")
+	}
+	got, ok := capturedOutput.Actions[tools.ActionLoopExit]
+	if !ok {
+		t.Fatalf("expected output actions to include %q", tools.ActionLoopExit)
+	}
+	exit, ok := got.(tools.ExitInput)
+	if !ok {
+		t.Fatalf("expected exit action to be %T, got %T", tools.ExitInput{}, got)
+	}
+	if exit.Reason != "done" {
+		t.Errorf("expected reason %q, got %q", "done", exit.Reason)
 	}
 }
 

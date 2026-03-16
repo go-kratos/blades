@@ -15,15 +15,15 @@ type mockToolContext struct {
 	actions map[string]any
 }
 
-func (m *mockToolContext) ID() string            { return m.id }
-func (m *mockToolContext) Name() string          { return m.name }
+func (m *mockToolContext) ID() string              { return m.id }
+func (m *mockToolContext) Name() string            { return m.name }
 func (m *mockToolContext) Actions() map[string]any { return m.actions }
 func (m *mockToolContext) SetAction(key string, value any) {
 	m.actions[key] = value
 }
 
 func ctxWithToolContext(tc tools.ToolContext) context.Context {
-	return tools.NewToolContext(context.Background(), tc)
+	return tools.NewContext(context.Background(), tc)
 }
 
 func TestExitTool_Name(t *testing.T) {
@@ -109,4 +109,3 @@ func TestExitTool_OutputSchema(t *testing.T) {
 		t.Error("OutputSchema should be nil")
 	}
 }
-
