@@ -7,26 +7,9 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// LoopExiter is implemented by a loop's LoopState and allows tools running
-// inside a loop iteration to signal that the loop should stop.
-type LoopExiter interface {
-	// ExitLoop signals that the loop should stop after the current iteration.
-	// If escalate is true the loop returns blades.ErrLoopEscalated to its caller.
-	ExitLoop(reason string, escalate bool)
-}
-
-type ctxLoopExiterKey struct{}
-
-// WithLoopExiter returns a child context that carries the given LoopExiter.
-func WithLoopExiter(ctx context.Context, e LoopExiter) context.Context {
-	return context.WithValue(ctx, ctxLoopExiterKey{}, e)
-}
-
-// LoopExiterFromContext retrieves the LoopExiter stored by WithLoopExiter.
-func LoopExiterFromContext(ctx context.Context) (LoopExiter, bool) {
-	e, ok := ctx.Value(ctxLoopExiterKey{}).(LoopExiter)
-	return e, ok
-}
+// ActionLoopExit is the action key set by ExitTool on the ToolContext to
+// signal that the enclosing loop should stop. The value is an ExitInput.
+const ActionLoopExit = "loop_exit"
 
 // ExitInput is the argument schema for ExitTool.
 type ExitInput struct {
@@ -35,8 +18,9 @@ type ExitInput struct {
 }
 
 // ExitTool signals the enclosing loop to stop. Register it via blades.WithTools
-// on a sub-agent; the loop picks up the signal through the context automatically.
-// If called outside a loop the call is a silent no-op.
+// on a sub-agent. When invoked by the LLM it sets ActionLoopExit on the
+// ToolContext so that the loop agent can observe it via message.Actions.
+// If called outside a loop (no ToolContext in context) the call is a no-op.
 type ExitTool struct {
 	inputSchema *jsonschema.Schema
 }
@@ -47,7 +31,7 @@ func NewExitTool() *ExitTool {
 	return &ExitTool{inputSchema: schema}
 }
 
-func (t *ExitTool) Name() string        { return "exit" }
+func (t *ExitTool) Name() string                     { return "exit" }
 func (t *ExitTool) InputSchema() *jsonschema.Schema  { return t.inputSchema }
 func (t *ExitTool) OutputSchema() *jsonschema.Schema { return nil }
 
@@ -61,8 +45,8 @@ func (t *ExitTool) Handle(ctx context.Context, input string) (string, error) {
 	if err := json.Unmarshal([]byte(input), &req); err != nil {
 		return "", err
 	}
-	if e, ok := LoopExiterFromContext(ctx); ok {
-		e.ExitLoop(req.Reason, req.Escalate)
+	if tc, ok := FromContext(ctx); ok {
+		tc.SetAction(ActionLoopExit, req)
 	}
 	return `{"ok":true}`, nil
 }

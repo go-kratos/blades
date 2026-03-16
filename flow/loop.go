@@ -20,9 +20,7 @@ const (
 	PhaseEscalate
 )
 
-// LoopState captures the accumulated context available to a LoopCondition.
-// A pointer to the current LoopState is stored in the context for every
-// iteration so that tools (e.g. tools.ExitTool) can signal loop exit.
+// LoopState captures the observable state available to a LoopCondition.
 type LoopState struct {
 	// Iteration is the 0-based index of the iteration that just completed.
 	Iteration int
@@ -30,19 +28,8 @@ type LoopState struct {
 	Input *blades.Message
 	// Output is the last message produced in the current iteration.
 	Output *blades.Message
-	phase  LoopPhase
-	reason string
-}
-
-// ExitLoop implements tools.LoopExiter. It is called by tools running inside
-// an iteration to signal that the loop should stop.
-func (s *LoopState) ExitLoop(reason string, escalate bool) {
-	s.reason = reason
-	if escalate {
-		s.phase = PhaseEscalate
-	} else {
-		s.phase = PhaseComplete
-	}
+	// Phase is the implicit phase signal set by ExitTool. It is overridden by
+	Phase LoopPhase
 }
 
 // LoopCondition is called once after every complete iteration.
@@ -75,24 +62,21 @@ func NewLoopAgent(config LoopConfig) blades.Agent {
 func (a *loopAgent) Name() string        { return a.config.Name }
 func (a *loopAgent) Description() string { return a.config.Description }
 
-// Run runs the sub-agents in a loop. Before each iteration the current
-// *LoopState is stored in the context via tools.WithLoopExiter so that
-// tools like tools.ExitTool can signal exit without needing a LoopConfig field.
-// The LoopCondition (if set) is evaluated after each iteration.
+// Run runs the sub-agents in a loop. After each message yielded by a sub-agent
+// the loop checks message.Actions for an ActionLoopExit signal set by ExitTool.
+// Context management across iterations is delegated to the ContextManager
+// configured on the Runner (via blades.WithContextManager).
 func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		state := LoopState{}
 		for state.Iteration = 0; state.Iteration < a.config.MaxIterations; state.Iteration++ {
-			state.phase = PhaseContinue
-			iterCtx := tools.WithLoopExiter(ctx, &state)
 			for _, agent := range a.config.SubAgents {
 				var (
 					err        error
 					message    *blades.Message
 					invocation = input.Clone()
 				)
-				state.Input = invocation.Message
-				for message, err = range agent.Run(iterCtx, invocation) {
+				for message, err = range agent.Run(ctx, invocation) {
 					if err != nil {
 						yield(nil, err)
 						return
@@ -100,7 +84,17 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 					if !yield(message, nil) {
 						return
 					}
+					if exit, ok := message.Actions[tools.ActionLoopExit]; ok {
+						if ei, ok := exit.(tools.ExitInput); ok {
+							if ei.Escalate {
+								state.Phase = PhaseEscalate
+							} else {
+								state.Phase = PhaseComplete
+							}
+						}
+					}
 				}
+				state.Input = invocation.Message
 				state.Output = message
 			}
 			if a.config.Condition != nil {
@@ -116,13 +110,15 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 					yield(nil, blades.ErrLoopEscalated)
 					return
 				}
-			}
-			switch state.phase {
-			case PhaseComplete:
-				return
-			case PhaseEscalate:
-				yield(nil, blades.ErrLoopEscalated)
-				return
+				// Condition returned PhaseContinue: ignore any ExitTool signal.
+			} else {
+				switch state.Phase {
+				case PhaseComplete:
+					return
+				case PhaseEscalate:
+					yield(nil, blades.ErrLoopEscalated)
+					return
+				}
 			}
 		}
 	}

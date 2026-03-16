@@ -582,7 +582,7 @@ func TestBuildNilSpec(t *testing.T) {
 	}
 }
 
-func TestBuildInjectsPromptAsFirstUserMessage(t *testing.T) {
+func TestBuildInjectsPromptAsInstruction(t *testing.T) {
 	model := &captureRequestModel{name: "openai"}
 	registry := NewRegistry()
 	registry.Register("openai", model)
@@ -607,18 +607,18 @@ func TestBuildInjectsPromptAsFirstUserMessage(t *testing.T) {
 	if _, err := runner.Run(context.Background(), blades.UserMessage("And then suggest improvements.")); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if len(model.messages) < 2 {
-		t.Fatalf("expected at least 2 messages, got %d", len(model.messages))
+	if len(model.messages) != 1 {
+		t.Fatalf("expected 1 message (user), got %d", len(model.messages))
 	}
-	if got := model.messages[0].Text(); got != "Please review go code first." {
-		t.Fatalf("unexpected first message: %q", got)
+	if got := model.messages[0].Text(); got != "And then suggest improvements." {
+		t.Fatalf("unexpected user message: %q", got)
 	}
-	if got := model.messages[1].Text(); got != "And then suggest improvements." {
-		t.Fatalf("unexpected second message: %q", got)
+	if !strings.Contains(model.instruction, "Please review go code first.") {
+		t.Fatalf("expected instruction to contain prompt, got: %q", model.instruction)
 	}
 }
 
-func TestBuildInjectsSubRecipePromptAsFirstUserMessage(t *testing.T) {
+func TestBuildInjectsSubRecipePromptAsInstruction(t *testing.T) {
 	model := &captureRequestModel{name: "m1"}
 	registry := NewRegistry()
 	registry.Register("m1", model)
@@ -649,14 +649,14 @@ func TestBuildInjectsSubRecipePromptAsFirstUserMessage(t *testing.T) {
 	if _, err := runner.Run(context.Background(), blades.UserMessage("Then suggest improvements.")); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if len(model.messages) < 2 {
-		t.Fatalf("expected at least 2 messages, got %d", len(model.messages))
+	if len(model.messages) != 1 {
+		t.Fatalf("expected 1 message (user), got %d", len(model.messages))
 	}
-	if got := model.messages[0].Text(); got != "First focus on go code style." {
-		t.Fatalf("unexpected first message: %q", got)
+	if got := model.messages[0].Text(); got != "Then suggest improvements." {
+		t.Fatalf("unexpected user message: %q", got)
 	}
-	if got := model.messages[1].Text(); got != "Then suggest improvements." {
-		t.Fatalf("unexpected second message: %q", got)
+	if !strings.Contains(model.instruction, "First focus on go code style.") {
+		t.Fatalf("expected instruction to contain sub-recipe prompt, got: %q", model.instruction)
 	}
 }
 

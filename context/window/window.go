@@ -8,7 +8,7 @@ import (
 
 const defaultMaxMessages = 100
 
-// Option configures a window ContextManager.
+// Option configures a window Manager.
 type Option func(*contextManager)
 
 // WithMaxMessages sets the maximum number of messages to retain.
@@ -43,15 +43,15 @@ type contextManager struct {
 	counter     blades.TokenCounter
 }
 
-// NewContextManager returns a ContextManager that keeps the most recent
+// NewContextManager returns a Manager that keeps the most recent
 // messages within the configured token or message count limits. Messages are
 // dropped from the front (oldest first) when limits are exceeded.
 func NewContextManager(opts ...Option) blades.ContextManager {
-	cm := &contextManager{maxMessages: defaultMaxMessages}
+	contextManager := &contextManager{maxMessages: defaultMaxMessages}
 	for _, opt := range opts {
-		opt(cm)
+		opt(contextManager)
 	}
-	return cm
+	return contextManager
 }
 
 // Prepare retains the most recent messages that fit the configured limits.

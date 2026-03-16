@@ -10,7 +10,7 @@ import (
 	"github.com/go-kratos/blades/contrib/openai"
 )
 
-// This example demonstrates the window ContextManager, which keeps only the
+// This example demonstrates the window Manager, which keeps only the
 // most recent messages within a configured message count or token budget.
 // Older messages are silently dropped from the front of the history once the
 // limit is exceeded, implementing a classic sliding-window context strategy.
@@ -21,7 +21,7 @@ func main() {
 
 	// Keep at most the last 4 messages and stay within a 2000-token budget.
 	// Adjust these values to observe different truncation behaviour.
-	windowCM := window.NewContextManager(
+	contextManager := window.NewContextManager(
 		window.WithMaxMessages(4),
 		window.WithMaxTokens(2000),
 	)
@@ -30,15 +30,16 @@ func main() {
 		"WindowDemo",
 		blades.WithModel(model),
 		blades.WithInstruction("You are a helpful assistant. Answer concisely."),
-		blades.WithContextManager(windowCM),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	runner := blades.NewRunner(agent)
-	session := blades.NewSession()
 	ctx := context.Background()
+	session := blades.NewSession()
+	runner := blades.NewRunner(
+		agent, blades.WithContextManager(contextManager),
+	)
 
 	turns := []string{
 		"My favourite colour is blue.",

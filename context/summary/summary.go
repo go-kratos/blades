@@ -37,7 +37,7 @@ func buildWorkingView(summaryContent string, offset int, messages []*blades.Mess
 	return result
 }
 
-// Option configures a summary ContextManager.
+// Option configures a summary Manager.
 type Option func(*contextManager)
 
 // WithMaxTokens sets the token budget that triggers compression.
@@ -79,7 +79,7 @@ func WithBatchSize(n int) Option {
 	}
 }
 
-// contextManager implements ContextManager by compressing old messages into a rolling summary when the token count exceeds a configured limit.
+// contextManager implements Manager by compressing old messages into a rolling summary when the token count exceeds a configured limit.
 // Compression state is persisted in the session when available to avoid redundant summarization work across runs.
 type contextManager struct {
 	maxTokens   int64
@@ -90,7 +90,7 @@ type contextManager struct {
 	instruction string
 }
 
-// NewContextManager returns a ContextManager that compresses old messages using
+// NewContextManager returns a Manager that compresses old messages using
 // the provided ModelProvider when the token count exceeds the configured limit.
 // Recent messages are always kept verbatim.
 //

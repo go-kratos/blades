@@ -10,7 +10,7 @@ import (
 	"github.com/go-kratos/blades/internal/counter"
 )
 
-func TestContextManager_BelowBudget(t *testing.T) {
+func TestManager_BelowBudget(t *testing.T) {
 	s := &mockSummarizer{}
 	cm := summary.NewContextManager(
 		summary.WithSummarizer(s),
@@ -30,7 +30,7 @@ func TestContextManager_BelowBudget(t *testing.T) {
 	}
 }
 
-func TestContextManager_CompressesOldMessages(t *testing.T) {
+func TestManager_CompressesOldMessages(t *testing.T) {
 	s := &mockSummarizer{}
 	cm := summary.NewContextManager(
 		summary.WithSummarizer(s),
@@ -52,7 +52,7 @@ func TestContextManager_CompressesOldMessages(t *testing.T) {
 	}
 }
 
-func TestContextManager_ZeroMaxTokens_NoOp(t *testing.T) {
+func TestManager_ZeroMaxTokens_NoOp(t *testing.T) {
 	s := &mockSummarizer{}
 	cm := summary.NewContextManager(summary.WithSummarizer(s)) // MaxTokens=0 → no-op
 	msgs := makeMessages(20)
@@ -65,9 +65,9 @@ func TestContextManager_ZeroMaxTokens_NoOp(t *testing.T) {
 	}
 }
 
-// TestContextManager_SessionPersistsOffset verifies that the compressed offset and
+// TestManager_SessionPersistsOffset verifies that the compressed offset and
 // rolling summary are persisted in session.State() and reused on subsequent calls.
-func TestContextManager_SessionPersistsOffset(t *testing.T) {
+func TestManager_SessionPersistsOffset(t *testing.T) {
 	s := &mockSummarizer{}
 	cm := summary.NewContextManager(
 		summary.WithSummarizer(s),
@@ -122,9 +122,9 @@ func TestContextManager_SessionPersistsOffset(t *testing.T) {
 	}
 }
 
-// TestContextManager_NoSession_Stateless verifies that without a session the
+// TestManager_NoSession_Stateless verifies that without a session the
 // context manager behaves statelessly (no state keys are set, no panic).
-func TestContextManager_NoSession_Stateless(t *testing.T) {
+func TestManager_NoSession_Stateless(t *testing.T) {
 	s := &mockSummarizer{}
 	cm := summary.NewContextManager(
 		summary.WithSummarizer(s),

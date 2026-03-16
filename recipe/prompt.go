@@ -29,7 +29,7 @@ func (a *promptInjectedAgent) Run(ctx context.Context, inv *blades.Invocation) b
 	if next.Message == nil {
 		next.Message = promptMessage
 	} else {
-		next.History = append(next.History, promptMessage)
+		next.Instruction = blades.MergeParts(blades.SystemMessage(a.prompt), next.Instruction)
 	}
 	return a.base.Run(ctx, next)
 }
