@@ -211,20 +211,55 @@ func applyCacheControlSliding(messages []anthropic.MessageParam) {
 		}
 	}
 
-	// If already at the limit, remove the earliest tag.
-	if len(tagged) >= maxCacheBreakpoints {
-		loc := tagged[0]
-		if cc := messages[loc.msg].Content[loc.block].GetCacheControl(); cc != nil {
-			*cc = anthropic.CacheControlEphemeralParam{}
+	// Determine the location of the last content block of the last message.
+	lastMsgIdx := len(messages) - 1
+	if len(messages[lastMsgIdx].Content) == 0 {
+		// Nothing to tag on the last message.
+		return
+	}
+	lastBlockIdx := len(messages[lastMsgIdx].Content) - 1
+	target := location{msg: lastMsgIdx, block: lastBlockIdx}
+
+	// Check if the target block is already tagged (stamping would be idempotent).
+	alreadyTagged := false
+	for _, loc := range tagged {
+		if loc == target {
+			alreadyTagged = true
+			break
+		}
+	}
+
+	// Calculate how many existing tags we are allowed to keep before stamping
+	// the target block, and evict the earliest ones (sliding window) if needed.
+	requiredNewTags := 1
+	if alreadyTagged {
+		requiredNewTags = 0
+	}
+	allowedExisting := maxCacheBreakpoints - requiredNewTags
+	if allowedExisting < 0 {
+		allowedExisting = 0
+	}
+	if len(tagged) > allowedExisting {
+		neededEvictions := len(tagged) - allowedExisting
+		evicted := 0
+		for _, loc := range tagged {
+			if evicted >= neededEvictions {
+				break
+			}
+			// Never evict the target block if it is already tagged.
+			if loc == target {
+				continue
+			}
+			if cc := messages[loc.msg].Content[loc.block].GetCacheControl(); cc != nil {
+				*cc = anthropic.CacheControlEphemeralParam{}
+				evicted++
+			}
 		}
 	}
 
 	// Stamp the last content block of the last message.
-	last := len(messages) - 1
-	if n := len(messages[last].Content); n > 0 {
-		if cc := messages[last].Content[n-1].GetCacheControl(); cc != nil {
-			*cc = anthropic.NewCacheControlEphemeralParam()
-		}
+	if cc := messages[lastMsgIdx].Content[lastBlockIdx].GetCacheControl(); cc != nil {
+		*cc = anthropic.NewCacheControlEphemeralParam()
 	}
 }
 
