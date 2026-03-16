@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/go-kratos/blades"
 )
 
@@ -28,6 +29,139 @@ func TestToClaudeParamsAssistantRole(t *testing.T) {
 	}
 	if got, want := string(params.Messages[1].Role), "assistant"; got != want {
 		t.Fatalf("second role = %q, want %q", got, want)
+	}
+}
+
+// countCacheControlTags returns the number of content blocks across all
+// messages that have a non-zero cache_control stamp.
+func countCacheControlTags(messages []anthropic.MessageParam) int {
+	n := 0
+	for i := range messages {
+		for j := range messages[i].Content {
+			if cc := messages[i].Content[j].GetCacheControl(); cc != nil && cc.Type != "" {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func TestCacheControlDisabledByDefault(t *testing.T) {
+	t.Parallel()
+
+	model := &Claude{model: "claude-test"}
+	params, err := model.toClaudeParams(&blades.ModelRequest{
+		Messages: []*blades.Message{
+			blades.UserMessage("hello"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("toClaudeParams returned error: %v", err)
+	}
+	if got := countCacheControlTags(params.Messages); got != 0 {
+		t.Fatalf("cache_control tags = %d, want 0 when CacheControl is disabled", got)
+	}
+}
+
+func TestCacheControlStampsLastBlock(t *testing.T) {
+	t.Parallel()
+
+	model := &Claude{model: "claude-test", config: Config{CacheControl: true}}
+	params, err := model.toClaudeParams(&blades.ModelRequest{
+		Messages: []*blades.Message{
+			blades.UserMessage("turn 1"),
+			blades.AssistantMessage("reply 1"),
+			blades.UserMessage("turn 2"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("toClaudeParams returned error: %v", err)
+	}
+
+	// Exactly one tag, on the last message's last block.
+	if got := countCacheControlTags(params.Messages); got != 1 {
+		t.Fatalf("cache_control tags = %d, want 1", got)
+	}
+	last := params.Messages[len(params.Messages)-1]
+	lastBlock := last.Content[len(last.Content)-1]
+	cc := lastBlock.GetCacheControl()
+	if cc == nil || cc.Type != "ephemeral" {
+		t.Fatalf("last block cache_control = %v, want ephemeral", cc)
+	}
+}
+
+func TestCacheControlSlidingWindowEvictsEarliest(t *testing.T) {
+	t.Parallel()
+
+	// Pre-seed 4 messages each already carrying a cache_control tag so that
+	// the next call must evict the oldest before adding the new one.
+	makeTaggedUserMsg := func(text string) anthropic.MessageParam {
+		block := anthropic.NewTextBlock(text)
+		block.OfText.CacheControl = anthropic.NewCacheControlEphemeralParam()
+		return anthropic.NewUserMessage(block)
+	}
+
+	messages := []anthropic.MessageParam{
+		makeTaggedUserMsg("msg-a"),
+		makeTaggedUserMsg("msg-b"),
+		makeTaggedUserMsg("msg-c"),
+		makeTaggedUserMsg("msg-d"),
+	}
+
+	if got := countCacheControlTags(messages); got != 4 {
+		t.Fatalf("pre-condition: tags = %d, want 4", got)
+	}
+
+	// Append a new (untagged) message and run the sliding window.
+	messages = append(messages, anthropic.NewUserMessage(anthropic.NewTextBlock("msg-e")))
+	applyCacheControlSliding(messages)
+
+	// Total must remain at 4.
+	if got := countCacheControlTags(messages); got != 4 {
+		t.Fatalf("after sliding: tags = %d, want 4", got)
+	}
+
+	// The earliest message (msg-a) must have lost its tag.
+	if cc := messages[0].Content[0].GetCacheControl(); cc != nil && cc.Type != "" {
+		t.Fatal("oldest message still has cache_control after eviction")
+	}
+
+	// The new last message (msg-e) must carry the tag.
+	last := messages[len(messages)-1]
+	cc := last.Content[len(last.Content)-1].GetCacheControl()
+	if cc == nil || cc.Type != "ephemeral" {
+		t.Fatalf("new last message cache_control = %v, want ephemeral", cc)
+	}
+}
+
+func TestCacheControlSlidingWindowPreservesMessages(t *testing.T) {
+	t.Parallel()
+
+	// Verify that eviction only clears the cache_control field and never
+	// removes the message or the content block itself.
+	makeTaggedUserMsg := func(text string) anthropic.MessageParam {
+		block := anthropic.NewTextBlock(text)
+		block.OfText.CacheControl = anthropic.NewCacheControlEphemeralParam()
+		return anthropic.NewUserMessage(block)
+	}
+
+	messages := []anthropic.MessageParam{
+		makeTaggedUserMsg("keep-me"),
+		makeTaggedUserMsg("b"),
+		makeTaggedUserMsg("c"),
+		makeTaggedUserMsg("d"),
+	}
+	messages = append(messages, anthropic.NewUserMessage(anthropic.NewTextBlock("new")))
+	applyCacheControlSliding(messages)
+
+	if got := len(messages); got != 5 {
+		t.Fatalf("messages len = %d, want 5 (no message deleted)", got)
+	}
+	if got := len(messages[0].Content); got != 1 {
+		t.Fatalf("first message content len = %d, want 1 (no block deleted)", got)
+	}
+	if got := messages[0].Content[0].OfText.Text; got != "keep-me" {
+		t.Fatalf("first block text = %q, want %q", got, "keep-me")
 	}
 }
 

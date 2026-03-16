@@ -10,6 +10,10 @@ import (
 	"github.com/go-kratos/blades"
 )
 
+// maxCacheBreakpoints is the maximum number of ephemeral cache_control tags
+// the Anthropic API accepts per request.
+const maxCacheBreakpoints = 4
+
 // Config holds configuration options for the Claude client.
 type Config struct {
 	BaseURL         string
@@ -22,6 +26,12 @@ type Config struct {
 	StopSequences   []string
 	RequestOptions  []option.RequestOption
 	Thinking        *anthropic.ThinkingConfigParamUnion
+	// CacheControl enables prompt caching. When true, an ephemeral
+	// cache_control breakpoint is added to the last content block of the last
+	// message on every request. A sliding window of maxCacheBreakpoints (4)
+	// tags is maintained across the message list: if the limit is already
+	// reached the earliest tag is removed first. Disabled by default.
+	CacheControl bool
 }
 
 // Claude provides a unified interface for Claude API access.
@@ -171,7 +181,51 @@ func (m *Claude) toClaudeParams(req *blades.ModelRequest) (*anthropic.MessageNew
 		}
 		params.Tools = tools
 	}
+	if m.config.CacheControl {
+		applyCacheControlSliding(params.Messages)
+	}
 	return params, nil
+}
+
+// applyCacheControlSliding stamps the last content block of the last message
+// with an ephemeral cache_control breakpoint, maintaining a sliding window of
+// at most maxCacheBreakpoints tags across all messages.
+//
+// If the tag count is already at the limit the earliest tag is removed first
+// (only the cache_control field is cleared; the message and content block are
+// left intact). The new tag is then placed on the last block regardless of its
+// type (text, tool_use, tool_result, …).
+func applyCacheControlSliding(messages []anthropic.MessageParam) {
+	if len(messages) == 0 {
+		return
+	}
+
+	// Locate all existing cache_control tags in message order.
+	type location struct{ msg, block int }
+	var tagged []location
+	for i := range messages {
+		for j := range messages[i].Content {
+			if cc := messages[i].Content[j].GetCacheControl(); cc != nil && cc.Type != "" {
+				tagged = append(tagged, location{i, j})
+			}
+		}
+	}
+
+	// If already at the limit, remove the earliest tag.
+	if len(tagged) >= maxCacheBreakpoints {
+		loc := tagged[0]
+		if cc := messages[loc.msg].Content[loc.block].GetCacheControl(); cc != nil {
+			*cc = anthropic.CacheControlEphemeralParam{}
+		}
+	}
+
+	// Stamp the last content block of the last message.
+	last := len(messages) - 1
+	if n := len(messages[last].Content); n > 0 {
+		if cc := messages[last].Content[n-1].GetCacheControl(); cc != nil {
+			*cc = anthropic.NewCacheControlEphemeralParam()
+		}
+	}
 }
 
 func decodeToolRequest(request string) any {
