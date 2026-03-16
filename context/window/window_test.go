@@ -9,7 +9,7 @@ import (
 	"github.com/go-kratos/blades/internal/counter"
 )
 
-func TestManager_NoLimits(t *testing.T) {
+func TestContextManager_NoLimits(t *testing.T) {
 	cm := window.NewContextManager()
 	msgs := makeMessages(5)
 	got, err := cm.Prepare(context.Background(), msgs)
@@ -21,7 +21,7 @@ func TestManager_NoLimits(t *testing.T) {
 	}
 }
 
-func TestManager_MaxMessages(t *testing.T) {
+func TestContextManager_MaxMessages(t *testing.T) {
 	cm := window.NewContextManager(window.WithMaxMessages(3))
 	msgs := makeMessages(5)
 	got, err := cm.Prepare(context.Background(), msgs)
@@ -38,7 +38,7 @@ func TestManager_MaxMessages(t *testing.T) {
 	}
 }
 
-func TestManager_MaxMessages_BelowLimit(t *testing.T) {
+func TestContextManager_MaxMessages_BelowLimit(t *testing.T) {
 	cm := window.NewContextManager(window.WithMaxMessages(10))
 	msgs := makeMessages(3)
 	got, err := cm.Prepare(context.Background(), msgs)
@@ -50,7 +50,7 @@ func TestManager_MaxMessages_BelowLimit(t *testing.T) {
 	}
 }
 
-func TestManager_MaxTokens(t *testing.T) {
+func TestContextManager_MaxTokens(t *testing.T) {
 	cm := window.NewContextManager(
 		window.WithTokenCounter(counter.NewCharBasedCounter()),
 		window.WithMaxTokens(1),
@@ -68,7 +68,7 @@ func TestManager_MaxTokens(t *testing.T) {
 	}
 }
 
-func TestManager_Empty(t *testing.T) {
+func TestContextManager_Empty(t *testing.T) {
 	cm := window.NewContextManager(window.WithMaxMessages(5))
 	got, err := cm.Prepare(context.Background(), nil)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestManager_Empty(t *testing.T) {
 	}
 }
 
-func TestManager_DefaultMaxMessages(t *testing.T) {
+func TestContextManager_DefaultMaxMessages(t *testing.T) {
 	cm := window.NewContextManager()
 	msgs := makeMessages(150)
 	got, err := cm.Prepare(context.Background(), msgs)
@@ -91,7 +91,7 @@ func TestManager_DefaultMaxMessages(t *testing.T) {
 	}
 }
 
-func TestManager_MaxMessagesZero_NoLimit(t *testing.T) {
+func TestContextManager_MaxMessagesZero_NoLimit(t *testing.T) {
 	cm := window.NewContextManager(window.WithMaxMessages(0))
 	msgs := makeMessages(150)
 	got, err := cm.Prepare(context.Background(), msgs)
