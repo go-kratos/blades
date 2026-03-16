@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/tools"
 )
 
 // LoopPhase is the decision outcome returned by a LoopCondition.
@@ -14,9 +15,14 @@ const (
 	PhaseContinue LoopPhase = iota
 	// PhaseComplete stops the loop successfully.
 	PhaseComplete
+	// PhaseEscalate stops the loop and escalates to an outer handler.
+	// The loop yields blades.ErrLoopEscalated to signal escalation.
+	PhaseEscalate
 )
 
 // LoopState captures the accumulated context available to a LoopCondition.
+// A pointer to the current LoopState is stored in the context for every
+// iteration so that tools (e.g. tools.ExitTool) can signal loop exit.
 type LoopState struct {
 	// Iteration is the 0-based index of the iteration that just completed.
 	Iteration int
@@ -24,6 +30,19 @@ type LoopState struct {
 	Input *blades.Message
 	// Output is the last message produced in the current iteration.
 	Output *blades.Message
+	phase  LoopPhase
+	reason string
+}
+
+// ExitLoop implements tools.LoopExiter. It is called by tools running inside
+// an iteration to signal that the loop should stop.
+func (s *LoopState) ExitLoop(reason string, escalate bool) {
+	s.reason = reason
+	if escalate {
+		s.phase = PhaseEscalate
+	} else {
+		s.phase = PhaseComplete
+	}
 }
 
 // LoopCondition is called once after every complete iteration.
@@ -35,8 +54,9 @@ type LoopConfig struct {
 	Name          string
 	Description   string
 	MaxIterations int
-	Condition     LoopCondition
-	SubAgents     []blades.Agent
+	// Condition is evaluated after every iteration. It takes priority over ExitTool signals.
+	Condition LoopCondition
+	SubAgents []blades.Agent
 }
 
 // loopAgent is an agent that runs sub-agents in a loop.
@@ -52,22 +72,19 @@ func NewLoopAgent(config LoopConfig) blades.Agent {
 	return &loopAgent{config: config}
 }
 
-// Name returns the name of the agent.
-func (a *loopAgent) Name() string {
-	return a.config.Name
-}
+func (a *loopAgent) Name() string        { return a.config.Name }
+func (a *loopAgent) Description() string { return a.config.Description }
 
-// Description returns the description of the agent.
-func (a *loopAgent) Description() string {
-	return a.config.Description
-}
-
-// Run runs the sub-agents in a loop, evaluating the condition once per
-// complete iteration (after all sub-agents have run).
+// Run runs the sub-agents in a loop. Before each iteration the current
+// *LoopState is stored in the context via tools.WithLoopExiter so that
+// tools like tools.ExitTool can signal exit without needing a LoopConfig field.
+// The LoopCondition (if set) is evaluated after each iteration.
 func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		state := LoopState{}
 		for state.Iteration = 0; state.Iteration < a.config.MaxIterations; state.Iteration++ {
+			state.phase = PhaseContinue
+			iterCtx := tools.WithLoopExiter(ctx, &state)
 			for _, agent := range a.config.SubAgents {
 				var (
 					err        error
@@ -75,7 +92,7 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 					invocation = input.Clone()
 				)
 				state.Input = invocation.Message
-				for message, err = range agent.Run(ctx, invocation) {
+				for message, err = range agent.Run(iterCtx, invocation) {
 					if err != nil {
 						yield(nil, err)
 						return
@@ -95,7 +112,17 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 				switch phase {
 				case PhaseComplete:
 					return
+				case PhaseEscalate:
+					yield(nil, blades.ErrLoopEscalated)
+					return
 				}
+			}
+			switch state.phase {
+			case PhaseComplete:
+				return
+			case PhaseEscalate:
+				yield(nil, blades.ErrLoopEscalated)
+				return
 			}
 		}
 	}
