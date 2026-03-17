@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/go-kratos/blades"
 )
 
@@ -28,6 +29,104 @@ func TestToClaudeParamsAssistantRole(t *testing.T) {
 	}
 	if got, want := string(params.Messages[1].Role), "assistant"; got != want {
 		t.Fatalf("second role = %q, want %q", got, want)
+	}
+}
+
+// countCacheControlTags returns the number of content blocks across all
+// messages that have a non-zero cache_control stamp.
+func countCacheControlTags(messages []anthropic.MessageParam) int {
+	n := 0
+	for i := range messages {
+		for j := range messages[i].Content {
+			if cc := messages[i].Content[j].GetCacheControl(); cc != nil && cc.Type != "" {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func TestCacheControlDisabledByDefault(t *testing.T) {
+	t.Parallel()
+
+	model := &Claude{model: "claude-test"}
+	params, err := model.toClaudeParams(&blades.ModelRequest{
+		Messages: []*blades.Message{
+			blades.UserMessage("hello"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("toClaudeParams returned error: %v", err)
+	}
+	if got := countCacheControlTags(params.Messages); got != 0 {
+		t.Fatalf("cache_control tags = %d, want 0 when CacheControl is disabled", got)
+	}
+}
+
+func TestCacheControlStampsLastMessageBlock(t *testing.T) {
+	t.Parallel()
+
+	model := &Claude{model: "claude-test", config: Config{CacheControl: true}}
+	params, err := model.toClaudeParams(&blades.ModelRequest{
+		Messages: []*blades.Message{
+			blades.UserMessage("turn 1"),
+			blades.AssistantMessage("reply 1"),
+			blades.UserMessage("turn 2"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("toClaudeParams returned error: %v", err)
+	}
+
+	if got := countCacheControlTags(params.Messages); got != 1 {
+		t.Fatalf("cache_control tags = %d, want 1", got)
+	}
+	last := params.Messages[len(params.Messages)-1]
+	cc := last.Content[len(last.Content)-1].GetCacheControl()
+	if cc == nil || cc.Type != "ephemeral" {
+		t.Fatalf("last message block cache_control = %v, want ephemeral", cc)
+	}
+}
+
+func TestCacheControlStampsLastSystemBlock(t *testing.T) {
+	t.Parallel()
+
+	model := &Claude{model: "claude-test", config: Config{CacheControl: true}}
+	params, err := model.toClaudeParams(&blades.ModelRequest{
+		Instruction: blades.SystemMessage("You are helpful."),
+		Messages:    []*blades.Message{blades.UserMessage("hi")},
+	})
+	if err != nil {
+		t.Fatalf("toClaudeParams returned error: %v", err)
+	}
+
+	last := params.System[len(params.System)-1]
+	if last.CacheControl.Type != "ephemeral" {
+		t.Fatalf("last system block cache_control = %v, want ephemeral", last.CacheControl)
+	}
+}
+
+func TestCacheControlStampsLastTool(t *testing.T) {
+	t.Parallel()
+
+	tool1 := anthropic.ToolParam{Name: "ping", InputSchema: anthropic.ToolInputSchemaParam{}}
+	tool2 := anthropic.ToolParam{Name: "pong", InputSchema: anthropic.ToolInputSchemaParam{}}
+	params := &anthropic.MessageNewParams{
+		Tools: []anthropic.ToolUnionParam{
+			{OfTool: &tool1},
+			{OfTool: &tool2},
+		},
+		Messages: []anthropic.MessageParam{
+			anthropic.NewUserMessage(anthropic.NewTextBlock("hi")),
+		},
+	}
+	applyEphemeralCache(params)
+
+	if cc := params.Tools[len(params.Tools)-1].GetCacheControl(); cc == nil || cc.Type != "ephemeral" {
+		t.Fatalf("last tool cache_control = %v, want ephemeral", cc)
+	}
+	if cc := params.Tools[0].GetCacheControl(); cc != nil && cc.Type != "" {
+		t.Fatalf("first tool cache_control = %v, want empty", cc)
 	}
 }
 
