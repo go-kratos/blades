@@ -8,13 +8,13 @@ import (
 	"github.com/go-kratos/blades/tools"
 )
 
-// ModelRegistry resolves model names from YAML to actual ModelProvider instances.
-type ModelRegistry interface {
+// ModelResolver resolves model names from YAML to actual ModelProvider instances.
+type ModelResolver interface {
 	Resolve(name string) (blades.ModelProvider, error)
 }
 
-// ToolRegistry resolves tool names from YAML to actual Tool instances.
-type ToolRegistry interface {
+// ToolResolver resolves tool names from YAML to actual Tool instances.
+type ToolResolver interface {
 	Resolve(name string) (tools.Tool, error)
 }
 
@@ -23,34 +23,34 @@ type ToolRegistry interface {
 // A nil or empty map is passed when no options are declared.
 type MiddlewareFactory func(options map[string]any) (blades.Middleware, error)
 
-// MiddlewareRegistry resolves middleware names from YAML to Middleware instances,
+// MiddlewareResolver resolves middleware names from YAML to Middleware instances,
 // passing the per-declaration options to the registered factory.
-type MiddlewareRegistry interface {
+type MiddlewareResolver interface {
 	Resolve(name string, options map[string]any) (blades.Middleware, error)
 }
 
-// StaticMiddlewareRegistry is a simple in-memory MiddlewareRegistry backed by factories.
-type StaticMiddlewareRegistry struct {
+// MiddlewareRegistry is a simple in-memory MiddlewareResolver backed by factories.
+type MiddlewareRegistry struct {
 	mu        sync.RWMutex
 	factories map[string]MiddlewareFactory
 }
 
-// NewStaticMiddlewareRegistry creates a new empty StaticMiddlewareRegistry.
-func NewStaticMiddlewareRegistry() *StaticMiddlewareRegistry {
-	return &StaticMiddlewareRegistry{
+// NewMiddlewareRegistry creates a new empty MiddlewareRegistry.
+func NewMiddlewareRegistry() *MiddlewareRegistry {
+	return &MiddlewareRegistry{
 		factories: make(map[string]MiddlewareFactory),
 	}
 }
 
 // Register adds a middleware factory under the given name.
-func (r *StaticMiddlewareRegistry) Register(name string, factory MiddlewareFactory) {
+func (r *MiddlewareRegistry) Register(name string, factory MiddlewareFactory) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.factories[name] = factory
 }
 
 // Resolve calls the registered factory for name, passing options, and returns the Middleware.
-func (r *StaticMiddlewareRegistry) Resolve(name string, options map[string]any) (blades.Middleware, error) {
+func (r *MiddlewareRegistry) Resolve(name string, options map[string]any) (blades.Middleware, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	f, ok := r.factories[name]
@@ -60,28 +60,28 @@ func (r *StaticMiddlewareRegistry) Resolve(name string, options map[string]any) 
 	return f(options)
 }
 
-// Registry is a simple in-memory ModelRegistry.
-type Registry struct {
+// ModelRegistry is a simple in-memory ModelResolver.
+type ModelRegistry struct {
 	mu        sync.RWMutex
 	providers map[string]blades.ModelProvider
 }
 
-// NewRegistry creates a new empty Registry.
-func NewRegistry() *Registry {
-	return &Registry{
+// NewModelRegistry creates a new empty ModelRegistry.
+func NewModelRegistry() *ModelRegistry {
+	return &ModelRegistry{
 		providers: make(map[string]blades.ModelProvider),
 	}
 }
 
 // Register adds a model provider under the given name.
-func (r *Registry) Register(name string, provider blades.ModelProvider) {
+func (r *ModelRegistry) Register(name string, provider blades.ModelProvider) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.providers[name] = provider
 }
 
 // Resolve returns the ModelProvider registered under the given name.
-func (r *Registry) Resolve(name string) (blades.ModelProvider, error) {
+func (r *ModelRegistry) Resolve(name string) (blades.ModelProvider, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	p, ok := r.providers[name]
@@ -91,28 +91,28 @@ func (r *Registry) Resolve(name string) (blades.ModelProvider, error) {
 	return p, nil
 }
 
-// StaticToolRegistry is a simple in-memory ToolRegistry.
-type StaticToolRegistry struct {
+// ToolRegistry is a simple in-memory ToolResolver.
+type ToolRegistry struct {
 	mu    sync.RWMutex
 	tools map[string]tools.Tool
 }
 
-// NewStaticToolRegistry creates a new empty StaticToolRegistry.
-func NewStaticToolRegistry() *StaticToolRegistry {
-	return &StaticToolRegistry{
+// NewToolRegistry creates a new empty ToolRegistry.
+func NewToolRegistry() *ToolRegistry {
+	return &ToolRegistry{
 		tools: make(map[string]tools.Tool),
 	}
 }
 
 // Register adds a tool under the given name.
-func (r *StaticToolRegistry) Register(name string, tool tools.Tool) {
+func (r *ToolRegistry) Register(name string, tool tools.Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.tools[name] = tool
 }
 
 // Resolve returns the Tool registered under the given name.
-func (r *StaticToolRegistry) Resolve(name string) (tools.Tool, error) {
+func (r *ToolRegistry) Resolve(name string) (tools.Tool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	t, ok := r.tools[name]

@@ -13,14 +13,14 @@ import (
 
 func main() {
 	// 1. Register models
-	registry := recipe.NewRegistry()
+	registry := recipe.NewModelRegistry()
 	registry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	}))
 
 	// 2. Register middlewares
 	// The "retry" middleware is declared in agent.yaml and resolved here at build time.
-	mwRegistry := recipe.NewStaticMiddlewareRegistry()
+	mwRegistry := recipe.NewMiddlewareRegistry()
 	mwRegistry.Register("retry", func(opts map[string]any) (blades.Middleware, error) {
 		attempts := 3
 		if v, ok := opts["attempts"].(int); ok && v > 0 {

@@ -25,7 +25,7 @@ instruction: |
 
 ```go
 // Register models
-registry := recipe.NewRegistry()
+registry := recipe.NewModelRegistry()
 registry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
     APIKey: os.Getenv("OPENAI_API_KEY"),
 }))
@@ -281,7 +281,7 @@ middlewares:
 Register middleware factories in Go:
 
 ```go
-mwRegistry := recipe.NewStaticMiddlewareRegistry()
+mwRegistry := recipe.NewMiddlewareRegistry()
 
 // No-options middleware
 mwRegistry.Register("tracing", func(_ map[string]any) (blades.Middleware, error) {
@@ -312,7 +312,7 @@ The `middlewares` field can appear on both the top-level `AgentSpec` and on indi
 The `model` field in YAML is a key in the registry. Register actual `ModelProvider` instances in Go:
 
 ```go
-registry := recipe.NewRegistry()
+registry := recipe.NewModelRegistry()
 
 // OpenAI models
 registry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
@@ -374,7 +374,7 @@ func extractEmails(_ context.Context, req ExtractEmailsReq) (ExtractEmailsRes, e
 emailTool, _ := tools.NewFunc("extract-emails", "Extract email addresses from text", extractEmails)
 
 // Register in a ToolRegistry
-toolRegistry := recipe.NewStaticToolRegistry()
+toolRegistry := recipe.NewToolRegistry()
 toolRegistry.Register("extract-emails", emailTool)
 
 // Build with the registry
@@ -393,7 +393,7 @@ tools: [extract-emails]
 For lower-level control, use `NewTool` with a raw `HandleFunc`:
 
 ```go
-toolRegistry := recipe.NewStaticToolRegistry()
+toolRegistry := recipe.NewToolRegistry()
 toolRegistry.Register("web-search", mySearchTool)
 
 agent, _ := recipe.Build(spec,

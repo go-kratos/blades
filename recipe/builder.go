@@ -12,28 +12,28 @@ import (
 type BuildOption func(*buildOptions)
 
 type buildOptions struct {
-	modelRegistry      ModelRegistry
-	toolRegistry       ToolRegistry
-	middlewareRegistry MiddlewareRegistry
+	modelRegistry      ModelResolver
+	toolRegistry       ToolResolver
+	middlewareRegistry MiddlewareResolver
 	params             map[string]any
 }
 
-// WithModelRegistry sets the model registry for resolving model names.
-func WithModelRegistry(r ModelRegistry) BuildOption {
+// WithModelRegistry sets the model resolver for resolving model names.
+func WithModelRegistry(r ModelResolver) BuildOption {
 	return func(o *buildOptions) {
 		o.modelRegistry = r
 	}
 }
 
-// WithToolRegistry sets the tool registry for resolving tool names.
-func WithToolRegistry(r ToolRegistry) BuildOption {
+// WithToolRegistry sets the tool resolver for resolving tool names.
+func WithToolRegistry(r ToolResolver) BuildOption {
 	return func(o *buildOptions) {
 		o.toolRegistry = r
 	}
 }
 
-// WithMiddlewareRegistry sets the middleware registry for resolving middleware names.
-func WithMiddlewareRegistry(r MiddlewareRegistry) BuildOption {
+// WithMiddlewareRegistry sets the middleware resolver for resolving middleware names.
+func WithMiddlewareRegistry(r MiddlewareResolver) BuildOption {
 	return func(o *buildOptions) {
 		o.middlewareRegistry = r
 	}

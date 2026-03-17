@@ -7,7 +7,7 @@
 // Usage:
 //
 //	// Register models
-//	registry := recipe.NewRegistry()
+//	registry := recipe.NewModelRegistry()
 //	registry.Register("gpt-4o", myModelProvider)
 //
 //	// Load and build

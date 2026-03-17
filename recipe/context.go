@@ -12,7 +12,7 @@ import (
 
 // buildContextManager constructs a blades.ContextManager from a ContextSpec.
 // fallbackModelName is used as the summarizer model when ContextSpec.Model is empty.
-func buildContextManager(spec *ContextSpec, reg ModelRegistry, fallbackModelName string) (blades.ContextManager, error) {
+func buildContextManager(spec *ContextSpec, reg ModelResolver, fallbackModelName string) (blades.ContextManager, error) {
 	if spec == nil {
 		return nil, nil
 	}
@@ -72,7 +72,7 @@ func (a *contextAwareAgent) Run(ctx context.Context, inv *blades.Invocation) ite
 // wrapWithContextManager wraps agent with a contextAwareAgent when spec is non-nil.
 // Returns the original agent unchanged when spec is nil.
 // fallbackModelName is used as the summarizer model when ContextSpec.Model is empty.
-func wrapWithContextManager(agent blades.Agent, spec *ContextSpec, fallbackModelName string, reg ModelRegistry) (blades.Agent, error) {
+func wrapWithContextManager(agent blades.Agent, spec *ContextSpec, fallbackModelName string, reg ModelResolver) (blades.Agent, error) {
 	if spec == nil {
 		return agent, nil
 	}
