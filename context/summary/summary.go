@@ -37,7 +37,7 @@ func buildWorkingView(summaryContent string, offset int, messages []*blades.Mess
 	return result
 }
 
-// Option configures a summary Compressor.
+// Option configures a summary ContextCompressor.
 type Option func(*compressor)
 
 // WithMaxTokens sets the token budget that triggers compression.
@@ -79,7 +79,7 @@ func WithBatchSize(n int) Option {
 	}
 }
 
-// compressor implements Compressor by compressing old messages into a rolling summary when the token count exceeds a configured limit.
+// compressor implements ContextCompressor by compressing old messages into a rolling summary when the token count exceeds a configured limit.
 // Compression state is persisted in the session when available to avoid redundant summarization work across runs.
 type compressor struct {
 	maxTokens   int64
@@ -90,7 +90,7 @@ type compressor struct {
 	instruction string
 }
 
-// NewCompressor returns a Compressor that compresses old messages using the provided
+// NewContextCompressor returns a ContextCompressor that compresses old messages using the provided
 // ModelProvider when the token count exceeds the configured limit.
 // Recent messages are always kept verbatim.
 //
@@ -105,7 +105,7 @@ type compressor struct {
 //     the current offset, extend the rolling summary with them, and advance the
 //     offset. Repeat until under budget or no more messages can be compressed.
 //  4. Persist the updated offset and summary content back to session.State().
-func NewCompressor(opts ...Option) blades.Compressor {
+func NewContextCompressor(opts ...Option) blades.ContextCompressor {
 	c := &compressor{
 		instruction: defaultInstruction,
 		keepRecent:  defaultKeepRecent,

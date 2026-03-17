@@ -18,29 +18,36 @@ func TestSession_History(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		s.Append(context.Background(), UserMessage("msg"))
 	}
-	if len(s.History()) != 3 {
-		t.Errorf("history len = %d, want 3", len(s.History()))
+	history, err := s.History(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 3 {
+		t.Errorf("history len = %d, want 3", len(history))
 	}
 }
 
 func TestSession_Context_NoCompressor(t *testing.T) {
 	s := NewSession()
-	msgs := []*Message{UserMessage("a"), UserMessage("b")}
-	got, err := s.Context(context.Background(), msgs)
+	msg := UserMessage("a")
+	s.Append(context.Background(), msg)
+	got, err := s.Context(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != nil {
-		t.Errorf("expected nil when no compressor configured, got %v", got)
+	if len(got) != 1 || got[0] != msg {
+		t.Errorf("expected raw history, got %v", got)
 	}
 }
 
-func TestSession_Context_WithCompressor(t *testing.T) {
-	// A compressor that always returns only the last message.
+func TestSession_Context_WithContextCompressor(t *testing.T) {
+	// A context compressor that always returns only the last message.
 	limiter := &limitCompressor{max: 1}
-	s := NewSession(WithCompressor(limiter))
-	msgs := []*Message{UserMessage("a"), UserMessage("b"), UserMessage("c")}
-	got, err := s.Context(context.Background(), msgs)
+	s := NewSession(WithContextCompressor(limiter))
+	for _, text := range []string{"a", "b", "c"} {
+		s.Append(context.Background(), UserMessage(text))
+	}
+	got, err := s.Context(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +59,7 @@ func TestSession_Context_WithCompressor(t *testing.T) {
 	}
 }
 
-// limitCompressor is a test Compressor that keeps only the last max messages.
+// limitCompressor is a test ContextCompressor that keeps only the last max messages.
 type limitCompressor struct{ max int }
 
 func (l *limitCompressor) Compress(_ context.Context, messages []*Message) ([]*Message, error) {

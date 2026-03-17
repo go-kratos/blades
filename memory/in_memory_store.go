@@ -34,7 +34,10 @@ func (s *InMemoryStore) SaveSession(ctx context.Context, session blades.Session)
 	}
 	s.m.Lock()
 	defer s.m.Unlock()
-	history := session.History()
+	history, err := session.History(ctx)
+	if err != nil {
+		return err
+	}
 	for _, msg := range history {
 		s.memories = append(s.memories, &Memory{Content: msg})
 	}

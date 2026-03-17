@@ -65,7 +65,7 @@ func (r *Runner) buildInvocation(ctx context.Context, message *Message, stream b
 		Stream:  stream,
 		Message: message,
 	}
-	if message != nil {
+	if message != nil && !o.Resume {
 		message.Author = "user"
 		if err := r.appendNewMessage(ctx, invocation, message); err != nil {
 			return nil, err

@@ -8,7 +8,7 @@ import (
 
 const defaultMaxMessages = 100
 
-// Option configures a window Compressor.
+// Option configures a window ContextCompressor.
 type Option func(*compressor)
 
 // WithMaxMessages sets the maximum number of messages to retain.
@@ -43,10 +43,10 @@ type compressor struct {
 	counter     blades.TokenCounter
 }
 
-// NewCompressor returns a Compressor that keeps the most recent messages within the
+// NewContextCompressor returns a ContextCompressor that keeps the most recent messages within the
 // configured token or message count limits. Messages are dropped from the
 // front (oldest first) when limits are exceeded.
-func NewCompressor(opts ...Option) blades.Compressor {
+func NewContextCompressor(opts ...Option) blades.ContextCompressor {
 	c := &compressor{maxMessages: defaultMaxMessages}
 	for _, opt := range opts {
 		opt(c)

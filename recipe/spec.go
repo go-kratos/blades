@@ -44,7 +44,7 @@ const (
 )
 
 // ContextSpec configures the context window compression for an agent.
-// It maps to either a summarizing or a sliding-window Compressor.
+// It maps to either a summarizing or a sliding-window ContextCompressor.
 //
 // Example (summarize):
 //

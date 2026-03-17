@@ -9,9 +9,9 @@ type TokenCounter interface {
 	Count(messages ...*Message) int64
 }
 
-// Compressor compresses, truncates, or filters the message list before each
-// model call to keep it within the context window budget.
-type Compressor interface {
+// ContextCompressor compresses, truncates, or filters the message list before
+// each model call to keep it within the context window budget.
+type ContextCompressor interface {
 	// Compress filters, truncates, or compresses messages to fit within the
 	// context window. System/instruction content is handled separately via
 	// ModelRequest.Instruction and is never passed to Compress.

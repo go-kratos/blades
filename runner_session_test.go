@@ -83,7 +83,10 @@ func TestRunnerRun_RerunsWithSameSession(t *testing.T) {
 		t.Fatalf("generate calls = %d, want %d", got, want)
 	}
 
-	history := session.History()
+	history, err := session.History(context.Background())
+	if err != nil {
+		t.Fatalf("session history: %v", err)
+	}
 	if got, want := len(history), 4; got != want {
 		t.Fatalf("session history len = %d, want %d", got, want)
 	}
@@ -154,7 +157,10 @@ func TestRunnerRunStream_RerunsWithSameSession(t *testing.T) {
 		t.Fatalf("stream calls = %d, want %d", got, want)
 	}
 
-	history := session.History()
+	history, err := session.History(context.Background())
+	if err != nil {
+		t.Fatalf("session history: %v", err)
+	}
 	if got, want := len(history), 4; got != want {
 		t.Fatalf("session history len = %d, want %d", got, want)
 	}

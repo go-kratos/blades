@@ -213,11 +213,14 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 }
 
 // findResumeMessages checks if the invocation can be resumed from a previous state by looking for completed assistant messages in the session history.
-func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
+func (a *agent) findResumeMessages(ctx context.Context, invocation *Invocation) ([]*Message, bool) {
 	if !invocation.Resume || invocation.Session == nil {
 		return nil, false
 	}
-	resumeHistory := invocation.Session.History()
+	resumeHistory, err := invocation.Session.History(ctx)
+	if err != nil {
+		return nil, false
+	}
 	resumeMessages := make([]*Message, 0, len(resumeHistory))
 	for _, m := range resumeHistory {
 		if m.InvocationID != invocation.ID {
@@ -237,7 +240,7 @@ func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
 // Run runs the agent with the given prompt and options, returning a streamable response.
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
-		resumeMessages, ok := a.findResumeMessages(invocation)
+		resumeMessages, ok := a.findResumeMessages(ctx, invocation)
 		if ok {
 			for _, resumeMessage := range resumeMessages {
 				if !yield(resumeMessage, nil) {
@@ -352,18 +355,17 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 	return func(yield func(*Message, error) bool) {
 		session, hasSession := FromSessionContext(ctx)
 		for i := 0; i < a.maxIterations; i++ {
-			// Apply context compression before each model call.
-			// This handles both the initial history and messages that accumulate
-			// during tool calls across iterations.
+			// Build the message list from session history before each model call.
+			// When a session is present, this provides the full conversation context
+			// (including prior turns and in-flight tool responses) and applies any
+			// configured ContextCompressor to keep it within the context window budget.
 			if hasSession {
-				prepared, err := session.Context(ctx, req.Messages)
+				prepared, err := session.Context(ctx)
 				if err != nil {
 					yield(nil, err)
 					return
 				}
-				if prepared != nil {
-					req.Messages = prepared
-				}
+				req.Messages = prepared
 			}
 			var finalMessage *Message
 			if !invocation.Stream {
@@ -437,8 +439,17 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 				if !yield(toolMessage, nil) {
 					return
 				}
-				// Append the tool response to the message history for the next iteration
-				req.Messages = append(req.Messages, toolMessage)
+				if hasSession {
+					// Persist the tool response in session so the next iteration's
+					// session.Context() call includes it in the message history.
+					if err := session.Append(ctx, toolMessage); err != nil {
+						yield(nil, err)
+						return
+					}
+				} else {
+					// No session: accumulate in req.Messages for the next iteration.
+					req.Messages = append(req.Messages, toolMessage)
+				}
 				continue // continue to the next iteration
 			}
 			return
