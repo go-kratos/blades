@@ -10,10 +10,6 @@ import (
 	"github.com/go-kratos/blades"
 )
 
-// maxCacheBreakpoints is the maximum number of ephemeral cache_control tags
-// the Anthropic API accepts per request.
-const maxCacheBreakpoints = 4
-
 // Config holds configuration options for the Claude client.
 type Config struct {
 	BaseURL         string
@@ -28,9 +24,7 @@ type Config struct {
 	Thinking        *anthropic.ThinkingConfigParamUnion
 	// CacheControl enables prompt caching. When true, an ephemeral
 	// cache_control breakpoint is added to the last content block of the last
-	// message on every request. A sliding window of maxCacheBreakpoints tags
-	// is maintained across the message list: if the limit is already reached,
-	// the earliest tag is removed first. Disabled by default.
+	// message on every request. Disabled by default.
 	CacheControl bool
 }
 
@@ -182,85 +176,29 @@ func (m *Claude) toClaudeParams(req *blades.ModelRequest) (*anthropic.MessageNew
 		params.Tools = tools
 	}
 	if m.config.CacheControl {
-		applyCacheControlSliding(params.Messages)
+		applyEphemeralCache(params)
 	}
 	return params, nil
 }
 
-// applyCacheControlSliding stamps the last content block of the last message
-// with an ephemeral cache_control breakpoint, maintaining a sliding window of
-// at most maxCacheBreakpoints tags across all messages.
-//
-// If the tag count is already at the limit the earliest tag is removed first
-// (only the cache_control field is cleared; the message and content block are
-// left intact). The new tag is then placed on the last block if that block
-// exposes a cache_control field via GetCacheControl; blocks that do not
-// support cache_control are left unchanged.
-func applyCacheControlSliding(messages []anthropic.MessageParam) {
-	if len(messages) == 0 {
-		return
+// applyEphemeralCache stamps an ephemeral cache_control breakpoint on the last
+// block of each cacheable section: system, tools, and messages.
+func applyEphemeralCache(params *anthropic.MessageNewParams) {
+	if len(params.System) > 0 {
+		params.System[len(params.System)-1].CacheControl = anthropic.NewCacheControlEphemeralParam()
 	}
-
-	// Locate all existing cache_control tags in message order.
-	type location struct{ msg, block int }
-	var tagged []location
-	for i := range messages {
-		for j := range messages[i].Content {
-			if cc := messages[i].Content[j].GetCacheControl(); cc != nil && cc.Type != "" {
-				tagged = append(tagged, location{i, j})
-			}
+	if len(params.Tools) > 0 {
+		if cc := params.Tools[len(params.Tools)-1].GetCacheControl(); cc != nil {
+			*cc = anthropic.NewCacheControlEphemeralParam()
 		}
 	}
-
-	// Determine the location of the last content block of the last message.
-	lastMsgIdx := len(messages) - 1
-	if len(messages[lastMsgIdx].Content) == 0 {
-		// Nothing to tag on the last message.
-		return
-	}
-	lastBlockIdx := len(messages[lastMsgIdx].Content) - 1
-	target := location{msg: lastMsgIdx, block: lastBlockIdx}
-
-	// Check if the target block is already tagged (stamping would be idempotent).
-	alreadyTagged := false
-	for _, loc := range tagged {
-		if loc == target {
-			alreadyTagged = true
-			break
-		}
-	}
-
-	// Calculate how many existing tags we are allowed to keep before stamping
-	// the target block, and evict the earliest ones (sliding window) if needed.
-	requiredNewTags := 1
-	if alreadyTagged {
-		requiredNewTags = 0
-	}
-	allowedExisting := maxCacheBreakpoints - requiredNewTags
-	if allowedExisting < 0 {
-		allowedExisting = 0
-	}
-	if len(tagged) > allowedExisting {
-		neededEvictions := len(tagged) - allowedExisting
-		evicted := 0
-		for _, loc := range tagged {
-			if evicted >= neededEvictions {
-				break
-			}
-			// Never evict the target block if it is already tagged.
-			if loc == target {
-				continue
-			}
-			if cc := messages[loc.msg].Content[loc.block].GetCacheControl(); cc != nil {
-				*cc = anthropic.CacheControlEphemeralParam{}
-				evicted++
+	if len(params.Messages) > 0 {
+		last := &params.Messages[len(params.Messages)-1]
+		if len(last.Content) > 0 {
+			if cc := last.Content[len(last.Content)-1].GetCacheControl(); cc != nil {
+				*cc = anthropic.NewCacheControlEphemeralParam()
 			}
 		}
-	}
-
-	// Stamp the last content block of the last message.
-	if cc := messages[lastMsgIdx].Content[lastBlockIdx].GetCacheControl(); cc != nil {
-		*cc = anthropic.NewCacheControlEphemeralParam()
 	}
 }
 

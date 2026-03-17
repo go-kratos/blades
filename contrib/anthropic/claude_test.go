@@ -63,7 +63,7 @@ func TestCacheControlDisabledByDefault(t *testing.T) {
 	}
 }
 
-func TestCacheControlStampsLastBlock(t *testing.T) {
+func TestCacheControlStampsLastMessageBlock(t *testing.T) {
 	t.Parallel()
 
 	model := &Claude{model: "claude-test", config: Config{CacheControl: true}}
@@ -78,139 +78,55 @@ func TestCacheControlStampsLastBlock(t *testing.T) {
 		t.Fatalf("toClaudeParams returned error: %v", err)
 	}
 
-	// Exactly one tag, on the last message's last block.
 	if got := countCacheControlTags(params.Messages); got != 1 {
 		t.Fatalf("cache_control tags = %d, want 1", got)
 	}
 	last := params.Messages[len(params.Messages)-1]
-	lastBlock := last.Content[len(last.Content)-1]
-	cc := lastBlock.GetCacheControl()
-	if cc == nil || cc.Type != "ephemeral" {
-		t.Fatalf("last block cache_control = %v, want ephemeral", cc)
-	}
-}
-
-func TestCacheControlSlidingWindowEvictsEarliest(t *testing.T) {
-	t.Parallel()
-
-	// Pre-seed 4 messages each already carrying a cache_control tag so that
-	// the next call must evict the oldest before adding the new one.
-	makeTaggedUserMsg := func(text string) anthropic.MessageParam {
-		block := anthropic.NewTextBlock(text)
-		block.OfText.CacheControl = anthropic.NewCacheControlEphemeralParam()
-		return anthropic.NewUserMessage(block)
-	}
-
-	messages := []anthropic.MessageParam{
-		makeTaggedUserMsg("msg-a"),
-		makeTaggedUserMsg("msg-b"),
-		makeTaggedUserMsg("msg-c"),
-		makeTaggedUserMsg("msg-d"),
-	}
-
-	if got := countCacheControlTags(messages); got != 4 {
-		t.Fatalf("pre-condition: tags = %d, want 4", got)
-	}
-
-	// Append a new (untagged) message and run the sliding window.
-	messages = append(messages, anthropic.NewUserMessage(anthropic.NewTextBlock("msg-e")))
-	applyCacheControlSliding(messages)
-
-	// Total must remain at 4.
-	if got := countCacheControlTags(messages); got != 4 {
-		t.Fatalf("after sliding: tags = %d, want 4", got)
-	}
-
-	// The earliest message (msg-a) must have lost its tag.
-	if cc := messages[0].Content[0].GetCacheControl(); cc != nil && cc.Type != "" {
-		t.Fatal("oldest message still has cache_control after eviction")
-	}
-
-	// The new last message (msg-e) must carry the tag.
-	last := messages[len(messages)-1]
 	cc := last.Content[len(last.Content)-1].GetCacheControl()
 	if cc == nil || cc.Type != "ephemeral" {
-		t.Fatalf("new last message cache_control = %v, want ephemeral", cc)
+		t.Fatalf("last message block cache_control = %v, want ephemeral", cc)
 	}
 }
 
-func TestCacheControlSlidingWindowTrimsExcessTags(t *testing.T) {
+func TestCacheControlStampsLastSystemBlock(t *testing.T) {
 	t.Parallel()
 
-	// Pre-seed more than maxCacheBreakpoints messages (limit is 4) each already
-	// carrying a cache_control tag so that the sliding window must trim the
-	// total tag count back down to the limit.
-	makeTaggedUserMsg := func(text string) anthropic.MessageParam {
-		block := anthropic.NewTextBlock(text)
-		block.OfText.CacheControl = anthropic.NewCacheControlEphemeralParam()
-		return anthropic.NewUserMessage(block)
+	model := &Claude{model: "claude-test", config: Config{CacheControl: true}}
+	params, err := model.toClaudeParams(&blades.ModelRequest{
+		Instruction: blades.SystemMessage("You are helpful."),
+		Messages:    []*blades.Message{blades.UserMessage("hi")},
+	})
+	if err != nil {
+		t.Fatalf("toClaudeParams returned error: %v", err)
 	}
 
-	messages := []anthropic.MessageParam{
-		makeTaggedUserMsg("msg-a"),
-		makeTaggedUserMsg("msg-b"),
-		makeTaggedUserMsg("msg-c"),
-		makeTaggedUserMsg("msg-d"),
-		makeTaggedUserMsg("msg-e"),
-		makeTaggedUserMsg("msg-f"),
-	}
-
-	// Sanity check: we start above the configured limit of 4.
-	if got := countCacheControlTags(messages); got != 6 {
-		t.Fatalf("pre-condition: tags = %d, want 6", got)
-	}
-
-	// Run the sliding window logic on an already-overfull set of tags.
-	applyCacheControlSliding(messages)
-
-	// The helper must reduce the tag count back down to the limit (4).
-	if got := countCacheControlTags(messages); got != maxCacheBreakpoints {
-		t.Fatalf("after sliding: tags = %d, want %d", got, maxCacheBreakpoints)
-	}
-
-	// The earliest two messages (msg-a, msg-b) must have lost their tags.
-	for i := 0; i < 2; i++ {
-		if cc := messages[i].Content[0].GetCacheControl(); cc != nil && cc.Type != "" {
-			t.Fatalf("message %d still has cache_control after trimming", i)
-		}
-	}
-
-	// The newest message (msg-f) must still carry an ephemeral tag.
-	last := messages[len(messages)-1]
-	cc := last.Content[len(last.Content)-1].GetCacheControl()
-	if cc == nil || cc.Type != "ephemeral" {
-		t.Fatalf("newest message cache_control = %v, want ephemeral", cc)
+	last := params.System[len(params.System)-1]
+	if last.CacheControl.Type != "ephemeral" {
+		t.Fatalf("last system block cache_control = %v, want ephemeral", last.CacheControl)
 	}
 }
 
-func TestCacheControlSlidingWindowPreservesMessages(t *testing.T) {
+func TestCacheControlStampsLastTool(t *testing.T) {
 	t.Parallel()
 
-	// Verify that eviction only clears the cache_control field and never
-	// removes the message or the content block itself.
-	makeTaggedUserMsg := func(text string) anthropic.MessageParam {
-		block := anthropic.NewTextBlock(text)
-		block.OfText.CacheControl = anthropic.NewCacheControlEphemeralParam()
-		return anthropic.NewUserMessage(block)
+	tool1 := anthropic.ToolParam{Name: "ping", InputSchema: anthropic.ToolInputSchemaParam{}}
+	tool2 := anthropic.ToolParam{Name: "pong", InputSchema: anthropic.ToolInputSchemaParam{}}
+	params := &anthropic.MessageNewParams{
+		Tools: []anthropic.ToolUnionParam{
+			{OfTool: &tool1},
+			{OfTool: &tool2},
+		},
+		Messages: []anthropic.MessageParam{
+			anthropic.NewUserMessage(anthropic.NewTextBlock("hi")),
+		},
 	}
+	applyEphemeralCache(params)
 
-	messages := []anthropic.MessageParam{
-		makeTaggedUserMsg("keep-me"),
-		makeTaggedUserMsg("b"),
-		makeTaggedUserMsg("c"),
-		makeTaggedUserMsg("d"),
+	if cc := params.Tools[len(params.Tools)-1].GetCacheControl(); cc == nil || cc.Type != "ephemeral" {
+		t.Fatalf("last tool cache_control = %v, want ephemeral", cc)
 	}
-	messages = append(messages, anthropic.NewUserMessage(anthropic.NewTextBlock("new")))
-	applyCacheControlSliding(messages)
-
-	if got := len(messages); got != 5 {
-		t.Fatalf("messages len = %d, want 5 (no message deleted)", got)
-	}
-	if got := len(messages[0].Content); got != 1 {
-		t.Fatalf("first message content len = %d, want 1 (no block deleted)", got)
-	}
-	if got := messages[0].Content[0].OfText.Text; got != "keep-me" {
-		t.Fatalf("first block text = %q, want %q", got, "keep-me")
+	if cc := params.Tools[0].GetCacheControl(); cc != nil && cc.Type != "" {
+		t.Fatalf("first tool cache_control = %v, want empty", cc)
 	}
 }
 
