@@ -10,6 +10,9 @@ const (
 	ExecutionParallel ExecutionMode = "parallel"
 	// ExecutionTool wraps each sub-agent as a tool for the parent agent.
 	ExecutionTool ExecutionMode = "tool"
+	// ExecutionLoop runs sub-agents in a repeated loop until max_iterations is
+	// reached or a sub-agent signals exit via the loop_exit tool.
+	ExecutionLoop ExecutionMode = "loop"
 )
 
 // ParameterType defines the type of a recipe parameter.

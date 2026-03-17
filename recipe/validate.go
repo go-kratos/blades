@@ -16,9 +16,10 @@ func Validate(spec *AgentSpec) error {
 	if spec.Name == "" {
 		return fmt.Errorf("recipe: name is required")
 	}
-	// instruction is required except for sequential/parallel modes where
+	// instruction is required except for sequential/parallel/loop modes where
 	// the flow agent has no LLM call and only orchestrates sub-agents.
-	if spec.Instruction == "" && spec.Execution != ExecutionSequential && spec.Execution != ExecutionParallel {
+	if spec.Instruction == "" && spec.Execution != ExecutionSequential &&
+		spec.Execution != ExecutionParallel && spec.Execution != ExecutionLoop {
 		return fmt.Errorf("recipe: instruction is required")
 	}
 	if len(spec.SubAgents) == 0 && spec.Model == "" {
@@ -28,8 +29,9 @@ func Validate(spec *AgentSpec) error {
 		return fmt.Errorf("recipe: execution mode is required when sub_agents are defined")
 	}
 	if spec.Execution != "" && spec.Execution != ExecutionSequential &&
-		spec.Execution != ExecutionParallel && spec.Execution != ExecutionTool {
-		return fmt.Errorf("recipe: invalid execution mode %q (must be sequential, parallel, or tool)", spec.Execution)
+		spec.Execution != ExecutionParallel && spec.Execution != ExecutionTool &&
+		spec.Execution != ExecutionLoop {
+		return fmt.Errorf("recipe: invalid execution mode %q (must be sequential, parallel, tool, or loop)", spec.Execution)
 	}
 	// tool mode needs a parent model for the orchestrating LLM call.
 	if spec.Execution == ExecutionTool && spec.Model == "" {
@@ -43,6 +45,10 @@ func Validate(spec *AgentSpec) error {
 		if spec.MaxIterations > 0 {
 			return fmt.Errorf("recipe %q: max_iterations is not supported in %s mode", spec.Name, spec.Execution)
 		}
+	}
+	// loop mode: output_key is not supported since LoopAgent makes no LLM call.
+	if spec.Execution == ExecutionLoop && spec.OutputKey != "" {
+		return fmt.Errorf("recipe %q: output_key is not supported in loop mode", spec.Name)
 	}
 	if err := validateParameters(spec.Parameters); err != nil {
 		return fmt.Errorf("recipe %q: %w", spec.Name, err)
@@ -73,8 +79,8 @@ func Validate(spec *AgentSpec) error {
 		if spec.Execution == ExecutionTool && sub.OutputKey != "" {
 			return fmt.Errorf("recipe %q: sub_agent %q: output_key is not supported in tool mode", spec.Name, sub.Name)
 		}
-		// In sequential/parallel mode, if the parent has no model, each sub_agent must specify its own.
-		if (spec.Execution == ExecutionSequential || spec.Execution == ExecutionParallel) &&
+		// In sequential/parallel/loop mode, if the parent has no model, each sub_agent must specify its own.
+		if (spec.Execution == ExecutionSequential || spec.Execution == ExecutionParallel || spec.Execution == ExecutionLoop) &&
 			spec.Model == "" && sub.Model == "" {
 			return fmt.Errorf("recipe %q: sub_agent %q: model is required when parent has no model", spec.Name, sub.Name)
 		}
