@@ -8,7 +8,8 @@ import (
 )
 
 // ActionLoopExit is the action key set by ExitTool on the ToolContext to
-// signal that the enclosing loop should stop. The value is an ExitInput.
+// signal that the enclosing loop should stop. The value is a bool indicating
+// whether the loop should escalate to the outer handler.
 const ActionLoopExit = "loop_exit"
 
 // ExitInput is the argument schema for ExitTool.
@@ -46,7 +47,7 @@ func (t *ExitTool) Handle(ctx context.Context, input string) (string, error) {
 		return "", err
 	}
 	if tc, ok := FromContext(ctx); ok {
-		tc.SetAction(ActionLoopExit, &req)
+		tc.SetAction(ActionLoopExit, req.Escalate)
 	}
 	return `{"ok":true}`, nil
 }

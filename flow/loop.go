@@ -15,10 +15,6 @@ type LoopState struct {
 	Input *blades.Message
 	// Output is the last message produced in the current iteration.
 	Output *blades.Message
-	// ExitRequested is true when ExitTool was invoked during this iteration.
-	ExitRequested bool
-	// Escalated is true when ExitTool was invoked with Escalate=true.
-	Escalated bool
 }
 
 // LoopCondition is called once after every complete iteration.
@@ -52,18 +48,6 @@ func NewLoopAgent(config LoopConfig) blades.Agent {
 func (a *loopAgent) Name() string        { return a.config.Name }
 func (a *loopAgent) Description() string { return a.config.Description }
 
-func loopExitInput(action any) (*tools.ExitInput, bool) {
-	switch v := action.(type) {
-	case *tools.ExitInput:
-		return v, true
-	case tools.ExitInput:
-		exit := v
-		return &exit, true
-	default:
-		return nil, false
-	}
-}
-
 // Run runs the sub-agents in a loop. After each message yielded by a sub-agent
 // the loop checks message.Actions for an ActionLoopExit signal set by ExitTool.
 // Context management across iterations is delegated to the ContextManager
@@ -72,8 +56,8 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 	return func(yield func(*blades.Message, error) bool) {
 		state := LoopState{}
 		for state.Iteration = 0; state.Iteration < a.config.MaxIterations; state.Iteration++ {
-			state.ExitRequested = false
-			state.Escalated = false
+			exitRequested := false
+			escalated := false
 			for _, agent := range a.config.SubAgents {
 				var (
 					err        error
@@ -89,13 +73,13 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 						return
 					}
 					if exit, ok := message.Actions[tools.ActionLoopExit]; ok {
-						if exitInput, ok := loopExitInput(exit); ok {
-							state.ExitRequested = true
-							state.Escalated = exitInput.Escalate
+						if exitEscalated, ok := exit.(bool); ok {
+							exitRequested = true
+							escalated = exitEscalated
 						}
 					}
 				}
-				state.Input = invocation.Message
+				state.Input = input.Message
 				state.Output = message
 			}
 			if a.config.Condition != nil {
@@ -109,8 +93,8 @@ func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 				}
 				continue
 			}
-			if state.ExitRequested {
-				if state.Escalated {
+			if exitRequested {
+				if escalated {
 					yield(nil, blades.ErrLoopEscalated)
 					return
 				}

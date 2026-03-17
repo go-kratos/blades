@@ -45,7 +45,7 @@ func (a *exitOnNthAgent) Run(_ context.Context, _ *blades.Invocation) blades.Gen
 		msg.Parts = append(msg.Parts, blades.TextPart{Text: "output"})
 		if a.calls >= a.target {
 			msg.Actions = map[string]any{
-				tools.ActionLoopExit: tools.ExitInput{Reason: "done", Escalate: a.escalate},
+				tools.ActionLoopExit: a.escalate,
 			}
 		}
 		yield(msg, nil)
@@ -82,26 +82,19 @@ func drainLoop(ctx context.Context, loop blades.Agent, msg *blades.Message) ([]*
 
 func TestLoopState_ExitSignal(t *testing.T) {
 	t.Parallel()
-	var (
-		capturedExit   bool
-		capturedOutput *blades.Message
-	)
+	var capturedOutput *blades.Message
 	exiter := &exitOnNthAgent{target: 1}
 	loop := NewLoopAgent(LoopConfig{
 		Name:          "test",
 		MaxIterations: 5,
 		SubAgents:     []blades.Agent{exiter},
 		Condition: func(_ context.Context, state LoopState) (bool, error) {
-			capturedExit = state.ExitRequested
 			capturedOutput = state.Output
 			return false, nil
 		},
 	})
 	if _, err := drainLoop(context.Background(), loop, blades.UserMessage("go")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if !capturedExit {
-		t.Fatal("expected ExitRequested to be true when ExitTool fires")
 	}
 	if capturedOutput == nil {
 		t.Fatal("expected loop state to capture the last output message")
@@ -110,12 +103,12 @@ func TestLoopState_ExitSignal(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected output actions to include %q", tools.ActionLoopExit)
 	}
-	exit, ok := got.(tools.ExitInput)
+	escalated, ok := got.(bool)
 	if !ok {
-		t.Fatalf("expected exit action to be %T, got %T", tools.ExitInput{}, got)
+		t.Fatalf("expected exit action to be bool, got %T", got)
 	}
-	if exit.Reason != "done" {
-		t.Errorf("expected reason %q, got %q", "done", exit.Reason)
+	if escalated {
+		t.Error("expected exit action to be false")
 	}
 }
 
@@ -156,6 +149,24 @@ func TestLoopAgent_ExitSignal(t *testing.T) {
 	}
 }
 
+func TestLoopAgent_ExitSignal_FromEarlierSubAgent(t *testing.T) {
+	t.Parallel()
+	exiter := &exitOnNthAgent{target: 1}
+	a := newEchoAgent(t, "worker", "hello")
+	loop := NewLoopAgent(LoopConfig{
+		Name:          "test",
+		MaxIterations: 10,
+		SubAgents:     []blades.Agent{exiter, a},
+	})
+	msgs, err := drainLoop(context.Background(), loop, blades.UserMessage("go"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages from one iteration, got %d", len(msgs))
+	}
+}
+
 func TestLoopAgent_ExitSignal_Escalate_NoCondition(t *testing.T) {
 	t.Parallel()
 	// Without a Condition, ExitTool with Escalate=true should yield ErrLoopEscalated.
@@ -168,6 +179,24 @@ func TestLoopAgent_ExitSignal_Escalate_NoCondition(t *testing.T) {
 	_, err := drainLoop(context.Background(), loop, blades.UserMessage("go"))
 	if !errors.Is(err, blades.ErrLoopEscalated) {
 		t.Errorf("expected ErrLoopEscalated, got %v", err)
+	}
+}
+
+func TestLoopAgent_ExitSignal_Escalate_FromEarlierSubAgent(t *testing.T) {
+	t.Parallel()
+	exiter := &exitOnNthAgent{target: 1, escalate: true}
+	a := newEchoAgent(t, "worker", "hello")
+	loop := NewLoopAgent(LoopConfig{
+		Name:          "test",
+		MaxIterations: 5,
+		SubAgents:     []blades.Agent{exiter, a},
+	})
+	msgs, err := drainLoop(context.Background(), loop, blades.UserMessage("go"))
+	if !errors.Is(err, blades.ErrLoopEscalated) {
+		t.Fatalf("expected ErrLoopEscalated, got %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages from one iteration before escalation, got %d", len(msgs))
 	}
 }
 
