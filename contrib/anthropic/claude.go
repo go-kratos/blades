@@ -24,7 +24,8 @@ type Config struct {
 	Thinking        *anthropic.ThinkingConfigParamUnion
 	// CacheControl enables prompt caching. When true, an ephemeral
 	// cache_control breakpoint is added to the last content block of the last
-	// message on every request. Disabled by default.
+	// message, as well as the final system block and the last tool, on every
+	// request. Disabled by default.
 	CacheControl bool
 }
 
