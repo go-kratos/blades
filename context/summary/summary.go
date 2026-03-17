@@ -38,19 +38,19 @@ func buildWorkingView(summaryContent string, offset int, messages []*blades.Mess
 }
 
 // Option configures a summary ContextCompressor.
-type Option func(*compressor)
+type Option func(*contextCompressor)
 
 // WithMaxTokens sets the token budget that triggers compression.
 // A value of 0 disables compression (no-op).
 func WithMaxTokens(tokens int64) Option {
-	return func(c *compressor) {
+	return func(c *contextCompressor) {
 		c.maxTokens = tokens
 	}
 }
 
 // WithSummarizer sets the ModelProvider used to generate summaries.
 func WithSummarizer(model blades.ModelProvider) Option {
-	return func(c *compressor) {
+	return func(c *contextCompressor) {
 		c.summarizer = model
 	}
 }
@@ -58,7 +58,7 @@ func WithSummarizer(model blades.ModelProvider) Option {
 // WithTokenCounter sets the TokenCounter used to estimate token usage.
 // Defaults to a character-based counter (1 token ≈ 4 chars).
 func WithTokenCounter(counter blades.TokenCounter) Option {
-	return func(c *compressor) {
+	return func(c *contextCompressor) {
 		c.counter = counter
 	}
 }
@@ -66,7 +66,7 @@ func WithTokenCounter(counter blades.TokenCounter) Option {
 // WithKeepRecent sets the number of most-recent messages always kept verbatim.
 // Defaults to 10.
 func WithKeepRecent(n int) Option {
-	return func(c *compressor) {
+	return func(c *contextCompressor) {
 		c.keepRecent = n
 	}
 }
@@ -74,14 +74,14 @@ func WithKeepRecent(n int) Option {
 // WithBatchSize sets the number of messages to summarize per compression pass.
 // Defaults to 20.
 func WithBatchSize(n int) Option {
-	return func(c *compressor) {
+	return func(c *contextCompressor) {
 		c.batchSize = n
 	}
 }
 
-// compressor implements ContextCompressor by compressing old messages into a rolling summary when the token count exceeds a configured limit.
+// contextCompressor implements ContextCompressor by compressing old messages into a rolling summary when the token count exceeds a configured limit.
 // Compression state is persisted in the session when available to avoid redundant summarization work across runs.
-type compressor struct {
+type contextCompressor struct {
 	maxTokens   int64
 	counter     blades.TokenCounter
 	summarizer  blades.ModelProvider
@@ -106,7 +106,7 @@ type compressor struct {
 //     offset. Repeat until under budget or no more messages can be compressed.
 //  4. Persist the updated offset and summary content back to session.State().
 func NewContextCompressor(opts ...Option) blades.ContextCompressor {
-	c := &compressor{
+	c := &contextCompressor{
 		instruction: defaultInstruction,
 		keepRecent:  defaultKeepRecent,
 		batchSize:   defaultBatchSize,
@@ -120,7 +120,7 @@ func NewContextCompressor(opts ...Option) blades.ContextCompressor {
 
 // ensureSession returns the Session from ctx. If none is present a temporary
 // in-memory session is returned so the rest of Compress never has to branch.
-func (s *compressor) ensureSession(ctx context.Context) blades.Session {
+func (s *contextCompressor) ensureSession(ctx context.Context) blades.Session {
 	if session, ok := blades.FromSessionContext(ctx); ok {
 		return session
 	}
@@ -130,7 +130,7 @@ func (s *compressor) ensureSession(ctx context.Context) blades.Session {
 // Compress compresses old messages if the total token count exceeds MaxTokens.
 // When a session is present in ctx it reads and writes two primitive-typed state
 // keys to persist incremental compression state across runs.
-func (s *compressor) Compress(ctx context.Context, messages []*blades.Message) ([]*blades.Message, error) {
+func (s *contextCompressor) Compress(ctx context.Context, messages []*blades.Message) ([]*blades.Message, error) {
 	if len(messages) == 0 || s.maxTokens == 0 {
 		return messages, nil
 	}
@@ -191,7 +191,7 @@ func (s *compressor) Compress(ctx context.Context, messages []*blades.Message) (
 
 // extendSummary calls the summarizer LLM to produce a new summary that covers
 // both the existing summary text and the provided message batch.
-func (s *compressor) extendSummary(ctx context.Context, existing string, batch []*blades.Message) (string, error) {
+func (s *contextCompressor) extendSummary(ctx context.Context, existing string, batch []*blades.Message) (string, error) {
 	instruction := s.instruction
 	if existing != "" {
 		instruction += "\n\nExisting summary:\n" + existing

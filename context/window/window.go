@@ -9,13 +9,13 @@ import (
 const defaultMaxMessages = 100
 
 // Option configures a window ContextCompressor.
-type Option func(*compressor)
+type Option func(*contextCompressor)
 
 // WithMaxMessages sets the maximum number of messages to retain.
 // Oldest messages are dropped first when the limit is exceeded.
 // Default is 100. Set to 0 to disable message count limiting.
 func WithMaxMessages(n int) Option {
-	return func(c *compressor) {
+	return func(c *contextCompressor) {
 		c.maxMessages = n
 	}
 }
@@ -24,7 +24,7 @@ func WithMaxMessages(n int) Option {
 // Messages are dropped from the front until the budget is met.
 // Default is 0 (no limit).
 func WithMaxTokens(tokens int64) Option {
-	return func(c *compressor) {
+	return func(c *contextCompressor) {
 		c.maxTokens = tokens
 	}
 }
@@ -32,12 +32,12 @@ func WithMaxTokens(tokens int64) Option {
 // WithTokenCounter sets the TokenCounter used to estimate token usage.
 // Defaults to a character-based counter (1 token ≈ 4 chars).
 func WithTokenCounter(counter blades.TokenCounter) Option {
-	return func(c *compressor) {
+	return func(c *contextCompressor) {
 		c.counter = counter
 	}
 }
 
-type compressor struct {
+type contextCompressor struct {
 	maxMessages int
 	maxTokens   int64
 	counter     blades.TokenCounter
@@ -47,7 +47,7 @@ type compressor struct {
 // configured token or message count limits. Messages are dropped from the
 // front (oldest first) when limits are exceeded.
 func NewContextCompressor(opts ...Option) blades.ContextCompressor {
-	c := &compressor{maxMessages: defaultMaxMessages}
+	c := &contextCompressor{maxMessages: defaultMaxMessages}
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -55,7 +55,7 @@ func NewContextCompressor(opts ...Option) blades.ContextCompressor {
 }
 
 // Compress retains the most recent messages that fit the configured limits.
-func (w *compressor) Compress(_ context.Context, messages []*blades.Message) ([]*blades.Message, error) {
+func (w *contextCompressor) Compress(_ context.Context, messages []*blades.Message) ([]*blades.Message, error) {
 	if len(messages) == 0 {
 		return messages, nil
 	}
