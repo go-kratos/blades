@@ -19,7 +19,7 @@ import (
 //
 // Context management:
 //   - Cross-iteration history is accumulated by the loop and injected into
-//     each sub-agent's invocation.History automatically.
+//     each sub-agent's invocation context automatically.
 //   - blades.WithContextManager on the Runner trims the context window before
 //     every model call, preventing unbounded growth over many iterations.
 func main() {
