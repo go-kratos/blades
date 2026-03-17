@@ -36,15 +36,16 @@ func main() {
 		"SummaryDemo",
 		blades.WithModel(model),
 		blades.WithInstruction("You are a helpful assistant. Answer concisely."),
-		blades.WithContextManager(contextManager),
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	runner := blades.NewRunner(agent)
-	session := blades.NewSession()
 	ctx := context.Background()
+	session := blades.NewSession()
+	runner := blades.NewRunner(
+		agent, blades.WithContextManager(contextManager),
+	)
 
 	turns := []string{
 		"Tell me a one-sentence fact about the Sun.",

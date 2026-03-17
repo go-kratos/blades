@@ -18,7 +18,6 @@ type Invocation struct {
 	Session     Session
 	Instruction *Message
 	Message     *Message
-	History     []*Message
 	Tools       []tools.Tool
 }
 
@@ -50,7 +49,6 @@ func (inv *Invocation) Clone() *Invocation {
 		Stream:      inv.Stream,
 		Message:     inv.Message.Clone(),
 		Instruction: inv.Instruction.Clone(),
-		History:     slices.Clone(inv.History),
 		Tools:       slices.Clone(inv.Tools),
 	}
 }

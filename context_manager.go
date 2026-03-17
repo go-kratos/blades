@@ -18,3 +18,17 @@ type ContextManager interface {
 	// ModelRequest.Instruction and is never passed to Prepare.
 	Prepare(ctx context.Context, messages []*Message) ([]*Message, error)
 }
+
+type ctxManagerKey struct{}
+
+// NewContextManagerContext returns a child context carrying m.
+// Called by Runner to inject the configured Manager into the execution context.
+func NewContextManagerContext(ctx context.Context, m ContextManager) context.Context {
+	return context.WithValue(ctx, ctxManagerKey{}, m)
+}
+
+// ContextManagerFromContext retrieves the Manager stored in ctx by the Runner.
+func ContextManagerFromContext(ctx context.Context) (ContextManager, bool) {
+	m, ok := ctx.Value(ctxManagerKey{}).(ContextManager)
+	return m, ok
+}

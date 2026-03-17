@@ -107,16 +107,6 @@ func WithMaxIterations(n int) AgentOption {
 	}
 }
 
-// WithContextManager sets a ContextManager that is applied before each model
-// call within the agent loop. Use this to enforce context window limits via
-// truncation (see the context/window package) or LLM-based summarization
-// (see the context/summary package).
-func WithContextManager(cm ContextManager) AgentOption {
-	return func(a *agent) {
-		a.contextManager = cm
-	}
-}
-
 // agent is a struct that represents an AI agent.
 type agent struct {
 	name                string
@@ -133,7 +123,6 @@ type agent struct {
 	skills              []skills.Skill
 	skillToolset        *skills.Toolset
 	toolsResolver       tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
-	contextManager      ContextManager // Optional context window manager
 }
 
 // NewAgent creates a new Agent with the given name and options.
@@ -269,9 +258,6 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 				InputSchema:  a.inputSchema,
 				OutputSchema: a.outputSchema,
 			}
-			if len(invocation.History) > 0 {
-				req.Messages = AppendMessages(req.Messages, invocation.History...)
-			}
 			switch {
 			case len(resumeMessages) > 0:
 				req.Messages = AppendMessages(req.Messages, resumeMessages...)
@@ -333,7 +319,7 @@ func (a *agent) executeTools(ctx context.Context, invocation *Invocation, messag
 				if v.Completed {
 					return nil
 				}
-				toolCtx := NewToolContext(ctx, &toolContext{
+				toolCtx := tools.NewContext(ctx, &toolContext{
 					id:      v.ID,
 					name:    v.Name,
 					actions: actions,
@@ -364,12 +350,13 @@ func messageFromResponse(response *ModelResponse) (*Message, error) {
 // handle constructs the default handlers for Run and Stream using the provider.
 func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
+		contextManager, _ := ContextManagerFromContext(ctx)
 		for i := 0; i < a.maxIterations; i++ {
 			// Apply context window management before each model call.
 			// This handles both the initial history and messages that accumulate
 			// during tool calls across iterations.
-			if a.contextManager != nil {
-				prepared, err := a.contextManager.Prepare(ctx, req.Messages)
+			if contextManager != nil {
+				prepared, err := contextManager.Prepare(ctx, req.Messages)
 				if err != nil {
 					yield(nil, err)
 					return
