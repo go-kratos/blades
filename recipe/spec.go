@@ -8,11 +8,11 @@ const (
 	ExecutionSequential ExecutionMode = "sequential"
 	// ExecutionParallel runs sub-agents concurrently.
 	ExecutionParallel ExecutionMode = "parallel"
-	// ExecutionTool wraps each sub-agent as a tool for the parent agent.
-	ExecutionTool ExecutionMode = "tool"
 	// ExecutionLoop runs sub-agents in a repeated loop until max_iterations is
 	// reached or a sub-agent signals exit via the loop_exit tool.
 	ExecutionLoop ExecutionMode = "loop"
+	// ExecutionTool wraps each sub-agent as a tool for the parent agent.
+	ExecutionTool ExecutionMode = "tool"
 )
 
 // ParameterType defines the type of a recipe parameter.
@@ -66,12 +66,12 @@ type ContextSpec struct {
 	Strategy ContextStrategy `yaml:"strategy"`
 	// MaxTokens is the token budget. When exceeded, old messages are compressed or dropped.
 	MaxTokens int64 `yaml:"max_tokens,omitempty"`
+	// MaxMessages is the maximum number of messages to retain (window only).
+	MaxMessages int `yaml:"max_messages,omitempty"`
 	// KeepRecent is the number of recent messages always kept verbatim (summarize only, default 10).
 	KeepRecent int `yaml:"keep_recent,omitempty"`
 	// BatchSize is the number of messages summarized per compression pass (summarize only, default 20).
 	BatchSize int `yaml:"batch_size,omitempty"`
-	// MaxMessages is the maximum number of messages to retain (window only).
-	MaxMessages int `yaml:"max_messages,omitempty"`
 	// Model is the model name used for summarization (summarize strategy only).
 	// If omitted, falls back to the agent's own model.
 	Model string `yaml:"model,omitempty"`
@@ -96,34 +96,34 @@ type MiddlewareSpec struct {
 // AgentSpec is the top-level declarative specification for a recipe.
 // A recipe YAML file is parsed into this structure and then built into a blades.Agent.
 type AgentSpec struct {
-	Version       string          `yaml:"version"`
-	Name          string          `yaml:"name"`
-	Description   string          `yaml:"description"`
-	Model         string          `yaml:"model,omitempty"`
-	Instruction   string          `yaml:"instruction"`
-	Prompt        string          `yaml:"prompt,omitempty"`
-	Parameters    []ParameterSpec `yaml:"parameters,omitempty"`
-	SubAgents    []SubAgentSpec  `yaml:"sub_agents,omitempty"`
-	Execution     ExecutionMode   `yaml:"execution,omitempty"`
-	Tools         []string        `yaml:"tools,omitempty"`
-	OutputKey     string          `yaml:"output_key,omitempty"`
-	MaxIterations int             `yaml:"max_iterations,omitempty"`
-	Context       *ContextSpec    `yaml:"context,omitempty"`
+	Version       string           `yaml:"version"`
+	Name          string           `yaml:"name"`
+	Description   string           `yaml:"description"`
+	Model         string           `yaml:"model,omitempty"`
+	Instruction   string           `yaml:"instruction"`
+	Prompt        string           `yaml:"prompt,omitempty"`
+	Parameters    []ParameterSpec  `yaml:"parameters,omitempty"`
+	SubAgents     []SubAgentSpec   `yaml:"sub_agents,omitempty"`
+	Execution     ExecutionMode    `yaml:"execution,omitempty"`
+	Tools         []string         `yaml:"tools,omitempty"`
+	OutputKey     string           `yaml:"output_key,omitempty"`
+	MaxIterations int              `yaml:"max_iterations,omitempty"`
+	Context       *ContextSpec     `yaml:"context,omitempty"`
 	Middlewares   []MiddlewareSpec `yaml:"middlewares,omitempty"`
 }
 
 // SubAgentSpec defines a child agent within a recipe.
 type SubAgentSpec struct {
-	Name          string          `yaml:"name"`
-	Description   string          `yaml:"description,omitempty"`
-	Model         string          `yaml:"model,omitempty"`
-	Instruction   string          `yaml:"instruction"`
-	Prompt        string          `yaml:"prompt,omitempty"`
-	Parameters    []ParameterSpec `yaml:"parameters,omitempty"`
-	Tools         []string        `yaml:"tools,omitempty"`
-	OutputKey     string          `yaml:"output_key,omitempty"`
-	MaxIterations int             `yaml:"max_iterations,omitempty"`
-	Context       *ContextSpec    `yaml:"context,omitempty"`
+	Name          string           `yaml:"name"`
+	Description   string           `yaml:"description,omitempty"`
+	Model         string           `yaml:"model,omitempty"`
+	Instruction   string           `yaml:"instruction"`
+	Prompt        string           `yaml:"prompt,omitempty"`
+	Parameters    []ParameterSpec  `yaml:"parameters,omitempty"`
+	Tools         []string         `yaml:"tools,omitempty"`
+	OutputKey     string           `yaml:"output_key,omitempty"`
+	MaxIterations int              `yaml:"max_iterations,omitempty"`
+	Context       *ContextSpec     `yaml:"context,omitempty"`
 	Middlewares   []MiddlewareSpec `yaml:"middlewares,omitempty"`
 }
 
