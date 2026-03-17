@@ -60,23 +60,23 @@ func Validate(spec *AgentSpec) error {
 	subNames := make(map[string]bool, len(spec.SubAgents))
 	for i := range spec.SubAgents {
 		sub := &spec.SubAgents[i]
-		if err := validateSubRecipe(sub, i); err != nil {
+		if err := validateSubAgent(sub, i); err != nil {
 			return fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}
 		if subNames[sub.Name] {
-			return fmt.Errorf("recipe %q: duplicate sub_recipe name %q", spec.Name, sub.Name)
+			return fmt.Errorf("recipe %q: duplicate sub_agent name %q", spec.Name, sub.Name)
 		}
 		subNames[sub.Name] = true
 		if spec.Execution == ExecutionTool && toolNames[sub.Name] {
-			return fmt.Errorf("recipe %q: sub_recipe %q conflicts with an external tool of the same name", spec.Name, sub.Name)
+			return fmt.Errorf("recipe %q: sub_agent %q conflicts with an external tool of the same name", spec.Name, sub.Name)
 		}
 		if spec.Execution == ExecutionTool && sub.OutputKey != "" {
-			return fmt.Errorf("recipe %q: sub_recipe %q: output_key is not supported in tool mode", spec.Name, sub.Name)
+			return fmt.Errorf("recipe %q: sub_agent %q: output_key is not supported in tool mode", spec.Name, sub.Name)
 		}
-		// In sequential/parallel mode, if the parent has no model, each sub_recipe must specify its own.
+		// In sequential/parallel mode, if the parent has no model, each sub_agent must specify its own.
 		if (spec.Execution == ExecutionSequential || spec.Execution == ExecutionParallel) &&
 			spec.Model == "" && sub.Model == "" {
-			return fmt.Errorf("recipe %q: sub_recipe %q: model is required when parent has no model", spec.Name, sub.Name)
+			return fmt.Errorf("recipe %q: sub_agent %q: model is required when parent has no model", spec.Name, sub.Name)
 		}
 	}
 	return nil
@@ -148,23 +148,23 @@ func validateParameters(params []ParameterSpec) error {
 	return nil
 }
 
-func validateSubRecipe(sub *SubAgentSpec, index int) error {
+func validateSubAgent(sub *SubAgentSpec, index int) error {
 	if sub.Name == "" {
-		return fmt.Errorf("sub_recipe[%d]: name is required", index)
+		return fmt.Errorf("sub_agent[%d]: name is required", index)
 	}
 	if sub.Instruction == "" {
-		return fmt.Errorf("sub_recipe %q: instruction is required", sub.Name)
+		return fmt.Errorf("sub_agent %q: instruction is required", sub.Name)
 	}
 	if err := validateParameters(sub.Parameters); err != nil {
-		return fmt.Errorf("sub_recipe %q: %w", sub.Name, err)
+		return fmt.Errorf("sub_agent %q: %w", sub.Name, err)
 	}
-	if _, err := validateToolNames(fmt.Sprintf("sub_recipe %q", sub.Name), sub.Tools); err != nil {
+	if _, err := validateToolNames(fmt.Sprintf("sub_agent %q", sub.Name), sub.Tools); err != nil {
 		return err
 	}
 	if err := validateContextSpec(sub.Context); err != nil {
-		return fmt.Errorf("sub_recipe %q: context: %w", sub.Name, err)
+		return fmt.Errorf("sub_agent %q: context: %w", sub.Name, err)
 	}
-	if err := validateMiddlewares(fmt.Sprintf("sub_recipe %q", sub.Name), sub.Middlewares); err != nil {
+	if err := validateMiddlewares(fmt.Sprintf("sub_agent %q", sub.Name), sub.Middlewares); err != nil {
 		return err
 	}
 	return nil

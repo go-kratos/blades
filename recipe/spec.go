@@ -1,14 +1,14 @@
 package recipe
 
-// ExecutionMode defines how sub-recipes are executed.
+// ExecutionMode defines how sub-agents are executed.
 type ExecutionMode string
 
 const (
-	// ExecutionSequential runs sub-recipes one after another.
+	// ExecutionSequential runs sub-agents one after another.
 	ExecutionSequential ExecutionMode = "sequential"
-	// ExecutionParallel runs sub-recipes concurrently.
+	// ExecutionParallel runs sub-agents concurrently.
 	ExecutionParallel ExecutionMode = "parallel"
-	// ExecutionTool wraps each sub-recipe as a tool for the parent agent.
+	// ExecutionTool wraps each sub-agent as a tool for the parent agent.
 	ExecutionTool ExecutionMode = "tool"
 )
 
@@ -70,6 +70,7 @@ type ContextSpec struct {
 	// MaxMessages is the maximum number of messages to retain (window only).
 	MaxMessages int `yaml:"max_messages,omitempty"`
 	// Model is the model name used for summarization (summarize strategy only).
+	// If omitted, falls back to the agent's own model.
 	Model string `yaml:"model,omitempty"`
 }
 

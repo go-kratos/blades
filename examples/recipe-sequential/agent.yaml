@@ -10,7 +10,7 @@ parameters:
     options: [go, python]
 instruction: Coordinate the review pipeline
 execution: sequential
-sub_recipes:
+sub_agents:
   - name: syntax-checker
     instruction: |
       Check the {{.language}} code for syntax errors and report any issues found.

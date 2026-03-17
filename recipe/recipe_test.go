@@ -667,7 +667,7 @@ func TestBuildInjectsSubRecipePromptAsInstruction(t *testing.T) {
 		t.Fatalf("unexpected user message: %q", got)
 	}
 	if !strings.Contains(model.instruction, "First focus on go code style.") {
-		t.Fatalf("expected instruction to contain sub-recipe prompt, got: %q", model.instruction)
+		t.Fatalf("expected instruction to contain sub-agent prompt, got: %q", model.instruction)
 	}
 }
 
@@ -702,7 +702,7 @@ func TestBuildFailsWhenSubRecipePromptRenderHasMissingParam(t *testing.T) {
 	}
 	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
 	if err == nil {
-		t.Fatal("expected sub-recipe prompt render error")
+		t.Fatal("expected sub-agent prompt render error")
 	}
 }
 
@@ -769,7 +769,7 @@ func TestBuildValidatesSubRecipeParams(t *testing.T) {
 	}
 	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
 	if err == nil {
-		t.Fatal("expected error for missing required sub-recipe param")
+		t.Fatal("expected error for missing required sub-agent param")
 	}
 }
 
@@ -905,9 +905,9 @@ func TestValidateSubRecipeNoName(t *testing.T) {
 	}
 	err := Validate(spec)
 	if err == nil {
-		t.Fatal("expected error for sub_recipe without name")
+		t.Fatal("expected error for sub_agent without name")
 	}
-	if !strings.Contains(err.Error(), "sub_recipe[0]") {
+	if !strings.Contains(err.Error(), "sub_agent[0]") {
 		t.Fatalf("error should mention index: %v", err)
 	}
 }
@@ -922,7 +922,7 @@ func TestValidateSubRecipeNoInstruction(t *testing.T) {
 		SubAgents:   []SubAgentSpec{{Name: "s"}},
 	}
 	if err := Validate(spec); err == nil {
-		t.Fatal("expected error for sub_recipe without instruction")
+		t.Fatal("expected error for sub_agent without instruction")
 	}
 }
 
@@ -943,7 +943,7 @@ func TestValidateSubRecipeDuplicateParam(t *testing.T) {
 		}},
 	}
 	if err := Validate(spec); err == nil {
-		t.Fatal("expected error for duplicate sub_recipe parameter")
+		t.Fatal("expected error for duplicate sub_agent parameter")
 	}
 }
 
@@ -1203,7 +1203,7 @@ func TestBuildSubRecipeNoModelAndNoParent(t *testing.T) {
 	}
 	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
 	if err == nil {
-		t.Fatal("expected error when sub_recipe has no model and parent has no model")
+		t.Fatal("expected error when sub_agent has no model and parent has no model")
 	}
 	if !strings.Contains(err.Error(), "no model") {
 		t.Fatalf("error should mention model: %v", err)
@@ -1223,7 +1223,7 @@ func TestBuildSubRecipeUnresolvableModel(t *testing.T) {
 	}
 	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
 	if err == nil {
-		t.Fatal("expected error for unresolvable sub_recipe model")
+		t.Fatal("expected error for unresolvable sub_agent model")
 	}
 }
 
@@ -1240,7 +1240,7 @@ func TestBuildSubRecipeUnresolvableTool(t *testing.T) {
 	}
 	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()), WithToolRegistry(NewStaticToolRegistry()))
 	if err == nil {
-		t.Fatal("expected error for unresolvable sub_recipe tool")
+		t.Fatal("expected error for unresolvable sub_agent tool")
 	}
 }
 

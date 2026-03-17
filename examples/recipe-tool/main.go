@@ -84,7 +84,7 @@ func main() {
 	}))
 
 	// 4. Load recipe
-	spec, err := recipe.LoadFromFile("recipe.yaml")
+	spec, err := recipe.LoadFromFile("agent.yaml")
 	if err != nil {
 		log.Fatal(err)
 	}
