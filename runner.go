@@ -37,15 +37,32 @@ type RunOptions struct {
 	InvocationID string
 }
 
+// RunnerOption configures a Runner at construction time.
+type RunnerOption func(*Runner)
+
+// WithContextManager sets a Manager that is applied before each model
+// call across all agents executed by this Runner. It is injected into the
+// execution context so every agent in the pipeline (including loop sub-agents)
+// benefits without per-agent configuration.
+func WithContextManager(contextManager ContextManager) RunnerOption {
+	return func(r *Runner) {
+		r.contextManager = contextManager
+	}
+}
+
 // Runner is responsible for executing a Runnable agent within a session context.
 type Runner struct {
-	rootAgent Agent
+	rootAgent      Agent
+	contextManager ContextManager
 }
 
 // NewRunner creates a new Runner with the given agent and options.
-func NewRunner(rootAgent Agent) *Runner {
+func NewRunner(rootAgent Agent, opts ...RunnerOption) *Runner {
 	r := &Runner{
 		rootAgent: rootAgent,
+	}
+	for _, opt := range opts {
+		opt(r)
 	}
 	return r
 }
@@ -97,7 +114,11 @@ func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (
 	if err != nil {
 		return nil, err
 	}
-	iter := r.rootAgent.Run(NewSessionContext(ctx, o.Session), invocation)
+	runCtx := NewSessionContext(ctx, o.Session)
+	if r.contextManager != nil {
+		runCtx = NewContextManagerContext(runCtx, r.contextManager)
+	}
+	iter := r.rootAgent.Run(runCtx, invocation)
 	for output, err = range iter {
 		if err != nil {
 			return nil, err
@@ -127,8 +148,12 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 	if err != nil {
 		return stream.Error[*Message](err)
 	}
+	runCtx := NewSessionContext(ctx, o.Session)
+	if r.contextManager != nil {
+		runCtx = NewContextManagerContext(runCtx, r.contextManager)
+	}
 	return func(yield func(*Message, error) bool) {
-		iter := r.rootAgent.Run(NewSessionContext(ctx, o.Session), invocation)
+		iter := r.rootAgent.Run(runCtx, invocation)
 		for output, err := range iter {
 			if err != nil {
 				yield(nil, err)

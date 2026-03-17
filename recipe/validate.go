@@ -5,8 +5,8 @@ import (
 	"slices"
 )
 
-// Validate checks the RecipeSpec for consistency and required fields.
-func Validate(spec *RecipeSpec) error {
+// Validate checks the AgentSpec for consistency and required fields.
+func Validate(spec *AgentSpec) error {
 	if spec == nil {
 		return fmt.Errorf("recipe: spec is required")
 	}
@@ -16,20 +16,22 @@ func Validate(spec *RecipeSpec) error {
 	if spec.Name == "" {
 		return fmt.Errorf("recipe: name is required")
 	}
-	// instruction is required except for sequential/parallel modes where
+	// instruction is required except for sequential/parallel/loop modes where
 	// the flow agent has no LLM call and only orchestrates sub-agents.
-	if spec.Instruction == "" && spec.Execution != ExecutionSequential && spec.Execution != ExecutionParallel {
+	if spec.Instruction == "" && spec.Execution != ExecutionSequential &&
+		spec.Execution != ExecutionParallel && spec.Execution != ExecutionLoop {
 		return fmt.Errorf("recipe: instruction is required")
 	}
-	if len(spec.SubRecipes) == 0 && spec.Model == "" {
-		return fmt.Errorf("recipe: model is required when there are no sub_recipes")
+	if len(spec.SubAgents) == 0 && spec.Model == "" {
+		return fmt.Errorf("recipe: model is required when there are no sub_agents")
 	}
-	if len(spec.SubRecipes) > 0 && spec.Execution == "" {
-		return fmt.Errorf("recipe: execution mode is required when sub_recipes are defined")
+	if len(spec.SubAgents) > 0 && spec.Execution == "" {
+		return fmt.Errorf("recipe: execution mode is required when sub_agents are defined")
 	}
 	if spec.Execution != "" && spec.Execution != ExecutionSequential &&
-		spec.Execution != ExecutionParallel && spec.Execution != ExecutionTool {
-		return fmt.Errorf("recipe: invalid execution mode %q (must be sequential, parallel, or tool)", spec.Execution)
+		spec.Execution != ExecutionParallel && spec.Execution != ExecutionTool &&
+		spec.Execution != ExecutionLoop {
+		return fmt.Errorf("recipe: invalid execution mode %q (must be sequential, parallel, tool, or loop)", spec.Execution)
 	}
 	// tool mode needs a parent model for the orchestrating LLM call.
 	if spec.Execution == ExecutionTool && spec.Model == "" {
@@ -44,34 +46,78 @@ func Validate(spec *RecipeSpec) error {
 			return fmt.Errorf("recipe %q: max_iterations is not supported in %s mode", spec.Name, spec.Execution)
 		}
 	}
+	// loop mode: output_key is not supported since LoopAgent makes no LLM call.
+	if spec.Execution == ExecutionLoop && spec.OutputKey != "" {
+		return fmt.Errorf("recipe %q: output_key is not supported in loop mode", spec.Name)
+	}
 	if err := validateParameters(spec.Parameters); err != nil {
 		return fmt.Errorf("recipe %q: %w", spec.Name, err)
+	}
+	if err := validateContextSpec(spec.Context); err != nil {
+		return fmt.Errorf("recipe %q: context: %w", spec.Name, err)
+	}
+	if err := validateMiddlewares(fmt.Sprintf("recipe %q", spec.Name), spec.Middlewares); err != nil {
+		return err
 	}
 	toolNames, err := validateToolNames(fmt.Sprintf("recipe %q", spec.Name), spec.Tools)
 	if err != nil {
 		return err
 	}
-	subNames := make(map[string]bool, len(spec.SubRecipes))
-	for i := range spec.SubRecipes {
-		sub := &spec.SubRecipes[i]
-		if err := validateSubRecipe(sub, i); err != nil {
+	subNames := make(map[string]bool, len(spec.SubAgents))
+	for i := range spec.SubAgents {
+		sub := &spec.SubAgents[i]
+		if err := validateSubAgent(sub, i); err != nil {
 			return fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}
 		if subNames[sub.Name] {
-			return fmt.Errorf("recipe %q: duplicate sub_recipe name %q", spec.Name, sub.Name)
+			return fmt.Errorf("recipe %q: duplicate sub_agent name %q", spec.Name, sub.Name)
 		}
 		subNames[sub.Name] = true
 		if spec.Execution == ExecutionTool && toolNames[sub.Name] {
-			return fmt.Errorf("recipe %q: sub_recipe %q conflicts with an external tool of the same name", spec.Name, sub.Name)
+			return fmt.Errorf("recipe %q: sub_agent %q conflicts with an external tool of the same name", spec.Name, sub.Name)
 		}
 		if spec.Execution == ExecutionTool && sub.OutputKey != "" {
-			return fmt.Errorf("recipe %q: sub_recipe %q: output_key is not supported in tool mode", spec.Name, sub.Name)
+			return fmt.Errorf("recipe %q: sub_agent %q: output_key is not supported in tool mode", spec.Name, sub.Name)
 		}
-		// In sequential/parallel mode, if the parent has no model, each sub_recipe must specify its own.
-		if (spec.Execution == ExecutionSequential || spec.Execution == ExecutionParallel) &&
+		// In sequential/parallel/loop mode, if the parent has no model, each sub_agent must specify its own.
+		if (spec.Execution == ExecutionSequential || spec.Execution == ExecutionParallel || spec.Execution == ExecutionLoop) &&
 			spec.Model == "" && sub.Model == "" {
-			return fmt.Errorf("recipe %q: sub_recipe %q: model is required when parent has no model", spec.Name, sub.Name)
+			return fmt.Errorf("recipe %q: sub_agent %q: model is required when parent has no model", spec.Name, sub.Name)
 		}
+	}
+	return nil
+}
+
+func validateMiddlewares(scope string, specs []MiddlewareSpec) error {
+	seen := make(map[string]bool, len(specs))
+	for i, mw := range specs {
+		if mw.Name == "" {
+			return fmt.Errorf("%s: middleware[%d]: name is required", scope, i)
+		}
+		if seen[mw.Name] {
+			return fmt.Errorf("%s: duplicate middleware name %q", scope, mw.Name)
+		}
+		seen[mw.Name] = true
+	}
+	return nil
+}
+
+func validateContextSpec(spec *ContextSpec) error {
+	if spec == nil {
+		return nil
+	}
+	switch spec.Strategy {
+	case ContextStrategySummarize:
+		// model is optional; falls back to the agent's model at build time
+	case ContextStrategyWindow:
+		// max_tokens and/or max_messages are optional but at least one is expected
+	case "":
+		return fmt.Errorf("strategy is required")
+	default:
+		return fmt.Errorf("unknown strategy %q (must be %q or %q)", spec.Strategy, ContextStrategySummarize, ContextStrategyWindow)
+	}
+	if spec.MaxTokens < 0 {
+		return fmt.Errorf("max_tokens must be >= 0")
 	}
 	return nil
 }
@@ -108,17 +154,23 @@ func validateParameters(params []ParameterSpec) error {
 	return nil
 }
 
-func validateSubRecipe(sub *SubRecipeSpec, index int) error {
+func validateSubAgent(sub *SubAgentSpec, index int) error {
 	if sub.Name == "" {
-		return fmt.Errorf("sub_recipe[%d]: name is required", index)
+		return fmt.Errorf("sub_agent[%d]: name is required", index)
 	}
 	if sub.Instruction == "" {
-		return fmt.Errorf("sub_recipe %q: instruction is required", sub.Name)
+		return fmt.Errorf("sub_agent %q: instruction is required", sub.Name)
 	}
 	if err := validateParameters(sub.Parameters); err != nil {
-		return fmt.Errorf("sub_recipe %q: %w", sub.Name, err)
+		return fmt.Errorf("sub_agent %q: %w", sub.Name, err)
 	}
-	if _, err := validateToolNames(fmt.Sprintf("sub_recipe %q", sub.Name), sub.Tools); err != nil {
+	if _, err := validateToolNames(fmt.Sprintf("sub_agent %q", sub.Name), sub.Tools); err != nil {
+		return err
+	}
+	if err := validateContextSpec(sub.Context); err != nil {
+		return fmt.Errorf("sub_agent %q: context: %w", sub.Name, err)
+	}
+	if err := validateMiddlewares(fmt.Sprintf("sub_agent %q", sub.Name), sub.Middlewares); err != nil {
 		return err
 	}
 	return nil
@@ -139,7 +191,7 @@ func validateToolNames(scope string, toolNames []string) (map[string]bool, error
 }
 
 // ValidateParams checks that provided parameter values satisfy the spec.
-func ValidateParams(spec *RecipeSpec, params map[string]any) error {
+func ValidateParams(spec *AgentSpec, params map[string]any) error {
 	if spec == nil {
 		return fmt.Errorf("recipe: spec is required")
 	}

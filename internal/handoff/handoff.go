@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -50,7 +49,7 @@ func (h *handoffTool) Handle(ctx context.Context, input string) (string, error) 
 		return "", fmt.Errorf("agentName must be a non-empty string")
 	}
 	// Set the target agent in the handoff control
-	toolCtx, ok := blades.FromToolContext(ctx)
+	toolCtx, ok := tools.FromContext(ctx)
 	if !ok {
 		return "", fmt.Errorf("tool context not found in context")
 	}

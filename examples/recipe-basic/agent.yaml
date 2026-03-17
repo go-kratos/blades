@@ -1,0 +1,22 @@
+version: "1.0"
+name: code-reviewer
+description: Review code quality
+model: gpt-4o
+parameters:
+  - name: language
+    type: select
+    description: Programming language to review
+    required: required
+    options: [go, python, typescript]
+instruction: |
+  You are a {{.language}} code review expert.
+  Analyze code for bugs, style issues, and performance.
+  Be concise and actionable.
+context:
+  strategy: window
+  max_tokens: 80000
+  max_messages: 50
+middlewares:
+  - name: retry
+    options:
+      attempts: 3

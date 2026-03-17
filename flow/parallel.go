@@ -14,28 +14,28 @@ type ParallelConfig struct {
 	SubAgents   []blades.Agent
 }
 
-// parallelAgent is an agent that runs sub-agents in parallel.
-type parallelAgent struct {
+// ParallelAgent is an agent that runs sub-agents in parallel.
+type ParallelAgent struct {
 	config ParallelConfig
 }
 
 // NewParallelAgent creates a new ParallelAgent.
 func NewParallelAgent(config ParallelConfig) blades.Agent {
-	return &parallelAgent{config: config}
+	return &ParallelAgent{config: config}
 }
 
 // Name returns the name of the agent.
-func (p *parallelAgent) Name() string {
+func (p *ParallelAgent) Name() string {
 	return p.config.Name
 }
 
 // Description returns the description of the agent.
-func (p *parallelAgent) Description() string {
+func (p *ParallelAgent) Description() string {
 	return p.config.Description
 }
 
 // Run runs the sub-agents in parallel.
-func (p *parallelAgent) Run(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
+func (p *ParallelAgent) Run(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		type result struct {
 			message *blades.Message

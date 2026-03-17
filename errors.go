@@ -19,4 +19,6 @@ var (
 	ErrNoFinalResponse = errors.New("stream ended without a final response")
 	// ErrInterrupted is returned when execution is interrupted.
 	ErrInterrupted = errors.New("execution was interrupted")
+	// ErrLoopEscalated is returned when a loop condition signals escalation to an outer handler.
+	ErrLoopEscalated = errors.New("loop escalated to outer handler")
 )

@@ -12,13 +12,13 @@ import (
 
 func main() {
 	// 1. Register models
-	registry := recipe.NewRegistry()
+	registry := recipe.NewModelRegistry()
 	registry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	}))
 
 	// 2. Load recipe
-	spec, err := recipe.LoadFromFile("recipe.yaml")
+	spec, err := recipe.LoadFromFile("agent.yaml")
 	if err != nil {
 		log.Fatal(err)
 	}

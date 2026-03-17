@@ -1,10 +1,10 @@
 # Recipe
 
-Recipe is a declarative workflow configuration system for Blades. Define agent workflows in YAML — model selection, instructions, parameters, and multi-step orchestration — without writing Go code.
+Recipe is a declarative workflow configuration system for Blades. Define agent workflows in YAML — model selection, instructions, parameters, context management, middlewares, and multi-step orchestration — without writing Go code.
 
 ## Quick Start
 
-### 1. Write a recipe.yaml
+Write a YAML spec:
 
 ```yaml
 version: "1.0"
@@ -21,111 +21,72 @@ instruction: |
   Analyze code for bugs, style issues, and performance.
 ```
 
-### 2. Load and run in Go
+Load and run in Go:
 
 ```go
-// Register models
-registry := recipe.NewRegistry()
-registry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
+modelRegistry := recipe.NewModelRegistry()
+modelRegistry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
     APIKey: os.Getenv("OPENAI_API_KEY"),
 }))
 
-// Load & build
-spec, _ := recipe.LoadFromFile("recipe.yaml")
+spec, _ := recipe.LoadFromFile("agent.yaml")
 agent, _ := recipe.Build(spec,
-    recipe.WithModelRegistry(registry),
+    recipe.WithModelRegistry(modelRegistry),
     recipe.WithParams(map[string]any{"language": "go"}),
 )
 
-// Run
 runner := blades.NewRunner(agent)
 output, _ := runner.Run(ctx, blades.UserMessage("Review this code: ..."))
 ```
 
-## YAML Reference
+## YAML Structure
 
-### Top-level Fields
+A recipe YAML file has a `version` and `name` at the root. The `model` field names a `ModelProvider` registered in the `ModelRegistry`. The `instruction` field is the system prompt and supports Go template syntax (`{{.param_name}}`). The optional `prompt` field injects an initial user message before the first user turn.
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `version` | string | Yes | Version number, currently `"1.0"` |
-| `name` | string | Yes | Recipe name, becomes the Agent name |
-| `description` | string | No | Description |
-| `model` | string | Conditional | Model name in the registry. Required when no sub_recipes or in tool mode |
-| `instruction` | string | Conditional | System prompt template. Optional in sequential/parallel mode |
-| `prompt` | string | No | Initial user message template, injected as the first user message |
-| `parameters` | list | No | Parameter definitions, see [Parameters](#parameters) |
-| `execution` | string | When sub_recipes exist | Execution mode: `sequential` / `parallel` / `tool` |
-| `sub_recipes` | list | No | Sub-recipe list, see [Sub-recipes](#sub-recipes) |
-| `tools` | list | No | External tool names, must be registered via `ToolRegistry` |
-| `output_key` | string | No | Key to store output in session state. Not supported in `sequential` / `parallel` mode |
-| `max_iterations` | int | No | Max agent iterations. Not supported in `sequential` / `parallel` mode |
+When the recipe has `sub_agents`, an `execution` mode is required. Sub-agents without their own `model` inherit the parent's model.
 
 ### Parameters
 
-Parameters are referenced in `instruction` and `prompt` using Go template syntax `{{.param_name}}`.
+Parameters are declared under `parameters` and referenced in `instruction` or `prompt` via `{{.name}}`. Each parameter has a `type` (`string`, `number`, `boolean`, or `select`), an optional `default`, and a `required` flag (`required` or `optional`). The `select` type requires an `options` list.
 
 ```yaml
 parameters:
   - name: language
-    type: select          # string / number / boolean / select
-    description: Programming language
-    required: required    # required / optional (default: optional)
-    default: go           # optional, default value
-    options: [go, python] # required for select type
+    type: select
+    required: required
+    options: [go, python]
+    default: go
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | Yes | Parameter name, must be unique |
-| `type` | string | Yes | `string` / `number` / `boolean` / `select` |
-| `description` | string | No | Description |
-| `required` | string | No | `required` or `optional` |
-| `default` | any | No | Default value. For select type, must be one of the options |
-| `options` | list | For select | Allowed values |
-
-Pass parameter values at build time:
+Pass values at build time via `recipe.WithParams`:
 
 ```go
 recipe.Build(spec,
-    recipe.WithModelRegistry(registry),
+    recipe.WithModelRegistry(modelRegistry),
     recipe.WithParams(map[string]any{"language": "go"}),
 )
 ```
 
-### Sub-recipes
+### Sub-agents
 
-Sub-recipes are defined under `sub_recipes`. Each one is built into an independent Agent.
+Each entry under `sub_agents` is built into an independent agent. It shares the same fields as the top-level spec (`instruction`, `model`, `tools`, `output_key`, `max_iterations`, `context`, `middlewares`) with the addition of `prompt` for a per-step initial message. The `name` field is required and must be unique.
 
 ```yaml
-sub_recipes:
+sub_agents:
   - name: step-name
     description: What this step does
-    model: gpt-4o-mini    # optional, inherits parent model if omitted
+    model: gpt-4o-mini    # inherits parent model if omitted
     instruction: |
       Your instruction here...
-    output_key: result     # optional, stores output in session state
-    max_iterations: 5      # optional
-    tools: [my-tool]       # optional, external tools
+    output_key: result
+    tools: [my-tool]
 ```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | Yes | Sub-recipe name, must be unique. In tool mode this becomes the tool name |
-| `description` | string | No | Description. In tool mode this becomes the tool description |
-| `model` | string | No | Override parent model. Inherits if omitted |
-| `instruction` | string | Yes | System prompt |
-| `prompt` | string | No | Initial user message template |
-| `parameters` | list | No | Sub-recipe specific parameters |
-| `tools` | list | No | External tool names |
-| `output_key` | string | No | Output key (not supported in tool mode) |
-| `max_iterations` | int | No | Max iterations |
 
 ## Execution Modes
 
-### sequential — Sequential Execution
+### sequential
 
-Sub-recipes run one after another in order. Each step can write to session state via `output_key`, and the next step can reference it with `{{.output_key}}`.
+Sub-agents run one after another. Each step can write to session state via `output_key`, and subsequent steps can read it via `{{.output_key}}`.
 
 ```yaml
 version: "1.0"
@@ -137,40 +98,38 @@ parameters:
     type: select
     required: required
     options: [go, python]
-sub_recipes:
+sub_agents:
   - name: syntax-checker
-    instruction: |
-      Check the {{.language}} code for syntax errors.
+    instruction: Check the {{.language}} code for syntax errors.
     output_key: syntax_report
-
   - name: quality-reviewer
-    instruction: |
-      Review code quality. Syntax report: {{.syntax_report}}
+    instruction: Review code quality. Syntax report: {{.syntax_report}}
     output_key: quality_report
 ```
 
-### parallel — Concurrent Execution
+`instruction` and `output_key` at the parent level are not used in sequential mode — the parent is a pure orchestrator.
 
-Sub-recipes run concurrently with no dependencies between them.
+### parallel
+
+Sub-agents run concurrently with no data dependencies. Outputs are written to session state independently.
 
 ```yaml
 version: "1.0"
 name: multi-review
 model: gpt-4o
 execution: parallel
-sub_recipes:
+sub_agents:
   - name: security-review
     instruction: Check for security vulnerabilities.
     output_key: security_report
-
   - name: performance-review
     instruction: Analyze performance issues.
     output_key: performance_report
 ```
 
-### tool — Tool Dispatch
+### tool
 
-Each sub-recipe is wrapped as a tool. The parent agent's LLM decides when to call which tool. You can also mix in function tools registered via `ToolRegistry`.
+Each sub-agent is wrapped as a tool. The parent agent's LLM decides when to call which sub-agent. The parent requires a `model` and an `instruction`. Sub-agent `name` becomes the tool name, and `description` becomes the tool description. Function tools from the `tools` list and sub-agent tools are merged together.
 
 ```yaml
 version: "1.0"
@@ -187,131 +146,182 @@ instruction: |
 tools:
   - extract-emails
 execution: tool
-sub_recipes:
+sub_agents:
   - name: fact-checker
     description: Verify claims and provide citations
-    instruction: |
-      You are a fact-checking specialist. Verify the given claim
-      and provide citations from reliable sources.
-
+    instruction: Verify the given claim and provide citations.
   - name: data-analyst
     description: Analyze data, statistics, and trends
-    instruction: |
-      You are a data analysis specialist. Analyze the given data
-      and produce clear insights.
+    instruction: Analyze the given data and produce clear insights.
 ```
 
-> **Tool mode notes:**
-> - Parent must specify `model` (the LLM that drives tool calls)
-> - Sub-recipe `name` becomes the tool name, `description` becomes the tool description
-> - `output_key` is not supported on sub-recipes
-> - Sub-recipe names must not conflict with names in the `tools` list
-> - Function tools from `tools` list and sub-recipe tools are merged together
+`output_key` is not supported on sub-agents in tool mode. Sub-agent names must not conflict with names in the `tools` list.
+
+### loop
+
+Sub-agents run repeatedly in a loop up to `max_iterations` (default: 10). After each full iteration the loop checks whether any sub-agent signalled an exit via the `exit` tool. The loop ends when max iterations is reached or when a sub-agent calls `exit`.
+
+```yaml
+version: "1.0"
+name: iterative-writer
+model: gpt-4o
+execution: loop
+max_iterations: 3
+sub_agents:
+  - name: writer
+    instruction: Write a short paragraph about the requested topic.
+    output_key: draft
+  - name: reviewer
+    instruction: |
+      Review the draft. If the quality is acceptable, call the exit tool.
+      Otherwise provide feedback for the next iteration.
+    tools:
+      - exit
+```
+
+Register the `exit` tool so sub-agents can signal an early stop:
+
+```go
+toolRegistry := recipe.NewToolRegistry()
+toolRegistry.Register("exit", tools.NewExitTool())
+
+agent, _ := recipe.Build(spec,
+    recipe.WithModelRegistry(modelRegistry),
+    recipe.WithToolRegistry(toolRegistry),
+)
+```
+
+`output_key` and `instruction` at the parent level are not used in loop mode. `max_iterations` sets the upper bound on iterations.
+
+## Context Management
+
+The `context` field controls how message history is trimmed before each model call. It can appear on the top-level spec or on individual sub-agents.
+
+### summarize
+
+Old messages are compressed into a rolling LLM-generated summary. The most recent messages are always kept verbatim.
+
+```yaml
+context:
+  strategy: summarize
+  max_tokens: 80000    # compress when history exceeds this token budget
+  keep_recent: 10      # always keep the last N messages verbatim (default: 10)
+  batch_size: 20       # messages to summarize per pass (default: 20)
+  model: gpt-4o-mini   # summarizer model; falls back to the agent's model
+```
+
+### window
+
+Oldest messages are dropped to stay within the budget.
+
+```yaml
+context:
+  strategy: window
+  max_tokens: 80000    # drop oldest when total tokens exceed this
+  max_messages: 100    # drop oldest when message count exceeds this
+```
+
+## Middleware
+
+The `middlewares` field attaches a middleware chain to an agent. Middlewares are resolved by name from a `MiddlewareRegistry` at build time. The `options` map is passed as-is to the registered factory. It can appear on the top-level spec or on individual sub-agents.
+
+```yaml
+middlewares:
+  - name: tracing
+  - name: logging
+    options:
+      level: info
+```
+
+Register middleware factories in Go:
+
+```go
+mwRegistry := recipe.NewMiddlewareRegistry()
+
+mwRegistry.Register("tracing", func(_ map[string]any) (blades.Middleware, error) {
+    return myTracingMiddleware, nil
+})
+
+mwRegistry.Register("logging", func(opts map[string]any) (blades.Middleware, error) {
+    level, _ := opts["level"].(string)
+    return newLoggingMiddleware(level), nil
+})
+
+agent, _ := recipe.Build(spec,
+    recipe.WithModelRegistry(modelRegistry),
+    recipe.WithMiddlewareRegistry(mwRegistry),
+)
+```
 
 ## Model Registration
 
-The `model` field in YAML is a key in the registry. Register actual ModelProvider instances in Go:
+The `model` field in YAML is a lookup key in the `ModelRegistry`. Register any `blades.ModelProvider` implementation:
 
 ```go
-registry := recipe.NewRegistry()
+modelRegistry := recipe.NewModelRegistry()
 
-// OpenAI models
-registry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
+modelRegistry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
     APIKey: os.Getenv("OPENAI_API_KEY"),
 }))
 
-// OpenAI-compatible models (e.g. Zhipu, DeepSeek)
-registry.Register("glm-5", openai.NewModel("glm-5", openai.Config{
+modelRegistry.Register("glm-5", openai.NewModel("glm-5", openai.Config{
     BaseURL: "https://open.bigmodel.cn/api/paas/v4",
     APIKey:  os.Getenv("ZHIPU_API_KEY"),
 }))
 
-// Anthropic models
-registry.Register("claude-sonnet", anthropic.NewModel("claude-sonnet-4-5-20250514", anthropic.Config{
+modelRegistry.Register("claude-sonnet", anthropic.NewModel("claude-sonnet-4-5-20250514", anthropic.Config{
     APIKey: os.Getenv("ANTHROPIC_API_KEY"),
 }))
 ```
 
-Sub-recipes without a `model` field inherit the parent model. Different sub-recipes can use different models:
+Sub-agents inherit the parent model when their own `model` field is omitted:
 
 ```yaml
-model: gpt-4o                    # parent default
-sub_recipes:
+model: gpt-4o
+sub_agents:
   - name: fast-step
-    model: gpt-4o-mini            # cheaper model
+    model: gpt-4o-mini   # override for this step
     instruction: ...
-  - name: deep-step               # inherits gpt-4o
+  - name: deep-step      # inherits gpt-4o
     instruction: ...
 ```
 
 ## Tool Registration
 
-Register tools via `ToolRegistry` and reference them by name in YAML. Tools are application-defined — there are no built-in tools.
-
-### Using `tools.NewFunc` (recommended)
-
-Create strongly-typed function tools with automatic JSON schema generation:
+Register tools via `ToolRegistry` and reference them by name in YAML:
 
 ```go
-type ExtractEmailsReq struct {
-    Text string `json:"text" jsonschema:"The text to extract email addresses from"`
+type SearchReq struct {
+    Query string `json:"query" jsonschema:"The search query"`
+}
+type SearchRes struct {
+    Results []string `json:"results"`
 }
 
-type ExtractEmailsRes struct {
-    Matches []string `json:"matches" jsonschema:"The extracted email addresses"`
-}
+searchTool, _ := tools.NewFunc("web-search", "Search the web", func(ctx context.Context, req SearchReq) (SearchRes, error) {
+    // ...
+})
 
-var emailPattern = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
+toolRegistry := recipe.NewToolRegistry()
+toolRegistry.Register("web-search", searchTool)
 
-func extractEmails(_ context.Context, req ExtractEmailsReq) (ExtractEmailsRes, error) {
-    matches := emailPattern.FindAllString(req.Text, -1)
-    if matches == nil {
-        matches = []string{}
-    }
-    return ExtractEmailsRes{Matches: matches}, nil
-}
-
-// Create the tool
-emailTool, _ := tools.NewFunc("extract-emails", "Extract email addresses from text", extractEmails)
-
-// Register in a ToolRegistry
-toolRegistry := recipe.NewStaticToolRegistry()
-toolRegistry.Register("extract-emails", emailTool)
-
-// Build with the registry
 agent, _ := recipe.Build(spec,
-    recipe.WithModelRegistry(registry),
+    recipe.WithModelRegistry(modelRegistry),
     recipe.WithToolRegistry(toolRegistry),
 )
 ```
 
 ```yaml
-tools: [extract-emails]
+tools: [web-search]
 ```
-
-### Using `tools.NewTool` (raw handler)
-
-For lower-level control, use `NewTool` with a raw `HandleFunc`:
-
-```go
-toolRegistry := recipe.NewStaticToolRegistry()
-toolRegistry.Register("web-search", mySearchTool)
-
-agent, _ := recipe.Build(spec,
-    recipe.WithModelRegistry(registry),
-    recipe.WithToolRegistry(toolRegistry),
-)
-```
-
-Function tools can be freely combined with sub-recipe tools in `tool` execution mode. See [recipe-tool](../examples/recipe-tool/) for a complete example.
 
 ## API
 
 ```go
 // Load
-spec, err := recipe.LoadFromFile("recipe.yaml")       // from file
-spec, err := recipe.LoadFromFS(fs, "recipe.yaml")     // from embed.FS
-spec, err := recipe.Parse(yamlBytes)                   // from []byte
+spec, err := recipe.LoadFromFile("agent.yaml")
+spec, err := recipe.LoadFromFS(fs, "agent.yaml")
+spec, err := recipe.Parse(yamlBytes)
 
 // Validate
 err := recipe.Validate(spec)
@@ -319,9 +329,10 @@ err := recipe.ValidateParams(spec, params)
 
 // Build
 agent, err := recipe.Build(spec,
-    recipe.WithModelRegistry(registry),       // required
-    recipe.WithToolRegistry(toolRegistry),    // required when tools are used
-    recipe.WithParams(map[string]any{...}),   // when parameters are defined
+    recipe.WithModelRegistry(modelRegistry),            // required
+    recipe.WithToolRegistry(toolRegistry),              // required when tools are used
+    recipe.WithMiddlewareRegistry(mwRegistry),  // required when middlewares are used
+    recipe.WithParams(map[string]any{...}),             // when parameters are defined
 )
 
 // The built agent is a standard blades.Agent
@@ -333,5 +344,6 @@ stream := runner.RunStream(ctx, blades.UserMessage("..."))
 ## Examples
 
 - [recipe-basic](../examples/recipe-basic/) — Single agent with parameterized instruction
-- [recipe-sequential](../examples/recipe-sequential/) — Sequential pipeline with output_key passing
-- [recipe-tool](../examples/recipe-tool/) — Sub-recipes + function tools with LLM-driven dispatch
+- [recipe-sequential](../examples/recipe-sequential/) — Sequential pipeline with `output_key` passing
+- [recipe-tool](../examples/recipe-tool/) — Sub-agents and function tools with LLM-driven dispatch
+

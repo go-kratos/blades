@@ -22,6 +22,11 @@ type Config struct {
 	StopSequences   []string
 	RequestOptions  []option.RequestOption
 	Thinking        *anthropic.ThinkingConfigParamUnion
+	// CacheControl enables prompt caching. When true, an ephemeral
+	// cache_control breakpoint is added to the last content block of the last
+	// message, as well as the final system block and the last tool, on every
+	// request. Disabled by default.
+	CacheControl bool
 }
 
 // Claude provides a unified interface for Claude API access.
@@ -171,7 +176,31 @@ func (m *Claude) toClaudeParams(req *blades.ModelRequest) (*anthropic.MessageNew
 		}
 		params.Tools = tools
 	}
+	if m.config.CacheControl {
+		applyEphemeralCache(params)
+	}
 	return params, nil
+}
+
+// applyEphemeralCache stamps an ephemeral cache_control breakpoint on the last
+// block of each cacheable section: system, tools, and messages.
+func applyEphemeralCache(params *anthropic.MessageNewParams) {
+	if len(params.System) > 0 {
+		params.System[len(params.System)-1].CacheControl = anthropic.NewCacheControlEphemeralParam()
+	}
+	if len(params.Tools) > 0 {
+		if cc := params.Tools[len(params.Tools)-1].GetCacheControl(); cc != nil {
+			*cc = anthropic.NewCacheControlEphemeralParam()
+		}
+	}
+	if len(params.Messages) > 0 {
+		last := &params.Messages[len(params.Messages)-1]
+		if len(last.Content) > 0 {
+			if cc := last.Content[len(last.Content)-1].GetCacheControl(); cc != nil {
+				*cc = anthropic.NewCacheControlEphemeralParam()
+			}
+		}
+	}
 }
 
 func decodeToolRequest(request string) any {

@@ -3,6 +3,7 @@ package blades
 import (
 	"context"
 
+	"github.com/go-kratos/blades/tools"
 	"github.com/go-kratos/kit/container/maps"
 )
 
@@ -12,16 +13,9 @@ type AgentContext interface {
 	Description() string
 }
 
-// ToolContext provides metadata about a tool used by an agent.
-type ToolContext interface {
-	ID() string
-	Name() string
-	// Actions returns a copy of the tool's action map.
-	Actions() map[string]any
-	// SetAction sets or updates an action in the tool's action map.
-	// This method is safe for concurrent use.
-	SetAction(key string, value any)
-}
+// ToolContext is an alias for tools.ToolContext so that existing callers of
+// blades.ToolContext / blades.FromToolContext continue to work unchanged.
+type ToolContext = tools.ToolContext
 
 // ctxAgentKey is the context key for AgentContext.
 type ctxAgentKey struct{}
@@ -35,20 +29,6 @@ func NewAgentContext(ctx context.Context, agent Agent) context.Context {
 func FromAgentContext(ctx context.Context) (AgentContext, bool) {
 	agent, ok := ctx.Value(ctxAgentKey{}).(AgentContext)
 	return agent, ok
-}
-
-// ctxToolKey is the context key for ToolContext.
-type ctxToolKey struct{}
-
-// NewToolContext returns a new context with the given ToolContext.
-func NewToolContext(ctx context.Context, tool ToolContext) context.Context {
-	return context.WithValue(ctx, ctxToolKey{}, tool)
-}
-
-// FromToolContext retrieves the ToolContext from the context, if present.
-func FromToolContext(ctx context.Context) (ToolContext, bool) {
-	tool, ok := ctx.Value(ctxToolKey{}).(ToolContext)
-	return tool, ok
 }
 
 type toolContext struct {

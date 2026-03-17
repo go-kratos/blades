@@ -73,18 +73,18 @@ func main() {
 	}
 
 	// 2. Register tools in a ToolRegistry
-	toolRegistry := recipe.NewStaticToolRegistry()
+	toolRegistry := recipe.NewToolRegistry()
 	toolRegistry.Register("extract-emails", emailTool)
 	toolRegistry.Register("get-weather", weatherTool)
 
 	// 3. Register models
-	modelRegistry := recipe.NewRegistry()
+	modelRegistry := recipe.NewModelRegistry()
 	modelRegistry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
 		APIKey: os.Getenv("OPENAI_API_KEY"),
 	}))
 
 	// 4. Load recipe
-	spec, err := recipe.LoadFromFile("recipe.yaml")
+	spec, err := recipe.LoadFromFile("agent.yaml")
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -29,12 +29,12 @@ func (a *promptInjectedAgent) Run(ctx context.Context, inv *blades.Invocation) b
 	if next.Message == nil {
 		next.Message = promptMessage
 	} else {
-		next.History = append(next.History, promptMessage)
+		next.Instruction = blades.MergeParts(blades.SystemMessage(a.prompt), next.Instruction)
 	}
 	return a.base.Run(ctx, next)
 }
 
-func withPromptInjection(spec *RecipeSpec, params map[string]any, base blades.Agent) (blades.Agent, error) {
+func withPromptInjection(spec *AgentSpec, params map[string]any, base blades.Agent) (blades.Agent, error) {
 	return withPromptTemplate(base, fmt.Sprintf("recipe %q", spec.Name), spec.Prompt, params)
 }
 

@@ -13,30 +13,30 @@ type SequentialConfig struct {
 	SubAgents   []blades.Agent
 }
 
-// sequentialAgent is an agent that runs sub-agents sequentially.
-type sequentialAgent struct {
+// SequentialAgent is an agent that runs sub-agents sequentially.
+type SequentialAgent struct {
 	config SequentialConfig
 }
 
 // NewSequentialAgent creates a new SequentialAgent.
 func NewSequentialAgent(config SequentialConfig) blades.Agent {
-	return &sequentialAgent{
+	return &SequentialAgent{
 		config: config,
 	}
 }
 
 // Name returns the name of the agent.
-func (a *sequentialAgent) Name() string {
+func (a *SequentialAgent) Name() string {
 	return a.config.Name
 }
 
 // Description returns the description of the agent.
-func (a *sequentialAgent) Description() string {
+func (a *SequentialAgent) Description() string {
 	return a.config.Description
 }
 
 // Run runs the sub-agents sequentially.
-func (a *sequentialAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
+func (a *SequentialAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		for _, agent := range a.config.SubAgents {
 			var (
