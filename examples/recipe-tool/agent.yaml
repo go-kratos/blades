@@ -22,7 +22,7 @@ tools:
   - extract-emails
   - get-weather
 execution: tool
-sub_recipes:
+sub_agents:
   - name: fact-checker
     description: Verify claims and provide citations from reliable sources
     instruction: |

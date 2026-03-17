@@ -8,8 +8,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LoadFromFile loads and parses a RecipeSpec from a YAML file path.
-func LoadFromFile(path string) (*RecipeSpec, error) {
+// LoadFromFile loads and parses a AgentSpec from a YAML file path.
+func LoadFromFile(path string) (*AgentSpec, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("recipe: failed to read file %q: %w", path, err)
@@ -17,8 +17,8 @@ func LoadFromFile(path string) (*RecipeSpec, error) {
 	return Parse(data)
 }
 
-// LoadFromFS loads and parses a RecipeSpec from an fs.FS (e.g., embed.FS).
-func LoadFromFS(fsys fs.FS, path string) (*RecipeSpec, error) {
+// LoadFromFS loads and parses a AgentSpec from an fs.FS (e.g., embed.FS).
+func LoadFromFS(fsys fs.FS, path string) (*AgentSpec, error) {
 	data, err := fs.ReadFile(fsys, path)
 	if err != nil {
 		return nil, fmt.Errorf("recipe: failed to read %q from fs: %w", path, err)
@@ -26,9 +26,9 @@ func LoadFromFS(fsys fs.FS, path string) (*RecipeSpec, error) {
 	return Parse(data)
 }
 
-// Parse parses raw YAML bytes into a RecipeSpec and validates it.
-func Parse(data []byte) (*RecipeSpec, error) {
-	var spec RecipeSpec
+// Parse parses raw YAML bytes into a AgentSpec and validates it.
+func Parse(data []byte) (*AgentSpec, error) {
+	var spec AgentSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
 		return nil, fmt.Errorf("recipe: failed to parse YAML: %w", err)
 	}

@@ -34,7 +34,7 @@ func (a *promptInjectedAgent) Run(ctx context.Context, inv *blades.Invocation) b
 	return a.base.Run(ctx, next)
 }
 
-func withPromptInjection(spec *RecipeSpec, params map[string]any, base blades.Agent) (blades.Agent, error) {
+func withPromptInjection(spec *AgentSpec, params map[string]any, base blades.Agent) (blades.Agent, error) {
 	return withPromptTemplate(base, fmt.Sprintf("recipe %q", spec.Name), spec.Prompt, params)
 }
 

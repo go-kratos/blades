@@ -10,7 +10,7 @@ parameters:
 instruction: |
   Research {{.topic}}. Use specialist tools when needed.
 execution: tool
-sub_recipes:
+sub_agents:
   - name: fact-checker
     description: Verify claims with citations
     model: gpt-4o-mini

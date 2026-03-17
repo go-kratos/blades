@@ -12,3 +12,11 @@ instruction: |
   You are a {{.language}} code review expert.
   Analyze code for bugs, style issues, and performance.
   Be concise and actionable.
+context:
+  strategy: window
+  max_tokens: 80000
+  max_messages: 50
+middlewares:
+  - name: retry
+    options:
+      attempts: 3

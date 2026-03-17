@@ -12,22 +12,30 @@ import (
 type BuildOption func(*buildOptions)
 
 type buildOptions struct {
-	modelRegistry ModelRegistry
-	toolRegistry  ToolRegistry
-	params        map[string]any
+	modelRegistry      ModelResolver
+	toolRegistry       ToolResolver
+	middlewareRegistry MiddlewareResolver
+	params             map[string]any
 }
 
-// WithModelRegistry sets the model registry for resolving model names.
-func WithModelRegistry(r ModelRegistry) BuildOption {
+// WithModelRegistry sets the model resolver for resolving model names.
+func WithModelRegistry(r ModelResolver) BuildOption {
 	return func(o *buildOptions) {
 		o.modelRegistry = r
 	}
 }
 
-// WithToolRegistry sets the tool registry for resolving tool names.
-func WithToolRegistry(r ToolRegistry) BuildOption {
+// WithToolRegistry sets the tool resolver for resolving tool names.
+func WithToolRegistry(r ToolResolver) BuildOption {
 	return func(o *buildOptions) {
 		o.toolRegistry = r
+	}
+}
+
+// WithMiddlewareRegistry sets the middleware resolver for resolving middleware names.
+func WithMiddlewareRegistry(r MiddlewareResolver) BuildOption {
+	return func(o *buildOptions) {
+		o.middlewareRegistry = r
 	}
 }
 
@@ -38,8 +46,8 @@ func WithParams(params map[string]any) BuildOption {
 	}
 }
 
-// Build constructs a blades.Agent from a RecipeSpec.
-func Build(spec *RecipeSpec, opts ...BuildOption) (blades.Agent, error) {
+// Build constructs a blades.Agent from a AgentSpec.
+func Build(spec *AgentSpec, opts ...BuildOption) (blades.Agent, error) {
 	if err := Validate(spec); err != nil {
 		return nil, err
 	}
@@ -57,15 +65,15 @@ func Build(spec *RecipeSpec, opts ...BuildOption) (blades.Agent, error) {
 		return nil, err
 	}
 
-	// No sub-recipes: build a single agent
+	// No sub-agents: build a single agent
 	var (
 		agent blades.Agent
 		err   error
 	)
-	if len(spec.SubRecipes) == 0 {
+	if len(spec.SubAgents) == 0 {
 		agent, err = buildSingleAgent(spec, params, o)
 	} else {
-		// With sub-recipes: build based on execution mode
+		// With sub-agents: build based on execution mode
 		switch spec.Execution {
 		case ExecutionSequential:
 			agent, err = buildSequentialAgent(spec, params, o)
@@ -83,8 +91,8 @@ func Build(spec *RecipeSpec, opts ...BuildOption) (blades.Agent, error) {
 	return withPromptInjection(spec, params, agent)
 }
 
-// buildSingleAgent creates a single blades.Agent from a RecipeSpec with no sub-recipes.
-func buildSingleAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
+// buildSingleAgent creates a single blades.Agent from a AgentSpec with no sub-agents.
+func buildSingleAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
 	model, err := o.modelRegistry.Resolve(spec.Model)
 	if err != nil {
 		return nil, err
@@ -120,18 +128,31 @@ func buildSingleAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) 
 		agentOpts = append(agentOpts, blades.WithTools(resolvedTools...))
 	}
 
-	return blades.NewAgent(spec.Name, agentOpts...)
+	// Resolve middlewares
+	middlewares, err := resolveMiddlewares(spec.Middlewares, o)
+	if err != nil {
+		return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
+	}
+	if len(middlewares) > 0 {
+		agentOpts = append(agentOpts, blades.WithMiddleware(middlewares...))
+	}
+
+	agent, err := blades.NewAgent(spec.Name, agentOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return wrapWithContextManager(agent, spec.Context, spec.Model, o.modelRegistry)
 }
 
-// buildSubAgent creates a blades.Agent from a SubRecipeSpec.
+// buildSubAgent creates a blades.Agent from a SubAgentSpec.
 // parentModel is the fallback model name from the parent spec.
-func buildSubAgent(sub *SubRecipeSpec, parentModel string, params map[string]any, o *buildOptions) (blades.Agent, error) {
+func buildSubAgent(sub *SubAgentSpec, parentModel string, params map[string]any, o *buildOptions) (blades.Agent, error) {
 	modelName := sub.Model
 	if modelName == "" {
 		modelName = parentModel
 	}
 	if modelName == "" {
-		return nil, fmt.Errorf("recipe: sub_recipe %q has no model and parent has no model", sub.Name)
+		return nil, fmt.Errorf("recipe: sub_agent %q has no model and parent has no model", sub.Name)
 	}
 
 	model, err := o.modelRegistry.Resolve(modelName)
@@ -147,7 +168,7 @@ func buildSubAgent(sub *SubRecipeSpec, parentModel string, params map[string]any
 	}
 
 	subParams := resolveParams(sub.Parameters, params)
-	if err := validateParamValues(fmt.Sprintf("sub_recipe %q", sub.Name), sub.Parameters, subParams); err != nil {
+	if err := validateParamValues(fmt.Sprintf("sub_agent %q", sub.Name), sub.Parameters, subParams); err != nil {
 		return nil, err
 	}
 
@@ -157,7 +178,7 @@ func buildSubAgent(sub *SubRecipeSpec, parentModel string, params map[string]any
 	if hasTemplateActions(instruction) {
 		rendered, err := renderTemplatePreservingUnknown(instruction, subParams)
 		if err != nil {
-			return nil, fmt.Errorf("sub_recipe %q: failed to render instruction: %w", sub.Name, err)
+			return nil, fmt.Errorf("sub_agent %q: failed to render instruction: %w", sub.Name, err)
 		}
 		instruction = rendered
 	}
@@ -172,24 +193,37 @@ func buildSubAgent(sub *SubRecipeSpec, parentModel string, params map[string]any
 
 	resolvedTools, err := resolveTools(sub.Tools, o)
 	if err != nil {
-		return nil, fmt.Errorf("sub_recipe %q: %w", sub.Name, err)
+		return nil, fmt.Errorf("sub_agent %q: %w", sub.Name, err)
 	}
 	if len(resolvedTools) > 0 {
 		agentOpts = append(agentOpts, blades.WithTools(resolvedTools...))
+	}
+
+	// Resolve middlewares
+	middlewares, err := resolveMiddlewares(sub.Middlewares, o)
+	if err != nil {
+		return nil, fmt.Errorf("sub_agent %q: %w", sub.Name, err)
+	}
+	if len(middlewares) > 0 {
+		agentOpts = append(agentOpts, blades.WithMiddleware(middlewares...))
 	}
 
 	agent, err := blades.NewAgent(sub.Name, agentOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return withPromptTemplate(agent, fmt.Sprintf("sub_recipe %q", sub.Name), sub.Prompt, subParams)
+	agent, err = withPromptTemplate(agent, fmt.Sprintf("sub_agent %q", sub.Name), sub.Prompt, subParams)
+	if err != nil {
+		return nil, err
+	}
+	return wrapWithContextManager(agent, sub.Context, modelName, o.modelRegistry)
 }
 
-// buildSequentialAgent creates a sequential flow from sub-recipes.
-func buildSequentialAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
-	subAgents := make([]blades.Agent, 0, len(spec.SubRecipes))
-	for i := range spec.SubRecipes {
-		agent, err := buildSubAgent(&spec.SubRecipes[i], spec.Model, params, o)
+// buildSequentialAgent creates a sequential flow from sub-agents.
+func buildSequentialAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
+	subAgents := make([]blades.Agent, 0, len(spec.SubAgents))
+	for i := range spec.SubAgents {
+		agent, err := buildSubAgent(&spec.SubAgents[i], spec.Model, params, o)
 		if err != nil {
 			return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}
@@ -202,11 +236,11 @@ func buildSequentialAgent(spec *RecipeSpec, params map[string]any, o *buildOptio
 	}), nil
 }
 
-// buildParallelAgent creates a parallel flow from sub-recipes.
-func buildParallelAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
-	subAgents := make([]blades.Agent, 0, len(spec.SubRecipes))
-	for i := range spec.SubRecipes {
-		agent, err := buildSubAgent(&spec.SubRecipes[i], spec.Model, params, o)
+// buildParallelAgent creates a parallel flow from sub-agents.
+func buildParallelAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
+	subAgents := make([]blades.Agent, 0, len(spec.SubAgents))
+	for i := range spec.SubAgents {
+		agent, err := buildSubAgent(&spec.SubAgents[i], spec.Model, params, o)
 		if err != nil {
 			return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}
@@ -219,17 +253,17 @@ func buildParallelAgent(spec *RecipeSpec, params map[string]any, o *buildOptions
 	}), nil
 }
 
-// buildToolAgent creates a parent agent with sub-recipes wrapped as tools.
-func buildToolAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
+// buildToolAgent creates a parent agent with sub-agents wrapped as tools.
+func buildToolAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
 	model, err := o.modelRegistry.Resolve(spec.Model)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build each sub-recipe as an agent, then wrap as a tool
-	agentTools := make([]tools.Tool, 0, len(spec.SubRecipes))
-	for i := range spec.SubRecipes {
-		subAgent, err := buildSubAgent(&spec.SubRecipes[i], spec.Model, params, o)
+	// Build each sub-agent as an agent, then wrap as a tool
+	agentTools := make([]tools.Tool, 0, len(spec.SubAgents))
+	for i := range spec.SubAgents {
+		subAgent, err := buildSubAgent(&spec.SubAgents[i], spec.Model, params, o)
 		if err != nil {
 			return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}
@@ -263,6 +297,15 @@ func buildToolAgent(spec *RecipeSpec, params map[string]any, o *buildOptions) (b
 		agentOpts = append(agentOpts, blades.WithMaxIterations(spec.MaxIterations))
 	}
 
+	// Resolve middlewares
+	middlewares, err := resolveMiddlewares(spec.Middlewares, o)
+	if err != nil {
+		return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
+	}
+	if len(middlewares) > 0 {
+		agentOpts = append(agentOpts, blades.WithMiddleware(middlewares...))
+	}
+
 	return blades.NewAgent(spec.Name, agentOpts...)
 }
 
@@ -281,6 +324,25 @@ func resolveTools(names []string, o *buildOptions) ([]tools.Tool, error) {
 			return nil, err
 		}
 		resolved = append(resolved, t)
+	}
+	return resolved, nil
+}
+
+// resolveMiddlewares resolves a list of MiddlewareSpec entries to blades.Middleware instances.
+func resolveMiddlewares(specs []MiddlewareSpec, o *buildOptions) ([]blades.Middleware, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	if o.middlewareRegistry == nil {
+		return nil, fmt.Errorf("middleware registry is required when middlewares are referenced")
+	}
+	resolved := make([]blades.Middleware, 0, len(specs))
+	for _, spec := range specs {
+		mw, err := o.middlewareRegistry.Resolve(spec.Name, spec.Options)
+		if err != nil {
+			return nil, err
+		}
+		resolved = append(resolved, mw)
 	}
 	return resolved, nil
 }

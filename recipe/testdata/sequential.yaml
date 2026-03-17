@@ -10,7 +10,7 @@ parameters:
     options: [go, python]
 instruction: Coordinate the review agents
 execution: sequential
-sub_recipes:
+sub_agents:
   - name: syntax-checker
     model: gpt-4o-mini
     instruction: Check {{.language}} code for syntax errors

@@ -72,17 +72,28 @@ func (t *mockTool) InputSchema() *jsonschema.Schema                    { return 
 func (t *mockTool) OutputSchema() *jsonschema.Schema                   { return nil }
 func (t *mockTool) Handle(_ context.Context, _ string) (string, error) { return "ok", nil }
 
-func newTestModelRegistry() *Registry {
-	r := NewRegistry()
+func newTestModelRegistry() *ModelRegistry {
+	r := NewModelRegistry()
 	r.Register("gpt-4o", &mockModel{name: "gpt-4o"})
 	r.Register("gpt-4o-mini", &mockModel{name: "gpt-4o-mini"})
 	r.Register("claude-sonnet", &mockModel{name: "claude-sonnet"})
 	return r
 }
 
-func newTestToolRegistry() *StaticToolRegistry {
-	r := NewStaticToolRegistry()
+func newTestToolRegistry() *ToolRegistry {
+	r := NewToolRegistry()
 	r.Register("web-search", &mockTool{name: "web-search"})
+	return r
+}
+
+func newTestMiddlewareRegistry() *MiddlewareRegistry {
+	r := NewMiddlewareRegistry()
+	r.Register("tracing", func(_ map[string]any) (blades.Middleware, error) {
+		return func(next blades.Handler) blades.Handler { return next }, nil
+	})
+	r.Register("logging", func(opts map[string]any) (blades.Middleware, error) {
+		return func(next blades.Handler) blades.Handler { return next }, nil
+	})
 	return r
 }
 
@@ -118,11 +129,11 @@ func TestParseSequentialYAML(t *testing.T) {
 	if spec.Execution != ExecutionSequential {
 		t.Errorf("expected execution %q, got %q", ExecutionSequential, spec.Execution)
 	}
-	if len(spec.SubRecipes) != 2 {
-		t.Fatalf("expected 2 sub_recipes, got %d", len(spec.SubRecipes))
+	if len(spec.SubAgents) != 2 {
+		t.Fatalf("expected 2 sub_agents, got %d", len(spec.SubAgents))
 	}
-	if spec.SubRecipes[0].OutputKey != "syntax_report" {
-		t.Errorf("expected output_key %q, got %q", "syntax_report", spec.SubRecipes[0].OutputKey)
+	if spec.SubAgents[0].OutputKey != "syntax_report" {
+		t.Errorf("expected output_key %q, got %q", "syntax_report", spec.SubAgents[0].OutputKey)
 	}
 }
 
@@ -134,8 +145,8 @@ func TestParseToolYAML(t *testing.T) {
 	if spec.Execution != ExecutionTool {
 		t.Errorf("expected execution %q, got %q", ExecutionTool, spec.Execution)
 	}
-	if len(spec.SubRecipes) != 2 {
-		t.Fatalf("expected 2 sub_recipes, got %d", len(spec.SubRecipes))
+	if len(spec.SubAgents) != 2 {
+		t.Fatalf("expected 2 sub_agents, got %d", len(spec.SubAgents))
 	}
 }
 
@@ -186,12 +197,12 @@ func TestValidateNoName(t *testing.T) {
 func TestValidateNoExecution(t *testing.T) {
 	_, err := LoadFromFile("testdata/invalid_no_execution.yaml")
 	if err == nil {
-		t.Fatal("expected validation error for missing execution with sub_recipes")
+		t.Fatal("expected validation error for missing execution with sub_agents")
 	}
 }
 
 func TestValidateSelectNoOptions(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "test",
 		Model:       "gpt-4o",
@@ -206,7 +217,7 @@ func TestValidateSelectNoOptions(t *testing.T) {
 }
 
 func TestValidateDuplicateParameter(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "test",
 		Model:       "gpt-4o",
@@ -222,7 +233,7 @@ func TestValidateDuplicateParameter(t *testing.T) {
 }
 
 func TestValidateParams(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "test",
 		Model:       "gpt-4o",
@@ -320,7 +331,7 @@ func TestHasTemplateActions(t *testing.T) {
 // --- Registry Tests ---
 
 func TestRegistry(t *testing.T) {
-	r := NewRegistry()
+	r := NewModelRegistry()
 	r.Register("test-model", &mockModel{name: "test-model"})
 
 	model, err := r.Resolve("test-model")
@@ -337,8 +348,8 @@ func TestRegistry(t *testing.T) {
 	}
 }
 
-func TestStaticToolRegistry(t *testing.T) {
-	r := NewStaticToolRegistry()
+func TestToolRegistry(t *testing.T) {
+	r := NewToolRegistry()
 	r.Register("my-tool", &mockTool{name: "my-tool"})
 
 	tool, err := r.Resolve("my-tool")
@@ -443,7 +454,7 @@ func TestBuildWithDefaults(t *testing.T) {
 }
 
 func TestBuildWithReferencedToolsRequiresToolRegistry(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "with-tools",
 		Model:       "gpt-4o",
@@ -458,10 +469,10 @@ func TestBuildWithReferencedToolsRequiresToolRegistry(t *testing.T) {
 
 func TestBuildResolvesExternalTools(t *testing.T) {
 	model := &captureRequestModel{name: "openai"}
-	modelRegistry := NewRegistry()
+	modelRegistry := NewModelRegistry()
 	modelRegistry.Register("openai", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "with-tools",
 		Model:       "openai",
@@ -484,7 +495,7 @@ func TestBuildResolvesExternalTools(t *testing.T) {
 }
 
 func TestBuildMissingModelRegistry(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "test",
 		Model:       "gpt-4o",
@@ -522,20 +533,20 @@ func TestBuildInvalidSelectParam(t *testing.T) {
 	}
 }
 
-func TestBuildToolModeIncludesSubRecipesAndExternalTools(t *testing.T) {
+func TestBuildToolModeIncludesSubAgentsAndExternalTools(t *testing.T) {
 	model := &captureRequestModel{name: "openai"}
-	modelRegistry := NewRegistry()
+	modelRegistry := NewModelRegistry()
 	modelRegistry.Register("openai", model)
 	modelRegistry.Register("worker-model", &mockModel{name: "worker-model"})
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "dispatcher",
 		Model:       "openai",
 		Instruction: "dispatch",
 		Execution:   ExecutionTool,
 		Tools:       []string{"web-search"},
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{Name: "fact-checker", Model: "worker-model", Instruction: "check"},
 			{Name: "data-analyst", Model: "worker-model", Instruction: "analyze"},
 		},
@@ -584,10 +595,10 @@ func TestBuildNilSpec(t *testing.T) {
 
 func TestBuildInjectsPromptAsInstruction(t *testing.T) {
 	model := &captureRequestModel{name: "openai"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("openai", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "prompted",
 		Model:       "openai",
@@ -620,10 +631,10 @@ func TestBuildInjectsPromptAsInstruction(t *testing.T) {
 
 func TestBuildInjectsSubRecipePromptAsInstruction(t *testing.T) {
 	model := &captureRequestModel{name: "m1"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m1", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "pipeline",
 		Model:       "m1",
@@ -632,7 +643,7 @@ func TestBuildInjectsSubRecipePromptAsInstruction(t *testing.T) {
 		Parameters: []ParameterSpec{
 			{Name: "language", Type: ParameterString, Required: ParameterRequired},
 		},
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{
 				Name:        "step-1",
 				Instruction: "check code",
@@ -656,12 +667,12 @@ func TestBuildInjectsSubRecipePromptAsInstruction(t *testing.T) {
 		t.Fatalf("unexpected user message: %q", got)
 	}
 	if !strings.Contains(model.instruction, "First focus on go code style.") {
-		t.Fatalf("expected instruction to contain sub-recipe prompt, got: %q", model.instruction)
+		t.Fatalf("expected instruction to contain sub-agent prompt, got: %q", model.instruction)
 	}
 }
 
 func TestBuildFailsWhenPromptRenderHasMissingParam(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "bad-prompt",
 		Model:       "gpt-4o",
@@ -675,13 +686,13 @@ func TestBuildFailsWhenPromptRenderHasMissingParam(t *testing.T) {
 }
 
 func TestBuildFailsWhenSubRecipePromptRenderHasMissingParam(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "bad-sub-prompt",
 		Model:       "gpt-4o",
 		Instruction: "instruction",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{
 				Name:        "step-1",
 				Instruction: "check",
@@ -691,18 +702,18 @@ func TestBuildFailsWhenSubRecipePromptRenderHasMissingParam(t *testing.T) {
 	}
 	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
 	if err == nil {
-		t.Fatal("expected sub-recipe prompt render error")
+		t.Fatal("expected sub-agent prompt render error")
 	}
 }
 
 func TestBuildSequentialRendersParamsAndPreservesOutputTemplate(t *testing.T) {
 	first := &captureRequestModel{name: "m1", response: "syntax-ok"}
 	second := &captureRequestModel{name: "m2", response: "done"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m1", first)
 	registry.Register("m2", second)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "pipeline",
 		Model:       "m1",
@@ -711,7 +722,7 @@ func TestBuildSequentialRendersParamsAndPreservesOutputTemplate(t *testing.T) {
 		Parameters: []ParameterSpec{
 			{Name: "language", Type: ParameterString, Required: ParameterRequired},
 		},
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{
 				Name:        "step-1",
 				Model:       "m1",
@@ -740,13 +751,13 @@ func TestBuildSequentialRendersParamsAndPreservesOutputTemplate(t *testing.T) {
 }
 
 func TestBuildValidatesSubRecipeParams(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "pipeline",
 		Model:       "gpt-4o",
 		Instruction: "pipeline",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{
 				Name:        "step-1",
 				Instruction: "style={{.style}}",
@@ -758,18 +769,18 @@ func TestBuildValidatesSubRecipeParams(t *testing.T) {
 	}
 	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
 	if err == nil {
-		t.Fatal("expected error for missing required sub-recipe param")
+		t.Fatal("expected error for missing required sub-agent param")
 	}
 }
 
 func TestValidateRejectsOutputKeyInToolMode(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "tool-mode",
 		Model:       "gpt-4o",
 		Instruction: "route",
 		Execution:   ExecutionTool,
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{
 				Name:        "worker",
 				Instruction: "do work",
@@ -791,7 +802,7 @@ func TestValidateNilSpec(t *testing.T) {
 }
 
 func TestValidateNoVersion(t *testing.T) {
-	spec := &RecipeSpec{Name: "x", Model: "m", Instruction: "i"}
+	spec := &AgentSpec{Name: "x", Model: "m", Instruction: "i"}
 	err := Validate(spec)
 	if err == nil {
 		t.Fatal("expected error for missing version")
@@ -802,7 +813,7 @@ func TestValidateNoVersion(t *testing.T) {
 }
 
 func TestValidateNoInstruction(t *testing.T) {
-	spec := &RecipeSpec{Version: "1.0", Name: "x", Model: "m"}
+	spec := &AgentSpec{Version: "1.0", Name: "x", Model: "m"}
 	err := Validate(spec)
 	if err == nil {
 		t.Fatal("expected error for missing instruction")
@@ -812,11 +823,11 @@ func TestValidateNoInstruction(t *testing.T) {
 	}
 }
 
-func TestValidateNoModelWithoutSubRecipes(t *testing.T) {
-	spec := &RecipeSpec{Version: "1.0", Name: "x", Instruction: "i"}
+func TestValidateNoModelWithoutSubAgents(t *testing.T) {
+	spec := &AgentSpec{Version: "1.0", Name: "x", Instruction: "i"}
 	err := Validate(spec)
 	if err == nil {
-		t.Fatal("expected error for missing model without sub_recipes")
+		t.Fatal("expected error for missing model without sub_agents")
 	}
 	if !strings.Contains(err.Error(), "model") {
 		t.Fatalf("error should mention model: %v", err)
@@ -824,7 +835,7 @@ func TestValidateNoModelWithoutSubRecipes(t *testing.T) {
 }
 
 func TestValidateInvalidExecutionMode(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -841,7 +852,7 @@ func TestValidateInvalidExecutionMode(t *testing.T) {
 }
 
 func TestValidateParameterNoType(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -854,7 +865,7 @@ func TestValidateParameterNoType(t *testing.T) {
 }
 
 func TestValidateParameterInvalidType(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -871,7 +882,7 @@ func TestValidateParameterInvalidType(t *testing.T) {
 }
 
 func TestValidateParameterNoName(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -884,45 +895,45 @@ func TestValidateParameterNoName(t *testing.T) {
 }
 
 func TestValidateSubRecipeNoName(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes:  []SubRecipeSpec{{Instruction: "sub"}},
+		SubAgents:   []SubAgentSpec{{Instruction: "sub"}},
 	}
 	err := Validate(spec)
 	if err == nil {
-		t.Fatal("expected error for sub_recipe without name")
+		t.Fatal("expected error for sub_agent without name")
 	}
-	if !strings.Contains(err.Error(), "sub_recipe[0]") {
+	if !strings.Contains(err.Error(), "sub_agent[0]") {
 		t.Fatalf("error should mention index: %v", err)
 	}
 }
 
 func TestValidateSubRecipeNoInstruction(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes:  []SubRecipeSpec{{Name: "s"}},
+		SubAgents:   []SubAgentSpec{{Name: "s"}},
 	}
 	if err := Validate(spec); err == nil {
-		t.Fatal("expected error for sub_recipe without instruction")
+		t.Fatal("expected error for sub_agent without instruction")
 	}
 }
 
 func TestValidateSubRecipeDuplicateParam(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{{
+		SubAgents: []SubAgentSpec{{
 			Name:        "s",
 			Instruction: "do",
 			Parameters: []ParameterSpec{
@@ -932,7 +943,7 @@ func TestValidateSubRecipeDuplicateParam(t *testing.T) {
 		}},
 	}
 	if err := Validate(spec); err == nil {
-		t.Fatal("expected error for duplicate sub_recipe parameter")
+		t.Fatal("expected error for duplicate sub_agent parameter")
 	}
 }
 
@@ -943,7 +954,7 @@ func TestValidateParamsNilSpec(t *testing.T) {
 }
 
 func TestValidateParamsSelectNonString(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -960,7 +971,7 @@ func TestValidateParamsSelectNonString(t *testing.T) {
 }
 
 func TestValidateParamsOptionalMissing(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -974,13 +985,13 @@ func TestValidateParamsOptionalMissing(t *testing.T) {
 
 func TestValidateAcceptsSequentialParallelTool(t *testing.T) {
 	for _, mode := range []ExecutionMode{ExecutionSequential, ExecutionParallel, ExecutionTool} {
-		spec := &RecipeSpec{
+		spec := &AgentSpec{
 			Version:     "1.0",
 			Name:        "x",
 			Model:       "m",
 			Instruction: "i",
 			Execution:   mode,
-			SubRecipes:  []SubRecipeSpec{{Name: "s", Instruction: "do"}},
+			SubAgents:   []SubAgentSpec{{Name: "s", Instruction: "do"}},
 		}
 		if err := Validate(spec); err != nil {
 			t.Errorf("mode %q should be valid: %v", mode, err)
@@ -1137,7 +1148,7 @@ func TestLoadFromFSInvalidContent(t *testing.T) {
 // --- Additional Registry Tests ---
 
 func TestRegistryOverwrite(t *testing.T) {
-	r := NewRegistry()
+	r := NewModelRegistry()
 	r.Register("m", &mockModel{name: "v1"})
 	r.Register("m", &mockModel{name: "v2"})
 	m, err := r.Resolve("m")
@@ -1149,8 +1160,8 @@ func TestRegistryOverwrite(t *testing.T) {
 	}
 }
 
-func TestStaticToolRegistryOverwrite(t *testing.T) {
-	r := NewStaticToolRegistry()
+func TestToolRegistryOverwrite(t *testing.T) {
+	r := NewToolRegistry()
 	r.Register("t", &mockTool{name: "v1"})
 	r.Register("t", &mockTool{name: "v2"})
 	tool, err := r.Resolve("t")
@@ -1165,13 +1176,13 @@ func TestStaticToolRegistryOverwrite(t *testing.T) {
 // --- Additional Build / Error Path Tests ---
 
 func TestBuildUnresolvableModel(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "nonexistent-model",
 		Instruction: "i",
 	}
-	_, err := Build(spec, WithModelRegistry(NewRegistry()))
+	_, err := Build(spec, WithModelRegistry(NewModelRegistry()))
 	if err == nil {
 		t.Fatal("expected error for unresolvable model")
 	}
@@ -1181,18 +1192,18 @@ func TestBuildUnresolvableModel(t *testing.T) {
 }
 
 func TestBuildSubRecipeNoModelAndNoParent(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{Name: "s", Instruction: "do"},
 		},
 	}
 	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
 	if err == nil {
-		t.Fatal("expected error when sub_recipe has no model and parent has no model")
+		t.Fatal("expected error when sub_agent has no model and parent has no model")
 	}
 	if !strings.Contains(err.Error(), "no model") {
 		t.Fatalf("error should mention model: %v", err)
@@ -1200,45 +1211,45 @@ func TestBuildSubRecipeNoModelAndNoParent(t *testing.T) {
 }
 
 func TestBuildSubRecipeUnresolvableModel(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "gpt-4o",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{Name: "s", Model: "nonexistent", Instruction: "do"},
 		},
 	}
 	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
 	if err == nil {
-		t.Fatal("expected error for unresolvable sub_recipe model")
+		t.Fatal("expected error for unresolvable sub_agent model")
 	}
 }
 
 func TestBuildSubRecipeUnresolvableTool(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "gpt-4o",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{Name: "s", Instruction: "do", Tools: []string{"missing-tool"}},
 		},
 	}
-	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()), WithToolRegistry(NewStaticToolRegistry()))
+	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()), WithToolRegistry(NewToolRegistry()))
 	if err == nil {
-		t.Fatal("expected error for unresolvable sub_recipe tool")
+		t.Fatal("expected error for unresolvable sub_agent tool")
 	}
 }
 
 func TestBuildSingleAgentVerifiesInstruction(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "reviewer",
 		Model:       "m",
@@ -1258,7 +1269,7 @@ func TestBuildSingleAgentVerifiesInstruction(t *testing.T) {
 }
 
 func TestBuildSingleAgentDescription(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Description: "my description",
@@ -1277,7 +1288,7 @@ func TestBuildSingleAgentDescription(t *testing.T) {
 func TestBuildSingleAgentMaxIterations(t *testing.T) {
 	// MaxIterations is not directly observable, but we can confirm
 	// the build succeeds with it set.
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:       "1.0",
 		Name:          "x",
 		Model:         "gpt-4o",
@@ -1295,10 +1306,10 @@ func TestBuildSingleAgentMaxIterations(t *testing.T) {
 
 func TestBuildSingleAgentOutputKey(t *testing.T) {
 	model := &captureRequestModel{name: "m", response: "hello world"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -1320,17 +1331,17 @@ func TestBuildSingleAgentOutputKey(t *testing.T) {
 }
 
 func TestBuildParallelAgentRunsSubAgents(t *testing.T) {
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m1", &mockModel{name: "m1"})
 	registry.Register("m2", &mockModel{name: "m2"})
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "par",
 		Model:       "m1",
 		Instruction: "parallel run",
 		Execution:   ExecutionParallel,
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{Name: "a", Model: "m1", Instruction: "do a", OutputKey: "out_a"},
 			{Name: "b", Model: "m2", Instruction: "do b", OutputKey: "out_b"},
 		},
@@ -1351,14 +1362,14 @@ func TestBuildParallelAgentRunsSubAgents(t *testing.T) {
 }
 
 func TestBuildToolAgentDescription(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "tool-agent",
 		Description: "routes tasks",
 		Model:       "gpt-4o",
 		Instruction: "route tasks",
 		Execution:   ExecutionTool,
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{Name: "w", Description: "worker desc", Instruction: "work"},
 		},
 	}
@@ -1376,7 +1387,7 @@ func TestBuildToolAgentDescription(t *testing.T) {
 func TestPromptInjectedAgentEmptyPrompt(t *testing.T) {
 	// When prompt is empty, the agent should pass through directly
 	model := &captureRequestModel{name: "m"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m", model)
 
 	base, err := blades.NewAgent("base", blades.WithModel(model), blades.WithInstruction("i"))
@@ -1396,10 +1407,10 @@ func TestPromptInjectedAgentEmptyPrompt(t *testing.T) {
 
 func TestPromptInjectedAgentNoPrompt(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -1421,10 +1432,10 @@ func TestPromptInjectedAgentNoPrompt(t *testing.T) {
 
 func TestPromptInjectedAgentWithNilMessage(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -1454,10 +1465,10 @@ func TestPromptInjectedAgentWithNilMessage(t *testing.T) {
 
 func TestE2ESingleAgentRun(t *testing.T) {
 	model := &captureRequestModel{name: "m", response: "reviewed!"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "reviewer",
 		Model:       "m",
@@ -1486,16 +1497,16 @@ func TestE2ESingleAgentRun(t *testing.T) {
 func TestE2ESequentialPipelineOutputKeyPropagation(t *testing.T) {
 	step1Model := &captureRequestModel{name: "s1", response: "analysis-result"}
 	step2Model := &captureRequestModel{name: "s2", response: "final-summary"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("s1", step1Model)
 	registry.Register("s2", step2Model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "pipeline",
 		Instruction: "coordinate",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{
 				Name:        "analyzer",
 				Model:       "s1",
@@ -1535,11 +1546,11 @@ func TestE2ESequentialPipelineOutputKeyPropagation(t *testing.T) {
 func TestE2EToolModeAgentRun(t *testing.T) {
 	model := &captureRequestModel{name: "m", response: "dispatched"}
 	workerModel := &mockModel{name: "w"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m", model)
 	registry.Register("w", workerModel)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "dispatcher",
 		Model:       "m",
@@ -1548,7 +1559,7 @@ func TestE2EToolModeAgentRun(t *testing.T) {
 		Parameters: []ParameterSpec{
 			{Name: "topic", Type: ParameterString, Required: ParameterRequired},
 		},
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{Name: "checker", Model: "w", Description: "check facts", Instruction: "verify"},
 		},
 	}
@@ -1573,10 +1584,10 @@ func TestE2EToolModeAgentRun(t *testing.T) {
 
 func TestE2EWithDefaultParamsNoUserOverride(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "defaults",
 		Model:       "m",
@@ -1600,10 +1611,10 @@ func TestE2EWithDefaultParamsNoUserOverride(t *testing.T) {
 
 func TestE2EWithDefaultParamsPartialOverride(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "defaults",
 		Model:       "m",
@@ -1627,18 +1638,18 @@ func TestE2EWithDefaultParamsPartialOverride(t *testing.T) {
 
 func TestBuildSequentialSubRecipeWithTools(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m", model)
-	toolRegistry := NewStaticToolRegistry()
+	toolRegistry := NewToolRegistry()
 	toolRegistry.Register("lint", &mockTool{name: "lint"})
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "pipeline",
 		Model:       "m",
 		Instruction: "coordinate",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{Name: "linter", Instruction: "lint code", Tools: []string{"lint"}},
 		},
 	}
@@ -1656,16 +1667,16 @@ func TestBuildSequentialSubRecipeWithTools(t *testing.T) {
 
 func TestBuildToolModeSubRecipeInheritsModel(t *testing.T) {
 	model := &captureRequestModel{name: "m"}
-	registry := NewRegistry()
+	registry := NewModelRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "router",
 		Model:       "m",
 		Instruction: "route",
 		Execution:   ExecutionTool,
-		SubRecipes: []SubRecipeSpec{
+		SubAgents: []SubAgentSpec{
 			{Name: "worker", Instruction: "work", Description: "does work"},
 		},
 	}
@@ -1705,6 +1716,382 @@ instruction: "val={{.x}}"
 	}
 }
 
-
 // Compile-time check that mockTool implements tools.Tool.
 var _ tools.Tool = (*mockTool)(nil)
+
+// --- ContextSpec Tests ---
+
+func TestContextSpecValidateUnknownStrategy(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "x",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Context:     &ContextSpec{Strategy: "noop"},
+	}
+	err := Validate(spec)
+	if err == nil || !strings.Contains(err.Error(), "unknown strategy") {
+		t.Fatalf("expected unknown strategy error, got: %v", err)
+	}
+}
+
+func TestContextSpecValidateMissingStrategy(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "x",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Context:     &ContextSpec{},
+	}
+	err := Validate(spec)
+	if err == nil || !strings.Contains(err.Error(), "strategy is required") {
+		t.Fatalf("expected strategy required error, got: %v", err)
+	}
+}
+
+func TestContextSpecValidateSummarizeNoModelRequired(t *testing.T) {
+	// model is optional for summarize; falls back to the agent's model at build time
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "x",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Context:     &ContextSpec{Strategy: ContextStrategySummarize},
+	}
+	if err := Validate(spec); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestContextSpecBuildSummarizeFallsBackToAgentModel(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "ctx-summarize-fallback",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Context: &ContextSpec{
+			Strategy:  ContextStrategySummarize,
+			MaxTokens: 80000,
+			// Model intentionally omitted — falls back to spec.Model ("gpt-4o")
+		},
+	}
+	agent, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	if _, ok := agent.(*contextAwareAgent); !ok {
+		t.Fatalf("expected *contextAwareAgent, got %T", agent)
+	}
+}
+
+func TestContextSpecValidateNegativeMaxTokens(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "x",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Context: &ContextSpec{
+			Strategy:  ContextStrategySummarize,
+			Model:     "gpt-4o-mini",
+			MaxTokens: -1,
+		},
+	}
+	err := Validate(spec)
+	if err == nil || !strings.Contains(err.Error(), "max_tokens must be") {
+		t.Fatalf("expected max_tokens error, got: %v", err)
+	}
+}
+
+func TestContextSpecBuildWithWindowStrategy(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "ctx-window",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Context: &ContextSpec{
+			Strategy:    ContextStrategyWindow,
+			MaxTokens:   8000,
+			MaxMessages: 50,
+		},
+	}
+	agent, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	if _, ok := agent.(*contextAwareAgent); !ok {
+		t.Fatalf("expected *contextAwareAgent, got %T", agent)
+	}
+	if agent.Name() != "ctx-window" {
+		t.Fatalf("unexpected name: %q", agent.Name())
+	}
+}
+
+func TestContextSpecBuildWithSummarizeStrategy(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "ctx-summarize",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Context: &ContextSpec{
+			Strategy:   ContextStrategySummarize,
+			MaxTokens:  80000,
+			KeepRecent: 10,
+			BatchSize:  20,
+			Model:      "gpt-4o-mini",
+		},
+	}
+	agent, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	if _, ok := agent.(*contextAwareAgent); !ok {
+		t.Fatalf("expected *contextAwareAgent, got %T", agent)
+	}
+}
+
+func TestContextSpecBuildWithNoContext(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "no-ctx",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+	}
+	agent, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	if _, ok := agent.(*contextAwareAgent); ok {
+		t.Fatalf("expected plain agent, got *contextAwareAgent")
+	}
+}
+
+func TestContextSpecBuildSubAgentWithContext(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "parent",
+		Model:       "gpt-4o",
+		Instruction: "orchestrate",
+		Execution:   ExecutionSequential,
+		SubAgents: []SubAgentSpec{
+			{
+				Name:        "worker",
+				Instruction: "do work",
+				Context: &ContextSpec{
+					Strategy:    ContextStrategyWindow,
+					MaxMessages: 20,
+				},
+			},
+		},
+	}
+	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+}
+
+func TestContextSpecValidateSubAgentUnknownStrategy(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "parent",
+		Model:       "gpt-4o",
+		Instruction: "orchestrate",
+		Execution:   ExecutionSequential,
+		SubAgents: []SubAgentSpec{
+			{
+				Name:        "worker",
+				Instruction: "do work",
+				Context:     &ContextSpec{Strategy: "bad"},
+			},
+		},
+	}
+	err := Validate(spec)
+	if err == nil || !strings.Contains(err.Error(), "unknown strategy") {
+		t.Fatalf("expected unknown strategy error, got: %v", err)
+	}
+}
+
+func TestContextSpecYAMLRoundTrip(t *testing.T) {
+	yamlDoc := `
+version: "1.0"
+name: yaml-ctx
+model: gpt-4o
+instruction: "do something"
+context:
+  strategy: summarize
+  max_tokens: 80000
+  keep_recent: 10
+  batch_size: 20
+  model: gpt-4o-mini
+`
+	spec, err := Parse([]byte(yamlDoc))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if spec.Context == nil {
+		t.Fatal("expected non-nil Context")
+	}
+	if spec.Context.Strategy != ContextStrategySummarize {
+		t.Fatalf("expected summarize, got %q", spec.Context.Strategy)
+	}
+	if spec.Context.MaxTokens != 80000 {
+		t.Fatalf("expected 80000, got %d", spec.Context.MaxTokens)
+	}
+	if spec.Context.KeepRecent != 10 {
+		t.Fatalf("expected 10, got %d", spec.Context.KeepRecent)
+	}
+	if spec.Context.BatchSize != 20 {
+		t.Fatalf("expected 20, got %d", spec.Context.BatchSize)
+	}
+	if spec.Context.Model != "gpt-4o-mini" {
+		t.Fatalf("expected gpt-4o-mini, got %q", spec.Context.Model)
+	}
+	agent, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	if _, ok := agent.(*contextAwareAgent); !ok {
+		t.Fatalf("expected *contextAwareAgent, got %T", agent)
+	}
+}
+
+// --- MiddlewareSpec Tests ---
+
+func TestMiddlewareSpecBuildAppliesMiddlewares(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "mw-agent",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Middlewares: []MiddlewareSpec{
+			{Name: "tracing"},
+			{Name: "logging", Options: map[string]any{"level": "info"}},
+		},
+	}
+	_, err := Build(spec,
+		WithModelRegistry(newTestModelRegistry()),
+		WithMiddlewareRegistry(newTestMiddlewareRegistry()),
+	)
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+}
+
+func TestMiddlewareSpecBuildMissingRegistry(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "mw-agent",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Middlewares: []MiddlewareSpec{{Name: "tracing"}},
+	}
+	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	if err == nil || !strings.Contains(err.Error(), "middleware registry is required") {
+		t.Fatalf("expected registry required error, got: %v", err)
+	}
+}
+
+func TestMiddlewareSpecBuildUnknownMiddleware(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "mw-agent",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Middlewares: []MiddlewareSpec{{Name: "unknown"}},
+	}
+	_, err := Build(spec,
+		WithModelRegistry(newTestModelRegistry()),
+		WithMiddlewareRegistry(newTestMiddlewareRegistry()),
+	)
+	if err == nil || !strings.Contains(err.Error(), `"unknown"`) {
+		t.Fatalf("expected unknown middleware error, got: %v", err)
+	}
+}
+
+func TestMiddlewareSpecValidateEmptyName(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "x",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Middlewares: []MiddlewareSpec{{Name: ""}},
+	}
+	err := Validate(spec)
+	if err == nil || !strings.Contains(err.Error(), "name is required") {
+		t.Fatalf("expected name required error, got: %v", err)
+	}
+}
+
+func TestMiddlewareSpecValidateDuplicateName(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "x",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Middlewares: []MiddlewareSpec{{Name: "tracing"}, {Name: "tracing"}},
+	}
+	err := Validate(spec)
+	if err == nil || !strings.Contains(err.Error(), "duplicate middleware") {
+		t.Fatalf("expected duplicate error, got: %v", err)
+	}
+}
+
+func TestMiddlewareSpecSubAgentMiddleware(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "parent",
+		Model:       "gpt-4o",
+		Instruction: "orchestrate",
+		Execution:   ExecutionSequential,
+		SubAgents: []SubAgentSpec{
+			{
+				Name:        "worker",
+				Instruction: "do work",
+				Middlewares: []MiddlewareSpec{{Name: "logging", Options: map[string]any{"level": "debug"}}},
+			},
+		},
+	}
+	_, err := Build(spec,
+		WithModelRegistry(newTestModelRegistry()),
+		WithMiddlewareRegistry(newTestMiddlewareRegistry()),
+	)
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+}
+
+func TestMiddlewareSpecYAMLRoundTrip(t *testing.T) {
+	yamlDoc := `
+version: "1.0"
+name: yaml-mw
+model: gpt-4o
+instruction: "do something"
+middlewares:
+  - name: tracing
+  - name: logging
+    options:
+      level: info
+`
+	spec, err := Parse([]byte(yamlDoc))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(spec.Middlewares) != 2 {
+		t.Fatalf("expected 2 middlewares, got %d", len(spec.Middlewares))
+	}
+	if spec.Middlewares[0].Name != "tracing" {
+		t.Fatalf("expected tracing, got %q", spec.Middlewares[0].Name)
+	}
+	if spec.Middlewares[1].Name != "logging" {
+		t.Fatalf("expected logging, got %q", spec.Middlewares[1].Name)
+	}
+	if spec.Middlewares[1].Options["level"] != "info" {
+		t.Fatalf("expected level=info, got %v", spec.Middlewares[1].Options["level"])
+	}
+	_, err = Build(spec,
+		WithModelRegistry(newTestModelRegistry()),
+		WithMiddlewareRegistry(newTestMiddlewareRegistry()),
+	)
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+}
