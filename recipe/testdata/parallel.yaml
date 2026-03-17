@@ -10,7 +10,7 @@ parameters:
     options: [go, python]
 instruction: Coordinate parallel reviews
 execution: parallel
-sub_recipes:
+sub_agents:
   - name: security-reviewer
     instruction: Check {{.language}} code for security issues
     output_key: security_report

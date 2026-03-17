@@ -21,11 +21,11 @@ func Validate(spec *AgentSpec) error {
 	if spec.Instruction == "" && spec.Execution != ExecutionSequential && spec.Execution != ExecutionParallel {
 		return fmt.Errorf("recipe: instruction is required")
 	}
-	if len(spec.SubRecipes) == 0 && spec.Model == "" {
-		return fmt.Errorf("recipe: model is required when there are no sub_recipes")
+	if len(spec.SubAgents) == 0 && spec.Model == "" {
+		return fmt.Errorf("recipe: model is required when there are no sub_agents")
 	}
-	if len(spec.SubRecipes) > 0 && spec.Execution == "" {
-		return fmt.Errorf("recipe: execution mode is required when sub_recipes are defined")
+	if len(spec.SubAgents) > 0 && spec.Execution == "" {
+		return fmt.Errorf("recipe: execution mode is required when sub_agents are defined")
 	}
 	if spec.Execution != "" && spec.Execution != ExecutionSequential &&
 		spec.Execution != ExecutionParallel && spec.Execution != ExecutionTool {
@@ -47,13 +47,16 @@ func Validate(spec *AgentSpec) error {
 	if err := validateParameters(spec.Parameters); err != nil {
 		return fmt.Errorf("recipe %q: %w", spec.Name, err)
 	}
+	if err := validateContextSpec(spec.Context); err != nil {
+		return fmt.Errorf("recipe %q: context: %w", spec.Name, err)
+	}
 	toolNames, err := validateToolNames(fmt.Sprintf("recipe %q", spec.Name), spec.Tools)
 	if err != nil {
 		return err
 	}
-	subNames := make(map[string]bool, len(spec.SubRecipes))
-	for i := range spec.SubRecipes {
-		sub := &spec.SubRecipes[i]
+	subNames := make(map[string]bool, len(spec.SubAgents))
+	for i := range spec.SubAgents {
+		sub := &spec.SubAgents[i]
 		if err := validateSubRecipe(sub, i); err != nil {
 			return fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}
@@ -72,6 +75,26 @@ func Validate(spec *AgentSpec) error {
 			spec.Model == "" && sub.Model == "" {
 			return fmt.Errorf("recipe %q: sub_recipe %q: model is required when parent has no model", spec.Name, sub.Name)
 		}
+	}
+	return nil
+}
+
+func validateContextSpec(spec *ContextSpec) error {
+	if spec == nil {
+		return nil
+	}
+	switch spec.Strategy {
+	case ContextStrategySummarize:
+		// model is optional; falls back to the agent's model at build time
+	case ContextStrategyWindow:
+		// max_tokens and/or max_messages are optional but at least one is expected
+	case "":
+		return fmt.Errorf("strategy is required")
+	default:
+		return fmt.Errorf("unknown strategy %q (must be %q or %q)", spec.Strategy, ContextStrategySummarize, ContextStrategyWindow)
+	}
+	if spec.MaxTokens < 0 {
+		return fmt.Errorf("max_tokens must be >= 0")
 	}
 	return nil
 }
@@ -120,6 +143,9 @@ func validateSubRecipe(sub *SubAgentSpec, index int) error {
 	}
 	if _, err := validateToolNames(fmt.Sprintf("sub_recipe %q", sub.Name), sub.Tools); err != nil {
 		return err
+	}
+	if err := validateContextSpec(sub.Context); err != nil {
+		return fmt.Errorf("sub_recipe %q: context: %w", sub.Name, err)
 	}
 	return nil
 }

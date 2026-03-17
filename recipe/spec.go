@@ -30,6 +30,49 @@ const (
 	ParameterOptional ParameterRequirement = "optional"
 )
 
+// ContextStrategy defines the context management strategy for an agent.
+type ContextStrategy string
+
+const (
+	// ContextStrategySummarize compresses old messages using an LLM-based rolling summary.
+	ContextStrategySummarize ContextStrategy = "summarize"
+	// ContextStrategyWindow truncates oldest messages to stay within a token or message budget.
+	ContextStrategyWindow ContextStrategy = "window"
+)
+
+// ContextSpec configures the context window management for an agent.
+// It maps to either a summarizing or a sliding-window ContextManager.
+//
+// Example (summarize):
+//
+//	context:
+//	  strategy: summarize
+//	  max_tokens: 80000
+//	  keep_recent: 10
+//	  batch_size: 20
+//	  model: gpt-4o-mini
+//
+// Example (window):
+//
+//	context:
+//	  strategy: window
+//	  max_tokens: 80000
+//	  max_messages: 100
+type ContextSpec struct {
+	// Strategy selects the implementation: "summarize" or "window".
+	Strategy ContextStrategy `yaml:"strategy"`
+	// MaxTokens is the token budget. When exceeded, old messages are compressed or dropped.
+	MaxTokens int64 `yaml:"max_tokens,omitempty"`
+	// KeepRecent is the number of recent messages always kept verbatim (summarize only, default 10).
+	KeepRecent int `yaml:"keep_recent,omitempty"`
+	// BatchSize is the number of messages summarized per compression pass (summarize only, default 20).
+	BatchSize int `yaml:"batch_size,omitempty"`
+	// MaxMessages is the maximum number of messages to retain (window only).
+	MaxMessages int `yaml:"max_messages,omitempty"`
+	// Model is the model name used for summarization (summarize strategy only).
+	Model string `yaml:"model,omitempty"`
+}
+
 // AgentSpec is the top-level declarative specification for a recipe.
 // A recipe YAML file is parsed into this structure and then built into a blades.Agent.
 type AgentSpec struct {
@@ -40,11 +83,12 @@ type AgentSpec struct {
 	Instruction   string          `yaml:"instruction"`
 	Prompt        string          `yaml:"prompt,omitempty"`
 	Parameters    []ParameterSpec `yaml:"parameters,omitempty"`
-	SubRecipes    []SubAgentSpec `yaml:"sub_recipes,omitempty"`
+	SubAgents    []SubAgentSpec  `yaml:"sub_agents,omitempty"`
 	Execution     ExecutionMode   `yaml:"execution,omitempty"`
 	Tools         []string        `yaml:"tools,omitempty"`
 	OutputKey     string          `yaml:"output_key,omitempty"`
 	MaxIterations int             `yaml:"max_iterations,omitempty"`
+	Context       *ContextSpec    `yaml:"context,omitempty"`
 }
 
 // SubAgentSpec defines a child agent within a recipe.
@@ -58,6 +102,7 @@ type SubAgentSpec struct {
 	Tools         []string        `yaml:"tools,omitempty"`
 	OutputKey     string          `yaml:"output_key,omitempty"`
 	MaxIterations int             `yaml:"max_iterations,omitempty"`
+	Context       *ContextSpec    `yaml:"context,omitempty"`
 }
 
 // ParameterSpec defines a configurable parameter for a recipe.

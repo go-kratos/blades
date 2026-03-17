@@ -51,12 +51,12 @@ output, _ := runner.Run(ctx, blades.UserMessage("Review this code: ..."))
 | `version` | string | 是 | 版本号，当前为 `"1.0"` |
 | `name` | string | 是 | Recipe 名称，也是构建出的 Agent 名称 |
 | `description` | string | 否 | 描述信息 |
-| `model` | string | 视情况 | 注册表中的模型名。无 sub_recipes 或 tool 模式时必填 |
+| `model` | string | 视情况 | 注册表中的模型名。无 sub_agents 或 tool 模式时必填 |
 | `instruction` | string | 视情况 | 系统提示词模版。sequential/parallel 模式可省略 |
 | `prompt` | string | 否 | 初始用户消息模版，构建时会作为第一条 user message 注入 |
 | `parameters` | list | 否 | 参数定义，见[参数配置](#参数配置) |
-| `execution` | string | 有 sub_recipes 时必填 | 执行模式：`sequential` / `parallel` / `tool` |
-| `sub_recipes` | list | 否 | 子配方列表，见[子配方](#子配方) |
+| `execution` | string | 有 sub_agents 时必填 | 执行模式：`sequential` / `parallel` / `tool` |
+| `sub_agents` | list | 否 | 子配方列表，见[子配方](#子配方) |
 | `tools` | list | 否 | 外部工具名列表，需通过 `ToolRegistry` 注册 |
 | `output_key` | string | 否 | 将输出写入 session state 的 key。`sequential` / `parallel` 模式不支持 |
 | `max_iterations` | int | 否 | Agent 最大迭代次数。`sequential` / `parallel` 模式不支持 |
@@ -95,10 +95,10 @@ recipe.Build(spec,
 
 ### 子配方
 
-子配方定义在 `sub_recipes` 中，每个子配方会被构建为一个独立的 Agent。
+子配方定义在 `sub_agents` 中，每个子配方会被构建为一个独立的 Agent。
 
 ```yaml
-sub_recipes:
+sub_agents:
   - name: step-name
     description: 这个步骤做什么
     model: gpt-4o-mini    # 可选，不填则继承父级 model
@@ -137,7 +137,7 @@ parameters:
     type: select
     required: required
     options: [go, python]
-sub_recipes:
+sub_agents:
   - name: syntax-checker
     instruction: |
       Check the {{.language}} code for syntax errors.
@@ -158,7 +158,7 @@ version: "1.0"
 name: multi-review
 model: gpt-4o
 execution: parallel
-sub_recipes:
+sub_agents:
   - name: security-review
     instruction: Check for security vulnerabilities.
     output_key: security_report
@@ -187,7 +187,7 @@ instruction: |
 tools:
   - extract-emails
 execution: tool
-sub_recipes:
+sub_agents:
   - name: fact-checker
     description: Verify claims and provide citations
     instruction: |
@@ -236,7 +236,7 @@ registry.Register("claude-sonnet", anthropic.NewModel("claude-sonnet-4-5-2025051
 
 ```yaml
 model: gpt-4o                    # 父级默认模型
-sub_recipes:
+sub_agents:
   - name: fast-step
     model: gpt-4o-mini            # 用便宜的小模型
     instruction: ...

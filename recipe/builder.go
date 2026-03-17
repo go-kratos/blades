@@ -62,7 +62,7 @@ func Build(spec *AgentSpec, opts ...BuildOption) (blades.Agent, error) {
 		agent blades.Agent
 		err   error
 	)
-	if len(spec.SubRecipes) == 0 {
+	if len(spec.SubAgents) == 0 {
 		agent, err = buildSingleAgent(spec, params, o)
 	} else {
 		// With sub-recipes: build based on execution mode
@@ -120,7 +120,11 @@ func buildSingleAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (
 		agentOpts = append(agentOpts, blades.WithTools(resolvedTools...))
 	}
 
-	return blades.NewAgent(spec.Name, agentOpts...)
+	agent, err := blades.NewAgent(spec.Name, agentOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return wrapWithContextManager(agent, spec.Context, spec.Model, o.modelRegistry)
 }
 
 // buildSubAgent creates a blades.Agent from a SubAgentSpec.
@@ -182,14 +186,18 @@ func buildSubAgent(sub *SubAgentSpec, parentModel string, params map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	return withPromptTemplate(agent, fmt.Sprintf("sub_recipe %q", sub.Name), sub.Prompt, subParams)
+	agent, err = withPromptTemplate(agent, fmt.Sprintf("sub_recipe %q", sub.Name), sub.Prompt, subParams)
+	if err != nil {
+		return nil, err
+	}
+	return wrapWithContextManager(agent, sub.Context, modelName, o.modelRegistry)
 }
 
 // buildSequentialAgent creates a sequential flow from sub-recipes.
 func buildSequentialAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
-	subAgents := make([]blades.Agent, 0, len(spec.SubRecipes))
-	for i := range spec.SubRecipes {
-		agent, err := buildSubAgent(&spec.SubRecipes[i], spec.Model, params, o)
+	subAgents := make([]blades.Agent, 0, len(spec.SubAgents))
+	for i := range spec.SubAgents {
+		agent, err := buildSubAgent(&spec.SubAgents[i], spec.Model, params, o)
 		if err != nil {
 			return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}
@@ -204,9 +212,9 @@ func buildSequentialAgent(spec *AgentSpec, params map[string]any, o *buildOption
 
 // buildParallelAgent creates a parallel flow from sub-recipes.
 func buildParallelAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
-	subAgents := make([]blades.Agent, 0, len(spec.SubRecipes))
-	for i := range spec.SubRecipes {
-		agent, err := buildSubAgent(&spec.SubRecipes[i], spec.Model, params, o)
+	subAgents := make([]blades.Agent, 0, len(spec.SubAgents))
+	for i := range spec.SubAgents {
+		agent, err := buildSubAgent(&spec.SubAgents[i], spec.Model, params, o)
 		if err != nil {
 			return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}
@@ -227,9 +235,9 @@ func buildToolAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (bl
 	}
 
 	// Build each sub-recipe as an agent, then wrap as a tool
-	agentTools := make([]tools.Tool, 0, len(spec.SubRecipes))
-	for i := range spec.SubRecipes {
-		subAgent, err := buildSubAgent(&spec.SubRecipes[i], spec.Model, params, o)
+	agentTools := make([]tools.Tool, 0, len(spec.SubAgents))
+	for i := range spec.SubAgents {
+		subAgent, err := buildSubAgent(&spec.SubAgents[i], spec.Model, params, o)
 		if err != nil {
 			return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
 		}

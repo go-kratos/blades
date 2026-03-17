@@ -51,12 +51,12 @@ output, _ := runner.Run(ctx, blades.UserMessage("Review this code: ..."))
 | `version` | string | Yes | Version number, currently `"1.0"` |
 | `name` | string | Yes | Recipe name, becomes the Agent name |
 | `description` | string | No | Description |
-| `model` | string | Conditional | Model name in the registry. Required when no sub_recipes or in tool mode |
+| `model` | string | Conditional | Model name in the registry. Required when no sub_agents or in tool mode |
 | `instruction` | string | Conditional | System prompt template. Optional in sequential/parallel mode |
 | `prompt` | string | No | Initial user message template, injected as the first user message |
 | `parameters` | list | No | Parameter definitions, see [Parameters](#parameters) |
-| `execution` | string | When sub_recipes exist | Execution mode: `sequential` / `parallel` / `tool` |
-| `sub_recipes` | list | No | Sub-recipe list, see [Sub-recipes](#sub-recipes) |
+| `execution` | string | When sub_agents exist | Execution mode: `sequential` / `parallel` / `tool` |
+| `sub_agents` | list | No | Sub-recipe list, see [Sub-recipes](#sub-recipes) |
 | `tools` | list | No | External tool names, must be registered via `ToolRegistry` |
 | `output_key` | string | No | Key to store output in session state. Not supported in `sequential` / `parallel` mode |
 | `max_iterations` | int | No | Max agent iterations. Not supported in `sequential` / `parallel` mode |
@@ -95,10 +95,10 @@ recipe.Build(spec,
 
 ### Sub-recipes
 
-Sub-recipes are defined under `sub_recipes`. Each one is built into an independent Agent.
+Sub-recipes are defined under `sub_agents`. Each one is built into an independent Agent.
 
 ```yaml
-sub_recipes:
+sub_agents:
   - name: step-name
     description: What this step does
     model: gpt-4o-mini    # optional, inherits parent model if omitted
@@ -137,7 +137,7 @@ parameters:
     type: select
     required: required
     options: [go, python]
-sub_recipes:
+sub_agents:
   - name: syntax-checker
     instruction: |
       Check the {{.language}} code for syntax errors.
@@ -158,7 +158,7 @@ version: "1.0"
 name: multi-review
 model: gpt-4o
 execution: parallel
-sub_recipes:
+sub_agents:
   - name: security-review
     instruction: Check for security vulnerabilities.
     output_key: security_report
@@ -187,7 +187,7 @@ instruction: |
 tools:
   - extract-emails
 execution: tool
-sub_recipes:
+sub_agents:
   - name: fact-checker
     description: Verify claims and provide citations
     instruction: |
@@ -236,7 +236,7 @@ Sub-recipes without a `model` field inherit the parent model. Different sub-reci
 
 ```yaml
 model: gpt-4o                    # parent default
-sub_recipes:
+sub_agents:
   - name: fast-step
     model: gpt-4o-mini            # cheaper model
     instruction: ...
