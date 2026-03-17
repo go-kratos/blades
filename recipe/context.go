@@ -10,9 +10,9 @@ import (
 	"github.com/go-kratos/blades/context/window"
 )
 
-// buildContextManager constructs a blades.ContextManager from a ContextSpec.
+// buildCompressor constructs a blades.Compressor from a ContextSpec.
 // fallbackModelName is used as the summarizer model when ContextSpec.Model is empty.
-func buildContextManager(spec *ContextSpec, reg ModelResolver, fallbackModelName string) (blades.ContextManager, error) {
+func buildCompressor(spec *ContextSpec, reg ModelResolver, fallbackModelName string) (blades.Compressor, error) {
 	if spec == nil {
 		return nil, nil
 	}
@@ -39,7 +39,7 @@ func buildContextManager(spec *ContextSpec, reg ModelResolver, fallbackModelName
 			}
 			opts = append(opts, summary.WithSummarizer(model))
 		}
-		return summary.NewContextManager(opts...), nil
+		return summary.NewCompressor(opts...), nil
 
 	case ContextStrategyWindow:
 		opts := []window.Option{}
@@ -49,36 +49,39 @@ func buildContextManager(spec *ContextSpec, reg ModelResolver, fallbackModelName
 		if spec.MaxMessages > 0 {
 			opts = append(opts, window.WithMaxMessages(spec.MaxMessages))
 		}
-		return window.NewContextManager(opts...), nil
+		return window.NewCompressor(opts...), nil
 
 	default:
 		return nil, fmt.Errorf("recipe: unknown context strategy %q", spec.Strategy)
 	}
 }
 
-// contextAwareAgent wraps a blades.Agent and injects a ContextManager into
-// the execution context before each run, enabling per-agent context strategies
-// independently of any Runner-level ContextManager.
-type contextAwareAgent struct {
+// compressorAwareAgent wraps a blades.Agent and overrides the session's
+// Compressor for the duration of the run, enabling per-agent context strategies
+// independently of any session-level Compressor.
+type compressorAwareAgent struct {
 	blades.Agent
-	cm blades.ContextManager
+	compressor blades.Compressor
 }
 
-func (a *contextAwareAgent) Run(ctx context.Context, inv *blades.Invocation) iter.Seq2[*blades.Message, error] {
-	ctx = blades.NewContextManagerContext(ctx, a.cm)
+func (a *compressorAwareAgent) Run(ctx context.Context, inv *blades.Invocation) iter.Seq2[*blades.Message, error] {
+	if session, ok := blades.FromSessionContext(ctx); ok {
+		wrapped := blades.NewSessionWithCompressor(session, a.compressor)
+		ctx = blades.NewSessionContext(ctx, wrapped)
+	}
 	return a.Agent.Run(ctx, inv)
 }
 
-// wrapWithContextManager wraps agent with a contextAwareAgent when spec is non-nil.
+// wrapWithCompressor wraps agent with a compressorAwareAgent when spec is non-nil.
 // Returns the original agent unchanged when spec is nil.
 // fallbackModelName is used as the summarizer model when ContextSpec.Model is empty.
-func wrapWithContextManager(agent blades.Agent, spec *ContextSpec, fallbackModelName string, reg ModelResolver) (blades.Agent, error) {
+func wrapWithCompressor(agent blades.Agent, spec *ContextSpec, fallbackModelName string, reg ModelResolver) (blades.Agent, error) {
 	if spec == nil {
 		return agent, nil
 	}
-	cm, err := buildContextManager(spec, reg, fallbackModelName)
+	c, err := buildCompressor(spec, reg, fallbackModelName)
 	if err != nil {
 		return nil, err
 	}
-	return &contextAwareAgent{Agent: agent, cm: cm}, nil
+	return &compressorAwareAgent{Agent: agent, compressor: c}, nil
 }

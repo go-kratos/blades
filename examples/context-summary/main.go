@@ -10,7 +10,7 @@ import (
 	"github.com/go-kratos/blades/contrib/openai"
 )
 
-// This example demonstrates the summary ContextManager, which compresses old
+// This example demonstrates the summary Compressor, which compresses old
 // conversation history into a rolling LLM-generated summary whenever the
 // token budget is exceeded. The most recent messages are always kept verbatim,
 // while earlier ones are folded into a concise summary, giving the model a
@@ -22,7 +22,7 @@ func main() {
 
 	// Use the same model as both the main agent and the summarizer.
 	// In production you might use a cheaper/faster model for summarization.
-	contextManager := summary.NewContextManager(
+	compressor := summary.NewCompressor(
 		summary.WithSummarizer(model),
 		// Trigger compression once the context exceeds ~500 tokens.
 		summary.WithMaxTokens(500),
@@ -42,10 +42,8 @@ func main() {
 	}
 
 	ctx := context.Background()
-	session := blades.NewSession()
-	runner := blades.NewRunner(
-		agent, blades.WithContextManager(contextManager),
-	)
+	session := blades.NewSession(blades.WithCompressor(compressor))
+	runner := blades.NewRunner(agent)
 
 	turns := []string{
 		"Tell me a one-sentence fact about the Sun.",

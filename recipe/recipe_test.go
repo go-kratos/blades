@@ -1779,8 +1779,8 @@ func TestContextSpecBuildSummarizeFallsBackToAgentModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if _, ok := agent.(*contextAwareAgent); !ok {
-		t.Fatalf("expected *contextAwareAgent, got %T", agent)
+	if _, ok := agent.(*compressorAwareAgent); !ok {
+		t.Fatalf("expected *compressorAwareAgent, got %T", agent)
 	}
 }
 
@@ -1818,8 +1818,8 @@ func TestContextSpecBuildWithWindowStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if _, ok := agent.(*contextAwareAgent); !ok {
-		t.Fatalf("expected *contextAwareAgent, got %T", agent)
+	if _, ok := agent.(*compressorAwareAgent); !ok {
+		t.Fatalf("expected *compressorAwareAgent, got %T", agent)
 	}
 	if agent.Name() != "ctx-window" {
 		t.Fatalf("unexpected name: %q", agent.Name())
@@ -1844,8 +1844,8 @@ func TestContextSpecBuildWithSummarizeStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if _, ok := agent.(*contextAwareAgent); !ok {
-		t.Fatalf("expected *contextAwareAgent, got %T", agent)
+	if _, ok := agent.(*compressorAwareAgent); !ok {
+		t.Fatalf("expected *compressorAwareAgent, got %T", agent)
 	}
 }
 
@@ -1860,8 +1860,8 @@ func TestContextSpecBuildWithNoContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if _, ok := agent.(*contextAwareAgent); ok {
-		t.Fatalf("expected plain agent, got *contextAwareAgent")
+	if _, ok := agent.(*compressorAwareAgent); ok {
+		t.Fatalf("expected plain agent, got *compressorAwareAgent")
 	}
 }
 
@@ -1949,8 +1949,8 @@ context:
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if _, ok := agent.(*contextAwareAgent); !ok {
-		t.Fatalf("expected *contextAwareAgent, got %T", agent)
+	if _, ok := agent.(*compressorAwareAgent); !ok {
+		t.Fatalf("expected *compressorAwareAgent, got %T", agent)
 	}
 }
 

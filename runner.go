@@ -40,20 +40,9 @@ type RunOptions struct {
 // RunnerOption configures a Runner at construction time.
 type RunnerOption func(*Runner)
 
-// WithContextManager sets a Manager that is applied before each model
-// call across all agents executed by this Runner. It is injected into the
-// execution context so every agent in the pipeline (including loop sub-agents)
-// benefits without per-agent configuration.
-func WithContextManager(contextManager ContextManager) RunnerOption {
-	return func(r *Runner) {
-		r.contextManager = contextManager
-	}
-}
-
 // Runner is responsible for executing a Runnable agent within a session context.
 type Runner struct {
-	rootAgent      Agent
-	contextManager ContextManager
+	rootAgent Agent
 }
 
 // NewRunner creates a new Runner with the given agent and options.
@@ -112,9 +101,6 @@ func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (
 		return nil, err
 	}
 	runCtx := NewSessionContext(ctx, o.Session)
-	if r.contextManager != nil {
-		runCtx = NewContextManagerContext(runCtx, r.contextManager)
-	}
 	iter := r.rootAgent.Run(runCtx, invocation)
 	for output, err = range iter {
 		if err != nil {
@@ -146,9 +132,6 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 		return stream.Error[*Message](err)
 	}
 	runCtx := NewSessionContext(ctx, o.Session)
-	if r.contextManager != nil {
-		runCtx = NewContextManagerContext(runCtx, r.contextManager)
-	}
 	return func(yield func(*Message, error) bool) {
 		iter := r.rootAgent.Run(runCtx, invocation)
 		for output, err := range iter {

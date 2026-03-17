@@ -50,8 +50,8 @@ func (a *LoopAgent) Description() string { return a.config.Description }
 
 // Run runs the sub-agents in a loop. After each message yielded by a sub-agent
 // the loop checks message.Actions for an ActionLoopExit signal set by ExitTool.
-// Context management across iterations is delegated to the ContextManager
-// configured on the Runner (via blades.WithContextManager).
+// Context compression across iterations is delegated to the Compressor
+// configured on the Session (via blades.WithCompressor).
 func (a *LoopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		state := LoopState{}

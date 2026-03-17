@@ -43,8 +43,8 @@ const (
 	ContextStrategyWindow ContextStrategy = "window"
 )
 
-// ContextSpec configures the context window management for an agent.
-// It maps to either a summarizing or a sliding-window ContextManager.
+// ContextSpec configures the context window compression for an agent.
+// It maps to either a summarizing or a sliding-window Compressor.
 //
 // Example (summarize):
 //

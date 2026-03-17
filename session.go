@@ -15,20 +15,51 @@ type Session interface {
 	SetState(string, any)
 	History() []*Message
 	Append(context.Context, *Message) error
+	// Context returns the message list prepared for the next model call by
+	// applying the configured Compressor to messages. Returns nil when no
+	// Compressor is set, signalling the caller to use messages unchanged.
+	Context(ctx context.Context, messages []*Message) ([]*Message, error)
 }
 
-// NewSession creates a new Session instance with an auto-generated UUID and optional initial state maps.
-func NewSession(states ...map[string]any) Session {
+// SessionOption configures a Session at construction time.
+type SessionOption func(*sessionInMemory)
+
+// WithCompressor sets the Compressor used by Session.Context to compress the
+// message history before each model call.
+func WithCompressor(c Compressor) SessionOption {
+	return func(s *sessionInMemory) {
+		s.compressor = c
+	}
+}
+
+// NewSession creates a new Session instance with an auto-generated UUID.
+// Pass SessionOption values to configure the session (e.g. WithCompressor).
+// Legacy map arguments are still accepted for backwards compatibility.
+func NewSession(opts ...SessionOption) Session {
 	session := &sessionInMemory{id: uuid.NewString()}
-	for _, state := range states {
-		for k, v := range state {
-			session.SetState(k, v)
-		}
+	for _, opt := range opts {
+		opt(session)
 	}
 	return session
 }
 
-// ctxSessionKey is an unexported type for keys defined in this package.
+// NewSessionWithCompressor returns a Session that delegates all operations to s
+// but overrides Context to compress using c. This allows per-agent compressor
+// overrides without mutating the shared session (e.g. in recipe flows).
+func NewSessionWithCompressor(s Session, c Compressor) Session {
+	return &sessionWithCompressor{Session: s, compressor: c}
+}
+
+type sessionWithCompressor struct {
+	Session
+	compressor Compressor
+}
+
+func (s *sessionWithCompressor) Context(ctx context.Context, messages []*Message) ([]*Message, error) {
+	return s.compressor.Compress(ctx, messages)
+}
+
+
 type ctxSessionKey struct{}
 
 // NewSessionContext returns a new Context that carries the session value.
@@ -44,9 +75,10 @@ func FromSessionContext(ctx context.Context) (Session, bool) {
 
 // sessionInMemory is an in-memory implementation of the Session interface.
 type sessionInMemory struct {
-	id      string
-	state   maps.Map[string, any]
-	history slices.Slice[*Message]
+	id         string
+	state      maps.Map[string, any]
+	history    slices.Slice[*Message]
+	compressor Compressor
 }
 
 func (s *sessionInMemory) ID() string {
@@ -64,4 +96,11 @@ func (s *sessionInMemory) SetState(key string, value any) {
 func (s *sessionInMemory) Append(ctx context.Context, message *Message) error {
 	s.history.Append(message)
 	return nil
+}
+
+func (s *sessionInMemory) Context(ctx context.Context, messages []*Message) ([]*Message, error) {
+	if s.compressor == nil {
+		return nil, nil
+	}
+	return s.compressor.Compress(ctx, messages)
 }

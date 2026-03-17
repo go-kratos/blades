@@ -37,20 +37,20 @@ func buildWorkingView(summaryContent string, offset int, messages []*blades.Mess
 	return result
 }
 
-// Option configures a summary ContextManager.
-type Option func(*contextManager)
+// Option configures a summary Compressor.
+type Option func(*compressor)
 
 // WithMaxTokens sets the token budget that triggers compression.
 // A value of 0 disables compression (no-op).
 func WithMaxTokens(tokens int64) Option {
-	return func(c *contextManager) {
+	return func(c *compressor) {
 		c.maxTokens = tokens
 	}
 }
 
 // WithSummarizer sets the ModelProvider used to generate summaries.
 func WithSummarizer(model blades.ModelProvider) Option {
-	return func(c *contextManager) {
+	return func(c *compressor) {
 		c.summarizer = model
 	}
 }
@@ -58,7 +58,7 @@ func WithSummarizer(model blades.ModelProvider) Option {
 // WithTokenCounter sets the TokenCounter used to estimate token usage.
 // Defaults to a character-based counter (1 token ≈ 4 chars).
 func WithTokenCounter(counter blades.TokenCounter) Option {
-	return func(c *contextManager) {
+	return func(c *compressor) {
 		c.counter = counter
 	}
 }
@@ -66,7 +66,7 @@ func WithTokenCounter(counter blades.TokenCounter) Option {
 // WithKeepRecent sets the number of most-recent messages always kept verbatim.
 // Defaults to 10.
 func WithKeepRecent(n int) Option {
-	return func(c *contextManager) {
+	return func(c *compressor) {
 		c.keepRecent = n
 	}
 }
@@ -74,14 +74,14 @@ func WithKeepRecent(n int) Option {
 // WithBatchSize sets the number of messages to summarize per compression pass.
 // Defaults to 20.
 func WithBatchSize(n int) Option {
-	return func(c *contextManager) {
+	return func(c *compressor) {
 		c.batchSize = n
 	}
 }
 
-// contextManager implements ContextManager by compressing old messages into a rolling summary when the token count exceeds a configured limit.
+// compressor implements Compressor by compressing old messages into a rolling summary when the token count exceeds a configured limit.
 // Compression state is persisted in the session when available to avoid redundant summarization work across runs.
-type contextManager struct {
+type compressor struct {
 	maxTokens   int64
 	counter     blades.TokenCounter
 	summarizer  blades.ModelProvider
@@ -90,8 +90,8 @@ type contextManager struct {
 	instruction string
 }
 
-// NewContextManager returns a ContextManager that compresses old messages using
-// the provided ModelProvider when the token count exceeds the configured limit.
+// NewCompressor returns a Compressor that compresses old messages using the provided
+// ModelProvider when the token count exceeds the configured limit.
 // Recent messages are always kept verbatim.
 //
 // When a Session is present in the context, compression state (rolling summary
@@ -105,32 +105,32 @@ type contextManager struct {
 //     the current offset, extend the rolling summary with them, and advance the
 //     offset. Repeat until under budget or no more messages can be compressed.
 //  4. Persist the updated offset and summary content back to session.State().
-func NewContextManager(opts ...Option) blades.ContextManager {
-	cm := &contextManager{
+func NewCompressor(opts ...Option) blades.Compressor {
+	c := &compressor{
 		instruction: defaultInstruction,
 		keepRecent:  defaultKeepRecent,
 		batchSize:   defaultBatchSize,
 		counter:     counter.NewCharBasedCounter(),
 	}
 	for _, opt := range opts {
-		opt(cm)
+		opt(c)
 	}
-	return cm
+	return c
 }
 
 // ensureSession returns the Session from ctx. If none is present a temporary
-// in-memory session is returned so the rest of Prepare never has to branch.
-func (s *contextManager) ensureSession(ctx context.Context) blades.Session {
+// in-memory session is returned so the rest of Compress never has to branch.
+func (s *compressor) ensureSession(ctx context.Context) blades.Session {
 	if session, ok := blades.FromSessionContext(ctx); ok {
 		return session
 	}
 	return blades.NewSession()
 }
 
-// Prepare compresses old messages if the total token count exceeds MaxTokens.
+// Compress compresses old messages if the total token count exceeds MaxTokens.
 // When a session is present in ctx it reads and writes two primitive-typed state
 // keys to persist incremental compression state across runs.
-func (s *contextManager) Prepare(ctx context.Context, messages []*blades.Message) ([]*blades.Message, error) {
+func (s *compressor) Compress(ctx context.Context, messages []*blades.Message) ([]*blades.Message, error) {
 	if len(messages) == 0 || s.maxTokens == 0 {
 		return messages, nil
 	}
@@ -191,7 +191,7 @@ func (s *contextManager) Prepare(ctx context.Context, messages []*blades.Message
 
 // extendSummary calls the summarizer LLM to produce a new summary that covers
 // both the existing summary text and the provided message batch.
-func (s *contextManager) extendSummary(ctx context.Context, existing string, batch []*blades.Message) (string, error) {
+func (s *compressor) extendSummary(ctx context.Context, existing string, batch []*blades.Message) (string, error) {
 	instruction := s.instruction
 	if existing != "" {
 		instruction += "\n\nExisting summary:\n" + existing

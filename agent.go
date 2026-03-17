@@ -350,18 +350,20 @@ func messageFromResponse(response *ModelResponse) (*Message, error) {
 // handle constructs the default handlers for Run and Stream using the provider.
 func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
-		contextManager, _ := ContextManagerFromContext(ctx)
+		session, hasSession := FromSessionContext(ctx)
 		for i := 0; i < a.maxIterations; i++ {
-			// Apply context window management before each model call.
+			// Apply context compression before each model call.
 			// This handles both the initial history and messages that accumulate
 			// during tool calls across iterations.
-			if contextManager != nil {
-				prepared, err := contextManager.Prepare(ctx, req.Messages)
+			if hasSession {
+				prepared, err := session.Context(ctx, req.Messages)
 				if err != nil {
 					yield(nil, err)
 					return
 				}
-				req.Messages = prepared
+				if prepared != nil {
+					req.Messages = prepared
+				}
 			}
 			var finalMessage *Message
 			if !invocation.Stream {
