@@ -79,6 +79,8 @@ func Build(spec *AgentSpec, opts ...BuildOption) (blades.Agent, error) {
 			agent, err = buildSequentialAgent(spec, params, o)
 		case ExecutionParallel:
 			agent, err = buildParallelAgent(spec, params, o)
+		case ExecutionLoop:
+			agent, err = buildLoopAgent(spec, params, o)
 		case ExecutionTool:
 			agent, err = buildToolAgent(spec, params, o)
 		default:
@@ -250,6 +252,26 @@ func buildParallelAgent(spec *AgentSpec, params map[string]any, o *buildOptions)
 		Name:        spec.Name,
 		Description: spec.Description,
 		SubAgents:   subAgents,
+	}), nil
+}
+
+// buildLoopAgent creates a loop flow from sub-agents.
+// The loop runs until max_iterations is reached or a sub-agent signals exit
+// via the loop_exit tool. LoopCondition is not supported in recipe YAML.
+func buildLoopAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (blades.Agent, error) {
+	subAgents := make([]blades.Agent, 0, len(spec.SubAgents))
+	for i := range spec.SubAgents {
+		agent, err := buildSubAgent(&spec.SubAgents[i], spec.Model, params, o)
+		if err != nil {
+			return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
+		}
+		subAgents = append(subAgents, agent)
+	}
+	return flow.NewLoopAgent(flow.LoopConfig{
+		Name:          spec.Name,
+		Description:   spec.Description,
+		MaxIterations: spec.MaxIterations,
+		SubAgents:     subAgents,
 	}), nil
 }
 

@@ -1,0 +1,16 @@
+version: "1.0"
+name: iterative-writer
+description: Iteratively write and review content until quality is sufficient
+execution: loop
+max_iterations: 3
+model: gpt-4o
+sub_agents:
+  - name: writer
+    instruction: Write a short paragraph about the requested topic.
+    output_key: draft
+  - name: reviewer
+    instruction: |
+      Review the draft. If the quality is acceptable, call the exit tool.
+      Otherwise provide feedback for the next iteration.
+    tools:
+      - exit

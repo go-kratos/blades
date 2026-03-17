@@ -984,7 +984,7 @@ func TestValidateParamsOptionalMissing(t *testing.T) {
 }
 
 func TestValidateAcceptsSequentialParallelTool(t *testing.T) {
-	for _, mode := range []ExecutionMode{ExecutionSequential, ExecutionParallel, ExecutionTool} {
+	for _, mode := range []ExecutionMode{ExecutionSequential, ExecutionParallel, ExecutionTool, ExecutionLoop} {
 		spec := &AgentSpec{
 			Version:     "1.0",
 			Name:        "x",
@@ -2093,5 +2093,232 @@ middlewares:
 	)
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
+	}
+}
+
+// --- Loop Mode Tests ---
+
+func newTestToolRegistryWithExit() *ToolRegistry {
+	r := NewToolRegistry()
+	r.Register("web-search", &mockTool{name: "web-search"})
+	r.Register("exit", tools.NewExitTool())
+	return r
+}
+
+func TestParseLoopYAML(t *testing.T) {
+	spec, err := LoadFromFile("testdata/loop.yaml")
+	if err != nil {
+		t.Fatalf("failed to parse loop.yaml: %v", err)
+	}
+	if spec.Execution != ExecutionLoop {
+		t.Errorf("expected execution %q, got %q", ExecutionLoop, spec.Execution)
+	}
+	if spec.MaxIterations != 3 {
+		t.Errorf("expected max_iterations 3, got %d", spec.MaxIterations)
+	}
+	if len(spec.SubAgents) != 2 {
+		t.Fatalf("expected 2 sub_agents, got %d", len(spec.SubAgents))
+	}
+	if spec.SubAgents[0].Name != "writer" {
+		t.Errorf("expected first sub_agent %q, got %q", "writer", spec.SubAgents[0].Name)
+	}
+	if spec.SubAgents[1].Name != "reviewer" {
+		t.Errorf("expected second sub_agent %q, got %q", "reviewer", spec.SubAgents[1].Name)
+	}
+}
+
+func TestValidateAcceptsLoopMode(t *testing.T) {
+	spec := &AgentSpec{
+		Version:   "1.0",
+		Name:      "loop-agent",
+		Model:     "gpt-4o",
+		Execution: ExecutionLoop,
+		SubAgents: []SubAgentSpec{
+			{Name: "worker", Instruction: "do work"},
+		},
+	}
+	if err := Validate(spec); err != nil {
+		t.Fatalf("expected loop mode to be valid: %v", err)
+	}
+}
+
+func TestValidateLoopAcceptsMaxIterations(t *testing.T) {
+	spec := &AgentSpec{
+		Version:       "1.0",
+		Name:          "loop-agent",
+		Model:         "gpt-4o",
+		Execution:     ExecutionLoop,
+		MaxIterations: 5,
+		SubAgents: []SubAgentSpec{
+			{Name: "worker", Instruction: "do work"},
+		},
+	}
+	if err := Validate(spec); err != nil {
+		t.Fatalf("expected max_iterations to be valid in loop mode: %v", err)
+	}
+}
+
+func TestValidateRejectsOutputKeyInLoopMode(t *testing.T) {
+	spec := &AgentSpec{
+		Version:   "1.0",
+		Name:      "loop-agent",
+		Model:     "gpt-4o",
+		Execution: ExecutionLoop,
+		OutputKey: "result",
+		SubAgents: []SubAgentSpec{
+			{Name: "worker", Instruction: "do work"},
+		},
+	}
+	err := Validate(spec)
+	if err == nil {
+		t.Fatal("expected validation error for output_key in loop mode")
+	}
+	if !strings.Contains(err.Error(), "output_key") {
+		t.Fatalf("error should mention output_key: %v", err)
+	}
+}
+
+func TestValidateLoopSubAgentInheritsParentModel(t *testing.T) {
+	// sub_agent without model should be valid when parent has a model.
+	spec := &AgentSpec{
+		Version:   "1.0",
+		Name:      "loop-agent",
+		Model:     "gpt-4o",
+		Execution: ExecutionLoop,
+		SubAgents: []SubAgentSpec{
+			{Name: "worker", Instruction: "do work"},
+		},
+	}
+	if err := Validate(spec); err != nil {
+		t.Fatalf("expected sub_agent to inherit parent model: %v", err)
+	}
+}
+
+func TestValidateLoopSubAgentNoModelAndNoParent(t *testing.T) {
+	spec := &AgentSpec{
+		Version:   "1.0",
+		Name:      "loop-agent",
+		Execution: ExecutionLoop,
+		SubAgents: []SubAgentSpec{
+			{Name: "worker", Instruction: "do work"},
+		},
+	}
+	if err := Validate(spec); err == nil {
+		t.Fatal("expected error when sub_agent has no model and parent has no model")
+	}
+}
+
+func TestBuildLoopAgent(t *testing.T) {
+	spec, err := LoadFromFile("testdata/loop.yaml")
+	if err != nil {
+		t.Fatalf("failed to load: %v", err)
+	}
+	agent, err := Build(spec,
+		WithModelRegistry(newTestModelRegistry()),
+		WithToolRegistry(newTestToolRegistryWithExit()),
+	)
+	if err != nil {
+		t.Fatalf("failed to build: %v", err)
+	}
+	if agent.Name() != "iterative-writer" {
+		t.Errorf("expected name %q, got %q", "iterative-writer", agent.Name())
+	}
+	if agent.Description() != "Iteratively write and review content until quality is sufficient" {
+		t.Errorf("unexpected description: %q", agent.Description())
+	}
+}
+
+func TestBuildLoopAgentInheritsParentModel(t *testing.T) {
+	registry := NewModelRegistry()
+	registry.Register("m", &mockModel{name: "m"})
+
+	spec := &AgentSpec{
+		Version:       "1.0",
+		Name:          "loop",
+		Model:         "m",
+		Execution:     ExecutionLoop,
+		MaxIterations: 2,
+		SubAgents: []SubAgentSpec{
+			{Name: "step-a", Instruction: "do step a"},
+			{Name: "step-b", Instruction: "do step b"},
+		},
+	}
+	agent, err := Build(spec, WithModelRegistry(registry))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	if agent.Name() != "loop" {
+		t.Errorf("expected name %q, got %q", "loop", agent.Name())
+	}
+}
+
+func TestBuildLoopAgentSubAgentOwnModel(t *testing.T) {
+	registry := NewModelRegistry()
+	registry.Register("m1", &mockModel{name: "m1"})
+	registry.Register("m2", &mockModel{name: "m2"})
+
+	spec := &AgentSpec{
+		Version:   "1.0",
+		Name:      "loop",
+		Execution: ExecutionLoop,
+		SubAgents: []SubAgentSpec{
+			{Name: "step-a", Model: "m1", Instruction: "step a"},
+			{Name: "step-b", Model: "m2", Instruction: "step b"},
+		},
+	}
+	agent, err := Build(spec, WithModelRegistry(registry))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	if agent.Name() != "loop" {
+		t.Errorf("expected name %q, got %q", "loop", agent.Name())
+	}
+}
+
+func TestBuildLoopAgentFailsWithoutSubAgentModel(t *testing.T) {
+	spec := &AgentSpec{
+		Version:   "1.0",
+		Name:      "loop",
+		Execution: ExecutionLoop,
+		SubAgents: []SubAgentSpec{
+			{Name: "step", Instruction: "do something"},
+		},
+	}
+	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	if err == nil {
+		t.Fatal("expected error when no model specified for sub_agent and parent")
+	}
+}
+
+func TestE2ELoopAgentRunsSubAgents(t *testing.T) {
+	model := &captureRequestModel{name: "m", response: "iteration result"}
+	reg := NewModelRegistry()
+	reg.Register("m", model)
+
+	spec := &AgentSpec{
+		Version:       "1.0",
+		Name:          "loop",
+		Model:         "m",
+		Execution:     ExecutionLoop,
+		MaxIterations: 2,
+		SubAgents: []SubAgentSpec{
+			{Name: "worker", Instruction: "work on it"},
+		},
+	}
+	agent, err := Build(spec, WithModelRegistry(reg))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	runner := blades.NewRunner(agent)
+	msg, err := runner.Run(context.Background(), blades.UserMessage("start"))
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if msg == nil {
+		t.Fatal("expected non-nil message")
+	}
+	// With max_iterations=2 and no exit signal, the sub-agent runs twice.
+	if model.messages == nil {
+		t.Fatal("expected model to have been called")
 	}
 }
