@@ -51,7 +51,7 @@ func main() {
 		Description:   "An agent that loops between writing and reviewing until the draft is good.",
 		MaxIterations: 3,
 		Condition: func(ctx context.Context, state flow.LoopState) (bool, error) {
-			if state.Output != nil && strings.Contains(state.Output.Text(), "The draft is good") {
+			if strings.Contains(state.Output.Text(), "The draft is good") {
 				return false, nil
 			}
 			return true, nil
