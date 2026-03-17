@@ -24,14 +24,14 @@ instruction: |
 Load and run in Go:
 
 ```go
-registry := recipe.NewModelRegistry()
-registry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
+modelRegistry := recipe.NewModelRegistry()
+modelRegistry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
     APIKey: os.Getenv("OPENAI_API_KEY"),
 }))
 
 spec, _ := recipe.LoadFromFile("agent.yaml")
 agent, _ := recipe.Build(spec,
-    recipe.WithModelRegistry(registry),
+    recipe.WithModelRegistry(modelRegistry),
     recipe.WithParams(map[string]any{"language": "go"}),
 )
 
@@ -62,7 +62,7 @@ Pass values at build time via `recipe.WithParams`:
 
 ```go
 recipe.Build(spec,
-    recipe.WithModelRegistry(registry),
+    recipe.WithModelRegistry(modelRegistry),
     recipe.WithParams(map[string]any{"language": "go"}),
 )
 ```
@@ -186,7 +186,7 @@ toolRegistry := recipe.NewToolRegistry()
 toolRegistry.Register("exit", tools.NewExitTool())
 
 agent, _ := recipe.Build(spec,
-    recipe.WithModelRegistry(registry),
+    recipe.WithModelRegistry(modelRegistry),
     recipe.WithToolRegistry(toolRegistry),
 )
 ```
@@ -248,7 +248,7 @@ mwRegistry.Register("logging", func(opts map[string]any) (blades.Middleware, err
 })
 
 agent, _ := recipe.Build(spec,
-    recipe.WithModelRegistry(registry),
+    recipe.WithModelRegistry(modelRegistry),
     recipe.WithMiddlewareRegistry(mwRegistry),
 )
 ```
@@ -258,18 +258,18 @@ agent, _ := recipe.Build(spec,
 The `model` field in YAML is a lookup key in the `ModelRegistry`. Register any `blades.ModelProvider` implementation:
 
 ```go
-registry := recipe.NewModelRegistry()
+modelRegistry := recipe.NewModelRegistry()
 
-registry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
+modelRegistry.Register("gpt-4o", openai.NewModel("gpt-4o", openai.Config{
     APIKey: os.Getenv("OPENAI_API_KEY"),
 }))
 
-registry.Register("glm-5", openai.NewModel("glm-5", openai.Config{
+modelRegistry.Register("glm-5", openai.NewModel("glm-5", openai.Config{
     BaseURL: "https://open.bigmodel.cn/api/paas/v4",
     APIKey:  os.Getenv("ZHIPU_API_KEY"),
 }))
 
-registry.Register("claude-sonnet", anthropic.NewModel("claude-sonnet-4-5-20250514", anthropic.Config{
+modelRegistry.Register("claude-sonnet", anthropic.NewModel("claude-sonnet-4-5-20250514", anthropic.Config{
     APIKey: os.Getenv("ANTHROPIC_API_KEY"),
 }))
 ```
@@ -306,7 +306,7 @@ toolRegistry := recipe.NewToolRegistry()
 toolRegistry.Register("web-search", searchTool)
 
 agent, _ := recipe.Build(spec,
-    recipe.WithModelRegistry(registry),
+    recipe.WithModelRegistry(modelRegistry),
     recipe.WithToolRegistry(toolRegistry),
 )
 ```
@@ -329,10 +329,10 @@ err := recipe.ValidateParams(spec, params)
 
 // Build
 agent, err := recipe.Build(spec,
-    recipe.WithModelRegistry(registry),          // required
-    recipe.WithToolRegistry(toolRegistry),       // required when tools are used
-    recipe.WithMiddlewareRegistry(mwRegistry),   // required when middlewares are used
-    recipe.WithParams(map[string]any{...}),      // when parameters are defined
+    recipe.WithModelRegistry(modelRegistry),            // required
+    recipe.WithToolRegistry(toolRegistry),              // required when tools are used
+    recipe.WithMiddlewareRegistry(mwRegistry),  // required when middlewares are used
+    recipe.WithParams(map[string]any{...}),             // when parameters are defined
 )
 
 // The built agent is a standard blades.Agent
