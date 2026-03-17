@@ -106,11 +106,6 @@ func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (
 		if err != nil {
 			return nil, err
 		}
-		if output.Status == StatusCompleted {
-			if err := r.appendNewMessage(ctx, invocation, output); err != nil {
-				return nil, err
-			}
-		}
 	}
 	if output == nil {
 		return nil, ErrNoFinalResponse
@@ -138,12 +133,6 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 			if err != nil {
 				yield(nil, err)
 				return
-			}
-			if output.Status == StatusCompleted {
-				if err := r.appendNewMessage(ctx, invocation, output); err != nil {
-					yield(nil, err)
-					return
-				}
 			}
 			if !yield(output, nil) {
 				return

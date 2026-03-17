@@ -453,6 +453,14 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 				req.Messages = AppendMessages(req.Messages, toolMessage)
 				continue // continue to the next iteration
 			}
+			// Persist the final assistant message so future invocations can
+			// access the full conversation history via session.Context().
+			if hasSession {
+				if err := session.Append(ctx, finalMessage); err != nil {
+					yield(nil, err)
+					return
+				}
+			}
 			return
 		}
 		// Exceeded maximum iterations
