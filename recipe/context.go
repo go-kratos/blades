@@ -1,9 +1,7 @@
 package recipe
 
 import (
-	"context"
 	"fmt"
-	"iter"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/context/summary"
@@ -56,32 +54,29 @@ func buildContextCompressor(spec *ContextSpec, reg ModelResolver, fallbackModelN
 	}
 }
 
-// compressorAwareAgent wraps a blades.Agent and overrides the session's
-// ContextCompressor for the duration of the run, enabling per-agent context strategies
-// independently of any session-level ContextCompressor.
-type compressorAwareAgent struct {
-	blades.Agent
-	compressor blades.ContextCompressor
-}
-
-func (a *compressorAwareAgent) Run(ctx context.Context, inv *blades.Invocation) iter.Seq2[*blades.Message, error] {
-	if session, ok := blades.FromSessionContext(ctx); ok {
-		wrapped := blades.NewSessionWithContextCompressor(session, a.compressor)
-		ctx = blades.NewSessionContext(ctx, wrapped)
+// BuildSessionOption returns a blades.SessionOption that installs the ContextCompressor
+// described by spec.Context onto a Session at creation time. Callers should use this
+// to create their session before running the agent:
+//
+//	sessOpt, err := recipe.BuildSessionOption(spec, opts...)
+//	session := blades.NewSession(sessOpt)
+//	runner.Run(ctx, msg, blades.WithSession(session))
+//
+// Returns nil when spec has no Context field; nil options are safe to pass to blades.NewSession.
+func BuildSessionOption(spec *AgentSpec, opts ...BuildOption) (blades.SessionOption, error) {
+	if spec == nil || spec.Context == nil {
+		return nil, nil
 	}
-	return a.Agent.Run(ctx, inv)
-}
-
-// wrapWithContextCompressor wraps agent with a compressorAwareAgent when spec is non-nil.
-// Returns the original agent unchanged when spec is nil.
-// fallbackModelName is used as the summarizer model when ContextSpec.Model is empty.
-func wrapWithContextCompressor(agent blades.Agent, spec *ContextSpec, fallbackModelName string, reg ModelResolver) (blades.Agent, error) {
-	if spec == nil {
-		return agent, nil
+	o := &buildOptions{}
+	for _, opt := range opts {
+		opt(o)
 	}
-	c, err := buildContextCompressor(spec, reg, fallbackModelName)
+	if o.modelRegistry == nil && spec.Context.Strategy == ContextStrategySummarize {
+		return nil, fmt.Errorf("recipe: model registry is required for summarize context strategy")
+	}
+	c, err := buildContextCompressor(spec.Context, o.modelRegistry, spec.Model)
 	if err != nil {
 		return nil, err
 	}
-	return &compressorAwareAgent{Agent: agent, compressor: c}, nil
+	return blades.WithContextCompressor(c), nil
 }

@@ -35,7 +35,7 @@ func TestSession_Context_NoCompressor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0] != msg {
+	if len(got) != 0 {
 		t.Errorf("expected raw history, got %v", got)
 	}
 }

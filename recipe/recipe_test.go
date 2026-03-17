@@ -1775,12 +1775,20 @@ func TestContextSpecBuildSummarizeFallsBackToAgentModel(t *testing.T) {
 			// Model intentionally omitted — falls back to spec.Model ("gpt-4o")
 		},
 	}
-	agent, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	buildOpts := []BuildOption{WithModelRegistry(newTestModelRegistry())}
+	agent, err := Build(spec, buildOpts...)
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if _, ok := agent.(*compressorAwareAgent); !ok {
-		t.Fatalf("expected *compressorAwareAgent, got %T", agent)
+	if agent.Name() != spec.Name {
+		t.Fatalf("unexpected name: %q", agent.Name())
+	}
+	sessOpt, err := BuildSessionOption(spec, buildOpts...)
+	if err != nil {
+		t.Fatalf("BuildSessionOption failed: %v", err)
+	}
+	if sessOpt == nil {
+		t.Fatal("expected non-nil SessionOption for spec with context")
 	}
 }
 
@@ -1814,15 +1822,20 @@ func TestContextSpecBuildWithWindowStrategy(t *testing.T) {
 			MaxMessages: 50,
 		},
 	}
-	agent, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	buildOpts := []BuildOption{WithModelRegistry(newTestModelRegistry())}
+	agent, err := Build(spec, buildOpts...)
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if _, ok := agent.(*compressorAwareAgent); !ok {
-		t.Fatalf("expected *compressorAwareAgent, got %T", agent)
-	}
 	if agent.Name() != "ctx-window" {
 		t.Fatalf("unexpected name: %q", agent.Name())
+	}
+	sessOpt, err := BuildSessionOption(spec, buildOpts...)
+	if err != nil {
+		t.Fatalf("BuildSessionOption failed: %v", err)
+	}
+	if sessOpt == nil {
+		t.Fatal("expected non-nil SessionOption for spec with context")
 	}
 }
 
@@ -1840,12 +1853,20 @@ func TestContextSpecBuildWithSummarizeStrategy(t *testing.T) {
 			Model:      "gpt-4o-mini",
 		},
 	}
-	agent, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	buildOpts := []BuildOption{WithModelRegistry(newTestModelRegistry())}
+	agent, err := Build(spec, buildOpts...)
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if _, ok := agent.(*compressorAwareAgent); !ok {
-		t.Fatalf("expected *compressorAwareAgent, got %T", agent)
+	if agent.Name() != spec.Name {
+		t.Fatalf("unexpected name: %q", agent.Name())
+	}
+	sessOpt, err := BuildSessionOption(spec, buildOpts...)
+	if err != nil {
+		t.Fatalf("BuildSessionOption failed: %v", err)
+	}
+	if sessOpt == nil {
+		t.Fatal("expected non-nil SessionOption for spec with context")
 	}
 }
 
@@ -1860,8 +1881,15 @@ func TestContextSpecBuildWithNoContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if _, ok := agent.(*compressorAwareAgent); ok {
-		t.Fatalf("expected plain agent, got *compressorAwareAgent")
+	if agent.Name() != spec.Name {
+		t.Fatalf("unexpected name: %q", agent.Name())
+	}
+	sessOpt, err := BuildSessionOption(spec, WithModelRegistry(newTestModelRegistry()))
+	if err != nil {
+		t.Fatalf("BuildSessionOption failed: %v", err)
+	}
+	if sessOpt != nil {
+		t.Fatal("expected nil SessionOption for spec with no context")
 	}
 }
 
@@ -1949,8 +1977,15 @@ context:
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if _, ok := agent.(*compressorAwareAgent); !ok {
-		t.Fatalf("expected *compressorAwareAgent, got %T", agent)
+	if agent.Name() != spec.Name {
+		t.Fatalf("unexpected name: %q", agent.Name())
+	}
+	sessOpt, err := BuildSessionOption(spec, WithModelRegistry(newTestModelRegistry()))
+	if err != nil {
+		t.Fatalf("BuildSessionOption failed: %v", err)
+	}
+	if sessOpt == nil {
+		t.Fatal("expected non-nil SessionOption for spec with context")
 	}
 }
 

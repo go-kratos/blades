@@ -355,17 +355,18 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 	return func(yield func(*Message, error) bool) {
 		session, hasSession := FromSessionContext(ctx)
 		for i := 0; i < a.maxIterations; i++ {
-			// Build the message list from session history before each model call.
-			// When a session is present, this provides the full conversation context
-			// (including prior turns and in-flight tool responses) and applies any
-			// configured ContextCompressor to keep it within the context window budget.
+			// Build the message list from session state before each model call.
+			// A nil session context means "do not inject session context", so keep
+			// the request messages assembled for this invocation unchanged.
 			if hasSession {
 				prepared, err := session.Context(ctx)
 				if err != nil {
 					yield(nil, err)
 					return
 				}
-				req.Messages = prepared
+				if prepared != nil {
+					req.Messages = prepared
+				}
 			}
 			var finalMessage *Message
 			if !invocation.Stream {
@@ -446,10 +447,10 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 						yield(nil, err)
 						return
 					}
-				} else {
-					// No session: accumulate in req.Messages for the next iteration.
-					req.Messages = append(req.Messages, toolMessage)
 				}
+				// Preserve the completed tool message for the next iteration when
+				// the session does not provide an explicit prepared context.
+				req.Messages = AppendMessages(req.Messages, toolMessage)
 				continue // continue to the next iteration
 			}
 			return
