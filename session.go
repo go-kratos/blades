@@ -95,12 +95,12 @@ func (s *sessionInMemory) Append(ctx context.Context, message *Message) error {
 }
 
 func (s *sessionInMemory) Context(ctx context.Context) ([]*Message, error) {
-	if s.compressor == nil {
-		return nil, nil
-	}
 	messages, err := s.History(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if s.compressor == nil {
+		return messages, nil
 	}
 	return s.compressor.Compress(ctx, messages)
 }
