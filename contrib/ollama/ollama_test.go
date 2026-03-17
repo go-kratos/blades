@@ -116,7 +116,7 @@ func TestNewStreaming_WithToolCalls(t *testing.T) {
 	}
 }
 
-func TestToChatMessages_ImageAndToolResponse(t *testing.T) {
+func TestToChatMessages_ImageAndToolMessages(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -148,7 +148,13 @@ func TestToChatMessages_ImageAndToolResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("toChatMessages(tool) error = %v", err)
 	}
-	if got, want := toolMsgs[0].ToolCallID, "call_1"; got != want {
+	if got, want := len(toolMsgs), 2; got != want {
+		t.Fatalf("tool message count = %d, want %d", got, want)
+	}
+	if got, want := toolMsgs[0].Role, string(blades.RoleAssistant); got != want {
+		t.Fatalf("assistant role = %q, want %q", got, want)
+	}
+	if got, want := toolMsgs[1].ToolCallID, "call_1"; got != want {
 		t.Fatalf("tool call id = %q, want %q", got, want)
 	}
 }
@@ -203,5 +209,27 @@ func TestRawJSON_InvalidInput(t *testing.T) {
 	}
 	if string(got) != `"city=Paris"` {
 		t.Fatalf("rawJSON quoted result = %s", got)
+	}
+}
+
+func TestGenerateNilRequest(t *testing.T) {
+	t.Parallel()
+
+	model := NewModel("llama3.2", Config{})
+	_, err := model.Generate(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error for nil request")
+	}
+}
+
+func TestEncodeImageFromURI_DataURIPlainText(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := encodeImageFromURI("data:text/plain,hello%20world")
+	if err != nil {
+		t.Fatalf("encodeImageFromURI error = %v", err)
+	}
+	if got, want := encoded, base64.StdEncoding.EncodeToString([]byte("hello world")); got != want {
+		t.Fatalf("encoded = %q, want %q", got, want)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,6 +60,9 @@ func (m *Model) Name() string { return m.model }
 
 // Generate executes a non-streaming Ollama chat request.
 func (m *Model) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+	if req == nil {
+		return nil, errors.New("nil model request")
+	}
 	payload, err := m.toChatRequest(req, false)
 	if err != nil {
 		return nil, err
@@ -79,6 +83,10 @@ func (m *Model) Generate(ctx context.Context, req *blades.ModelRequest) (*blades
 // NewStreaming executes a streaming Ollama chat request and yields chunks.
 func (m *Model) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
 	return func(yield func(*blades.ModelResponse, error) bool) {
+		if req == nil {
+			yield(nil, errors.New("nil model request"))
+			return
+		}
 		payload, err := m.toChatRequest(req, true)
 		if err != nil {
 			yield(nil, err)
@@ -176,7 +184,7 @@ func toChatMessages(msg *blades.Message) ([]chatMessage, error) {
 	}
 
 	if msg.Role == blades.RoleTool {
-		return toToolResponseMessages(msg), nil
+		return toToolMessages(msg), nil
 	}
 
 	out := chatMessage{Role: role}
@@ -213,26 +221,37 @@ func toChatMessages(msg *blades.Message) ([]chatMessage, error) {
 	return []chatMessage{out}, nil
 }
 
-func toToolResponseMessages(msg *blades.Message) []chatMessage {
-	messages := make([]chatMessage, 0, len(msg.Parts))
+func toToolMessages(msg *blades.Message) []chatMessage {
+	toolCalls := make([]chatToolCall, 0, len(msg.Parts))
+	toolResponses := make([]chatMessage, 0, len(msg.Parts))
 	for _, part := range msg.Parts {
 		toolPart, ok := part.(blades.ToolPart)
 		if !ok {
 			continue
 		}
+		toolCalls = append(toolCalls, chatToolCall{
+			ID: toolPart.ID,
+			Function: chatFunctionCall{
+				Name:      toolPart.Name,
+				Arguments: rawJSON(toolPart.Request),
+			},
+		})
 		if toolPart.Response == "" {
 			continue
 		}
-		messages = append(messages, chatMessage{
+		toolResponses = append(toolResponses, chatMessage{
 			Role:       string(blades.RoleTool),
 			Content:    toolPart.Response,
 			ToolName:   toolPart.Name,
 			ToolCallID: toolPart.ID,
 		})
 	}
-	if len(messages) > 0 {
-		return messages
+
+	if len(toolCalls) > 0 {
+		assistant := chatMessage{Role: string(blades.RoleAssistant), ToolCalls: toolCalls}
+		return append([]chatMessage{assistant}, toolResponses...)
 	}
+
 	fallback := chatMessage{Role: string(blades.RoleTool)}
 	for _, part := range msg.Parts {
 		if text, ok := part.(blades.TextPart); ok {
@@ -301,7 +320,11 @@ func encodeImageFromURI(uri string) (string, error) {
 		if strings.Contains(parts[0], ";base64") {
 			return parts[1], nil
 		}
-		return base64.StdEncoding.EncodeToString([]byte(parts[1])), nil
+		decoded, err := url.QueryUnescape(parts[1])
+		if err != nil {
+			return "", err
+		}
+		return base64.StdEncoding.EncodeToString([]byte(decoded)), nil
 	}
 
 	path := strings.TrimPrefix(uri, "file://")
