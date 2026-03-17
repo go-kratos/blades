@@ -82,11 +82,8 @@ func Validate(spec *RecipeSpec) error {
 	if err := validateApproval(spec.Approval); err != nil {
 		return fmt.Errorf("recipe %q: approval: %w", spec.Name, err)
 	}
-	if err := validateObservability(spec.Observability); err != nil {
-		return fmt.Errorf("recipe %q: observability: %w", spec.Name, err)
-	}
-	if err := validateHooks(spec.Hooks); err != nil {
-		return fmt.Errorf("recipe %q: hooks: %w", spec.Name, err)
+	if err := validateMiddlewares(spec.Middlewares); err != nil {
+		return fmt.Errorf("recipe %q: middlewares: %w", spec.Name, err)
 	}
 	return nil
 }
@@ -118,35 +115,11 @@ func validateApproval(spec *ApprovalSpec) error {
 	return nil
 }
 
-// validateObservability checks an ObservabilitySpec for valid fields.
-func validateObservability(spec *ObservabilitySpec) error {
-	if spec == nil {
-		return nil
-	}
-	if spec.Tracing != "" && spec.Tracing != "otel" {
-		return fmt.Errorf("tracing must be %q or empty, got %q", "otel", spec.Tracing)
-	}
-	return nil
-}
-
-// validateHooks checks a HooksSpec for valid fields.
-func validateHooks(spec *HooksSpec) error {
-	if spec == nil {
-		return nil
-	}
-	for _, name := range spec.OnStart {
-		if name == "" {
-			return fmt.Errorf("on_start: hook name must be non-empty")
-		}
-	}
-	for _, name := range spec.OnComplete {
-		if name == "" {
-			return fmt.Errorf("on_complete: hook name must be non-empty")
-		}
-	}
-	for _, name := range spec.OnError {
-		if name == "" {
-			return fmt.Errorf("on_error: hook name must be non-empty")
+// validateMiddlewares checks that all MiddlewareSpec entries have non-empty names.
+func validateMiddlewares(specs []MiddlewareSpec) error {
+	for i, ms := range specs {
+		if ms.Name == "" {
+			return fmt.Errorf("middlewares[%d]: name must be non-empty", i)
 		}
 	}
 	return nil
@@ -171,9 +144,8 @@ func validateAgentSpec(spec *AgentSpec) error {
 	if spec.Model.Primary == "" {
 		return fmt.Errorf("recipe: agent spec %q: model.primary is required", spec.Name)
 	}
-	// identity.persona maps to RecipeSpec.Instruction which is required for single agents.
-	if spec.Identity.Persona == "" {
-		return fmt.Errorf("recipe: agent spec %q: identity.persona is required", spec.Name)
+	if spec.Instruction == "" {
+		return fmt.Errorf("recipe: agent spec %q: instruction is required", spec.Name)
 	}
 	// Validate tool names for the same constraints as RecipeSpec.
 	if _, err := validateToolNames(fmt.Sprintf("agent spec %q", spec.Name), spec.Tools); err != nil {
@@ -185,11 +157,8 @@ func validateAgentSpec(spec *AgentSpec) error {
 	if err := validateApproval(spec.Approval); err != nil {
 		return fmt.Errorf("recipe: agent spec %q: approval: %w", spec.Name, err)
 	}
-	if err := validateObservability(spec.Observability); err != nil {
-		return fmt.Errorf("recipe: agent spec %q: observability: %w", spec.Name, err)
-	}
-	if err := validateHooks(spec.Hooks); err != nil {
-		return fmt.Errorf("recipe: agent spec %q: hooks: %w", spec.Name, err)
+	if err := validateMiddlewares(spec.Middlewares); err != nil {
+		return fmt.Errorf("recipe: agent spec %q: middlewares: %w", spec.Name, err)
 	}
 	return nil
 }

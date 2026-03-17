@@ -8,41 +8,47 @@ import (
 	"github.com/go-kratos/blades/tools"
 )
 
+// MiddlewareFactory creates a blades.Middleware from a set of options.
+// The options map corresponds to the "options" field in MiddlewareSpec.
+// A nil map is passed when no options are specified.
+type MiddlewareFactory func(options map[string]any) blades.Middleware
+
 // MiddlewareRegistry resolves middleware names to blades.Middleware instances.
-// It is used to look up named hooks defined in HooksSpec.
+// Options from the MiddlewareSpec are forwarded so each factory can configure
+// itself at resolve time.
 type MiddlewareRegistry interface {
-	Resolve(name string) (blades.Middleware, error)
+	Resolve(name string, options map[string]any) (blades.Middleware, error)
 }
 
 // StaticMiddlewareRegistry is a simple in-memory MiddlewareRegistry.
 type StaticMiddlewareRegistry struct {
-	mu          sync.RWMutex
-	middlewares map[string]blades.Middleware
+	mu        sync.RWMutex
+	factories map[string]MiddlewareFactory
 }
 
 // NewStaticMiddlewareRegistry creates a new empty StaticMiddlewareRegistry.
 func NewStaticMiddlewareRegistry() *StaticMiddlewareRegistry {
 	return &StaticMiddlewareRegistry{
-		middlewares: make(map[string]blades.Middleware),
+		factories: make(map[string]MiddlewareFactory),
 	}
 }
 
-// Register adds a middleware under the given name.
-func (r *StaticMiddlewareRegistry) Register(name string, mw blades.Middleware) {
+// Register adds a MiddlewareFactory under the given name.
+func (r *StaticMiddlewareRegistry) Register(name string, factory MiddlewareFactory) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.middlewares[name] = mw
+	r.factories[name] = factory
 }
 
-// Resolve returns the Middleware registered under the given name.
-func (r *StaticMiddlewareRegistry) Resolve(name string) (blades.Middleware, error) {
+// Resolve instantiates the middleware registered under name, passing options to its factory.
+func (r *StaticMiddlewareRegistry) Resolve(name string, options map[string]any) (blades.Middleware, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	mw, ok := r.middlewares[name]
+	f, ok := r.factories[name]
 	if !ok {
 		return nil, fmt.Errorf("recipe: middleware %q not found in registry", name)
 	}
-	return mw, nil
+	return f(options), nil
 }
 
 // ModelRegistry resolves model names from YAML to actual ModelProvider instances.

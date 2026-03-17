@@ -58,18 +58,11 @@ type ApprovalSpec struct {
 	OnTools []string `yaml:"on_tools,omitempty"`
 }
 
-// ObservabilitySpec configures tracing and observability for an agent.
-type ObservabilitySpec struct {
-	Tracing string `yaml:"tracing,omitempty"` // only "otel" is supported
-	System  string `yaml:"system,omitempty"`  // AI system name for otel spans (e.g. "openai")
-}
-
-// HooksSpec configures named middleware hooks applied at lifecycle events.
-// Each name is resolved via the MiddlewareRegistry provided to Build.
-type HooksSpec struct {
-	OnStart    []string `yaml:"on_start,omitempty"`
-	OnComplete []string `yaml:"on_complete,omitempty"`
-	OnError    []string `yaml:"on_error,omitempty"`
+// MiddlewareSpec references a named middleware and optional configuration options.
+// The name is resolved via the MiddlewareRegistry provided to Build.
+type MiddlewareSpec struct {
+	Name    string         `yaml:"name"`
+	Options map[string]any `yaml:"options,omitempty"`
 }
 
 // RecipeSpec is the top-level declarative specification for a recipe.
@@ -89,8 +82,7 @@ type RecipeSpec struct {
 	MaxIterations int                `yaml:"max_iterations,omitempty"`
 	Context       *ContextSpec       `yaml:"context,omitempty"`
 	Approval      *ApprovalSpec      `yaml:"approval,omitempty"`
-	Observability *ObservabilitySpec `yaml:"observability,omitempty"`
-	Hooks         *HooksSpec         `yaml:"hooks,omitempty"`
+	Middlewares   []MiddlewareSpec    `yaml:"middlewares,omitempty"`
 }
 
 // SubRecipeSpec defines a child agent within a recipe.
@@ -120,23 +112,17 @@ type ParameterSpec struct {
 // It provides a flat, human-friendly YAML format that is converted to a RecipeSpec
 // internally via ToRecipeSpec.
 type AgentSpec struct {
-	Kind          string             `yaml:"kind"`
-	Version       string             `yaml:"version"`
-	Name          string             `yaml:"name"`
-	Description   string             `yaml:"description,omitempty"`
-	Identity      IdentitySpec       `yaml:"identity,omitempty"`
-	Model         AgentModelSpec     `yaml:"model"`
-	Tools         []string           `yaml:"tools,omitempty"`
-	Policy        *PolicySpec        `yaml:"policy,omitempty"`
-	Context       *ContextSpec       `yaml:"context,omitempty"`
-	Approval      *ApprovalSpec      `yaml:"approval,omitempty"`
-	Observability *ObservabilitySpec `yaml:"observability,omitempty"`
-	Hooks         *HooksSpec         `yaml:"hooks,omitempty"`
-}
-
-// IdentitySpec defines the persona/system-prompt identity for an AgentSpec.
-type IdentitySpec struct {
-	Persona string `yaml:"persona"`
+	Kind        string          `yaml:"kind"`
+	Version     string          `yaml:"version"`
+	Name        string          `yaml:"name"`
+	Description string          `yaml:"description,omitempty"`
+	Instruction string          `yaml:"instruction,omitempty"`
+	Model       AgentModelSpec  `yaml:"model"`
+	Tools       []string        `yaml:"tools,omitempty"`
+	Policy      *PolicySpec     `yaml:"policy,omitempty"`
+	Context     *ContextSpec    `yaml:"context,omitempty"`
+	Approval    *ApprovalSpec   `yaml:"approval,omitempty"`
+	Middlewares []MiddlewareSpec `yaml:"middlewares,omitempty"`
 }
 
 // AgentModelSpec defines the model configuration for an AgentSpec.
@@ -156,16 +142,15 @@ type PolicySpec struct {
 // both formats share the same Build pipeline.
 func (a *AgentSpec) ToRecipeSpec() *RecipeSpec {
 	spec := &RecipeSpec{
-		Version:       a.Version,
-		Name:          a.Name,
-		Description:   a.Description,
-		Model:         a.Model.Primary,
-		Instruction:   a.Identity.Persona,
-		Tools:         a.Tools,
-		Context:       a.Context,
-		Approval:      a.Approval,
-		Observability: a.Observability,
-		Hooks:         a.Hooks,
+		Version:     a.Version,
+		Name:        a.Name,
+		Description: a.Description,
+		Model:       a.Model.Primary,
+		Instruction: a.Instruction,
+		Tools:       a.Tools,
+		Context:     a.Context,
+		Approval:    a.Approval,
+		Middlewares: a.Middlewares,
 	}
 	if a.Policy != nil {
 		spec.MaxIterations = a.Policy.MaxTurns

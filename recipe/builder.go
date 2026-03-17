@@ -15,17 +15,12 @@ import (
 // BuildOption configures the Build process.
 type BuildOption func(*buildOptions)
 
-// TracingMiddlewareFactory creates a tracing middleware given the ObservabilitySpec.
-// Returning nil disables tracing even when observability is configured.
-type TracingMiddlewareFactory func(spec *ObservabilitySpec) blades.Middleware
-
 type buildOptions struct {
-	modelRegistry            ModelRegistry
-	toolRegistry             ToolRegistry
-	middlewareRegistry       MiddlewareRegistry
-	approvalHandler          middleware.ConfirmFunc
-	tracingMiddlewareFactory TracingMiddlewareFactory
-	params                   map[string]any
+	modelRegistry      ModelRegistry
+	toolRegistry       ToolRegistry
+	middlewareRegistry MiddlewareRegistry
+	approvalHandler    middleware.ConfirmFunc
+	params             map[string]any
 }
 
 // WithModelRegistry sets the model registry for resolving model names.
@@ -57,26 +52,10 @@ func WithApprovalHandler(fn middleware.ConfirmFunc) BuildOption {
 	}
 }
 
-// WithMiddlewareRegistry sets the registry used to resolve named hooks in HooksSpec.
+// WithMiddlewareRegistry sets the registry used to resolve named middlewares in MiddlewareSpec.
 func WithMiddlewareRegistry(r MiddlewareRegistry) BuildOption {
 	return func(o *buildOptions) {
 		o.middlewareRegistry = r
-	}
-}
-
-// WithTracingMiddlewareFactory sets a factory function that produces a tracing middleware
-// from an ObservabilitySpec. This is called when spec.Observability is non-nil.
-// Example with contrib/otel:
-//
-//	recipe.WithTracingMiddlewareFactory(func(spec *recipe.ObservabilitySpec) blades.Middleware {
-//	    if spec.Tracing == "otel" {
-//	        return otel.Tracing(otel.WithSystem(spec.System))
-//	    }
-//	    return nil
-//	})
-func WithTracingMiddlewareFactory(factory TracingMiddlewareFactory) BuildOption {
-	return func(o *buildOptions) {
-		o.tracingMiddlewareFactory = factory
 	}
 }
 
@@ -125,30 +104,18 @@ func buildContextManager(spec *ContextSpec, o *buildOptions) (blades.ContextMana
 	}
 }
 
-// buildAgentMiddlewares assembles the middleware stack from observability, approval, and hooks specs.
-// Order: observability(otel) → on_start hooks → approval → on_complete hooks → on_error hooks.
+// buildAgentMiddlewares assembles the middleware stack from the spec.
+// Order: named middlewares (from spec.Middlewares) → approval.
 func buildAgentMiddlewares(spec *RecipeSpec, o *buildOptions) ([]blades.Middleware, error) {
 	var mws []blades.Middleware
 
-	// Observability (tracing)
-	if spec.Observability != nil && spec.Observability.Tracing != "" {
-		if o.tracingMiddlewareFactory == nil {
-			return nil, fmt.Errorf("recipe: observability.tracing=%q is configured but no tracing factory was provided (use WithTracingMiddlewareFactory)", spec.Observability.Tracing)
+	// Named middlewares resolved from the registry.
+	for _, ms := range spec.Middlewares {
+		mw, err := resolveMiddleware(ms.Name, ms.Options, o)
+		if err != nil {
+			return nil, fmt.Errorf("recipe: middleware %q: %w", ms.Name, err)
 		}
-		if mw := o.tracingMiddlewareFactory(spec.Observability); mw != nil {
-			mws = append(mws, mw)
-		}
-	}
-
-	// Hooks: on_start
-	if spec.Hooks != nil {
-		for _, name := range spec.Hooks.OnStart {
-			mw, err := resolveMiddleware(name, o)
-			if err != nil {
-				return nil, fmt.Errorf("recipe: hooks.on_start %q: %w", name, err)
-			}
-			mws = append(mws, mw)
-		}
+		mws = append(mws, mw)
 	}
 
 	// Approval
@@ -200,34 +167,15 @@ func buildAgentMiddlewares(spec *RecipeSpec, o *buildOptions) ([]blades.Middlewa
 		}
 	}
 
-	// Hooks: on_complete — only fires when the inner handler finishes without error.
-	if spec.Hooks != nil {
-		for _, name := range spec.Hooks.OnComplete {
-			mw, err := resolveMiddleware(name, o)
-			if err != nil {
-				return nil, fmt.Errorf("recipe: hooks.on_complete %q: %w", name, err)
-			}
-			mws = append(mws, wrapOnComplete(mw))
-		}
-		// Hooks: on_error — only fires when the inner handler yields an error.
-		for _, name := range spec.Hooks.OnError {
-			mw, err := resolveMiddleware(name, o)
-			if err != nil {
-				return nil, fmt.Errorf("recipe: hooks.on_error %q: %w", name, err)
-			}
-			mws = append(mws, wrapOnError(mw))
-		}
-	}
-
 	return mws, nil
 }
 
-// resolveMiddleware resolves a named middleware from the registry.
-func resolveMiddleware(name string, o *buildOptions) (blades.Middleware, error) {
+// resolveMiddleware resolves a named middleware from the registry, passing options to its factory.
+func resolveMiddleware(name string, options map[string]any, o *buildOptions) (blades.Middleware, error) {
 	if o.middlewareRegistry == nil {
-		return nil, fmt.Errorf("middleware registry is required when hooks are referenced")
+		return nil, fmt.Errorf("middleware registry is required when middlewares are referenced")
 	}
-	return o.middlewareRegistry.Resolve(name)
+	return o.middlewareRegistry.Resolve(name, options)
 }
 
 // BuildFromAgentSpec constructs a blades.Agent from an AgentSpec by converting
@@ -473,84 +421,6 @@ func (m *middlewareAgent) Run(ctx context.Context, inv *blades.Invocation) blade
 // wrapWithMiddlewares wraps a blades.Agent with the given middleware chain.
 func wrapWithMiddlewares(agent blades.Agent, mws []blades.Middleware) blades.Agent {
 	return &middlewareAgent{inner: agent, mws: mws}
-}
-
-// hookResult holds a single (message, error) pair collected from the inner handler.
-type hookResult struct {
-	msg *blades.Message
-	err error
-}
-
-// replayHandler creates a Handler that replays the collected results so that
-// lifecycle hook middlewares can observe the original execution output.
-func replayHandler(results []hookResult) blades.Handler {
-	return blades.HandleFunc(func(_ context.Context, _ *blades.Invocation) blades.Generator[*blades.Message, error] {
-		return func(yield func(*blades.Message, error) bool) {
-			for _, r := range results {
-				if !yield(r.msg, r.err) {
-					return
-				}
-			}
-		}
-	})
-}
-
-// wrapOnComplete wraps mw so it only executes after the inner handler finishes
-// without any error. The hook middleware receives a replay of the original
-// results via its next handler, so it can observe the actual messages.
-// Output from the hook itself is consumed but not re-yielded to the caller.
-func wrapOnComplete(mw blades.Middleware) blades.Middleware {
-	return func(next blades.Handler) blades.Handler {
-		return blades.HandleFunc(func(ctx context.Context, inv *blades.Invocation) blades.Generator[*blades.Message, error] {
-			return func(yield func(*blades.Message, error) bool) {
-				var results []hookResult
-				hasError := false
-				for msg, err := range next.Handle(ctx, inv) {
-					if err != nil {
-						hasError = true
-					}
-					results = append(results, hookResult{msg, err})
-					if !yield(msg, err) {
-						return
-					}
-				}
-				if !hasError {
-					// Run hook for side-effects; discard output to avoid duplicates.
-					for range mw(replayHandler(results)).Handle(ctx, inv) {
-					}
-				}
-			}
-		})
-	}
-}
-
-// wrapOnError wraps mw so it only executes after the inner handler yields an
-// error. The hook middleware receives a replay of the original results via its
-// next handler, so it can observe the actual errors.
-// Output from the hook itself is consumed but not re-yielded to the caller.
-func wrapOnError(mw blades.Middleware) blades.Middleware {
-	return func(next blades.Handler) blades.Handler {
-		return blades.HandleFunc(func(ctx context.Context, inv *blades.Invocation) blades.Generator[*blades.Message, error] {
-			return func(yield func(*blades.Message, error) bool) {
-				var results []hookResult
-				for msg, err := range next.Handle(ctx, inv) {
-					results = append(results, hookResult{msg, err})
-					if err != nil {
-						// Run hook before surfacing the error. Callers like Runner.Run
-						// stop consuming as soon as they see an error, so post-yield
-						// hooks would otherwise never execute.
-						for range mw(replayHandler(results)).Handle(ctx, inv) {
-						}
-						yield(msg, err)
-						return
-					}
-					if !yield(msg, err) {
-						return
-					}
-				}
-			}
-		})
-	}
 }
 
 // buildToolAgent creates a parent agent with sub-recipes wrapped as tools.

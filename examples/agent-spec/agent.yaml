@@ -2,10 +2,9 @@ kind: AgentSpec
 version: v1
 name: code-reviewer
 description: Smart code reviewer with full observability
-identity:
-  persona: |
-    You are a senior engineer. Be concise and opinionated.
-    Focus on bugs, performance issues, and style violations.
+instruction: |
+  You are a senior engineer. Be concise and opinionated.
+  Focus on bugs, performance issues, and style violations.
 model:
   primary: gpt-4o
 tools:
@@ -19,11 +18,8 @@ context:
   model: gpt-4o-mini
 approval:
   on_tools: [bash, deploy]
-observability:
-  tracing: otel
-  system: openai
-hooks:
-  on_start:
-    - logging
-  on_error:
-    - alert
+middlewares:
+  - name: tracing
+  - name: logging
+    options: {"level": "info"}
+

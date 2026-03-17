@@ -1,6 +1,6 @@
 // Package main demonstrates loading and running an agent from an AgentSpec YAML file.
 // The AgentSpec format is a Kubernetes-style declarative specification that supports
-// context management, approval gates, observability, and lifecycle hooks.
+// context management, approval gates, and named middleware pipelines.
 package main
 
 import (
@@ -72,27 +72,28 @@ func main() {
 	toolRegistry := recipe.NewStaticToolRegistry()
 	toolRegistry.Register("get-weather", weatherTool)
 
-	// 4. Register named hook middlewares (on_start: logging, on_error: alert).
+	// 4. Register named middleware factories.
 	mwRegistry := recipe.NewStaticMiddlewareRegistry()
-	mwRegistry.Register("logging", func(next blades.Handler) blades.Handler {
-		return blades.HandleFunc(func(ctx context.Context, inv *blades.Invocation) blades.Generator[*blades.Message, error] {
-			log.Printf("[hook:logging] invocation started (id=%s)", inv.ID)
-			return next.Handle(ctx, inv)
-		})
+
+	// "tracing" factory: create an otel tracing middleware.
+	mwRegistry.Register("tracing", func(_ map[string]any) blades.Middleware {
+		return otelMiddleware.Tracing(otelMiddleware.WithSystem("openai"))
 	})
-	mwRegistry.Register("alert", func(next blades.Handler) blades.Handler {
-		return blades.HandleFunc(func(ctx context.Context, inv *blades.Invocation) blades.Generator[*blades.Message, error] {
-			return func(yield func(*blades.Message, error) bool) {
-				for msg, err := range next.Handle(ctx, inv) {
-					if err != nil {
-						log.Printf("[hook:alert] error during invocation (id=%s): %v", inv.ID, err)
-					}
-					if !yield(msg, err) {
-						return
-					}
-				}
+
+	// "logging" factory: logs invocation start; reads optional "level" from options.
+	mwRegistry.Register("logging", func(options map[string]any) blades.Middleware {
+		level := "info"
+		if options != nil {
+			if l, ok := options["level"].(string); ok {
+				level = l
 			}
-		})
+		}
+		return func(next blades.Handler) blades.Handler {
+			return blades.HandleFunc(func(ctx context.Context, inv *blades.Invocation) blades.Generator[*blades.Message, error] {
+				log.Printf("[middleware:logging level=%s] invocation started (id=%s)", level, inv.ID)
+				return next.Handle(ctx, inv)
+			})
+		}
 	})
 
 	// 5. Load the AgentSpec from YAML.
@@ -117,18 +118,6 @@ func main() {
 			log.Printf("[approval] Request: %s", preview)
 			log.Println("[approval] Auto-approved for demo")
 			return true, nil
-		}),
-
-		// Tracing factory: wire up contrib/otel using the ObservabilitySpec fields.
-		recipe.WithTracingMiddlewareFactory(func(obs *recipe.ObservabilitySpec) blades.Middleware {
-			if obs.Tracing == "otel" {
-				opts := []otelMiddleware.TraceOption{}
-				if obs.System != "" {
-					opts = append(opts, otelMiddleware.WithSystem(obs.System))
-				}
-				return otelMiddleware.Tracing(opts...)
-			}
-			return nil
 		}),
 	)
 	if err != nil {
