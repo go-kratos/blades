@@ -12,9 +12,10 @@ import (
 type BuildOption func(*buildOptions)
 
 type buildOptions struct {
-	modelRegistry ModelRegistry
-	toolRegistry  ToolRegistry
-	params        map[string]any
+	modelRegistry      ModelRegistry
+	toolRegistry       ToolRegistry
+	middlewareRegistry MiddlewareRegistry
+	params             map[string]any
 }
 
 // WithModelRegistry sets the model registry for resolving model names.
@@ -28,6 +29,13 @@ func WithModelRegistry(r ModelRegistry) BuildOption {
 func WithToolRegistry(r ToolRegistry) BuildOption {
 	return func(o *buildOptions) {
 		o.toolRegistry = r
+	}
+}
+
+// WithMiddlewareRegistry sets the middleware registry for resolving middleware names.
+func WithMiddlewareRegistry(r MiddlewareRegistry) BuildOption {
+	return func(o *buildOptions) {
+		o.middlewareRegistry = r
 	}
 }
 
@@ -120,6 +128,15 @@ func buildSingleAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (
 		agentOpts = append(agentOpts, blades.WithTools(resolvedTools...))
 	}
 
+	// Resolve middlewares
+	middlewares, err := resolveMiddlewares(spec.Middlewares, o)
+	if err != nil {
+		return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
+	}
+	if len(middlewares) > 0 {
+		agentOpts = append(agentOpts, blades.WithMiddleware(middlewares...))
+	}
+
 	agent, err := blades.NewAgent(spec.Name, agentOpts...)
 	if err != nil {
 		return nil, err
@@ -180,6 +197,15 @@ func buildSubAgent(sub *SubAgentSpec, parentModel string, params map[string]any,
 	}
 	if len(resolvedTools) > 0 {
 		agentOpts = append(agentOpts, blades.WithTools(resolvedTools...))
+	}
+
+	// Resolve middlewares
+	middlewares, err := resolveMiddlewares(sub.Middlewares, o)
+	if err != nil {
+		return nil, fmt.Errorf("sub_recipe %q: %w", sub.Name, err)
+	}
+	if len(middlewares) > 0 {
+		agentOpts = append(agentOpts, blades.WithMiddleware(middlewares...))
 	}
 
 	agent, err := blades.NewAgent(sub.Name, agentOpts...)
@@ -271,6 +297,15 @@ func buildToolAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (bl
 		agentOpts = append(agentOpts, blades.WithMaxIterations(spec.MaxIterations))
 	}
 
+	// Resolve middlewares
+	middlewares, err := resolveMiddlewares(spec.Middlewares, o)
+	if err != nil {
+		return nil, fmt.Errorf("recipe %q: %w", spec.Name, err)
+	}
+	if len(middlewares) > 0 {
+		agentOpts = append(agentOpts, blades.WithMiddleware(middlewares...))
+	}
+
 	return blades.NewAgent(spec.Name, agentOpts...)
 }
 
@@ -289,6 +324,25 @@ func resolveTools(names []string, o *buildOptions) ([]tools.Tool, error) {
 			return nil, err
 		}
 		resolved = append(resolved, t)
+	}
+	return resolved, nil
+}
+
+// resolveMiddlewares resolves a list of MiddlewareSpec entries to blades.Middleware instances.
+func resolveMiddlewares(specs []MiddlewareSpec, o *buildOptions) ([]blades.Middleware, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	if o.middlewareRegistry == nil {
+		return nil, fmt.Errorf("middleware registry is required when middlewares are referenced")
+	}
+	resolved := make([]blades.Middleware, 0, len(specs))
+	for _, spec := range specs {
+		mw, err := o.middlewareRegistry.Resolve(spec.Name, spec.Options)
+		if err != nil {
+			return nil, err
+		}
+		resolved = append(resolved, mw)
 	}
 	return resolved, nil
 }

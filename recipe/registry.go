@@ -18,6 +18,48 @@ type ToolRegistry interface {
 	Resolve(name string) (tools.Tool, error)
 }
 
+// MiddlewareFactory constructs a blades.Middleware from YAML options.
+// The options map contains the key-value pairs from the middleware's `options:` block.
+// A nil or empty map is passed when no options are declared.
+type MiddlewareFactory func(options map[string]any) (blades.Middleware, error)
+
+// MiddlewareRegistry resolves middleware names from YAML to Middleware instances,
+// passing the per-declaration options to the registered factory.
+type MiddlewareRegistry interface {
+	Resolve(name string, options map[string]any) (blades.Middleware, error)
+}
+
+// StaticMiddlewareRegistry is a simple in-memory MiddlewareRegistry backed by factories.
+type StaticMiddlewareRegistry struct {
+	mu        sync.RWMutex
+	factories map[string]MiddlewareFactory
+}
+
+// NewStaticMiddlewareRegistry creates a new empty StaticMiddlewareRegistry.
+func NewStaticMiddlewareRegistry() *StaticMiddlewareRegistry {
+	return &StaticMiddlewareRegistry{
+		factories: make(map[string]MiddlewareFactory),
+	}
+}
+
+// Register adds a middleware factory under the given name.
+func (r *StaticMiddlewareRegistry) Register(name string, factory MiddlewareFactory) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.factories[name] = factory
+}
+
+// Resolve calls the registered factory for name, passing options, and returns the Middleware.
+func (r *StaticMiddlewareRegistry) Resolve(name string, options map[string]any) (blades.Middleware, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	f, ok := r.factories[name]
+	if !ok {
+		return nil, fmt.Errorf("recipe: middleware %q not found in registry", name)
+	}
+	return f(options)
+}
+
 // Registry is a simple in-memory ModelRegistry.
 type Registry struct {
 	mu        sync.RWMutex

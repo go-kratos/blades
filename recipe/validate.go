@@ -50,6 +50,9 @@ func Validate(spec *AgentSpec) error {
 	if err := validateContextSpec(spec.Context); err != nil {
 		return fmt.Errorf("recipe %q: context: %w", spec.Name, err)
 	}
+	if err := validateMiddlewares(fmt.Sprintf("recipe %q", spec.Name), spec.Middlewares); err != nil {
+		return err
+	}
 	toolNames, err := validateToolNames(fmt.Sprintf("recipe %q", spec.Name), spec.Tools)
 	if err != nil {
 		return err
@@ -75,6 +78,20 @@ func Validate(spec *AgentSpec) error {
 			spec.Model == "" && sub.Model == "" {
 			return fmt.Errorf("recipe %q: sub_recipe %q: model is required when parent has no model", spec.Name, sub.Name)
 		}
+	}
+	return nil
+}
+
+func validateMiddlewares(scope string, specs []MiddlewareSpec) error {
+	seen := make(map[string]bool, len(specs))
+	for i, mw := range specs {
+		if mw.Name == "" {
+			return fmt.Errorf("%s: middleware[%d]: name is required", scope, i)
+		}
+		if seen[mw.Name] {
+			return fmt.Errorf("%s: duplicate middleware name %q", scope, mw.Name)
+		}
+		seen[mw.Name] = true
 	}
 	return nil
 }
@@ -146,6 +163,9 @@ func validateSubRecipe(sub *SubAgentSpec, index int) error {
 	}
 	if err := validateContextSpec(sub.Context); err != nil {
 		return fmt.Errorf("sub_recipe %q: context: %w", sub.Name, err)
+	}
+	if err := validateMiddlewares(fmt.Sprintf("sub_recipe %q", sub.Name), sub.Middlewares); err != nil {
+		return err
 	}
 	return nil
 }

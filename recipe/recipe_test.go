@@ -86,6 +86,17 @@ func newTestToolRegistry() *StaticToolRegistry {
 	return r
 }
 
+func newTestMiddlewareRegistry() *StaticMiddlewareRegistry {
+	r := NewStaticMiddlewareRegistry()
+	r.Register("tracing", func(_ map[string]any) (blades.Middleware, error) {
+		return func(next blades.Handler) blades.Handler { return next }, nil
+	})
+	r.Register("logging", func(opts map[string]any) (blades.Middleware, error) {
+		return func(next blades.Handler) blades.Handler { return next }, nil
+	})
+	return r
+}
+
 // --- Parse / Load Tests ---
 
 func TestParseBasicYAML(t *testing.T) {
@@ -890,7 +901,7 @@ func TestValidateSubRecipeNoName(t *testing.T) {
 		Model:       "m",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubAgents:  []SubAgentSpec{{Instruction: "sub"}},
+		SubAgents:   []SubAgentSpec{{Instruction: "sub"}},
 	}
 	err := Validate(spec)
 	if err == nil {
@@ -908,7 +919,7 @@ func TestValidateSubRecipeNoInstruction(t *testing.T) {
 		Model:       "m",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubAgents:  []SubAgentSpec{{Name: "s"}},
+		SubAgents:   []SubAgentSpec{{Name: "s"}},
 	}
 	if err := Validate(spec); err == nil {
 		t.Fatal("expected error for sub_recipe without instruction")
@@ -980,7 +991,7 @@ func TestValidateAcceptsSequentialParallelTool(t *testing.T) {
 			Model:       "m",
 			Instruction: "i",
 			Execution:   mode,
-			SubAgents:  []SubAgentSpec{{Name: "s", Instruction: "do"}},
+			SubAgents:   []SubAgentSpec{{Name: "s", Instruction: "do"}},
 		}
 		if err := Validate(spec); err != nil {
 			t.Errorf("mode %q should be valid: %v", mode, err)
@@ -1705,7 +1716,6 @@ instruction: "val={{.x}}"
 	}
 }
 
-
 // Compile-time check that mockTool implements tools.Tool.
 var _ tools.Tool = (*mockTool)(nil)
 
@@ -1941,5 +1951,147 @@ context:
 	}
 	if _, ok := agent.(*contextAwareAgent); !ok {
 		t.Fatalf("expected *contextAwareAgent, got %T", agent)
+	}
+}
+
+// --- MiddlewareSpec Tests ---
+
+func TestMiddlewareSpecBuildAppliesMiddlewares(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "mw-agent",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Middlewares: []MiddlewareSpec{
+			{Name: "tracing"},
+			{Name: "logging", Options: map[string]any{"level": "info"}},
+		},
+	}
+	_, err := Build(spec,
+		WithModelRegistry(newTestModelRegistry()),
+		WithMiddlewareRegistry(newTestMiddlewareRegistry()),
+	)
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+}
+
+func TestMiddlewareSpecBuildMissingRegistry(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "mw-agent",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Middlewares: []MiddlewareSpec{{Name: "tracing"}},
+	}
+	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
+	if err == nil || !strings.Contains(err.Error(), "middleware registry is required") {
+		t.Fatalf("expected registry required error, got: %v", err)
+	}
+}
+
+func TestMiddlewareSpecBuildUnknownMiddleware(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "mw-agent",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Middlewares: []MiddlewareSpec{{Name: "unknown"}},
+	}
+	_, err := Build(spec,
+		WithModelRegistry(newTestModelRegistry()),
+		WithMiddlewareRegistry(newTestMiddlewareRegistry()),
+	)
+	if err == nil || !strings.Contains(err.Error(), `"unknown"`) {
+		t.Fatalf("expected unknown middleware error, got: %v", err)
+	}
+}
+
+func TestMiddlewareSpecValidateEmptyName(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "x",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Middlewares: []MiddlewareSpec{{Name: ""}},
+	}
+	err := Validate(spec)
+	if err == nil || !strings.Contains(err.Error(), "name is required") {
+		t.Fatalf("expected name required error, got: %v", err)
+	}
+}
+
+func TestMiddlewareSpecValidateDuplicateName(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "x",
+		Model:       "gpt-4o",
+		Instruction: "do something",
+		Middlewares: []MiddlewareSpec{{Name: "tracing"}, {Name: "tracing"}},
+	}
+	err := Validate(spec)
+	if err == nil || !strings.Contains(err.Error(), "duplicate middleware") {
+		t.Fatalf("expected duplicate error, got: %v", err)
+	}
+}
+
+func TestMiddlewareSpecSubAgentMiddleware(t *testing.T) {
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "parent",
+		Model:       "gpt-4o",
+		Instruction: "orchestrate",
+		Execution:   ExecutionSequential,
+		SubAgents: []SubAgentSpec{
+			{
+				Name:        "worker",
+				Instruction: "do work",
+				Middlewares: []MiddlewareSpec{{Name: "logging", Options: map[string]any{"level": "debug"}}},
+			},
+		},
+	}
+	_, err := Build(spec,
+		WithModelRegistry(newTestModelRegistry()),
+		WithMiddlewareRegistry(newTestMiddlewareRegistry()),
+	)
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+}
+
+func TestMiddlewareSpecYAMLRoundTrip(t *testing.T) {
+	yamlDoc := `
+version: "1.0"
+name: yaml-mw
+model: gpt-4o
+instruction: "do something"
+middlewares:
+  - name: tracing
+  - name: logging
+    options:
+      level: info
+`
+	spec, err := Parse([]byte(yamlDoc))
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(spec.Middlewares) != 2 {
+		t.Fatalf("expected 2 middlewares, got %d", len(spec.Middlewares))
+	}
+	if spec.Middlewares[0].Name != "tracing" {
+		t.Fatalf("expected tracing, got %q", spec.Middlewares[0].Name)
+	}
+	if spec.Middlewares[1].Name != "logging" {
+		t.Fatalf("expected logging, got %q", spec.Middlewares[1].Name)
+	}
+	if spec.Middlewares[1].Options["level"] != "info" {
+		t.Fatalf("expected level=info, got %v", spec.Middlewares[1].Options["level"])
+	}
+	_, err = Build(spec,
+		WithModelRegistry(newTestModelRegistry()),
+		WithMiddlewareRegistry(newTestMiddlewareRegistry()),
+	)
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
 	}
 }

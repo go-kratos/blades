@@ -73,6 +73,22 @@ type ContextSpec struct {
 	Model string `yaml:"model,omitempty"`
 }
 
+// MiddlewareSpec declares a single middleware to apply to an agent.
+// The middleware is resolved by name from the MiddlewareRegistry at build time,
+// with Options passed as-is to the factory function.
+//
+// Example:
+//
+//	middlewares:
+//	  - name: tracing
+//	  - name: logging
+//	    options:
+//	      level: info
+type MiddlewareSpec struct {
+	Name    string         `yaml:"name"`
+	Options map[string]any `yaml:"options,omitempty"`
+}
+
 // AgentSpec is the top-level declarative specification for a recipe.
 // A recipe YAML file is parsed into this structure and then built into a blades.Agent.
 type AgentSpec struct {
@@ -89,6 +105,7 @@ type AgentSpec struct {
 	OutputKey     string          `yaml:"output_key,omitempty"`
 	MaxIterations int             `yaml:"max_iterations,omitempty"`
 	Context       *ContextSpec    `yaml:"context,omitempty"`
+	Middlewares   []MiddlewareSpec `yaml:"middlewares,omitempty"`
 }
 
 // SubAgentSpec defines a child agent within a recipe.
@@ -103,6 +120,7 @@ type SubAgentSpec struct {
 	OutputKey     string          `yaml:"output_key,omitempty"`
 	MaxIterations int             `yaml:"max_iterations,omitempty"`
 	Context       *ContextSpec    `yaml:"context,omitempty"`
+	Middlewares   []MiddlewareSpec `yaml:"middlewares,omitempty"`
 }
 
 // ParameterSpec defines a configurable parameter for a recipe.
