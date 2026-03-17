@@ -32,8 +32,8 @@ type LoopConfig struct {
 	SubAgents []blades.Agent
 }
 
-// loopAgent is an agent that runs sub-agents in a loop.
-type loopAgent struct {
+// LoopAgent is an agent that runs sub-agents in a loop.
+type LoopAgent struct {
 	config LoopConfig
 }
 
@@ -42,17 +42,17 @@ func NewLoopAgent(config LoopConfig) blades.Agent {
 	if config.MaxIterations <= 0 {
 		config.MaxIterations = 10
 	}
-	return &loopAgent{config: config}
+	return &LoopAgent{config: config}
 }
 
-func (a *loopAgent) Name() string        { return a.config.Name }
-func (a *loopAgent) Description() string { return a.config.Description }
+func (a *LoopAgent) Name() string        { return a.config.Name }
+func (a *LoopAgent) Description() string { return a.config.Description }
 
 // Run runs the sub-agents in a loop. After each message yielded by a sub-agent
 // the loop checks message.Actions for an ActionLoopExit signal set by ExitTool.
 // Context management across iterations is delegated to the ContextManager
 // configured on the Runner (via blades.WithContextManager).
-func (a *loopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
+func (a *LoopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		state := LoopState{}
 		for state.Iteration = 0; state.Iteration < a.config.MaxIterations; state.Iteration++ {
