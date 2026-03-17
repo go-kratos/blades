@@ -23,7 +23,7 @@ func main() {
 	// Use the same model as both the main agent and the summarizer.
 	// In production you might use a cheaper/faster model for summarization.
 	compressor := summary.NewContextCompressor(
-		summary.WithSummarizer(model),
+		model,
 		// Trigger compression once the context exceeds ~500 tokens.
 		summary.WithMaxTokens(500),
 		// Always keep the 3 most recent messages verbatim.

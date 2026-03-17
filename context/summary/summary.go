@@ -48,13 +48,6 @@ func WithMaxTokens(tokens int64) Option {
 	}
 }
 
-// WithSummarizer sets the ModelProvider used to generate summaries.
-func WithSummarizer(model blades.ModelProvider) Option {
-	return func(c *contextCompressor) {
-		c.summarizer = model
-	}
-}
-
 // WithTokenCounter sets the TokenCounter used to estimate token usage.
 // Defaults to a character-based counter (1 token ≈ 4 chars).
 func WithTokenCounter(counter blades.TokenCounter) Option {
@@ -105,11 +98,12 @@ type contextCompressor struct {
 //     the current offset, extend the rolling summary with them, and advance the
 //     offset. Repeat until under budget or no more messages can be compressed.
 //  4. Persist the updated offset and summary content back to session.State().
-func NewContextCompressor(opts ...Option) blades.ContextCompressor {
+func NewContextCompressor(model blades.ModelProvider, opts ...Option) blades.ContextCompressor {
 	c := &contextCompressor{
 		instruction: defaultInstruction,
 		keepRecent:  defaultKeepRecent,
 		batchSize:   defaultBatchSize,
+		summarizer:  model,
 		counter:     counter.NewCharBasedCounter(),
 	}
 	for _, opt := range opts {

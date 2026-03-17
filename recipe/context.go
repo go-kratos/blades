@@ -30,14 +30,11 @@ func buildContextCompressor(spec *ContextSpec, reg ModelResolver, fallbackModelN
 		if modelName == "" {
 			modelName = fallbackModelName
 		}
-		if modelName != "" {
-			model, err := reg.Resolve(modelName)
-			if err != nil {
-				return nil, fmt.Errorf("recipe: context model: %w", err)
-			}
-			opts = append(opts, summary.WithSummarizer(model))
+		model, err := reg.Resolve(modelName)
+		if err != nil {
+			return nil, fmt.Errorf("recipe: context model: %w", err)
 		}
-		return summary.NewContextCompressor(opts...), nil
+		return summary.NewContextCompressor(model, opts...), nil
 
 	case ContextStrategyWindow:
 		opts := []window.Option{}

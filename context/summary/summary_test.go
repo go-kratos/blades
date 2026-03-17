@@ -13,7 +13,7 @@ import (
 func TestContextCompressor_BelowBudget(t *testing.T) {
 	s := &mockSummarizer{}
 	c := summary.NewContextCompressor(
-		summary.WithSummarizer(s),
+		s,
 		summary.WithMaxTokens(1_000_000),
 		summary.WithKeepRecent(5),
 	)
@@ -33,7 +33,7 @@ func TestContextCompressor_BelowBudget(t *testing.T) {
 func TestContextCompressor_CompressesOldMessages(t *testing.T) {
 	s := &mockSummarizer{}
 	c := summary.NewContextCompressor(
-		summary.WithSummarizer(s),
+		s,
 		summary.WithMaxTokens(10),
 		summary.WithKeepRecent(2),
 		summary.WithBatchSize(3),
@@ -54,7 +54,7 @@ func TestContextCompressor_CompressesOldMessages(t *testing.T) {
 
 func TestContextCompressor_ZeroMaxTokens_NoOp(t *testing.T) {
 	s := &mockSummarizer{}
-	c := summary.NewContextCompressor(summary.WithSummarizer(s)) // MaxTokens=0 → no-op
+	c := summary.NewContextCompressor(s) // MaxTokens=0 → no-op
 	msgs := makeMessages(20)
 	got, err := c.Compress(context.Background(), msgs)
 	if err != nil {
@@ -70,7 +70,7 @@ func TestContextCompressor_ZeroMaxTokens_NoOp(t *testing.T) {
 func TestContextCompressor_SessionPersistsOffset(t *testing.T) {
 	s := &mockSummarizer{}
 	c := summary.NewContextCompressor(
-		summary.WithSummarizer(s),
+		s,
 		summary.WithMaxTokens(10),
 		summary.WithKeepRecent(2),
 		summary.WithBatchSize(3),
@@ -127,7 +127,7 @@ func TestContextCompressor_SessionPersistsOffset(t *testing.T) {
 func TestContextCompressor_NoSession_Stateless(t *testing.T) {
 	s := &mockSummarizer{}
 	c := summary.NewContextCompressor(
-		summary.WithSummarizer(s),
+		s,
 		summary.WithMaxTokens(10),
 		summary.WithKeepRecent(2),
 		summary.WithBatchSize(3),
