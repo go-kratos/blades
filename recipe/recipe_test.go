@@ -191,7 +191,7 @@ func TestValidateNoExecution(t *testing.T) {
 }
 
 func TestValidateSelectNoOptions(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "test",
 		Model:       "gpt-4o",
@@ -206,7 +206,7 @@ func TestValidateSelectNoOptions(t *testing.T) {
 }
 
 func TestValidateDuplicateParameter(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "test",
 		Model:       "gpt-4o",
@@ -222,7 +222,7 @@ func TestValidateDuplicateParameter(t *testing.T) {
 }
 
 func TestValidateParams(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "test",
 		Model:       "gpt-4o",
@@ -443,7 +443,7 @@ func TestBuildWithDefaults(t *testing.T) {
 }
 
 func TestBuildWithReferencedToolsRequiresToolRegistry(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "with-tools",
 		Model:       "gpt-4o",
@@ -461,7 +461,7 @@ func TestBuildResolvesExternalTools(t *testing.T) {
 	modelRegistry := NewRegistry()
 	modelRegistry.Register("openai", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "with-tools",
 		Model:       "openai",
@@ -484,7 +484,7 @@ func TestBuildResolvesExternalTools(t *testing.T) {
 }
 
 func TestBuildMissingModelRegistry(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "test",
 		Model:       "gpt-4o",
@@ -528,14 +528,14 @@ func TestBuildToolModeIncludesSubRecipesAndExternalTools(t *testing.T) {
 	modelRegistry.Register("openai", model)
 	modelRegistry.Register("worker-model", &mockModel{name: "worker-model"})
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "dispatcher",
 		Model:       "openai",
 		Instruction: "dispatch",
 		Execution:   ExecutionTool,
 		Tools:       []string{"web-search"},
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{Name: "fact-checker", Model: "worker-model", Instruction: "check"},
 			{Name: "data-analyst", Model: "worker-model", Instruction: "analyze"},
 		},
@@ -587,7 +587,7 @@ func TestBuildInjectsPromptAsInstruction(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register("openai", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "prompted",
 		Model:       "openai",
@@ -623,7 +623,7 @@ func TestBuildInjectsSubRecipePromptAsInstruction(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register("m1", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "pipeline",
 		Model:       "m1",
@@ -632,7 +632,7 @@ func TestBuildInjectsSubRecipePromptAsInstruction(t *testing.T) {
 		Parameters: []ParameterSpec{
 			{Name: "language", Type: ParameterString, Required: ParameterRequired},
 		},
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{
 				Name:        "step-1",
 				Instruction: "check code",
@@ -661,7 +661,7 @@ func TestBuildInjectsSubRecipePromptAsInstruction(t *testing.T) {
 }
 
 func TestBuildFailsWhenPromptRenderHasMissingParam(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "bad-prompt",
 		Model:       "gpt-4o",
@@ -675,13 +675,13 @@ func TestBuildFailsWhenPromptRenderHasMissingParam(t *testing.T) {
 }
 
 func TestBuildFailsWhenSubRecipePromptRenderHasMissingParam(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "bad-sub-prompt",
 		Model:       "gpt-4o",
 		Instruction: "instruction",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{
 				Name:        "step-1",
 				Instruction: "check",
@@ -702,7 +702,7 @@ func TestBuildSequentialRendersParamsAndPreservesOutputTemplate(t *testing.T) {
 	registry.Register("m1", first)
 	registry.Register("m2", second)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "pipeline",
 		Model:       "m1",
@@ -711,7 +711,7 @@ func TestBuildSequentialRendersParamsAndPreservesOutputTemplate(t *testing.T) {
 		Parameters: []ParameterSpec{
 			{Name: "language", Type: ParameterString, Required: ParameterRequired},
 		},
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{
 				Name:        "step-1",
 				Model:       "m1",
@@ -740,13 +740,13 @@ func TestBuildSequentialRendersParamsAndPreservesOutputTemplate(t *testing.T) {
 }
 
 func TestBuildValidatesSubRecipeParams(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "pipeline",
 		Model:       "gpt-4o",
 		Instruction: "pipeline",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{
 				Name:        "step-1",
 				Instruction: "style={{.style}}",
@@ -763,13 +763,13 @@ func TestBuildValidatesSubRecipeParams(t *testing.T) {
 }
 
 func TestValidateRejectsOutputKeyInToolMode(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "tool-mode",
 		Model:       "gpt-4o",
 		Instruction: "route",
 		Execution:   ExecutionTool,
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{
 				Name:        "worker",
 				Instruction: "do work",
@@ -791,7 +791,7 @@ func TestValidateNilSpec(t *testing.T) {
 }
 
 func TestValidateNoVersion(t *testing.T) {
-	spec := &RecipeSpec{Name: "x", Model: "m", Instruction: "i"}
+	spec := &AgentSpec{Name: "x", Model: "m", Instruction: "i"}
 	err := Validate(spec)
 	if err == nil {
 		t.Fatal("expected error for missing version")
@@ -802,7 +802,7 @@ func TestValidateNoVersion(t *testing.T) {
 }
 
 func TestValidateNoInstruction(t *testing.T) {
-	spec := &RecipeSpec{Version: "1.0", Name: "x", Model: "m"}
+	spec := &AgentSpec{Version: "1.0", Name: "x", Model: "m"}
 	err := Validate(spec)
 	if err == nil {
 		t.Fatal("expected error for missing instruction")
@@ -813,7 +813,7 @@ func TestValidateNoInstruction(t *testing.T) {
 }
 
 func TestValidateNoModelWithoutSubRecipes(t *testing.T) {
-	spec := &RecipeSpec{Version: "1.0", Name: "x", Instruction: "i"}
+	spec := &AgentSpec{Version: "1.0", Name: "x", Instruction: "i"}
 	err := Validate(spec)
 	if err == nil {
 		t.Fatal("expected error for missing model without sub_recipes")
@@ -824,7 +824,7 @@ func TestValidateNoModelWithoutSubRecipes(t *testing.T) {
 }
 
 func TestValidateInvalidExecutionMode(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -841,7 +841,7 @@ func TestValidateInvalidExecutionMode(t *testing.T) {
 }
 
 func TestValidateParameterNoType(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -854,7 +854,7 @@ func TestValidateParameterNoType(t *testing.T) {
 }
 
 func TestValidateParameterInvalidType(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -871,7 +871,7 @@ func TestValidateParameterInvalidType(t *testing.T) {
 }
 
 func TestValidateParameterNoName(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -884,13 +884,13 @@ func TestValidateParameterNoName(t *testing.T) {
 }
 
 func TestValidateSubRecipeNoName(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes:  []SubRecipeSpec{{Instruction: "sub"}},
+		SubRecipes:  []SubAgentSpec{{Instruction: "sub"}},
 	}
 	err := Validate(spec)
 	if err == nil {
@@ -902,13 +902,13 @@ func TestValidateSubRecipeNoName(t *testing.T) {
 }
 
 func TestValidateSubRecipeNoInstruction(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes:  []SubRecipeSpec{{Name: "s"}},
+		SubRecipes:  []SubAgentSpec{{Name: "s"}},
 	}
 	if err := Validate(spec); err == nil {
 		t.Fatal("expected error for sub_recipe without instruction")
@@ -916,13 +916,13 @@ func TestValidateSubRecipeNoInstruction(t *testing.T) {
 }
 
 func TestValidateSubRecipeDuplicateParam(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{{
+		SubRecipes: []SubAgentSpec{{
 			Name:        "s",
 			Instruction: "do",
 			Parameters: []ParameterSpec{
@@ -943,7 +943,7 @@ func TestValidateParamsNilSpec(t *testing.T) {
 }
 
 func TestValidateParamsSelectNonString(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -960,7 +960,7 @@ func TestValidateParamsSelectNonString(t *testing.T) {
 }
 
 func TestValidateParamsOptionalMissing(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -974,13 +974,13 @@ func TestValidateParamsOptionalMissing(t *testing.T) {
 
 func TestValidateAcceptsSequentialParallelTool(t *testing.T) {
 	for _, mode := range []ExecutionMode{ExecutionSequential, ExecutionParallel, ExecutionTool} {
-		spec := &RecipeSpec{
+		spec := &AgentSpec{
 			Version:     "1.0",
 			Name:        "x",
 			Model:       "m",
 			Instruction: "i",
 			Execution:   mode,
-			SubRecipes:  []SubRecipeSpec{{Name: "s", Instruction: "do"}},
+			SubRecipes:  []SubAgentSpec{{Name: "s", Instruction: "do"}},
 		}
 		if err := Validate(spec); err != nil {
 			t.Errorf("mode %q should be valid: %v", mode, err)
@@ -1165,7 +1165,7 @@ func TestStaticToolRegistryOverwrite(t *testing.T) {
 // --- Additional Build / Error Path Tests ---
 
 func TestBuildUnresolvableModel(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "nonexistent-model",
@@ -1181,12 +1181,12 @@ func TestBuildUnresolvableModel(t *testing.T) {
 }
 
 func TestBuildSubRecipeNoModelAndNoParent(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{Name: "s", Instruction: "do"},
 		},
 	}
@@ -1200,13 +1200,13 @@ func TestBuildSubRecipeNoModelAndNoParent(t *testing.T) {
 }
 
 func TestBuildSubRecipeUnresolvableModel(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "gpt-4o",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{Name: "s", Model: "nonexistent", Instruction: "do"},
 		},
 	}
@@ -1217,13 +1217,13 @@ func TestBuildSubRecipeUnresolvableModel(t *testing.T) {
 }
 
 func TestBuildSubRecipeUnresolvableTool(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "gpt-4o",
 		Instruction: "i",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{Name: "s", Instruction: "do", Tools: []string{"missing-tool"}},
 		},
 	}
@@ -1238,7 +1238,7 @@ func TestBuildSingleAgentVerifiesInstruction(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "reviewer",
 		Model:       "m",
@@ -1258,7 +1258,7 @@ func TestBuildSingleAgentVerifiesInstruction(t *testing.T) {
 }
 
 func TestBuildSingleAgentDescription(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Description: "my description",
@@ -1277,7 +1277,7 @@ func TestBuildSingleAgentDescription(t *testing.T) {
 func TestBuildSingleAgentMaxIterations(t *testing.T) {
 	// MaxIterations is not directly observable, but we can confirm
 	// the build succeeds with it set.
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:       "1.0",
 		Name:          "x",
 		Model:         "gpt-4o",
@@ -1298,7 +1298,7 @@ func TestBuildSingleAgentOutputKey(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -1324,13 +1324,13 @@ func TestBuildParallelAgentRunsSubAgents(t *testing.T) {
 	registry.Register("m1", &mockModel{name: "m1"})
 	registry.Register("m2", &mockModel{name: "m2"})
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "par",
 		Model:       "m1",
 		Instruction: "parallel run",
 		Execution:   ExecutionParallel,
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{Name: "a", Model: "m1", Instruction: "do a", OutputKey: "out_a"},
 			{Name: "b", Model: "m2", Instruction: "do b", OutputKey: "out_b"},
 		},
@@ -1351,14 +1351,14 @@ func TestBuildParallelAgentRunsSubAgents(t *testing.T) {
 }
 
 func TestBuildToolAgentDescription(t *testing.T) {
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "tool-agent",
 		Description: "routes tasks",
 		Model:       "gpt-4o",
 		Instruction: "route tasks",
 		Execution:   ExecutionTool,
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{Name: "w", Description: "worker desc", Instruction: "work"},
 		},
 	}
@@ -1399,7 +1399,7 @@ func TestPromptInjectedAgentNoPrompt(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -1424,7 +1424,7 @@ func TestPromptInjectedAgentWithNilMessage(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "x",
 		Model:       "m",
@@ -1457,7 +1457,7 @@ func TestE2ESingleAgentRun(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "reviewer",
 		Model:       "m",
@@ -1490,12 +1490,12 @@ func TestE2ESequentialPipelineOutputKeyPropagation(t *testing.T) {
 	registry.Register("s1", step1Model)
 	registry.Register("s2", step2Model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "pipeline",
 		Instruction: "coordinate",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{
 				Name:        "analyzer",
 				Model:       "s1",
@@ -1539,7 +1539,7 @@ func TestE2EToolModeAgentRun(t *testing.T) {
 	registry.Register("m", model)
 	registry.Register("w", workerModel)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "dispatcher",
 		Model:       "m",
@@ -1548,7 +1548,7 @@ func TestE2EToolModeAgentRun(t *testing.T) {
 		Parameters: []ParameterSpec{
 			{Name: "topic", Type: ParameterString, Required: ParameterRequired},
 		},
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{Name: "checker", Model: "w", Description: "check facts", Instruction: "verify"},
 		},
 	}
@@ -1576,7 +1576,7 @@ func TestE2EWithDefaultParamsNoUserOverride(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "defaults",
 		Model:       "m",
@@ -1603,7 +1603,7 @@ func TestE2EWithDefaultParamsPartialOverride(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "defaults",
 		Model:       "m",
@@ -1632,13 +1632,13 @@ func TestBuildSequentialSubRecipeWithTools(t *testing.T) {
 	toolRegistry := NewStaticToolRegistry()
 	toolRegistry.Register("lint", &mockTool{name: "lint"})
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "pipeline",
 		Model:       "m",
 		Instruction: "coordinate",
 		Execution:   ExecutionSequential,
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{Name: "linter", Instruction: "lint code", Tools: []string{"lint"}},
 		},
 	}
@@ -1659,13 +1659,13 @@ func TestBuildToolModeSubRecipeInheritsModel(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register("m", model)
 
-	spec := &RecipeSpec{
+	spec := &AgentSpec{
 		Version:     "1.0",
 		Name:        "router",
 		Model:       "m",
 		Instruction: "route",
 		Execution:   ExecutionTool,
-		SubRecipes: []SubRecipeSpec{
+		SubRecipes: []SubAgentSpec{
 			{Name: "worker", Instruction: "work", Description: "does work"},
 		},
 	}

@@ -30,9 +30,9 @@ const (
 	ParameterOptional ParameterRequirement = "optional"
 )
 
-// RecipeSpec is the top-level declarative specification for a recipe.
+// AgentSpec is the top-level declarative specification for a recipe.
 // A recipe YAML file is parsed into this structure and then built into a blades.Agent.
-type RecipeSpec struct {
+type AgentSpec struct {
 	Version       string          `yaml:"version"`
 	Name          string          `yaml:"name"`
 	Description   string          `yaml:"description"`
@@ -40,15 +40,15 @@ type RecipeSpec struct {
 	Instruction   string          `yaml:"instruction"`
 	Prompt        string          `yaml:"prompt,omitempty"`
 	Parameters    []ParameterSpec `yaml:"parameters,omitempty"`
-	SubRecipes    []SubRecipeSpec `yaml:"sub_recipes,omitempty"`
+	SubRecipes    []SubAgentSpec `yaml:"sub_recipes,omitempty"`
 	Execution     ExecutionMode   `yaml:"execution,omitempty"`
 	Tools         []string        `yaml:"tools,omitempty"`
 	OutputKey     string          `yaml:"output_key,omitempty"`
 	MaxIterations int             `yaml:"max_iterations,omitempty"`
 }
 
-// SubRecipeSpec defines a child agent within a recipe.
-type SubRecipeSpec struct {
+// SubAgentSpec defines a child agent within a recipe.
+type SubAgentSpec struct {
 	Name          string          `yaml:"name"`
 	Description   string          `yaml:"description,omitempty"`
 	Model         string          `yaml:"model,omitempty"`

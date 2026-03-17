@@ -5,8 +5,8 @@ import (
 	"slices"
 )
 
-// Validate checks the RecipeSpec for consistency and required fields.
-func Validate(spec *RecipeSpec) error {
+// Validate checks the AgentSpec for consistency and required fields.
+func Validate(spec *AgentSpec) error {
 	if spec == nil {
 		return fmt.Errorf("recipe: spec is required")
 	}
@@ -108,7 +108,7 @@ func validateParameters(params []ParameterSpec) error {
 	return nil
 }
 
-func validateSubRecipe(sub *SubRecipeSpec, index int) error {
+func validateSubRecipe(sub *SubAgentSpec, index int) error {
 	if sub.Name == "" {
 		return fmt.Errorf("sub_recipe[%d]: name is required", index)
 	}
@@ -139,7 +139,7 @@ func validateToolNames(scope string, toolNames []string) (map[string]bool, error
 }
 
 // ValidateParams checks that provided parameter values satisfy the spec.
-func ValidateParams(spec *RecipeSpec, params map[string]any) error {
+func ValidateParams(spec *AgentSpec, params map[string]any) error {
 	if spec == nil {
 		return fmt.Errorf("recipe: spec is required")
 	}
