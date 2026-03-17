@@ -50,10 +50,11 @@ Examples:
 			}
 
 			fmt.Printf("\nNext steps:\n")
-			fmt.Printf("  1. Edit %s — set your LLM provider and API key\n", ws.ConfigPath())
-			fmt.Printf("  2. Edit %s — define startup rules and file-loading behaviour\n", ws.AgentsPath())
-			fmt.Printf("  3. Edit %s and %s — define the assistant and the user\n", ws.SoulPath(), ws.UserPath())
-			fmt.Printf("  4. Run 'blades chat' to start a conversation\n")
+			fmt.Printf("  1. Edit %s — set providers, API keys, and defaults\n", ws.ConfigPath())
+			fmt.Printf("  2. Edit %s — define model/workflow/tools for this workspace\n", ws.AgentPath())
+			fmt.Printf("  3. Edit %s — define startup rules and file-loading behaviour\n", ws.AgentsPath())
+			fmt.Printf("  4. Edit %s and %s — define the assistant and the user\n", ws.SoulPath(), ws.UserPath())
+			fmt.Printf("  5. Run 'blades chat' to start a conversation\n")
 			if isCustomWorkspace {
 				fmt.Printf("\nNote: Using custom workspace at %s\n", workspaceDir)
 			}

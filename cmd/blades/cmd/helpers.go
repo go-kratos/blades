@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/context/window"
 	bladesmcp "github.com/go-kratos/blades/contrib/mcp"
+	"github.com/go-kratos/blades/recipe"
 	bladeskills "github.com/go-kratos/blades/skills"
 	bladestools "github.com/go-kratos/blades/tools"
 
@@ -27,12 +27,11 @@ import (
 //
 // Configuration precedence (highest to lowest):
 //  1. --config flag: use specified config file directly
-//  2. ~/.blades/agent.yaml (default location)
-//  3. Built-in defaults (anthropic, claude-sonnet-4-6)
+//  2. ~/.blades/config.yaml (default location)
 func loadConfigForFlags() (*config.Config, error) {
 	configPath := flagConfig
 
-	// Config is always loaded from --config or ~/.blades/agent.yaml
+	// Config is always loaded from --config or ~/.blades/config.yaml
 	// (NOT from workspace directory)
 
 	cfg, err := config.Load(configPath)
@@ -63,7 +62,7 @@ func workspaceForConfig(cfg *config.Config) *workspace.Workspace {
 }
 
 // loadAll loads config, workspace, memory store, and MCP servers.
-// MCP servers are loaded only from ~/.blades/mcp.json (not from agent.yaml).
+// MCP servers are loaded only from ~/.blades/mcp.json (not from config.yaml).
 func loadAll() (*config.Config, *workspace.Workspace, *memory.Store, []bladesmcp.ClientConfig, error) {
 	cfg, err := loadConfigForFlags()
 	if err != nil {
@@ -91,16 +90,17 @@ func loadAll() (*config.Config, *workspace.Workspace, *memory.Store, []bladesmcp
 }
 
 // buildRunner constructs a blades Agent + Runner from config, workspace, and MCP list.
+// The model and context strategy are resolved from agent.yaml via recipe.Build.
 // extraTools are appended in addition to the built-in exec tool.
 func buildRunner(cfg *config.Config, ws *workspace.Workspace, mcpServers []bladesmcp.ClientConfig, extraTools ...bladestools.Tool) (*blades.Runner, error) {
-	provider, err := model.NewProvider(cfg.LLM)
+	spec, err := loadAgentSpec(ws)
 	if err != nil {
-		return nil, fmt.Errorf("model: %w", err)
+		return nil, err
 	}
 
-	instruction, err := ws.ReadFile("AGENTS.md")
-	if err != nil {
-		return nil, fmt.Errorf("instruction: %w", err)
+	// Override instruction with AGENTS.md content when available.
+	if instruction, err := ws.ReadFile("AGENTS.md"); err == nil && instruction != "" {
+		spec.Instruction = instruction
 	}
 
 	skillList, err := loadSkills(ws)
@@ -108,46 +108,31 @@ func buildRunner(cfg *config.Config, ws *workspace.Workspace, mcpServers []blade
 		return nil, err
 	}
 
-	maxMessages := contextMessageLimit(cfg)
-	windowCM := window.NewContextManager(
-		window.WithMaxMessages(maxMessages),
-		window.WithMaxTokens(int64(cfg.Defaults.CompressThreshold)),
-	)
+	execCfg := execConfigFromDefaults(defaultExecWorkingDir(ws), cfg.Exec)
+	allTools := append([]bladestools.Tool{bldtools.NewExecTool(execCfg)}, extraTools...)
 
-	agentOpts := []blades.AgentOption{
-		blades.WithModel(provider),
-		blades.WithContextManager(windowCM),
-	}
-	if instruction != "" {
-		agentOpts = append(agentOpts, blades.WithInstruction(instruction))
+	extraOpts := []blades.AgentOption{
+		blades.WithTools(allTools...),
 	}
 	if len(skillList) > 0 {
-		agentOpts = append(agentOpts, blades.WithSkills(skillList...))
+		extraOpts = append(extraOpts, blades.WithSkills(skillList...))
 	}
-	if cfg.Defaults.MaxIterations > 0 {
-		agentOpts = append(agentOpts, blades.WithMaxIterations(cfg.Defaults.MaxIterations))
-	}
-
-	execCfg := execConfigFromDefaults(defaultExecWorkingDir(ws), cfg.Exec)
-	builtinTools := []bladestools.Tool{
-		bldtools.NewExecTool(execCfg),
-	}
-	allTools := append(builtinTools, extraTools...)
-
 	if len(mcpServers) > 0 {
 		resolver, err := bladesmcp.NewToolsResolver(mcpServers...)
 		if err != nil {
 			log.Printf("mcp: init resolver: %v (continuing without MCP tools)", err)
 		} else {
-			agentOpts = append(agentOpts, blades.WithToolsResolver(resolver))
+			extraOpts = append(extraOpts, blades.WithToolsResolver(resolver))
 		}
 	}
 
-	agentOpts = append(agentOpts, blades.WithTools(allTools...))
-
-	agent, err := blades.NewAgent("blades", agentOpts...)
+	reg := model.NewRegistry(cfg.Providers)
+	agent, err := recipe.Build(spec,
+		recipe.WithModelRegistry(reg),
+		recipe.WithAgentOptions(extraOpts...),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("agent: %w", err)
+		return nil, fmt.Errorf("recipe: %w", err)
 	}
 	return blades.NewRunner(agent), nil
 }
@@ -231,13 +216,6 @@ func makeTriggerWithGetter(getRunner func() *blades.Runner, sessMgr *session.Man
 	}
 }
 
-func contextMessageLimit(cfg *config.Config) int {
-	if cfg != nil && cfg.Defaults.MaxTurns > 0 {
-		return cfg.Defaults.MaxTurns * 2
-	}
-	return 100
-}
-
 // defaultExecWorkingDir returns the workspace directory as the exec tool's working directory.
 func defaultExecWorkingDir(ws *workspace.Workspace) string {
 	if ws == nil {
@@ -248,4 +226,23 @@ func defaultExecWorkingDir(ws *workspace.Workspace) string {
 		return "."
 	}
 	return root
+}
+
+// loadAgentSpec loads agent.yaml from the workspace, returning a default spec if not found.
+func loadAgentSpec(ws *workspace.Workspace) (*recipe.AgentSpec, error) {
+	path := ws.AgentPath()
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		// No agent.yaml — return a minimal default spec.
+		return &recipe.AgentSpec{
+			Version:     "1.0",
+			Name:        "blades",
+			Model:       "anthropic/claude-sonnet-4-6",
+			Instruction: "You are a helpful personal AI assistant.",
+		}, nil
+	}
+	spec, err := recipe.LoadFromFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("agent.yaml: %w", err)
+	}
+	return spec, nil
 }

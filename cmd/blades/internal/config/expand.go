@@ -3,7 +3,7 @@ package config
 import "os"
 
 // ExpandEnv replaces ${VAR} and $VAR in s with the value of the named
-// environment variable. Used consistently for agent.yaml and mcp.json.
+// environment variable. Used consistently for config.yaml and mcp.json.
 func ExpandEnv(s string) string {
 	return os.ExpandEnv(s)
 }

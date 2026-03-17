@@ -76,9 +76,6 @@ func (r *Runner) buildInvocation(ctx context.Context, message *Message, stream b
 		Stream:  stream,
 		Message: message,
 	}
-	if o.Session != nil {
-		invocation.History = append(invocation.History, o.Session.History()...)
-	}
 	if message != nil {
 		message.Author = "user"
 		if err := r.appendNewMessage(ctx, invocation, message); err != nil {

@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"log"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -74,17 +73,9 @@ func newRunCmd() *cobra.Command {
 			}
 			fmt.Println()
 
-			if cfg.Defaults.LogConversation {
-				if err := mem.AppendDailyLog("user", message); err != nil {
-					log.Printf("run: append daily log (user) failed: %v", err)
-				}
-				if err := mem.AppendDailyLog("assistant", buf.String()); err != nil {
-					log.Printf("run: append daily log (assistant) failed: %v", err)
-				}
-			}
-			if err := sessMgr.Save(sess); err != nil {
-				log.Printf("run: save session failed: %v", err)
-			}
+			_ = mem.AppendDailyLog("user", message)
+			_ = mem.AppendDailyLog("assistant", buf.String())
+			_ = sessMgr.Save(sess)
 			return nil
 		},
 	}

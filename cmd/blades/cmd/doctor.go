@@ -39,7 +39,8 @@ func newDoctorCmd() *cobra.Command {
 
 			check("Blades home (root)", ws.Home())
 			check("Workspace directory", ws.WorkspaceDir())
-			check("agent.yaml", ws.ConfigPath())
+			check("config.yaml", ws.ConfigPath())
+			check("workspace/agent.yaml", ws.AgentPath())
 			check("workspace/AGENTS.md", ws.AgentsPath())
 			check("workspace/SOUL.md", ws.SoulPath())
 			check("workspace/IDENTITY.md", ws.IdentityPath())

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -11,9 +12,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/cmd/blades/internal/channel"
 	clichi "github.com/go-kratos/blades/cmd/blades/internal/channel/cli"
 	"github.com/go-kratos/blades/cmd/blades/internal/cron"
-	"github.com/go-kratos/blades/cmd/blades/internal/logger"
 	"github.com/go-kratos/blades/cmd/blades/internal/session"
 	bldtools "github.com/go-kratos/blades/cmd/blades/internal/tools"
 )
@@ -59,13 +60,97 @@ func newChatCmd() *cobra.Command {
 				sessionID = fmt.Sprintf("chat-%d", time.Now().Unix())
 			}
 
-			getRunner := func() *blades.Runner {
+			// handler is called once per user message. It streams text tokens and
+			// tool lifecycle events to w so the channel can render them.
+			handler := func(ctx context.Context, sid, text string, w channel.Writer) (string, error) {
 				mu.RLock()
-				defer mu.RUnlock()
-				return currentRunner
+				runner := currentRunner
+				mu.RUnlock()
+
+				sess := sessMgr.GetOrNew(sid)
+				msg := blades.UserMessage(text)
+				var buf strings.Builder
+				toolEventKey := func(tp blades.ToolPart) string {
+					if strings.TrimSpace(tp.ID) != "" {
+						return tp.ID
+					}
+					return tp.Name + "\n" + tp.Request
+				}
+				// Track which tool call IDs have already been announced so that
+				// partial-argument streaming tokens don't open a new box every tick.
+				startedTools := make(map[string]bool)
+				endedTools := make(map[string]bool)
+
+				for m, err := range runner.RunStream(ctx, msg, blades.WithSession(sess)) {
+					if err != nil {
+						return buf.String(), err
+					}
+					if m == nil {
+						continue
+					}
+					// StatusCompleted is the final assembled message — its text is the
+					// union of all prior InProgress deltas. Don't re-stream it to the
+					// writer (that would show every token twice). Use it only as the
+					// canonical return value. If no deltas were streamed at all (e.g.
+					// non-streaming provider), fall back to writing the full text once.
+					if m.Status == blades.StatusCompleted {
+						finalText := m.Text()
+						if buf.Len() == 0 && finalText != "" {
+							w.WriteText(finalText)
+						}
+						buf.Reset()
+						buf.WriteString(finalText)
+					} else if chunk := m.Text(); chunk != "" {
+						w.WriteText(chunk)
+						buf.WriteString(chunk)
+					}
+					// Emit tool call events — one Start and one End per unique tp.ID.
+					for _, part := range m.Parts {
+						tp, ok := part.(blades.ToolPart)
+						if !ok {
+							continue
+						}
+						key := toolEventKey(tp)
+						if !tp.Completed {
+							if !startedTools[key] {
+								startedTools[key] = true
+								w.WriteEvent(channel.Event{
+									Kind:  channel.EventToolStart,
+									ID:    key,
+									Name:  tp.Name,
+									Input: tp.Request,
+								})
+							}
+						} else if !endedTools[key] {
+							// Some providers only surface completed tool parts. Emit a
+							// synthetic start so the CLI can render the tool lifecycle.
+							if !startedTools[key] {
+								startedTools[key] = true
+								w.WriteEvent(channel.Event{
+									Kind:  channel.EventToolStart,
+									ID:    key,
+									Name:  tp.Name,
+									Input: tp.Request,
+								})
+							}
+							endedTools[key] = true
+							w.WriteEvent(channel.Event{
+								Kind:   channel.EventToolEnd,
+								ID:     key,
+								Name:   tp.Name,
+								Input:  tp.Request,
+								Output: tp.Response,
+							})
+						}
+					}
+				}
+
+				// Persist turn to daily log and session.
+				_ = mem.AppendDailyLog("user", text)
+				_ = mem.AppendDailyLog("assistant", buf.String())
+				_ = sessMgr.Save(sess)
+				return buf.String(), nil
 			}
-			rtLog := logger.NewRuntime(ws.Home())
-			handler := createStreamHandlerWithGetter(getRunner, sessMgr, mem, rtLog, cfg.Defaults.LogConversation, false)
 
 			// reload rebuilds the runner so skill changes are picked up live.
 			reload := func() error {

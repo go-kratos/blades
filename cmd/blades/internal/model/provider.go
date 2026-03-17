@@ -14,32 +14,32 @@ import (
 	"github.com/go-kratos/blades/cmd/blades/internal/config"
 )
 
-// NewProvider creates a ModelProvider from the LLM configuration.
-func NewProvider(cfg config.LLMConfig) (blades.ModelProvider, error) {
-	switch cfg.Provider {
+// NewProvider creates a ModelProvider from a Provider config entry and a model name.
+func NewProvider(p config.Provider, model string) (blades.ModelProvider, error) {
+	switch p.Provider {
 	case "anthropic":
-		c := bldanthropic.Config{APIKey: cfg.APIKey}
-		if cfg.BaseURL != "" {
-			c.BaseURL = cfg.BaseURL
+		c := bldanthropic.Config{APIKey: p.APIKey}
+		if p.BaseURL != "" {
+			c.BaseURL = p.BaseURL
 		}
-		return bldanthropic.NewModel(cfg.Model, c), nil
+		return bldanthropic.NewModel(model, c), nil
 
 	case "openai":
-		c := bldopenai.Config{APIKey: cfg.APIKey}
-		if cfg.BaseURL != "" {
-			c.BaseURL = cfg.BaseURL
+		c := bldopenai.Config{APIKey: p.APIKey}
+		if p.BaseURL != "" {
+			c.BaseURL = p.BaseURL
 		}
-		return bldopenai.NewModel(cfg.Model, c), nil
+		return bldopenai.NewModel(model, c), nil
 
 	case "gemini":
 		c := bldgemini.Config{}
-		if cfg.APIKey != "" {
-			c.ClientConfig.APIKey = cfg.APIKey
+		if p.APIKey != "" {
+			c.ClientConfig.APIKey = p.APIKey
 		}
 		c.ClientConfig.Backend = genai.BackendGeminiAPI
-		return bldgemini.NewModel(context.Background(), cfg.Model, c)
+		return bldgemini.NewModel(context.Background(), model, c)
 
 	default:
-		return nil, fmt.Errorf("unsupported provider: %q (want anthropic|openai|gemini)", cfg.Provider)
+		return nil, fmt.Errorf("unsupported provider: %q (want anthropic|openai|gemini)", p.Provider)
 	}
 }

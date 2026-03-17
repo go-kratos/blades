@@ -33,13 +33,14 @@ func newRootCmd() *cobra.Command {
 		Long: `blades — personal AI assistant with configurable workspace.
 
 Home Directory (~/.blades/):
-  ├── agent.yaml           LLM provider, model, API key
+	├── config.yaml          provider credentials and defaults
   ├── mcp.json             global MCP server connections
   ├── skills/              global skills (shared across workspaces)
   ├── sessions/            conversation history
   └── logs/                runtime logs (YYYY-MM-DD.log)
 
 Workspace Directory (configurable, default: ~/.blades/workspace/):
+	├── agent.yaml           agent recipe (model ref, workflow, tools)
   ├── AGENTS.md            behaviour rules (loaded at startup)
   ├── SOUL.md / USER.md / IDENTITY.md / MEMORY.md
   ├── memory/              daily session logs
@@ -53,7 +54,7 @@ Use --workspace to specify a custom workspace directory (e.g., ~/my-agent).`,
 		},
 	}
 
-	root.PersistentFlags().StringVar(&flagConfig, "config", "", "path to agent.yaml (default: ~/.blades/agent.yaml)")
+	root.PersistentFlags().StringVar(&flagConfig, "config", "", "path to config.yaml (default: ~/.blades/config.yaml)")
 	root.PersistentFlags().StringVar(&flagWorkspace, "workspace", "", "workspace directory (default: ~/.blades/workspace or config value)")
 	root.PersistentFlags().BoolVar(&flagDebug, "debug", false, "enable verbose debug logging")
 

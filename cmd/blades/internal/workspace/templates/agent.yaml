@@ -1,23 +1,21 @@
-llm:
-  provider: openai
-  model: deepseek-chat
-  apiKey: ${OPENAI_API_KEY}
-  baseUrl: https://api.deepseek.com
+version: "1.0"
+name: blades
+description: Personal AI assistant running in your local workspace.
 
-defaults:
-  maxIterations: 10
-  compressThreshold: 40000     # character count that triggers truncation
-  logConversation: false       # when true, append user/assistant to workspace/memory/YYYY-MM-DD.md
+# model: <provider>/<model-name> — resolved via the providers list in config.yaml.
+model: openai/gpt-4o
 
-# Optional: exec tool overrides (denyPatterns/allowPatterns are appended to built-in)
-# exec:
-#   timeoutSeconds: 60
-#   restrictToWorkspace: true
-#   denyPatterns: []
-#   allowPatterns: []
+instruction: |
+  You are a helpful personal AI assistant.
+  Read the AGENTS.md file in the workspace for detailed behaviour rules.
+  Be concise, accurate, and thoughtful in your responses.
 
-# Optional: Lark/Feishu channel (WebSocket only) for `blades daemon`
-# lark:
-#   enabled: true
-#   appID: ${LARK_APP_ID}
-#   appSecret: ${LARK_APP_SECRET}
+context:
+  strategy: window
+  max_tokens: 80000
+  max_messages: 50
+
+middlewares:
+  - name: retry
+    options:
+      attempts: 3
