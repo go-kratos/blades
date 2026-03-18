@@ -355,11 +355,11 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 	return func(yield func(*Message, error) bool) {
 		session, hasSession := FromSessionContext(ctx)
 		for i := 0; i < a.maxIterations; i++ {
-			// Build the message list from session state before each model call.
-			// A nil session context means "do not inject session context", so keep
-			// the request messages assembled for this invocation unchanged.
+			// Build the message list from session history before each model call.
+			// When a ContextCompressor is configured on the session, History()
+			// returns a compressed view; otherwise the raw history is used.
 			if hasSession {
-				prepared, err := session.Context(ctx)
+				prepared, err := session.History(ctx)
 				if err != nil {
 					yield(nil, err)
 					return
@@ -441,8 +441,8 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					return
 				}
 				if hasSession {
-					// Persist the tool response in session so the next iteration's
-					// session.Context() call includes it in the message history.
+					// Persist the tool response so the next iteration's
+					// session.History() call includes it in the message history.
 					if err := session.Append(ctx, toolMessage); err != nil {
 						yield(nil, err)
 						return
@@ -454,7 +454,7 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 				continue // continue to the next iteration
 			}
 			// Persist the final assistant message so future invocations can
-			// access the full conversation history via session.Context().
+			// access the full conversation history via session.History().
 			if hasSession {
 				if err := session.Append(ctx, finalMessage); err != nil {
 					yield(nil, err)

@@ -14,18 +14,17 @@ type Session interface {
 	State() State
 	SetState(string, any)
 	Append(context.Context, *Message) error
+	// History returns the message history prepared for the next model call.
+	// When a ContextCompressor is configured, the history is compressed before
+	// being returned; otherwise the raw message list is returned unchanged.
 	History(ctx context.Context) ([]*Message, error)
-	// Context returns the compressed message history prepared for the next model
-	// call by applying the configured ContextCompressor to History(). When no
-	// ContextCompressor is set, the raw History() is returned unchanged.
-	Context(ctx context.Context) ([]*Message, error)
 }
 
 // SessionOption configures a Session at construction time.
 type SessionOption func(*sessionInMemory)
 
-// WithContextCompressor sets the ContextCompressor used by Session.Context to
-// compress the message history returned by History() before each model call.
+// WithContextCompressor sets the ContextCompressor used by Session.History to
+// compress the message history before returning it for each model call.
 func WithContextCompressor(c ContextCompressor) SessionOption {
 	return func(s *sessionInMemory) {
 		s.compressor = c
@@ -41,19 +40,6 @@ func NewSession(opts ...SessionOption) Session {
 		opt(session)
 	}
 	return session
-}
-
-type sessionWithCompressor struct {
-	Session
-	compressor ContextCompressor
-}
-
-func (s *sessionWithCompressor) Context(ctx context.Context) ([]*Message, error) {
-	messages, err := s.Session.History(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s.compressor.Compress(ctx, messages)
 }
 
 type ctxSessionKey struct{}
@@ -83,8 +69,12 @@ func (s *sessionInMemory) ID() string {
 func (s *sessionInMemory) State() State {
 	return s.state.ToMap()
 }
-func (s *sessionInMemory) History(_ context.Context) ([]*Message, error) {
-	return s.history.ToSlice(), nil
+func (s *sessionInMemory) History(ctx context.Context) ([]*Message, error) {
+	messages := s.history.ToSlice()
+	if s.compressor == nil {
+		return messages, nil
+	}
+	return s.compressor.Compress(ctx, messages)
 }
 func (s *sessionInMemory) SetState(key string, value any) {
 	s.state.Store(key, value)
@@ -92,15 +82,4 @@ func (s *sessionInMemory) SetState(key string, value any) {
 func (s *sessionInMemory) Append(ctx context.Context, message *Message) error {
 	s.history.Append(message)
 	return nil
-}
-
-func (s *sessionInMemory) Context(ctx context.Context) ([]*Message, error) {
-	messages, err := s.History(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if s.compressor == nil {
-		return messages, nil
-	}
-	return s.compressor.Compress(ctx, messages)
 }

@@ -27,11 +27,11 @@ func TestSession_History(t *testing.T) {
 	}
 }
 
-func TestSession_Context_NoCompressor(t *testing.T) {
+func TestSession_History_NoCompressor(t *testing.T) {
 	s := NewSession()
 	msg := UserMessage("a")
 	s.Append(context.Background(), msg)
-	got, err := s.Context(context.Background())
+	got, err := s.History(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,14 +40,14 @@ func TestSession_Context_NoCompressor(t *testing.T) {
 	}
 }
 
-func TestSession_Context_WithContextCompressor(t *testing.T) {
+func TestSession_History_WithContextCompressor(t *testing.T) {
 	// A context compressor that always returns only the last message.
 	limiter := &limitCompressor{max: 1}
 	s := NewSession(WithContextCompressor(limiter))
 	for _, text := range []string{"a", "b", "c"} {
 		s.Append(context.Background(), UserMessage(text))
 	}
-	got, err := s.Context(context.Background())
+	got, err := s.History(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

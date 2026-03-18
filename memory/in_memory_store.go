@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 	"sync"
-
-	"github.com/go-kratos/blades"
 )
 
 // InMemoryStore is an in-memory implementation of MemoryStore.
@@ -24,23 +22,6 @@ func (s *InMemoryStore) AddMemory(ctx context.Context, m *Memory) error {
 	s.m.Lock()
 	s.memories = append(s.memories, m)
 	s.m.Unlock()
-	return nil
-}
-
-// SaveSession saves the session's history as memories in the store.
-func (s *InMemoryStore) SaveSession(ctx context.Context, session blades.Session) error {
-	if session == nil {
-		return nil
-	}
-	s.m.Lock()
-	defer s.m.Unlock()
-	history, err := session.History(ctx)
-	if err != nil {
-		return err
-	}
-	for _, msg := range history {
-		s.memories = append(s.memories, &Memory{Content: msg})
-	}
 	return nil
 }
 
