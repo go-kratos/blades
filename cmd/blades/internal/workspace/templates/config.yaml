@@ -6,7 +6,7 @@
 providers:
   - name: openai
     provider: openai
-    baseURL: https://api.openai.com/v1
+    baseUrl: https://api.openai.com/v1
     apiKey: ${OPENAI_API_KEY}
     models: [gpt-4o, gpt-4o-mini]
   - name: anthropic

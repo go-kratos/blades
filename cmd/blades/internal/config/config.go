@@ -19,7 +19,7 @@ type Provider struct {
 	Provider string   `yaml:"provider"`
 	Models   []string `yaml:"models"`
 	APIKey   string   `yaml:"apiKey"`
-	BaseURL  string   `yaml:"baseURL"`
+	BaseURL  string   `yaml:"baseUrl"`
 }
 
 // Normalize fills derived defaults and validates the config.
