@@ -7,8 +7,8 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
-	"charm.land/glamour/v2"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/go-kratos/blades/cmd/blades/internal/channel"
@@ -46,16 +46,17 @@ type convTurn struct {
 // model is the bubbletea application model.
 type model struct {
 	// Injected
-	ctx          context.Context
-	cancel       context.CancelFunc
-	handler      channel.StreamHandler
-	sessionID    string
-	reload       func() error
-	stop         func() error
-	debug        bool
-	glamourStyle string // "dark" or "light"
-	isDark       bool
-	cmdProc      *command.Processor
+	ctx           context.Context
+	cancel        context.CancelFunc
+	handler       channel.StreamHandler
+	sessionID     string
+	stop          func() error
+	switchSession func(string) error
+	clearSession  func(string) error
+	debug         bool
+	glamourStyle  string // "dark" or "light"
+	isDark        bool
+	cmdProc       *command.Processor
 
 	// Styles (built once from isDark)
 	styles appStyles
@@ -95,7 +96,6 @@ func newModel(
 	ctx context.Context,
 	handler channel.StreamHandler,
 	sessionID string,
-	reload func() error,
 	stop func() error,
 	debug bool,
 	glamourStyle string,
@@ -108,15 +108,18 @@ func newModel(
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(ld(lipgloss.Color("#7C3AED"), lipgloss.Color("#A78BFA")))
+	sp.Style = lipgloss.NewStyle().Foreground(ld(lipgloss.Color("#6B7280"), lipgloss.Color("#9CA3AF")))
 
 	ti := textinput.New()
-	ti.Placeholder = "Type a message — /help for commands"
+	ti.Placeholder = "Message or /help"
 	ti.CharLimit = 8000
-	ti.Prompt = "❯ "
-	// Style the prompt with the success colour.
+	ti.Prompt = "> "
 	s := textinput.DefaultStyles(isDark)
-	s.Focused.Prompt = lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#059669"), lipgloss.Color("#34D399")))
+	s.Focused.Prompt = lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#1D4ED8"), lipgloss.Color("#93C5FD")))
+	s.Focused.Text = lipgloss.NewStyle().Bold(true)
+	s.Blurred.Text = lipgloss.NewStyle().Bold(true)
+	s.Focused.Placeholder = lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#6B7280"), lipgloss.Color("#9CA3AF")))
+	s.Blurred.Placeholder = lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#6B7280"), lipgloss.Color("#9CA3AF")))
 	s.Cursor.Shape = tea.CursorBar
 	ti.SetStyles(s)
 	// Use a real cursor so ConPTY/IME can track its position.
@@ -128,7 +131,6 @@ func newModel(
 		cancel:       cancel,
 		handler:      handler,
 		sessionID:    sessionID,
-		reload:       reload,
 		stop:         stop,
 		debug:        debug,
 		glamourStyle: glamourStyle,

@@ -9,15 +9,15 @@ import (
 	"path/filepath"
 	"time"
 
+	appcore "github.com/go-kratos/blades/cmd/blades/internal/app"
 	"github.com/spf13/cobra"
 )
 
-// Global flags registered on the root command and read by loadConfigForFlags.
-var (
-	flagConfig    string
-	flagWorkspace string
-	flagDebug     bool
-)
+type rootLoggerDeps struct {
+	stderr   io.Writer
+	setenv   func(string, string) error
+	unsetenv func(string) error
+}
 
 // Execute runs the root command and exits the process on error.
 func Execute() {
@@ -34,14 +34,13 @@ func newRootCmd() *cobra.Command {
 
 Home Directory (~/.blades/):
 	├── config.yaml          provider credentials and defaults
-  ├── mcp.json             global MCP server connections
+  ├── agent.yaml           agent recipe (model ref, workflow, tools)
   ├── skills/              global skills (shared across workspaces)
   ├── sessions/            conversation history
   └── logs/                runtime logs (YYYY-MM-DD.log)
 
 Workspace Directory (configurable, default: ~/.blades/workspace/):
-	├── agent.yaml           agent recipe (model ref, workflow, tools)
-  ├── AGENTS.md            behaviour rules (loaded at startup)
+	├── AGENTS.md            behaviour rules (loaded at startup)
   ├── SOUL.md / USER.md / IDENTITY.md / MEMORY.md
   ├── memory/              daily session logs
   ├── knowledges/          domain reference files
@@ -50,13 +49,13 @@ Workspace Directory (configurable, default: ~/.blades/workspace/):
 Use --workspace to specify a custom workspace directory (e.g., ~/my-agent).`,
 		SilenceUsage: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			configureRootLogger(time.Now())
+			configureRootLoggerForOptions(time.Now(), commandOptions(cmd))
 		},
 	}
 
-	root.PersistentFlags().StringVar(&flagConfig, "config", "", "path to config.yaml (default: ~/.blades/config.yaml)")
-	root.PersistentFlags().StringVar(&flagWorkspace, "workspace", "", "workspace directory (default: ~/.blades/workspace or config value)")
-	root.PersistentFlags().BoolVar(&flagDebug, "debug", false, "enable verbose debug logging")
+	root.PersistentFlags().String("config", "", "path to config.yaml (default: ~/.blades/config.yaml)")
+	root.PersistentFlags().String("workspace", "", "workspace directory (default: ~/.blades/workspace)")
+	root.PersistentFlags().Bool("debug", false, "enable verbose debug logging")
 
 	root.AddCommand(
 		newInitCmd(),
@@ -71,16 +70,37 @@ Use --workspace to specify a custom workspace directory (e.g., ~/my-agent).`,
 }
 
 func configureRootLogger(now time.Time) {
-	if flagDebug {
+	configureRootLoggerForOptions(now, appcore.Options{})
+}
+
+func configureRootLoggerForOptions(now time.Time, opts appcore.Options) {
+	configureRootLoggerWithDeps(now, opts, rootLoggerDeps{
+		stderr:   os.Stderr,
+		setenv:   os.Setenv,
+		unsetenv: os.Unsetenv,
+	})
+}
+
+func configureRootLoggerWithDeps(now time.Time, opts appcore.Options, deps rootLoggerDeps) {
+	stderr := deps.stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	if opts.Debug {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
-		_ = os.Setenv("BLADES_DEBUG", "1")
+		if deps.setenv != nil {
+			_ = deps.setenv("BLADES_DEBUG", "1")
+		}
 	} else {
 		log.SetFlags(log.LstdFlags)
+		if deps.unsetenv != nil {
+			_ = deps.unsetenv("BLADES_DEBUG")
+		}
 	}
 
-	f, path, err := openRootLogFile(now)
+	f, path, err := openRootLogFileForOptions(now, opts)
 	if err != nil {
-		log.SetOutput(os.Stderr)
+		log.SetOutput(stderr)
 		if path != "" {
 			log.Printf("blades: use stderr logging (open %s failed): %v", path, err)
 		} else {
@@ -89,15 +109,19 @@ func configureRootLogger(now time.Time) {
 		return
 	}
 
-	if flagDebug {
-		log.SetOutput(io.MultiWriter(os.Stderr, f))
+	if opts.Debug {
+		log.SetOutput(io.MultiWriter(stderr, f))
 		return
 	}
 	log.SetOutput(f)
 }
 
 func openRootLogFile(now time.Time) (*os.File, string, error) {
-	root := resolveLogRootDir()
+	return openRootLogFileForOptions(now, appcore.Options{})
+}
+
+func openRootLogFileForOptions(now time.Time, opts appcore.Options) (*os.File, string, error) {
+	root := resolveLogRootDirForOptions(opts)
 	if root == "" {
 		return nil, "", errors.New("workspace root is empty")
 	}
@@ -118,10 +142,9 @@ func openRootLogFile(now time.Time) (*os.File, string, error) {
 // resolveLogRootDir determines the home directory for log file placement.
 // Logs are always stored in ~/.blades/logs (the home directory, not workspace).
 func resolveLogRootDir() string {
-	// Logs always go to ~/.blades/logs (home directory)
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".blades")
+	return resolveLogRootDirForOptions(appcore.Options{})
+}
+
+func resolveLogRootDirForOptions(opts appcore.Options) string {
+	return bootstrapFromOptions(opts).LogRootDir()
 }

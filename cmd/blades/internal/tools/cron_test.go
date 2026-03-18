@@ -64,6 +64,7 @@ func TestCronToolRunAcceptsIDAliases(t *testing.T) {
 		{"action": "run", "jobId": job.ID},
 		{"action": "run", "id": job.ID},
 	} {
+		lastRunBefore := job.State.LastRunAtMs
 		raw, err := json.Marshal(in)
 		if err != nil {
 			t.Fatalf("marshal input: %v", err)
@@ -74,6 +75,22 @@ func TestCronToolRunAcceptsIDAliases(t *testing.T) {
 		}
 		if !strings.Contains(out, "triggered") {
 			t.Fatalf("unexpected output for input %v: %q", in, out)
+		}
+
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			jobs, err := svc.ListJobs(true)
+			if err != nil {
+				t.Fatalf("ListJobs after run: %v", err)
+			}
+			if len(jobs) == 1 && jobs[0].State.LastRunAtMs > lastRunBefore {
+				job = jobs[0]
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if job.State.LastRunAtMs <= lastRunBefore {
+			t.Fatalf("job %q did not finish running for input %v", job.ID, in)
 		}
 	}
 }

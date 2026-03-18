@@ -6,53 +6,51 @@ import "charm.land/lipgloss/v2"
 // detected dark/light background so that no AdaptiveColor queries happen
 // during rendering.
 type appStyles struct {
-	banner       lipgloss.Style
-	dim          lipgloss.Style
-	hint         lipgloss.Style
-	err          lipgloss.Style
-	userLabel    lipgloss.Style
-	assistLabel  lipgloss.Style
-	toolHeader   lipgloss.Style
-	toolBox      lipgloss.Style
+	header        lipgloss.Style
+	dim           lipgloss.Style
+	hint          lipgloss.Style
+	err           lipgloss.Style
+	userLabel     lipgloss.Style
+	assistLabel   lipgloss.Style
+	toolLabel     lipgloss.Style
+	toolBox       lipgloss.Style
 	toolBoxActive lipgloss.Style
-	inputBorder  lipgloss.Style
-	statusBar    lipgloss.Style
+	inputBox      lipgloss.Style
+	statusBar     lipgloss.Style
 }
 
 func newStyles(isDark bool) appStyles {
 	ld := lipgloss.LightDark(isDark)
 
-	primary := ld(lipgloss.Color("#7C3AED"), lipgloss.Color("#A78BFA"))
-	success := ld(lipgloss.Color("#059669"), lipgloss.Color("#34D399"))
-	warning := ld(lipgloss.Color("#D97706"), lipgloss.Color("#FCD34D"))
-	errClr  := ld(lipgloss.Color("#DC2626"), lipgloss.Color("#F87171"))
-	userClr := ld(lipgloss.Color("#2563EB"), lipgloss.Color("#60A5FA"))
-	dim     := ld(lipgloss.Color("#6B7280"), lipgloss.Color("#9CA3AF"))
+	primary := ld(lipgloss.Color("#111827"), lipgloss.Color("#F9FAFB"))
+	success := ld(lipgloss.Color("#065F46"), lipgloss.Color("#D1FAE5"))
+	errClr := ld(lipgloss.Color("#DC2626"), lipgloss.Color("#F87171"))
+	userClr := ld(lipgloss.Color("#1D4ED8"), lipgloss.Color("#93C5FD"))
+	dim := ld(lipgloss.Color("#6B7280"), lipgloss.Color("#9CA3AF"))
+	panel := ld(lipgloss.Color("#CBD5E1"), lipgloss.Color("#475569"))
+	panelActive := ld(lipgloss.Color("#1D4ED8"), lipgloss.Color("#93C5FD"))
+	toolClr := ld(lipgloss.Color("#92400E"), lipgloss.Color("#FCD34D"))
 
 	return appStyles{
-		banner:      lipgloss.NewStyle().Bold(true).Foreground(primary),
+		header:      lipgloss.NewStyle().Bold(true).Foreground(primary),
 		dim:         lipgloss.NewStyle().Foreground(dim),
-		hint:        lipgloss.NewStyle().Foreground(dim).Italic(true),
+		hint:        lipgloss.NewStyle().Foreground(dim),
 		err:         lipgloss.NewStyle().Bold(true).Foreground(errClr),
 		userLabel:   lipgloss.NewStyle().Bold(true).Foreground(userClr),
 		assistLabel: lipgloss.NewStyle().Bold(true).Foreground(success),
-		toolHeader:  lipgloss.NewStyle().Bold(true).Foreground(warning),
-
+		toolLabel:   lipgloss.NewStyle().Bold(true).Foreground(toolClr),
 		toolBox: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(dim).
-			PaddingLeft(1).PaddingRight(1),
-
+			BorderForeground(panel).
+			Padding(0, 1),
 		toolBoxActive: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(warning).
-			PaddingLeft(1).PaddingRight(1),
-
-		inputBorder: lipgloss.NewStyle().
+			BorderForeground(panelActive).
+			Padding(0, 1),
+		inputBox: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(dim),
-
-		statusBar: lipgloss.NewStyle().
-			Foreground(dim).PaddingLeft(1),
+			BorderForeground(panelActive).
+			Padding(0, 1),
+		statusBar: lipgloss.NewStyle().Foreground(dim),
 	}
 }

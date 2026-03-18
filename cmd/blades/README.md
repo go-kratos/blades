@@ -4,7 +4,7 @@
 >
 > 中文文档：[README_CN.md](README_CN.md)
 
-`blades` is a local-first command-line AI agent backed by plain files: **blades home (root)** at `~/.blades` and an **agent workspace** at `~/.blades/workspace` by default (or any path via `--workspace`). It remembers your conversations, loads skills from Markdown, connects to MCP tool servers via `mcp.json`, schedules recurring tasks via cron, and supports multiple LLM providers.
+`blades` is a local-first command-line AI agent backed by plain files: **blades home (root)** at `~/.blades` and an **agent workspace** at `~/.blades/workspace` by default (or any path via `--workspace`). It remembers your conversations, loads skills from Markdown, schedules recurring tasks via cron, and supports multiple LLM providers.
 
 ---
 
@@ -13,11 +13,9 @@
 - **Streaming chat** — animated spinner → token-by-token streaming with ANSI colour support
 - **Persistent memory** — `MEMORY.md` (L1), daily session logs in `memory/` (L2), knowledge files (L3)
 - **Skill system** — drop a `SKILL.md` into any skills directory and the agent picks it up automatically
-- **MCP support** — connect external tool servers via `mcp.json` only (stdio, HTTP, WebSocket)
 - **Cron scheduler** — run shell commands or agent turns on a schedule; backed by `cron.json`
 - **Daemon mode** — keep the scheduler running as a long-lived background process
 - **Multi-provider** — Anthropic Claude, OpenAI, Google Gemini; switch in `agent.yaml`
-- **Hot reload** — type `/reload` in chat to pick up skill or config changes without restarting
 
 ---
 
@@ -41,7 +39,8 @@ blades init
 # 2. Set your API key
 export ANTHROPIC_API_KEY=sk-...     # or OPENAI_API_KEY / GEMINI_API_KEY
 
-# 3. Edit config (choose provider + model)
+# 3. Edit config and agent recipe
+$EDITOR ~/.blades/config.yaml
 $EDITOR ~/.blades/agent.yaml
 
 # 4. Start chatting
@@ -52,15 +51,14 @@ blades chat
 
 ## Directory layout
 
-- **Blades home (root)** — `~/.blades`. Holds config, global MCP, cron, skills, sessions, and **runtime logs**.
-- **Workspace** — `~/.blades/workspace` by default, or `--workspace <path>`. The agent’s working directory (exec CWD, workspace-level MCP, **memory**, skills, outputs).
+- **Blades home (root)** — `~/.blades`. Holds config, cron, skills, sessions, and **runtime logs**.
+- **Workspace** — `~/.blades/workspace` by default, or `--workspace <path>`. The agent’s working directory (exec CWD, **memory**, skills, outputs).
 
 Default layout when no custom `--workspace` is set:
 
 ```
 ~/.blades/                    ← home (root)
 ├── agent.yaml                ← LLM provider, model, API key
-├── mcp.json                  ← global MCP server connections
 ├── cron.json                 ← persistent cron job store
 ├── skills/                   ← global skills (all workspaces)
 ├── sessions/                 ← conversation state per session ID
@@ -78,18 +76,14 @@ Default layout when no custom `--workspace` is set:
 - **Log** — runtime/audit logs go to `~/.blades/logs/YYYY-MM-DD.log` (daemon channel traffic, errors).
 - **Memory** — when `logConversation: true` in config, user/assistant turns are appended to **workspace** `memory/YYYY-MM-DD.md` for long-term context.
 
-### agent.yaml
+### `config.yaml`
 
 ```yaml
-llm:
-  provider: anthropic          # anthropic | openai | gemini
-  model: claude-sonnet-4-6
-  apiKey: ${ANTHROPIC_API_KEY} # env-var expansion supported
-
-defaults:
-  maxIterations: 10
-  compressThreshold: 40000
-  logConversation: false      # when true, append turns to workspace/memory/YYYY-MM-DD.md
+providers:
+  - name: anthropic
+    provider: anthropic
+    models: [claude-sonnet-4-6]
+    apiKey: ${ANTHROPIC_API_KEY} # env-var expansion supported
 
 # Optional: exec tool overrides (see template)
 # exec:
@@ -97,10 +91,11 @@ defaults:
 #   restrictToWorkspace: true
 
 # Optional: Lark/Feishu channel (WebSocket only) for `blades daemon`
-# lark:
-#   enabled: true
-#   appID: ${LARK_APP_ID}
-#   appSecret: ${LARK_APP_SECRET}
+# channels:
+#   lark:
+#     enabled: true
+#     appID: ${LARK_APP_ID}
+#     appSecret: ${LARK_APP_SECRET}
 ```
 
 ---
@@ -127,7 +122,7 @@ blades chat --session my-project
 blades chat --simple
 ```
 
-**In-chat slash commands:** `/help`, `/reload`, `/session <id>`, `/clear`, `/exit`.
+**In-chat slash commands:** `/help`, `/session <id>`, `/clear`, `/exit`.
 
 ### `blades run`
 
@@ -155,10 +150,16 @@ blades cron add --name "morning-brief" --cron "0 8 * * *" --message "generate my
 blades cron add --name "health-check" --every 1h --command "echo ok"
 blades cron add --name "test ls" --delay 10 --command "ls . > outputs/test.txt"
 blades cron heartbeat
+blades cron heartbeat --every 15m   # reuses the heartbeat job and updates its schedule
 blades cron heartbeat --run-now
 blades cron remove <id>
 blades cron run <id>
 ```
+
+Notes:
+- `blades cron add` requires exactly one schedule flag: `--cron`, `--every`, or `--delay`.
+- `blades cron add` requires exactly one payload flag: `--message` or `--command`.
+- Scheduled `agent_turn` jobs persist their session history, so recurring jobs and `heartbeat` keep continuity across daemon restarts.
 
 ### `blades daemon`
 
@@ -177,6 +178,7 @@ Check health: blades home, workspace directory, required files, stale cron jobs.
 
 ```sh
 blades doctor
+blades doctor --config ~/custom-blades-config.yaml
 ```
 
 ---
@@ -185,7 +187,7 @@ blades doctor
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `~/.blades/agent.yaml` | Path to config file |
+| `--config` | `~/.blades/config.yaml` | Path to config file |
 | `--workspace` | `~/.blades/workspace` | Agent workspace directory |
 | `--debug` | false | Verbose debug logging |
 
@@ -199,19 +201,7 @@ Skills are discovered from `~/.blades/skills/` (global):
 |-----------|--------|
 | `~/.blades/skills/` | Global blades |
 
-Each skill is a directory with a `SKILL.md` (YAML front-matter + body). Type `/reload` in chat to pick up changes.
-
----
-
-## MCP (Model Context Protocol)
-
-MCP servers are configured **only in `~/.blades/mcp.json`** (not in `agent.yaml`):
-
-| File | Scope |
-|------|--------|
-| `~/.blades/mcp.json` | Global |
-
-Same schema as Claude Desktop. String values support `${ENV_VAR}` expansion.
+Each skill is a directory with a `SKILL.md` (YAML front-matter + body).
 
 ---
 

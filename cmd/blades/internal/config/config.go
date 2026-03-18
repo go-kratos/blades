@@ -1,11 +1,12 @@
 package config
 
 import (
+	"fmt"
+	"strings"
 	"time"
 )
 
 // Config is the top-level configuration (config.yaml).
-// MCP servers are loaded only from mcp.json files, not from config.
 type Config struct {
 	Providers []Provider    `yaml:"providers"`
 	Exec      ExecConfig    `yaml:"exec"`
@@ -14,10 +15,50 @@ type Config struct {
 
 // Provider holds credentials and model list for a single model provider.
 type Provider struct {
+	Name     string   `yaml:"name"`
 	Provider string   `yaml:"provider"`
 	Models   []string `yaml:"models"`
 	APIKey   string   `yaml:"apiKey"`
 	BaseURL  string   `yaml:"baseURL"`
+}
+
+// Normalize fills derived defaults and validates the config.
+func (c *Config) Normalize() error {
+	seenNames := make(map[string]struct{}, len(c.Providers))
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		p.Name = strings.TrimSpace(p.Name)
+		p.Provider = strings.TrimSpace(p.Provider)
+		p.APIKey = strings.TrimSpace(p.APIKey)
+		p.BaseURL = strings.TrimSpace(p.BaseURL)
+		for j := range p.Models {
+			p.Models[j] = strings.TrimSpace(p.Models[j])
+		}
+
+		if p.Provider == "" {
+			return fmt.Errorf("config: providers[%d].provider is required", i)
+		}
+		if !isSupportedProvider(p.Provider) {
+			return fmt.Errorf("config: providers[%d].provider %q is unsupported (want anthropic|openai|gemini)", i, p.Provider)
+		}
+		if p.Name == "" {
+			p.Name = p.Provider
+		}
+		if _, ok := seenNames[p.Name]; ok {
+			return fmt.Errorf("config: duplicate provider name %q", p.Name)
+		}
+		seenNames[p.Name] = struct{}{}
+	}
+	return nil
+}
+
+func isSupportedProvider(name string) bool {
+	switch name {
+	case "anthropic", "openai", "gemini":
+		return true
+	default:
+		return false
+	}
 }
 
 // ChannelConfig groups all channel integrations.

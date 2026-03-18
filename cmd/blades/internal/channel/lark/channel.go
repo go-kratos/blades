@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"sync"
@@ -42,11 +43,14 @@ type Channel struct {
 	lastPruneAt       int64
 
 	// command handling
-	cmdProc   *command.Processor
-	reload    func() error
-	stop      func() error
+	cmdProc      *command.Processor
+	stop         func() error
+	clearSession func(string) error
 
-	debug bool // when true, log received messages and watch events
+	debug  bool // when true, log received messages and watch events
+	output io.Writer
+	logf   func(string, ...any)
+	now    func() time.Time
 }
 
 type sessionState struct {
@@ -82,14 +86,29 @@ func WithDebug(enabled bool) Option {
 	return func(c *Channel) { c.debug = enabled }
 }
 
-// WithReload sets the function called when the user issues /reload.
-func WithReload(fn func() error) Option {
-	return func(c *Channel) { c.reload = fn }
-}
-
 // WithStop sets the function called when the user issues /stop.
 func WithStop(fn func() error) Option {
 	return func(c *Channel) { c.stop = fn }
+}
+
+// WithClearSession sets the function called when the user issues /clear.
+func WithClearSession(fn func(string) error) Option {
+	return func(c *Channel) { c.clearSession = fn }
+}
+
+// WithOutput sets where startup/status messages are written.
+func WithOutput(w io.Writer) Option {
+	return func(c *Channel) { c.output = w }
+}
+
+// WithLogf overrides diagnostic logging.
+func WithLogf(fn func(string, ...any)) Option {
+	return func(c *Channel) { c.logf = fn }
+}
+
+// WithNow overrides the wall clock used for dedupe bookkeeping.
+func WithNow(fn func() time.Time) Option {
+	return func(c *Channel) { c.now = fn }
 }
 
 // New creates a new Lark channel.
@@ -97,6 +116,9 @@ func New(opts ...Option) *Channel {
 	c := &Channel{
 		dedupeTTL: 2 * time.Minute,
 		cmdProc:   command.NewProcessor(),
+		output:    io.Discard,
+		logf:      log.Printf,
+		now:       time.Now,
 	}
 	for _, o := range opts {
 		o(c)
@@ -127,7 +149,7 @@ func (c *Channel) Start(ctx context.Context, handler channel.StreamHandler) erro
 		larkws.WithAutoReconnect(true),
 	)
 
-	fmt.Println("Lark channel connecting via WebSocket...")
+	fmt.Fprintln(c.output, "Lark channel connecting via WebSocket...")
 	return c.wsClient.Start(ctx)
 }
 
@@ -142,7 +164,7 @@ func (c *Channel) handleMessage(ctx context.Context, event *larkim.P2MessageRece
 	if messageID == "" {
 		return nil
 	}
-	if !c.markMessageIfNew(messageID, time.Now()) {
+	if !c.markMessageIfNew(messageID, c.nowTime()) {
 		return nil
 	}
 
@@ -159,7 +181,7 @@ func (c *Channel) handleMessage(ctx context.Context, event *larkim.P2MessageRece
 	sessionID := c.getOrCreateSession(chatID, chatType)
 
 	if c.debug {
-		log.Printf("lark: received message chat=%s type=%s session=%s content=%q", chatID, chatType, sessionID, truncForLog(content, 200))
+		c.printf("lark: received message chat=%s type=%s session=%s content=%q", chatID, chatType, sessionID, truncForLog(content, 200))
 	}
 
 	// Check if this is a command
@@ -171,7 +193,7 @@ func (c *Channel) handleMessage(ctx context.Context, event *larkim.P2MessageRece
 	writer := NewCardWriter(ctx, c.client, messageID, chatID, chatType)
 	defer func() {
 		if err := writer.Close(); err != nil {
-			log.Printf("lark: failed to close writer: %v", err)
+			c.printf("lark: failed to close writer: %v", err)
 		}
 	}()
 
@@ -188,12 +210,19 @@ func (c *Channel) handleMessage(ctx context.Context, event *larkim.P2MessageRece
 // handleCommand processes a slash command in Lark.
 func (c *Channel) handleCommand(ctx context.Context, line string, sessionID string, chatID string) error {
 	env := &command.Environment{
-		SessionID:         sessionID,
-		ReloadFunc:        c.reload,
-		StopFunc:          c.stop,
-		SwitchSessionFunc: func(newSessionID string) error { return nil }, // Not applicable in Lark
-		ClearFunc:         func() error { return nil },                      // Not applicable in Lark
-		Processor:         c.cmdProc,
+		SessionID: sessionID,
+		StopFunc:  c.stop,
+		SwitchSessionFunc: func(newSessionID string) error {
+			c.setSession(chatID, newSessionID)
+			return nil
+		},
+		ClearFunc: func() error {
+			if c.clearSession != nil {
+				return c.clearSession(sessionID)
+			}
+			return nil
+		},
+		Processor: c.cmdProc,
 	}
 
 	result, err := c.cmdProc.Process(ctx, line, env)
@@ -395,14 +424,31 @@ func (c *Channel) getOrCreateSession(chatID, chatType string) string {
 	return state.sessionID
 }
 
+func (c *Channel) setSession(chatID, sessionID string) {
+	key := strings.TrimSpace(chatID)
+	if key == "" {
+		return
+	}
+	state := &sessionState{sessionID: strings.TrimSpace(sessionID), chatType: ""}
+	if v, ok := c.sessions.Load(key); ok {
+		if existing, ok := v.(*sessionState); ok {
+			state.chatType = existing.chatType
+		}
+	}
+	if state.sessionID == "" {
+		state.sessionID = key
+	}
+	c.sessions.Store(key, state)
+}
+
 // SendToSession implements channel.SessionNotifier. It sends a text message to the
 // given session (chat ID), e.g. to deliver cron job output to the Feishu chat that created the job.
 func (c *Channel) SendToSession(ctx context.Context, sessionID, text string) error {
 	if sessionID == "" || strings.TrimSpace(text) == "" {
-		log.Printf("lark SendToSession: skip session_id=%q text_empty=%v", sessionID, text == "" || strings.TrimSpace(text) == "")
+		c.printf("lark SendToSession: skip session_id=%q text_empty=%v", sessionID, text == "" || strings.TrimSpace(text) == "")
 		return nil
 	}
-	log.Printf("lark SendToSession: session_id=%s len=%d", sessionID, len(text))
+	c.printf("lark SendToSession: session_id=%s len=%d", sessionID, len(text))
 	content, _ := json.Marshal(map[string]string{"text": strings.TrimSpace(text)})
 	req := larkim.NewCreateMessageReqBuilder().
 		ReceiveIdType(larkim.ReceiveIdTypeChatId).
@@ -414,9 +460,22 @@ func (c *Channel) SendToSession(ctx context.Context, sessionID, text string) err
 		Build()
 	_, err := c.client.Im.Message.Create(ctx, req)
 	if err != nil {
-		log.Printf("lark SendToSession: Create message failed session_id=%s err=%v", sessionID, err)
+		c.printf("lark SendToSession: Create message failed session_id=%s err=%v", sessionID, err)
 		return err
 	}
-	log.Printf("lark SendToSession: ok session_id=%s", sessionID)
+	c.printf("lark SendToSession: ok session_id=%s", sessionID)
 	return nil
+}
+
+func (c *Channel) printf(format string, args ...any) {
+	if c != nil && c.logf != nil {
+		c.logf(format, args...)
+	}
+}
+
+func (c *Channel) nowTime() time.Time {
+	if c != nil && c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }

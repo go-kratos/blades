@@ -15,7 +15,6 @@
 - **Memory** — daily logs + long-term MEMORY.md
 - **Cron** — scheduled tasks and reminders
 - **Shell** — run local commands (with care)
-- **MCP** — connect external tool servers via mcp.json
 - **Skills** — extensible tools via ~/.blades/skills/
 
 ## Key Files

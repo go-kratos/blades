@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	appcore "github.com/go-kratos/blades/cmd/blades/internal/app"
 	"github.com/go-kratos/blades/cmd/blades/internal/cron"
 )
 
@@ -84,6 +85,142 @@ func TestEnsureHeartbeatJobSkipsExistingJob(t *testing.T) {
 	}
 }
 
+func TestEnsureHeartbeatJobUpdatesSchedule(t *testing.T) {
+	t.Parallel()
+
+	svc := cron.NewService(filepath.Join(t.TempDir(), "cron.json"), nil)
+	firstSchedule := cron.Schedule{Kind: cron.ScheduleEvery, EveryMs: time.Minute.Milliseconds()}
+	secondSchedule := cron.Schedule{Kind: cron.ScheduleEvery, EveryMs: (15 * time.Minute).Milliseconds()}
+
+	job1, existed, err := ensureHeartbeatJob(context.Background(), svc, firstSchedule, defaultHeartbeatJobName, defaultHeartbeatMessage, defaultHeartbeatSessionID)
+	if err != nil {
+		t.Fatalf("first ensureHeartbeatJob: %v", err)
+	}
+	if existed {
+		t.Fatal("first ensureHeartbeatJob reported existing job")
+	}
+
+	job2, existed, err := ensureHeartbeatJob(context.Background(), svc, secondSchedule, defaultHeartbeatJobName, defaultHeartbeatMessage, defaultHeartbeatSessionID)
+	if err != nil {
+		t.Fatalf("second ensureHeartbeatJob: %v", err)
+	}
+	if existed {
+		t.Fatal("updated heartbeat should not be reported as unchanged")
+	}
+	if job1.ID == job2.ID {
+		t.Fatal("expected heartbeat update to replace the stored job")
+	}
+	if job2.Schedule != secondSchedule {
+		t.Fatalf("updated schedule = %+v, want %+v", job2.Schedule, secondSchedule)
+	}
+
+	jobs, err := svc.ListJobs(true)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 heartbeat job after update, got %d", len(jobs))
+	}
+	if jobs[0].Schedule != secondSchedule {
+		t.Fatalf("persisted schedule = %+v, want %+v", jobs[0].Schedule, secondSchedule)
+	}
+}
+
+func TestValidateCronAddFlags(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cron    string
+		every   string
+		delay   string
+		message string
+		command string
+		wantErr string
+	}{
+		{
+			name:    "valid message schedule",
+			every:   "1m",
+			message: "hello",
+		},
+		{
+			name:    "conflicting schedules",
+			cron:    "* * * * *",
+			every:   "1m",
+			message: "hello",
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:    "conflicting payloads",
+			delay:   "10",
+			message: "hello",
+			command: "echo ok",
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:    "missing schedule",
+			message: "hello",
+			wantErr: "one of --cron, --every, or --delay is required",
+		},
+		{
+			name:    "missing payload",
+			delay:   "10",
+			wantErr: "one of --message or --command is required",
+		},
+		{
+			name:    "zero every",
+			every:   "0s",
+			message: "hello",
+			wantErr: "--every must be > 0",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateCronAddFlags(tt.cron, tt.every, tt.delay, tt.message, tt.command)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateCronAddFlags returned error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestParseScheduleFlags(t *testing.T) {
+	t.Parallel()
+
+	t.Run("heartbeat default", func(t *testing.T) {
+		t.Parallel()
+
+		schedule, err := parseScheduleFlags("", "", "", "", scheduleFlagOptions{
+			DefaultEvery: defaultHeartbeatEvery,
+		})
+		if err != nil {
+			t.Fatalf("parseScheduleFlags default: %v", err)
+		}
+		if schedule.Kind != cron.ScheduleEvery || schedule.EveryMs != defaultHeartbeatEvery.Milliseconds() {
+			t.Fatalf("default schedule = %+v", schedule)
+		}
+	})
+
+	t.Run("mutually exclusive", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := parseScheduleFlags("* * * * *", "1m", "", "", scheduleFlagOptions{})
+		if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+			t.Fatalf("expected mutually exclusive error, got %v", err)
+		}
+	})
+}
+
 func TestRunNowReturnsOutput(t *testing.T) {
 	t.Parallel()
 
@@ -126,10 +263,9 @@ func TestCronAddSupportsDelayFlag(t *testing.T) {
 	})
 
 	workspaceDir := t.TempDir()
-	flagWorkspace = workspaceDir
-	flagConfig = ""
 
 	cmd := newCronAddCmd()
+	withCommandOptions(cmd, appcore.Options{WorkspaceDir: workspaceDir})
 	cmd.SetArgs([]string{"--name", "test-ls", "--delay", "10", "--command", "echo ok"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("cron add with --delay: %v", err)

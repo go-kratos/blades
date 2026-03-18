@@ -17,4 +17,6 @@ var (
 	ErrMaxIterationsExceeded = errors.New("maximum iterations exceeded in agent execution")
 	// ErrMissingFinalResponse is returned when an agent's stream ends without a final response.
 	ErrNoFinalResponse = errors.New("stream ended without a final response")
+	// ErrInterrupted is returned when execution is interrupted.
+	ErrInterrupted = errors.New("execution was interrupted")
 )

@@ -149,28 +149,20 @@ func (w *CardWriter) flushSync() {
 	}
 }
 
-// buildCard creates a Lark card JSON with tools on top and text below.
-// Tool results are shown in collapsible panels.
+// buildCard creates a compact Lark card with tool markdown blocks followed by text.
 func (w *CardWriter) buildCard(textContent string) string {
 	var elements []map[string]interface{}
 
-	// 1. Tools section (on top)
 	if len(w.tools) > 0 {
 		for _, tool := range w.tools {
 			elements = append(elements, buildToolPanel(tool))
 		}
-
-		// Separator between tools and text
-		elements = append(elements, map[string]interface{}{
-			"tag": "hr",
-		})
 	}
 
-	// 2. Text content (below tools) with streaming cursor
 	if textContent != "" {
 		elements = append(elements, map[string]interface{}{
 			"tag":     "markdown",
-			"content": textContent + "▌", // Streaming cursor
+			"content": textContent + "▌",
 		})
 	}
 
@@ -296,24 +288,16 @@ func (w *CardWriter) Close() error {
 	return err
 }
 
-// buildFinalCard creates the final card without streaming cursor.
-// Tool results are shown in collapsible panels.
+// buildFinalCard creates the final card without the streaming cursor.
 func (w *CardWriter) buildFinalCard(textContent string) string {
 	var elements []map[string]interface{}
 
-	// 1. Tools section (on top) - show all completed tools
 	if len(w.tools) > 0 {
 		for _, tool := range w.tools {
 			elements = append(elements, buildToolPanel(tool))
 		}
-
-		// Separator between tools and text
-		elements = append(elements, map[string]interface{}{
-			"tag": "hr",
-		})
 	}
 
-	// 2. Text content (no cursor)
 	if textContent != "" {
 		elements = append(elements, map[string]interface{}{
 			"tag":     "markdown",
@@ -333,37 +317,26 @@ func (w *CardWriter) buildFinalCard(textContent string) string {
 }
 
 func buildToolPanel(tool toolInfo) map[string]interface{} {
-	statusIcon, template, statusText, collapsedText := toolPanelMeta(tool.status)
-	header := strings.TrimSpace(fmt.Sprintf("%s %s %s", statusIcon, tool.name, statusText))
+	_, _, statusText, _ := toolPanelMeta(tool.status)
+	header := strings.TrimSpace(fmt.Sprintf("**%s**", tool.name))
+	if statusText != "" {
+		header += " " + statusText
+	}
 
 	return map[string]interface{}{
-		"tag": "collapsible_panel",
-		"header": map[string]interface{}{
-			"title": map[string]interface{}{
-				"tag":     "plain_text",
-				"content": header,
-			},
-			"template": template,
-		},
-		"collapsed_text": collapsedText,
-		"expanded_text":  "收起",
-		"elements": []map[string]interface{}{
-			{
-				"tag":     "markdown",
-				"content": buildToolCodeBlock(tool, 2000),
-			},
-		},
+		"tag":     "markdown",
+		"content": header + "\n" + buildToolCodeBlock(tool, 1200),
 	}
 }
 
 func toolPanelMeta(status string) (icon, template, statusText, collapsedText string) {
 	switch status {
 	case "running":
-		return "🔄", "grey", "(running)", "展开查看命令"
+		return "", "", "running", ""
 	case "error":
-		return "❌", "red", "(error)", "展开查看错误"
+		return "", "", "error", ""
 	default:
-		return "✅", "blue", "", "展开查看结果"
+		return "", "", "", ""
 	}
 }
 

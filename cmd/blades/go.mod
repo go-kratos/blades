@@ -10,7 +10,6 @@ require (
 	github.com/go-kratos/blades v0.4.0
 	github.com/go-kratos/blades/contrib/anthropic v0.3.0
 	github.com/go-kratos/blades/contrib/gemini v0.3.0
-	github.com/go-kratos/blades/contrib/mcp v0.1.0
 	github.com/go-kratos/blades/contrib/openai v0.3.0
 	github.com/google/jsonschema-go v0.3.0
 	github.com/google/uuid v1.6.0
@@ -52,7 +51,6 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-runewidth v0.0.20 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
-	github.com/modelcontextprotocol/go-sdk v1.0.0 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/openai/openai-go/v3 v3.8.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
@@ -61,7 +59,6 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/goldmark v1.7.13 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	go.opencensus.io v0.24.0 // indirect

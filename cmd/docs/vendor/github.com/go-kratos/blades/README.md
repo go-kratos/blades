@@ -1,3 +1,10 @@
+<p align="center">
+    <a href="https://github.com/go-kratos/blades/actions"><img src="https://github.com/go-kratos/blades/workflows/Go/badge.svg" alt="Build Status"></a>
+    <a href="https://pkg.go.dev/github.com/go-kratos/blades"><img src="https://pkg.go.dev/badge/github.com/go-kratos/blades" alt="GoDoc"></a>
+    <a href="https://deepwiki.com/go-kratos/blades"><img src="https://deepwiki.com/badge.svg" alt="DeepWiki"></a>
+    <a href="https://github.com/go-kratos/blades/blob/main/LICENSE"><img src="https://img.shields.io/github/license/go-kratos/blades" alt="License"></a>
+</p>
+
 ## Blades
 Blades is a multimodal AI Agent framework for the Go language, supporting custom models, tools, memory, middleware, etc. It is suitable for multi-turn conversations, chain-of-thought reasoning, and structured output, among other use cases.
 > The name originates from: The game *God of War*, set against the backdrop of Greek mythology, tells the adventure story of Kratos transforming from a mortal into the God of War and embarking on a god-slaying rampage. The Blades are Kratos's iconic weapons.
@@ -96,7 +103,7 @@ func main() {
     agent := blades.NewAgent(
         "Blades Agent",
         blades.WithModel(model),
-        blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
+        blades.WithInstruction("You are a helpful assistant that provides detailed and accurate information."),
     )
     // Create a Prompt with user message
     input := blades.UserMessage("What is the capital of France?")
@@ -110,6 +117,45 @@ func main() {
     log.Println(output.Text())
 }
 ```
+
+### Skills
+
+`Agent` supports skill injection via `WithSkills(...)`, and skills can be loaded from a directory or `embed.FS`.
+For the skill package format and metadata rules, see [Agent Skill specification](https://agentskills.io/specification).
+
+```go
+package main
+
+import (
+    "embed"
+
+    "github.com/go-kratos/blades"
+    "github.com/go-kratos/blades/skills"
+)
+
+//go:embed example-skill/*
+var skillFS embed.FS
+
+func createAgent(model blades.ModelProvider) (blades.Agent, error) {
+    // Directory-based loading:
+    skillsFromDir, err := skills.NewFromDir("./skills")
+    if err != nil {
+        return nil, err
+    }
+    // Embedded loading:
+    skillsFromEmbed, err := skills.NewFromEmbed(skillFS)
+    if err != nil {
+        return nil, err
+    }
+    allSkills := append(skillsFromDir, skillsFromEmbed...)
+    return blades.NewAgent(
+        "SkillsAgent",
+        blades.WithModel(model),
+        blades.WithSkills(allSkills...),
+    )
+}
+```
+
 For more examples, please refer to the [examples](./examples) directory.
 
 ## 🤝 Contribution & Community

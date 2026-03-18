@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -48,24 +49,6 @@ func TestProcessor_Process(t *testing.T) {
 			expectMsg:   "Unknown command",
 		},
 		{
-			name: "reload command with func",
-			line: "/reload",
-			env: &Environment{
-				ReloadFunc: func() error { return nil },
-			},
-			expectError: false,
-			expectMsg:   "reloaded",
-		},
-		{
-			name: "reload command without func",
-			line: "/reload",
-			env: &Environment{
-				ReloadFunc: nil,
-			},
-			expectError: false,
-			expectMsg:   "not configured",
-		},
-		{
 			name: "session command show",
 			line: "/session",
 			env: &Environment{
@@ -85,6 +68,15 @@ func TestProcessor_Process(t *testing.T) {
 			},
 			expectError: false,
 			expectMsg:   "new-session",
+		},
+		{
+			name: "session command switch unavailable",
+			line: "/session new-session",
+			env: &Environment{
+				SessionID: "old-session",
+			},
+			expectError: false,
+			expectMsg:   "not available",
 		},
 		{
 			name: "stop command",
@@ -162,11 +154,55 @@ func TestProcessor_GetCommands(t *testing.T) {
 		cmdNames[cmd.Name] = true
 	}
 
-	expected := []string{"help", "reload", "stop", "session", "clear", "exit"}
+	expected := []string{"help", "stop", "session", "clear", "exit"}
 	for _, name := range expected {
 		if !cmdNames[name] {
 			t.Errorf("expected command %q not found", name)
 		}
+	}
+}
+
+func TestBuiltinHandlersAdditionalBranches(t *testing.T) {
+	t.Parallel()
+
+	help, err := helpHandler(context.Background(), nil, &Environment{
+		Processor: NewProcessor(),
+		Custom:    map[string]any{"helpSuffix": "\nextra help"},
+	})
+	if err != nil {
+		t.Fatalf("helpHandler: %v", err)
+	}
+	if !strings.Contains(help.Message, "extra help") {
+		t.Fatalf("help message = %q", help.Message)
+	}
+
+	stop, err := stopHandler(context.Background(), nil, nil)
+	if err != nil || !stop.IsError {
+		t.Fatalf("stopHandler(nil env) = %+v, %v", stop, err)
+	}
+
+	stop, err = stopHandler(context.Background(), nil, &Environment{})
+	if err != nil || stop.IsError {
+		t.Fatalf("stopHandler(no stop func) = %+v, %v", stop, err)
+	}
+
+	stop, err = stopHandler(context.Background(), nil, &Environment{
+		StopFunc: func() error { return errors.New("boom") },
+	})
+	if err != nil || !stop.IsError || !strings.Contains(stop.Message, "boom") {
+		t.Fatalf("stopHandler(error) = %+v, %v", stop, err)
+	}
+
+	clear, err := clearHandler(context.Background(), nil, nil)
+	if err != nil || !clear.IsError {
+		t.Fatalf("clearHandler(nil env) = %+v, %v", clear, err)
+	}
+
+	clear, err = clearHandler(context.Background(), nil, &Environment{
+		ClearFunc: func() error { return errors.New("wipe failed") },
+	})
+	if err != nil || !clear.IsError || !strings.Contains(clear.Message, "wipe failed") {
+		t.Fatalf("clearHandler(error) = %+v, %v", clear, err)
 	}
 }
 

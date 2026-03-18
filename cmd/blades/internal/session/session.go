@@ -4,6 +4,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -96,8 +97,11 @@ func (m *Manager) Get(id string) (blades.Session, error) {
 	// Try loading from disk.
 	sess, err := m.loadFromDisk(id)
 	if err != nil {
-		// Not found on disk — create fresh.
-		sess = newManagedSession(id, nil, nil)
+		if errors.Is(err, os.ErrNotExist) {
+			sess = newManagedSession(id, nil, nil)
+		} else {
+			return nil, err
+		}
 	}
 	m.sessions[id] = sess
 	return sess, nil
@@ -223,7 +227,10 @@ func (m *Manager) Delete(id string) error {
 	delete(m.sessions, id)
 	m.mu.Unlock()
 	path := filepath.Join(m.dir, id+".json")
-	return os.Remove(path)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func newManagedSession(id string, state map[string]any, history []*blades.Message) blades.Session {

@@ -234,6 +234,23 @@ func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
 	return resumeMessages, false
 }
 
+func invocationMessages(invocation *Invocation) []*Message {
+	if invocation == nil {
+		return nil
+	}
+	if invocation.Session != nil {
+		history := invocation.Session.History()
+		if invocation.Message != nil {
+			return AppendMessages(history, invocation.Message)
+		}
+		return history
+	}
+	if invocation.Message != nil {
+		return []*Message{invocation.Message}
+	}
+	return nil
+}
+
 // Run runs the agent with the given prompt and options, returning a streamable response.
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
@@ -261,8 +278,8 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			switch {
 			case len(resumeMessages) > 0:
 				req.Messages = AppendMessages(req.Messages, resumeMessages...)
-			case invocation.Message != nil:
-				req.Messages = AppendMessages(req.Messages, invocation.Message)
+			default:
+				req.Messages = AppendMessages(req.Messages, invocationMessages(invocation)...)
 			}
 			return a.handle(ctx, invocation, req)
 		}))

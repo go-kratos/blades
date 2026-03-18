@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/go-kratos/blades/cmd/blades/internal/memory"
 )
 
 func newMemoryCmd() *cobra.Command {
@@ -20,65 +22,39 @@ func newMemoryCmd() *cobra.Command {
 }
 
 func newMemoryAddCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "add <text>",
-		Short: "Append text to MEMORY.md",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _, mem, _, err := loadAll()
-			if err != nil {
-				return err
-			}
-			if err := mem.AppendMemory(args[0]); err != nil {
-				return err
-			}
-			fmt.Println("✓ appended to MEMORY.md")
-			return nil
-		},
-	}
+	return newMemoryActionCmd("add <text>", "Append text to MEMORY.md", cobra.ExactArgs(1), func(cmd *cobra.Command, mem *memory.Store, args []string) error {
+		if err := mem.AppendMemory(args[0]); err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "✓ appended to MEMORY.md")
+		return nil
+	})
 }
 
 func newMemoryShowCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "show",
-		Short: "Display MEMORY.md",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _, mem, _, err := loadAll()
-			if err != nil {
-				return err
-			}
-			content, err := mem.ReadMemory()
-			if err != nil {
-				return err
-			}
-			fmt.Println(content)
-			return nil
-		},
-	}
+	return newMemoryActionCmd("show", "Display MEMORY.md", cobra.NoArgs, func(cmd *cobra.Command, mem *memory.Store, args []string) error {
+		content, err := mem.ReadMemory()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), content)
+		return nil
+	})
 }
 
 func newMemorySearchCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "search <query>",
-		Short: "Search historical session logs",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _, mem, _, err := loadAll()
-			if err != nil {
-				return err
-			}
-			results, err := mem.SearchLogs(args[0])
-			if err != nil {
-				return err
-			}
-			if len(results) == 0 {
-				fmt.Println("(no results)")
-				return nil
-			}
-			for _, r := range results {
-				fmt.Println(r)
-			}
+	return newMemoryActionCmd("search <query>", "Search historical session logs", cobra.ExactArgs(1), func(cmd *cobra.Command, mem *memory.Store, args []string) error {
+		results, err := mem.SearchLogs(args[0])
+		if err != nil {
+			return err
+		}
+		if len(results) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "(no results)")
 			return nil
-		},
-	}
+		}
+		for _, r := range results {
+			fmt.Fprintln(cmd.OutOrStdout(), r)
+		}
+		return nil
+	})
 }

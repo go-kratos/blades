@@ -49,3 +49,17 @@ func TestMarkMessageIfNew(t *testing.T) {
 		t.Fatalf("duplicate after TTL should still be ignored (no reprocess)")
 	}
 }
+
+func TestSetSessionOverridesChatSession(t *testing.T) {
+	ch := New()
+
+	if got := ch.getOrCreateSession("chat-1", "p2p"); got != "chat-1" {
+		t.Fatalf("default session = %q, want %q", got, "chat-1")
+	}
+
+	ch.setSession("chat-1", "custom-session")
+
+	if got := ch.getOrCreateSession("chat-1", "p2p"); got != "custom-session" {
+		t.Fatalf("overridden session = %q, want %q", got, "custom-session")
+	}
+}

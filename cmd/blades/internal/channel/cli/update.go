@@ -221,17 +221,25 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) handleSlash(line string) (tea.Model, tea.Cmd) {
 	env := &command.Environment{
-		SessionID:  m.sessionID,
-		ReloadFunc: m.reload,
-		StopFunc:   m.stop,
+		SessionID: m.sessionID,
+		StopFunc:  m.stop,
 		SwitchSessionFunc: func(sessionID string) error {
+			if m.switchSession != nil {
+				if err := m.switchSession(sessionID); err != nil {
+					return err
+				}
+			}
+			m.resetConversationView()
 			m.sessionID = sessionID
 			return nil
 		},
 		ClearFunc: func() error {
-			m.turns = nil
-			m.pastContent = ""
-			m.err = nil
+			if m.clearSession != nil {
+				if err := m.clearSession(m.sessionID); err != nil {
+					return err
+				}
+			}
+			m.resetConversationView()
 			return nil
 		},
 		Processor: m.cmdProc,
@@ -259,6 +267,15 @@ func (m *model) handleSlash(line string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *model) resetConversationView() {
+	m.turns = nil
+	m.pastContent = ""
+	m.err = nil
+	m.streamBuf.Reset()
+	m.streamTools = nil
+	m.toolCounter = 0
+}
+
 // ── Stream handling ───────────────────────────────────────────────────────────
 
 func (m *model) handleStream(msg streamMsg) (tea.Model, tea.Cmd) {
@@ -276,7 +293,7 @@ func (m *model) handleStream(msg streamMsg) (tea.Model, tea.Cmd) {
 				id:       e.ID,
 				name:     e.Name,
 				input:    e.Input,
-				expanded: true,
+				expanded: false,
 			})
 		case channel.EventToolEnd:
 			for i := len(m.streamTools) - 1; i >= 0; i-- {

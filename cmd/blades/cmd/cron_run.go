@@ -2,36 +2,29 @@ package cmd
 
 import (
 	"context"
-	"fmt"
-	"os/signal"
-	"strings"
-	"syscall"
-	"time"
 
+	appcore "github.com/go-kratos/blades/cmd/blades/internal/app"
 	"github.com/spf13/cobra"
-
-	"github.com/go-kratos/blades/cmd/blades/internal/cron"
-	"github.com/go-kratos/blades/cmd/blades/internal/session"
 )
 
 // runScheduledJobNow loads a full runner and triggers job id immediately,
 // returning the assembled output. Used by "cron run" and "cron heartbeat --run-now".
 func runScheduledJobNow(ctx context.Context, id string) (string, error) {
-	cfg, ws, _, _, err := loadAll()
+	rt, err := loadRuntimeForOptions(appcore.Options{})
 	if err != nil {
 		return "", err
 	}
-	runner, err := buildRunner(cfg, ws, nil)
+	appcore.ConfigureRuntimeCron(rt, nil)
+	return rt.Cron.RunNow(ctx, id)
+}
+
+func runScheduledJobNowForOptions(ctx context.Context, opts appcore.Options, id string) (string, error) {
+	rt, err := loadRuntimeForOptions(opts)
 	if err != nil {
 		return "", err
 	}
-	sessMgr := session.NewManager(ws.SessionsDir())
-	trigger := makeTrigger(runner, sessMgr)
-	svc := cron.NewService(
-		ws.CronStorePath(),
-		cron.NewAgentHandlerWithExecWorkDir(trigger, 60*time.Second, defaultExecWorkingDir(ws)),
-	)
-	return svc.RunNow(ctx, id)
+	appcore.ConfigureRuntimeCron(rt, nil)
+	return rt.Cron.RunNow(ctx, id)
 }
 
 func newCronRunCmd() *cobra.Command {
@@ -40,17 +33,11 @@ func newCronRunCmd() *cobra.Command {
 		Short: "Execute a job immediately",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-			defer cancel()
-
-			output, err := runScheduledJobNow(ctx, args[0])
-			if strings.TrimSpace(output) != "" {
-				fmt.Print(output)
-				if !strings.HasSuffix(output, "\n") {
-					fmt.Println()
-				}
-			}
-			return err
+			return runWithSignalContext(context.Background(), func(ctx context.Context) error {
+				output, err := runScheduledJobNowForOptions(ctx, commandOptions(cmd), args[0])
+				writeCommandOutput(cmd.OutOrStdout(), output)
+				return err
+			})
 		},
 	}
 }

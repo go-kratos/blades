@@ -4,11 +4,13 @@
 # providers: list of model providers available to the agent.
 # The first entry is used as the default model unless overridden in agent.yaml.
 providers:
-  - provider: openai
+  - name: openai
+    provider: openai
     baseURL: https://api.openai.com/v1
     apiKey: ${OPENAI_API_KEY}
     models: [gpt-4o, gpt-4o-mini]
-  - provider: anthropic
+  - name: anthropic
+    provider: anthropic
     apiKey: ${ANTHROPIC_API_KEY}
     models: [claude-sonnet-4-6, claude-opus-4-6]
 

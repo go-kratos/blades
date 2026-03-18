@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	appcore "github.com/go-kratos/blades/cmd/blades/internal/app"
 )
 
 func TestResolveInitPathsUsesHomeAndWorkspaceFlag(t *testing.T) {
@@ -16,9 +18,7 @@ func TestResolveInitPathsUsesHomeAndWorkspaceFlag(t *testing.T) {
 		_ = os.Setenv("HOME", oldHome)
 	})
 
-	flagWorkspace = "~/my-agent"
-
-	homeDir, workspaceDir, isCustom := resolveInitPaths()
+	homeDir, workspaceDir, isCustom := initPathsForOptions(appcore.Options{WorkspaceDir: "~/my-agent"})
 	if got, want := homeDir, filepath.Join(newHome, ".blades"); got != want {
 		t.Fatalf("home dir = %q, want %q", got, want)
 	}
@@ -40,9 +40,7 @@ func TestResolveInitPathsDefaultWorkspace(t *testing.T) {
 		_ = os.Setenv("HOME", oldHome)
 	})
 
-	flagWorkspace = ""
-
-	homeDir, workspaceDir, isCustom := resolveInitPaths()
+	homeDir, workspaceDir, isCustom := initPathsForOptions(appcore.Options{})
 	if got, want := homeDir, filepath.Join(newHome, ".blades"); got != want {
 		t.Fatalf("home dir = %q, want %q", got, want)
 	}
@@ -67,10 +65,8 @@ func TestInitWithCustomWorkspaceSeparatesHomeAndWorkspace(t *testing.T) {
 	homeDir := filepath.Join(newHome, ".blades")
 	workspaceDir := filepath.Join(newHome, "my-agent")
 
-	flagConfig = ""
-	flagWorkspace = "~/my-agent"
-
 	initCmd := newInitCmd()
+	withCommandOptions(initCmd, appcore.Options{WorkspaceDir: "~/my-agent"})
 	initCmd.SetArgs([]string{})
 	if err := initCmd.Execute(); err != nil {
 		t.Fatalf("init command failed: %v", err)
@@ -78,7 +74,6 @@ func TestInitWithCustomWorkspaceSeparatesHomeAndWorkspace(t *testing.T) {
 
 	homePaths := []string{
 		filepath.Join(homeDir, "agent.yaml"),
-		filepath.Join(homeDir, "mcp.json"),
 		filepath.Join(homeDir, "skills"),
 		filepath.Join(homeDir, "sessions"),
 		filepath.Join(homeDir, "logs"),

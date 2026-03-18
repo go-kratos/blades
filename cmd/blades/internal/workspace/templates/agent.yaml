@@ -2,13 +2,17 @@ version: "1.0"
 name: blades
 description: Personal AI assistant running in your local workspace.
 
-# model: <provider>/<model-name> — resolved via the providers list in config.yaml.
+# model: <name>/<model-name> — resolved via the providers list in config.yaml.
 model: openai/gpt-4o
 
 instruction: |
   You are a helpful personal AI assistant.
   Read the AGENTS.md file in the workspace for detailed behaviour rules.
   Be concise, accurate, and thoughtful in your responses.
+
+tools:
+  - exec
+  - cron
 
 context:
   strategy: window

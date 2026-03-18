@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-kratos/blades"
 )
@@ -114,5 +115,55 @@ func TestManager_List_Delete(t *testing.T) {
 	infos, _ = mgr.List()
 	if len(infos) != 0 {
 		t.Fatalf("after delete list = %v", infos)
+	}
+}
+
+func TestSessionHelpersSortAndRestoreBranches(t *testing.T) {
+	t.Parallel()
+
+	infos := []SessionInfo{
+		{ID: "older", LastAccessAt: time.Now().Add(-time.Hour)},
+		{ID: "newer", LastAccessAt: time.Now()},
+	}
+	sortSessionInfosByLastAccess(infos)
+	if infos[0].ID != "newer" {
+		t.Fatalf("sorted infos = %+v", infos)
+	}
+
+	parts := makePersistedParts([]blades.Part{
+		blades.FilePart{Name: "doc", URI: "file:///tmp/doc", MIMEType: "text/plain"},
+		blades.DataPart{Name: "blob", Bytes: []byte("abc"), MIMEType: "application/octet-stream"},
+		nil,
+	})
+	if len(parts) != 2 {
+		t.Fatalf("persisted parts = %+v", parts)
+	}
+
+	restored, err := restoreParts([]persistedPart{
+		{Type: "file", Name: "doc", URI: "file:///tmp/doc", MIMEType: "text/plain"},
+		{Type: "data", Name: "blob", Bytes: []byte("abc"), MIMEType: "application/octet-stream"},
+	})
+	if err != nil {
+		t.Fatalf("restoreParts: %v", err)
+	}
+	if len(restored) != 2 {
+		t.Fatalf("restored parts = %+v", restored)
+	}
+
+	if _, err := restoreParts([]persistedPart{{Type: "unknown"}}); err == nil {
+		t.Fatal("expected unknown part type error")
+	}
+}
+
+func TestManagerGetReturnsErrorForCorruptSessionFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("{not-json"), 0o644); err != nil {
+		t.Fatalf("write corrupt session: %v", err)
+	}
+
+	if _, err := NewManager(dir).Get("broken"); err == nil {
+		t.Fatal("expected corrupt session file to return an error")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	appcore "github.com/go-kratos/blades/cmd/blades/internal/app"
 	robfigcron "github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 
@@ -35,41 +36,28 @@ func newCronCmd() *cobra.Command {
 }
 
 // cronService creates a Service with no handler for read-only operations
-// (list, add, remove). It intentionally uses loadConfigForFlags rather than
-// loadAll because a full workspace load is not needed for these commands.
+// (list, add, remove). It only validates config and workspace paths because
+// a full runtime load is not needed for these commands.
 func cronService() (*cron.Service, error) {
-	cfg, err := loadConfigForFlags()
-	if err != nil {
-		return nil, err
-	}
-	ws := workspaceForConfig(cfg)
-	return cron.NewService(ws.CronStorePath(), nil), nil
+	return cronServiceForOptions(appcore.Options{})
 }
 
 func newCronListCmd() *cobra.Command {
 	var all bool
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List scheduled jobs",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := cronService()
-			if err != nil {
-				return err
-			}
-			jobs, err := svc.ListJobs(all)
-			if err != nil {
-				return err
-			}
-			if len(jobs) == 0 {
-				fmt.Println("(no jobs)")
-				return nil
-			}
-			for _, j := range jobs {
-				fmt.Println(cron.FormatJob(j))
-			}
+	cmd := newCronServiceCmd("list", "List scheduled jobs", cobra.NoArgs, func(cmd *cobra.Command, svc *cron.Service, args []string) error {
+		jobs, err := svc.ListJobs(all)
+		if err != nil {
+			return err
+		}
+		if len(jobs) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "(no jobs)")
 			return nil
-		},
-	}
+		}
+		for _, j := range jobs {
+			fmt.Fprintln(cmd.OutOrStdout(), cron.FormatJob(j))
+		}
+		return nil
+	})
 	cmd.Flags().BoolVar(&all, "all", false, "include disabled jobs")
 	return cmd
 }
@@ -82,75 +70,125 @@ func newCronAddCmd() *cobra.Command {
 		delayStr    string
 		message     string
 		command     string
+		sessionID   string
 		deleteAfter bool
 		tz          string
 	)
-	cmd := &cobra.Command{
-		Use:   "add",
-		Short: "Add a scheduled job",
-		Example: `  blades cron add --name "daily-brief" --cron "0 8 * * *" --message "generate morning brief"
+	cmd := newCronServiceCmd("add", "Add a scheduled job", cobra.NoArgs, func(cmd *cobra.Command, svc *cron.Service, args []string) error {
+		if name == "" {
+			return fmt.Errorf("--name is required")
+		}
+		if err := validateCronAddFlags(cronExpr, everyStr, delayStr, message, command); err != nil {
+			return err
+		}
+
+		sched, err := parseScheduleFlags(cronExpr, everyStr, delayStr, tz, scheduleFlagOptions{AllowDelay: true})
+		if err != nil {
+			return err
+		}
+
+		payload, err := cronPayloadFromFlags(message, command, sessionID)
+		if err != nil {
+			return err
+		}
+
+		job, err := svc.AddJob(cmd.Context(), name, sched, payload, deleteAfter)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "✓ job added: %s\n", cron.FormatJob(job))
+		return nil
+	})
+	cmd.Example = `  blades cron add --name "daily-brief" --cron "0 8 * * *" --message "generate morning brief"
   blades cron add --name "check" --every 1h --command "echo ok"
-  blades cron add --name "test ls" --delay 10 --command "ls . > outputs/test.txt"`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if name == "" {
-				return fmt.Errorf("--name is required")
-			}
-
-			var sched cron.Schedule
-			switch {
-			case cronExpr != "":
-				parser := robfigcron.NewParser(robfigcron.Minute | robfigcron.Hour | robfigcron.Dom | robfigcron.Month | robfigcron.Dow)
-				if _, err := parser.Parse(cronExpr); err != nil {
-					return fmt.Errorf("invalid --cron expression: %w", err)
-				}
-				sched = cron.Schedule{Kind: cron.ScheduleCron, Expr: cronExpr, TZ: tz}
-			case everyStr != "":
-				d, err := time.ParseDuration(everyStr)
-				if err != nil {
-					return fmt.Errorf("invalid --every duration: %w", err)
-				}
-				sched = cron.Schedule{Kind: cron.ScheduleEvery, EveryMs: d.Milliseconds()}
-			case delayStr != "":
-				d, err := parseDelayValue(delayStr)
-				if err != nil {
-					return err
-				}
-				sched = cron.Schedule{Kind: cron.ScheduleAt, AtMs: time.Now().Add(d).UnixMilli()}
-			default:
-				return fmt.Errorf("one of --cron, --every, or --delay is required")
-			}
-
-			var payload cron.Payload
-			switch {
-			case message != "":
-				payload = cron.Payload{Kind: cron.PayloadAgentTurn, Message: message, SessionID: "cron"}
-			case command != "":
-				payload = cron.Payload{Kind: cron.PayloadExec, Command: command}
-			default:
-				return fmt.Errorf("one of --message or --command is required")
-			}
-
-			svc, err := cronService()
-			if err != nil {
-				return err
-			}
-			job, err := svc.AddJob(cmd.Context(), name, sched, payload, deleteAfter)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("✓ job added: %s\n", cron.FormatJob(job))
-			return nil
-		},
-	}
+  blades cron add --name "test ls" --delay 10 --command "ls . > outputs/test.txt"`
 	cmd.Flags().StringVar(&name, "name", "", "job name")
 	cmd.Flags().StringVar(&cronExpr, "cron", "", "cron expression (5-field)")
 	cmd.Flags().StringVar(&everyStr, "every", "", "repeat interval, e.g. 1h, 30m")
 	cmd.Flags().StringVar(&delayStr, "delay", "", "run once after delay (seconds when unit omitted, e.g. 10 or 10s)")
 	cmd.Flags().StringVar(&message, "message", "", "agent message payload")
 	cmd.Flags().StringVar(&command, "command", "", "shell command payload")
+	cmd.Flags().StringVar(&sessionID, "session", "", "session ID for agent message jobs (default: isolated per job)")
 	cmd.Flags().StringVar(&tz, "tz", "", "timezone for cron expression")
 	cmd.Flags().BoolVar(&deleteAfter, "delete-after-run", false, "delete job after first execution")
 	return cmd
+}
+
+func validateCronAddFlags(cronExpr, everyStr, delayStr, message, command string) error {
+	if _, err := parseScheduleFlags(cronExpr, everyStr, delayStr, "", scheduleFlagOptions{AllowDelay: true, ValidateOnly: true}); err != nil {
+		return err
+	}
+	_, err := cronPayloadFromFlags(message, command, "cron")
+	return err
+}
+
+type scheduleFlagOptions struct {
+	AllowDelay   bool
+	DefaultEvery time.Duration
+	ValidateOnly bool
+}
+
+func parseScheduleFlags(cronExpr, everyStr, delayStr, tz string, opts scheduleFlagOptions) (cron.Schedule, error) {
+	return parseScheduleFlagsWithNow(time.Now, cronExpr, everyStr, delayStr, tz, opts)
+}
+
+func parseScheduleFlagsWithNow(now func() time.Time, cronExpr, everyStr, delayStr, tz string, opts scheduleFlagOptions) (cron.Schedule, error) {
+	scheduleFlags := 0
+	for _, value := range []string{cronExpr, everyStr, delayStr} {
+		if strings.TrimSpace(value) != "" {
+			scheduleFlags++
+		}
+	}
+	if scheduleFlags > 1 {
+		return cron.Schedule{}, fmt.Errorf("--cron, --every, and --delay are mutually exclusive")
+	}
+	if scheduleFlags == 0 {
+		if opts.DefaultEvery > 0 {
+			return cron.Schedule{Kind: cron.ScheduleEvery, EveryMs: opts.DefaultEvery.Milliseconds()}, nil
+		}
+		return cron.Schedule{}, fmt.Errorf("one of --cron, --every, or --delay is required")
+	}
+
+	switch {
+	case strings.TrimSpace(cronExpr) != "":
+		parser := robfigcron.NewParser(robfigcron.Minute | robfigcron.Hour | robfigcron.Dom | robfigcron.Month | robfigcron.Dow)
+		if _, err := parser.Parse(cronExpr); err != nil {
+			return cron.Schedule{}, fmt.Errorf("invalid --cron expression: %w", err)
+		}
+		if opts.ValidateOnly {
+			return cron.Schedule{}, nil
+		}
+		return cron.Schedule{Kind: cron.ScheduleCron, Expr: cronExpr, TZ: tz}, nil
+	case strings.TrimSpace(everyStr) != "":
+		d, err := time.ParseDuration(everyStr)
+		if err != nil {
+			return cron.Schedule{}, fmt.Errorf("invalid --every duration: %w", err)
+		}
+		if d <= 0 {
+			return cron.Schedule{}, fmt.Errorf("--every must be > 0")
+		}
+		if opts.ValidateOnly {
+			return cron.Schedule{}, nil
+		}
+		return cron.Schedule{Kind: cron.ScheduleEvery, EveryMs: d.Milliseconds()}, nil
+	case strings.TrimSpace(delayStr) != "":
+		if !opts.AllowDelay {
+			return cron.Schedule{}, fmt.Errorf("--delay is not supported here")
+		}
+		d, err := parseDelayValue(delayStr)
+		if err != nil {
+			return cron.Schedule{}, err
+		}
+		if opts.ValidateOnly {
+			return cron.Schedule{}, nil
+		}
+		if now == nil {
+			now = time.Now
+		}
+		return cron.Schedule{Kind: cron.ScheduleAt, AtMs: now().Add(d).UnixMilli()}, nil
+	default:
+		return cron.Schedule{}, fmt.Errorf("one of --cron, --every, or --delay is required")
+	}
 }
 
 func parseDelayValue(raw string) (time.Duration, error) {
@@ -178,24 +216,15 @@ func parseDelayValue(raw string) (time.Duration, error) {
 }
 
 func newCronRemoveCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "remove <id>",
-		Short: "Remove a scheduled job",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := cronService()
-			if err != nil {
-				return err
-			}
-			found, err := svc.RemoveJob(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			if !found {
-				return fmt.Errorf("job %q not found", args[0])
-			}
-			fmt.Printf("✓ removed job %s\n", args[0])
-			return nil
-		},
-	}
+	return newCronServiceCmd("remove <id>", "Remove a scheduled job", cobra.ExactArgs(1), func(cmd *cobra.Command, svc *cron.Service, args []string) error {
+		found, err := svc.RemoveJob(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("job %q not found", args[0])
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "✓ removed job %s\n", args[0])
+		return nil
+	})
 }

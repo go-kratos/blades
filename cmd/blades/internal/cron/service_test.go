@@ -169,3 +169,73 @@ func TestServiceWatchFileReloadsWhenMtimeUnchanged(t *testing.T) {
 
 	t.Fatal("external job was not executed; watcher likely missed file changes with unchanged mtime")
 }
+
+func TestAddJobRejectsScheduleWithoutFutureRun(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService(filepath.Join(t.TempDir(), "cron.json"), nil)
+
+	if _, err := svc.AddJob(context.Background(), "invalid", Schedule{Kind: ScheduleEvery, EveryMs: 0}, Payload{Kind: PayloadExec, Command: "true"}, false); err == nil {
+		t.Fatal("expected AddJob to reject zero-interval schedule")
+	}
+}
+
+func TestNewBotHandlerRespectsCanceledContextForExec(t *testing.T) {
+	t.Parallel()
+
+	h := NewBotHandler(nil, nil, time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := h(ctx, &Job{Payload: Payload{Kind: PayloadExec, Command: "printf ok"}}); err == nil {
+		t.Fatal("expected canceled exec context to fail")
+	}
+}
+
+func TestNewBotHandlerRespectsCanceledContextForAgentTurn(t *testing.T) {
+	t.Parallel()
+
+	trigger := func(ctx context.Context, sessionID, text string) (string, error) {
+		if ctx.Err() == nil {
+			return "", context.DeadlineExceeded
+		}
+		return "", ctx.Err()
+	}
+	h := NewBotHandler(trigger, nil, time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := h(ctx, &Job{Payload: Payload{Kind: PayloadAgentTurn, SessionID: "s1", Message: "hello"}}); err == nil {
+		t.Fatal("expected canceled agent_turn context to fail")
+	}
+}
+
+func TestAddJobAssignsUniqueDefaultSessionForAgentTurns(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService(filepath.Join(t.TempDir(), "cron.json"), nil)
+	schedule := Schedule{Kind: ScheduleEvery, EveryMs: time.Minute.Milliseconds()}
+
+	first, err := svc.AddJob(context.Background(), "job-1", schedule, Payload{Kind: PayloadAgentTurn, Message: "hello"}, false)
+	if err != nil {
+		t.Fatalf("add first job: %v", err)
+	}
+	second, err := svc.AddJob(context.Background(), "job-2", schedule, Payload{Kind: PayloadAgentTurn, Message: "world"}, false)
+	if err != nil {
+		t.Fatalf("add second job: %v", err)
+	}
+	if first.Payload.SessionID == "" || second.Payload.SessionID == "" {
+		t.Fatalf("expected auto session IDs, got %q and %q", first.Payload.SessionID, second.Payload.SessionID)
+	}
+	if first.Payload.SessionID == second.Payload.SessionID {
+		t.Fatalf("expected isolated session IDs, got shared %q", first.Payload.SessionID)
+	}
+
+	explicit, err := svc.AddJob(context.Background(), "job-3", schedule, Payload{Kind: PayloadAgentTurn, Message: "keep", SessionID: "shared"}, false)
+	if err != nil {
+		t.Fatalf("add explicit session job: %v", err)
+	}
+	if explicit.Payload.SessionID != "shared" {
+		t.Fatalf("explicit session ID = %q, want shared", explicit.Payload.SessionID)
+	}
+}

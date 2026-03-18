@@ -3,15 +3,23 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os/signal"
 	"strings"
-	"syscall"
+	"time"
 
+	appcore "github.com/go-kratos/blades/cmd/blades/internal/app"
 	"github.com/spf13/cobra"
-
-	blades "github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/cmd/blades/internal/session"
 )
+
+func resolveRunSessionID(sessionID string, now func() time.Time) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID != "" {
+		return sessionID
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return fmt.Sprintf("run-%d", now().UnixNano())
+}
 
 func newRunCmd() *cobra.Command {
 	var message string
@@ -26,57 +34,20 @@ func newRunCmd() *cobra.Command {
 				return fmt.Errorf("--message is required")
 			}
 
-			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-			defer cancel()
+			return runWithRuntimeCommand(cmd, func(ctx context.Context, cmd *cobra.Command, rt *appcore.Runtime) error {
+				runSessionID := resolveRunSessionID(sessionID, time.Now)
 
-			cfg, ws, mem, mcpServers, err := loadAll()
-			if err != nil {
-				return err
-			}
-
-			runner, err := buildRunner(cfg, ws, mcpServers)
-			if err != nil {
-				return err
-			}
-
-			sessMgr := session.NewManager(ws.SessionsDir())
-			if sessionID == "" {
-				sessionID = "run"
-			}
-			sess := sessMgr.GetOrNew(sessionID)
-
-			msg := blades.UserMessage(message)
-			var buf strings.Builder
-
-			for m, err := range runner.RunStream(ctx, msg, blades.WithSession(sess)) {
+				_, err := appcore.NewTurnExecutor(rt.Runner, rt.Sessions, appcore.TurnOptions{
+					Writer:          textWriter{writeText: func(chunk string) { fmt.Fprint(cmd.OutOrStdout(), chunk) }},
+					Memory:          rt.Memory,
+					LogConversation: true,
+				}).Run(ctx, runSessionID, message)
 				if err != nil {
 					return err
 				}
-				if m == nil {
-					continue
-				}
-				// StatusCompleted is the final assembled message — its text is the
-				// union of all prior InProgress deltas. Skip printing it to avoid
-				// double-output when the provider streams deltas first. If no deltas
-				// were streamed (non-streaming provider), fall back to writing it once.
-				if m.Status == blades.StatusCompleted {
-					finalText := m.Text()
-					if buf.Len() == 0 && finalText != "" {
-						fmt.Print(finalText)
-					}
-					buf.Reset()
-					buf.WriteString(finalText)
-				} else if chunk := m.Text(); chunk != "" {
-					fmt.Print(chunk)
-					buf.WriteString(chunk)
-				}
-			}
-			fmt.Println()
-
-			_ = mem.AppendDailyLog("user", message)
-			_ = mem.AppendDailyLog("assistant", buf.String())
-			_ = sessMgr.Save(sess)
-			return nil
+				printCommandln(cmd)
+				return nil
+			})
 		},
 	}
 	cmd.Flags().StringVarP(&message, "message", "m", "", "message to send to the agent")

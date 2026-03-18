@@ -24,6 +24,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -38,25 +39,34 @@ const channelName = "cli"
 
 // Channel is a bubbletea-based interactive terminal channel.
 type Channel struct {
-	sessionID   string
-	reload      func() error
-	stop        func() error
-	debug       bool
-	noAltScreen bool
-	cmdProc     *command.Processor
+	sessionID     string
+	stop          func() error
+	switchSession func(string) error
+	clearSession  func(string) error
+	debug         bool
+	noAltScreen   bool
+	cmdProc       *command.Processor
+	input         io.Reader
+	output        io.Writer
+	errOutput     io.Writer
 }
 
 // Option configures a Channel.
 type Option func(*Channel)
 
-// WithReload sets the function called when the user issues /reload.
-func WithReload(fn func() error) Option {
-	return func(c *Channel) { c.reload = fn }
-}
-
 // WithStop sets the function called when the user issues /stop.
 func WithStop(fn func() error) Option {
 	return func(c *Channel) { c.stop = fn }
+}
+
+// WithSwitchSession sets the function called when the user issues /session <id>.
+func WithSwitchSession(fn func(string) error) Option {
+	return func(c *Channel) { c.switchSession = fn }
+}
+
+// WithClearSession sets the function called when the user issues /clear.
+func WithClearSession(fn func(string) error) Option {
+	return func(c *Channel) { c.clearSession = fn }
 }
 
 // WithDebug enables verbose error output.
@@ -73,11 +83,29 @@ func WithNoAltScreen() Option {
 	return func(c *Channel) { c.noAltScreen = true }
 }
 
+// WithIO overrides the simple-mode input and output streams.
+func WithIO(input io.Reader, output, errOutput io.Writer) Option {
+	return func(c *Channel) {
+		if input != nil {
+			c.input = input
+		}
+		if output != nil {
+			c.output = output
+		}
+		if errOutput != nil {
+			c.errOutput = errOutput
+		}
+	}
+}
+
 // New creates a CLI Channel for the given session ID.
 func New(sessionID string, opts ...Option) *Channel {
 	c := &Channel{
 		sessionID: sessionID,
 		cmdProc:   command.NewProcessor(),
+		input:     os.Stdin,
+		output:    os.Stdout,
+		errOutput: os.Stderr,
 	}
 	for _, o := range opts {
 		o(c)
@@ -109,7 +137,9 @@ func (c *Channel) Start(ctx context.Context, handler channel.StreamHandler) erro
 	// Detect dark/light BEFORE p.Run() so the OSC 11 query doesn't interfere
 	// with bubbletea's input handling.
 	glamourStyle, isDark := detectGlamourStyle()
-	m := newModel(ctx, handler, c.sessionID, c.reload, c.stop, c.debug, glamourStyle, isDark, c.cmdProc)
+	m := newModel(ctx, handler, c.sessionID, c.stop, c.debug, glamourStyle, isDark, c.cmdProc)
+	m.switchSession = c.switchSession
+	m.clearSession = c.clearSession
 	// AltScreen is declared in View() — no program options needed.
 	// Real cursor is used (SetVirtualCursor(false) in newModel) so that
 	// ConPTY/IME can track the physical cursor and position the pre-edit window.
@@ -123,10 +153,10 @@ func (c *Channel) Start(ctx context.Context, handler channel.StreamHandler) erro
 // stdout. Because bubbletea never takes ownership of stdin, the OS/Windows IME
 // can position the pre-edit composition window correctly.
 func (c *Channel) startSimple(ctx context.Context, handler channel.StreamHandler) error {
-	fmt.Println("⚡ blades  (simple mode — /help for commands, Ctrl+C to quit)")
-	fmt.Println()
+	fmt.Fprintln(c.output, "blades simple mode  /help  Ctrl+C quit")
+	fmt.Fprintln(c.output)
 
-	scanner := bufio.NewScanner(os.Stdin)
+	scanner := bufio.NewScanner(c.input)
 	for {
 		select {
 		case <-ctx.Done():
@@ -134,7 +164,7 @@ func (c *Channel) startSimple(ctx context.Context, handler channel.StreamHandler
 		default:
 		}
 
-		fmt.Print("❯ ")
+		fmt.Fprint(c.output, "> ")
 		if !scanner.Scan() {
 			return scanner.Err()
 		}
@@ -145,25 +175,37 @@ func (c *Channel) startSimple(ctx context.Context, handler channel.StreamHandler
 
 		if strings.HasPrefix(line, "/") {
 			env := &command.Environment{
-				SessionID:         c.sessionID,
-				ReloadFunc:        c.reload,
-				StopFunc:          c.stop,
-				SwitchSessionFunc: func(sessionID string) error { c.sessionID = sessionID; return nil },
-				ClearFunc:         func() error { return nil }, // Not applicable in simple mode
-				Processor:         c.cmdProc,
+				SessionID: c.sessionID,
+				StopFunc:  c.stop,
+				SwitchSessionFunc: func(sessionID string) error {
+					if c.switchSession != nil {
+						if err := c.switchSession(sessionID); err != nil {
+							return err
+						}
+					}
+					c.sessionID = sessionID
+					return nil
+				},
+				ClearFunc: func() error {
+					if c.clearSession != nil {
+						return c.clearSession(c.sessionID)
+					}
+					return nil
+				},
+				Processor: c.cmdProc,
 			}
 
 			result, err := c.cmdProc.Process(ctx, line, env)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "command error:", err)
+				fmt.Fprintln(c.errOutput, "command error:", err)
 				continue
 			}
 
 			if result != nil {
 				if result.IsError {
-					fmt.Fprintln(os.Stderr, result.Message)
+					fmt.Fprintln(c.errOutput, result.Message)
 				} else {
-					fmt.Println(result.Message)
+					fmt.Fprintln(c.output, result.Message)
 				}
 				if result.ShouldQuit {
 					return nil
@@ -172,26 +214,28 @@ func (c *Channel) startSimple(ctx context.Context, handler channel.StreamHandler
 			continue
 		}
 
-		fmt.Println()
-		w := &simpleWriter{}
+		fmt.Fprintln(c.output)
+		w := &simpleWriter{out: c.output}
 		_, err := handler(ctx, c.sessionID, line, w)
-		fmt.Println()
+		fmt.Fprintln(c.output)
 		if err != nil && ctx.Err() == nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
+			fmt.Fprintln(c.errOutput, "error:", err)
 		}
 	}
 }
 
 // simpleWriter prints streaming output directly to stdout without any TUI.
-type simpleWriter struct{}
+type simpleWriter struct {
+	out io.Writer
+}
 
-func (w *simpleWriter) WriteText(chunk string) { fmt.Print(chunk) }
+func (w *simpleWriter) WriteText(chunk string) { fmt.Fprint(w.out, chunk) }
 
 func (w *simpleWriter) WriteEvent(e channel.Event) {
 	switch e.Kind {
 	case channel.EventToolStart:
-		fmt.Printf("🔧 %s …\n", e.Name)
+		fmt.Fprintf(w.out, "\ntool %s...\n", e.Name)
 	case channel.EventToolEnd:
-		fmt.Println()
+		fmt.Fprintln(w.out)
 	}
 }

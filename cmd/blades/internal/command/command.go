@@ -21,9 +21,6 @@ type Environment struct {
 	// SessionID is the current session identifier
 	SessionID string
 
-	// ReloadFunc reloads skills/configuration if available
-	ReloadFunc func() error
-
 	// StopFunc stops the current streaming response if available
 	StopFunc func() error
 
@@ -76,13 +73,6 @@ func (p *Processor) registerDefaults() {
 		Description: "Show available commands",
 		Usage:       "/help",
 		Handler:     helpHandler,
-	})
-
-	p.Register(&Command{
-		Name:        "reload",
-		Description: "Hot-reload skills and configuration",
-		Usage:       "/reload",
-		Handler:     reloadHandler,
 	})
 
 	p.Register(&Command{
@@ -184,7 +174,6 @@ func helpHandler(ctx context.Context, args []string, env *Environment) (*Result,
 			name, desc string
 		}{
 			{"/help", "Show this help"},
-			{"/reload", "Hot-reload skills"},
 			{"/stop", "Stop current response (keep chatting)"},
 			{"/session [id]", "Show or switch session"},
 			{"/clear", "Clear conversation"},
@@ -204,31 +193,6 @@ func helpHandler(ctx context.Context, args []string, env *Environment) (*Result,
 	}
 
 	return &Result{Message: b.String()}, nil
-}
-
-func reloadHandler(ctx context.Context, args []string, env *Environment) (*Result, error) {
-	if env == nil {
-		return &Result{
-			Message: "(reload not available - no environment)",
-			IsError: true,
-		}, nil
-	}
-	if env.ReloadFunc == nil {
-		return &Result{
-			Message: "(reload not configured)",
-		}, nil
-	}
-
-	if err := env.ReloadFunc(); err != nil {
-		return &Result{
-			Message: fmt.Sprintf("Reload failed: %v", err),
-			IsError: true,
-		}, nil
-	}
-
-	return &Result{
-		Message: "✓ Skills reloaded successfully",
-	}, nil
 }
 
 func stopHandler(ctx context.Context, args []string, env *Environment) (*Result, error) {
@@ -270,13 +234,17 @@ func sessionHandler(ctx context.Context, args []string, env *Environment) (*Resu
 	}
 
 	newSessionID := args[0]
-	if env.SwitchSessionFunc != nil {
-		if err := env.SwitchSessionFunc(newSessionID); err != nil {
-			return &Result{
-				Message: fmt.Sprintf("Failed to switch session: %v", err),
-				IsError: true,
-			}, nil
-		}
+	if env.SwitchSessionFunc == nil {
+		return &Result{
+			Message: "(session switching not available)",
+			IsError: true,
+		}, nil
+	}
+	if err := env.SwitchSessionFunc(newSessionID); err != nil {
+		return &Result{
+			Message: fmt.Sprintf("Failed to switch session: %v", err),
+			IsError: true,
+		}, nil
 	}
 
 	return &Result{

@@ -1,3 +1,10 @@
+<p align="center">
+    <a href="https://github.com/go-kratos/blades/actions"><img src="https://github.com/go-kratos/blades/workflows/Go/badge.svg" alt="Build Status"></a>
+    <a href="https://pkg.go.dev/github.com/go-kratos/blades"><img src="https://pkg.go.dev/badge/github.com/go-kratos/blades" alt="GoDoc"></a>
+    <a href="https://deepwiki.com/go-kratos/blades"><img src="https://deepwiki.com/badge.svg" alt="DeepWiki"></a>
+    <a href="https://github.com/go-kratos/blades/blob/main/LICENSE"><img src="https://img.shields.io/github/license/go-kratos/blades" alt="License"></a>
+</p>
+
 ## Blades
 Blades 是一个 Go 语言的多模态 AI Agent 框架，支持自定义模型、工具、记忆体、中间件等，适用于多轮对话、链式推理和结构化输出等。
 > 名字来源于：《战神》游戏以希腊神话为背景，讲述奎托斯（Kratos）由凡人成为战神并展开弑神屠杀的冒险经历，Blades 是奎托斯的标志性武器。
@@ -96,7 +103,7 @@ func main() {
     agent := blades.NewAgent(
         "Blades Agent",
         blades.WithModel(model),
-        blades.WithInstructions("You are a helpful assistant that provides detailed and accurate information."),
+        blades.WithInstruction("You are a helpful assistant that provides detailed and accurate information."),
     )
     // Create a Prompt with user message
     input := blades.UserMessage("What is the capital of France?")
@@ -110,7 +117,46 @@ func main() {
     log.Println(output.Text())
 }
 ```
-更多示例请参见 [examples](./examples) 目录。
+
+### Skills
+
+`Agent` 支持通过 `WithSkills(...)` 注入 Skills，支持从目录或 `embed.FS` 加载。
+Skill 的包结构与元数据规范请参考 [Agent Skill specification](https://agentskills.io/specification)。
+
+```go
+package main
+
+import (
+    "embed"
+
+    "github.com/go-kratos/blades"
+    "github.com/go-kratos/blades/skills"
+)
+
+//go:embed example-skill/*
+var skillFS embed.FS
+
+func createAgent(model blades.ModelProvider) (blades.Agent, error) {
+    // Directory-based loading:
+    skillsFromDir, err := skills.NewFromDir("./skills")
+    if err != nil {
+        return nil, err
+    }
+    // Embedded loading:
+    skillsFromEmbed, err := skills.NewFromEmbed(skillFS)
+    if err != nil {
+        return nil, err
+    }
+    allSkills := append(skillsFromDir, skillsFromEmbed...)
+    return blades.NewAgent(
+        "SkillsAgent",
+        blades.WithModel(model),
+        blades.WithSkills(allSkills...),
+    )
+}
+```
+
+更多示例用法，请参考 [examples](./examples) 目录。
 
 ## 🤝 贡献与社区
 项目当前处于初期阶段，我们正在持续快速地迭代中。我们诚挚地邀请所有 Go 开发者和 AI 爱好者访问我们的 GitHub 仓库，亲自体验 Blades 带来的开发乐趣。

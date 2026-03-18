@@ -18,7 +18,7 @@ import (
 func NewProvider(p config.Provider, model string) (blades.ModelProvider, error) {
 	switch p.Provider {
 	case "anthropic":
-		c := bldanthropic.Config{APIKey: p.APIKey}
+		c := bldanthropic.Config{APIKey: p.APIKey, CacheControl: true}
 		if p.BaseURL != "" {
 			c.BaseURL = p.BaseURL
 		}

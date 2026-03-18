@@ -4,7 +4,7 @@
 >
 > English: [README.md](README.md)
 
-`blades` 是以本地文件为核心的命令行 AI 智能体：**blades 根目录（home）** 固定为 `~/.blades`，**Agent 工作空间** 默认为 `~/.blades/workspace`，也可通过 `--workspace` 指定任意路径。支持对话记忆、Markdown 技能、通过 `mcp.json` 连接 MCP 工具、cron 定时任务及多 LLM 提供商。
+`blades` 是以本地文件为核心的命令行 AI 智能体：**blades 根目录（home）** 固定为 `~/.blades`，**Agent 工作空间** 默认为 `~/.blades/workspace`，也可通过 `--workspace` 指定任意路径。支持对话记忆、Markdown 技能、cron 定时任务及多 LLM 提供商。
 
 ---
 
@@ -13,11 +13,9 @@
 - **流式对话** — 带动画 spinner，逐 token 流式输出，支持 ANSI 彩色
 - **持久记忆** — `MEMORY.md`（L1）、`memory/` 每日会话日志（L2）、知识文件（L3）
 - **技能系统** — 在任意 skills 目录放入 `SKILL.md`，Agent 自动发现
-- **MCP 支持** — 仅通过 `mcp.json` 连接外部工具（stdio、HTTP、WebSocket）
 - **Cron 调度** — 定时执行 Shell 或 Agent 对话，配置存于 `cron.json`
 - **Daemon 模式** — 常驻进程运行调度器与可选通道（如 Lark）
 - **多 LLM** — Anthropic、OpenAI、Google Gemini，在 `agent.yaml` 中切换
-- **热重载** — 对话中输入 `/reload` 即可加载新技能或配置
 
 ---
 
@@ -36,6 +34,7 @@ go install .
 ```sh
 blades init
 export ANTHROPIC_API_KEY=sk-...
+$EDITOR ~/.blades/config.yaml
 $EDITOR ~/.blades/agent.yaml
 blades chat
 ```
@@ -44,15 +43,14 @@ blades chat
 
 ## 目录结构
 
-- **Blades 根目录（home）** — `~/.blades`。存放配置、全局 MCP、cron、技能、会话及**运行日志**。
-- **工作空间（workspace）** — 默认 `~/.blades/workspace`，或 `--workspace <path>`。Agent 工作目录（exec 默认 CWD、工作区级 MCP、**记忆**、技能、输出）。
+- **Blades 根目录（home）** — `~/.blades`。存放配置、cron、技能、会话及**运行日志**。
+- **工作空间（workspace）** — 默认 `~/.blades/workspace`，或 `--workspace <path>`。Agent 工作目录（exec 默认 CWD、**记忆**、技能、输出）。
 
 未指定 `--workspace` 时的默认布局：
 
 ```
 ~/.blades/                    ← 根目录（home）
 ├── agent.yaml
-├── mcp.json
 ├── cron.json
 ├── skills/
 ├── sessions/
@@ -69,18 +67,14 @@ blades chat
 - **日志** — 运行/审计日志写入 `~/.blades/logs/YYYY-MM-DD.log`（daemon 通道流量、错误等）。
 - **记忆** — 当配置中 `logConversation: true` 时，用户/助手轮次会追加到**工作空间**的 `memory/YYYY-MM-DD.md`，用于长期上下文。
 
-### agent.yaml
+### `config.yaml`
 
 ```yaml
-llm:
-  provider: anthropic
-  model: claude-sonnet-4-6
-  apiKey: ${ANTHROPIC_API_KEY}
-
-defaults:
-  maxIterations: 10
-  compressThreshold: 40000
-  logConversation: false   # 为 true 时，将对话追加到 workspace/memory/YYYY-MM-DD.md
+providers:
+  - name: anthropic
+    provider: anthropic
+    models: [claude-sonnet-4-6]
+    apiKey: ${ANTHROPIC_API_KEY}
 
 # 可选：exec 工具覆盖（见模板）
 # exec:
@@ -88,10 +82,11 @@ defaults:
 #   restrictToWorkspace: true
 
 # 可选：blades daemon 的 Lark/飞书 通道（仅 WebSocket）
-# lark:
-#   enabled: true
-#   appID: ${LARK_APP_ID}
-#   appSecret: ${LARK_APP_SECRET}
+# channels:
+#   lark:
+#     enabled: true
+#     appID: ${LARK_APP_ID}
+#     appSecret: ${LARK_APP_SECRET}
 ```
 
 ---
@@ -104,7 +99,13 @@ defaults:
 
 ### `blades chat` / `blades run` / `blades memory` / `blades cron`
 
-与英文 README 一致；支持 `--session`、`/reload`、cron 增删查运行、heartbeat 等。
+与英文 README 一致；支持 `--session`、cron 增删查运行、heartbeat 等。
+
+补充说明：
+- `blades cron add` 的 `--cron`、`--every`、`--delay` 三者必须且只能传一个。
+- `blades cron add` 的 `--message`、`--command` 二者必须且只能传一个。
+- 定时 `agent_turn` 任务会持久化 session，因此 heartbeat 和周期任务在 daemon 重启后仍能保持对话连续性。
+- `blades cron heartbeat --every 15m` 会复用已有 heartbeat 任务并更新调度周期，而不是静默保留旧配置。
 
 ### `blades daemon`
 
@@ -112,7 +113,7 @@ defaults:
 
 ### `blades doctor`
 
-检查 blades 根目录、工作空间、必要文件及过期 cron 任务。
+检查 blades 根目录、工作空间、必要文件及过期 cron 任务。传入 `--config` 时，会按实际配置文件路径检查。
 
 ---
 
@@ -120,16 +121,15 @@ defaults:
 
 | 标志 | 默认值 | 说明 |
 |------|--------|------|
-| `--config` | `~/.blades/agent.yaml` | 配置文件路径 |
+| `--config` | `~/.blades/config.yaml` | 配置文件路径 |
 | `--workspace` | `~/.blades/workspace` | 工作空间路径 |
 | `--debug` | false | 详细调试日志 |
 
 ---
 
-## 技能与 MCP
+## 技能
 
 - **技能**：从 `~/.blades/skills/` 加载（全局）。
-- **MCP**：仅通过 **`~/.blades/mcp.json`** 配置（不支持在 agent.yaml 内联）。格式与 Claude Desktop 兼容，支持 `${ENV_VAR}` 展开。
 
 ---
 

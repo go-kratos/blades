@@ -19,7 +19,7 @@ var templateFS embed.FS
 // Home directory (e.g., ~/.blades/):
 //
 //	├── config.yaml          provider credentials and defaults
-//	├── mcp.json             global MCP server connections
+//	├── agent.yaml           agent recipe (model ref, workflow, tools)
 //	├── cron.json            scheduled tasks
 //	├── skills/              global skills (shared across workspaces)
 //	├── sessions/            conversation session files
@@ -27,7 +27,6 @@ var templateFS embed.FS
 //
 // Workspace directory (e.g., ~/my-agent/ or ~/.blades/workspace/):
 //
-//	├── agent.yaml           agent recipe (model ref, workflow, tools)
 //	├── AGENTS.md            behaviour rules
 //	├── SOUL.md / USER.md / IDENTITY.md / MEMORY.md / HEARTBEAT.md / TOOLS.md
 //	├── memory/              daily session logs
@@ -82,8 +81,8 @@ func (w *Workspace) IsCustomWorkspace() bool {
 // ConfigPath returns the path to config.yaml.
 func (w *Workspace) ConfigPath() string { return filepath.Join(w.home, "config.yaml") }
 
-// MCPPath returns the path to the global mcp.json.
-func (w *Workspace) MCPPath() string { return filepath.Join(w.home, "mcp.json") }
+// AgentPath returns the path to ~/.blades/agent.yaml.
+func (w *Workspace) AgentPath() string { return filepath.Join(w.home, "agent.yaml") }
 
 // CronStorePath returns the path to the cron jobs store file.
 func (w *Workspace) CronStorePath() string { return filepath.Join(w.home, "cron.json") }
@@ -98,9 +97,6 @@ func (w *Workspace) SessionsDir() string { return filepath.Join(w.home, "session
 func (w *Workspace) LogDir() string { return filepath.Join(w.home, "logs") }
 
 // --- Workspace-level paths ---
-
-// AgentPath returns the path to workspace/agent.yaml.
-func (w *Workspace) AgentPath() string { return filepath.Join(w.workspace, "agent.yaml") }
 
 // AgentsPath returns the path to AGENTS.md.
 func (w *Workspace) AgentsPath() string { return filepath.Join(w.workspace, "AGENTS.md") }
@@ -166,7 +162,7 @@ func (w *Workspace) Init() error {
 		}
 	}
 
-	// Copy home-level templates (config.yaml, mcp.json, skills/)
+	// Copy home-level templates (config.yaml, skills/)
 	if err := w.copyTemplates("templates", w.home, true); err != nil {
 		return err
 	}

@@ -20,7 +20,7 @@ func (m *model) View() tea.View {
 	} else {
 		content = m.vp.View() + "\n" +
 			m.statusBar() + "\n" +
-			m.styles.inputBorder.Width(m.width-2).Render(m.input.View())
+			m.styles.inputBox.Width(m.width-2).Render(m.input.View()) + "\n"
 	}
 
 	v := tea.NewView(content)
@@ -30,11 +30,6 @@ func (m *model) View() tea.View {
 	// Cursor() returns nil when unfocused or when virtual cursor is in use.
 	if m.vpReady && m.state == stateInput {
 		if c := m.input.Cursor(); c != nil {
-			// The input box is rendered at: viewport (vpHeight rows) +
-			// status bar (1 row) + top border (1 row) + top padding (0) = vpH+2.
-			// The inputBorderStyle has PaddingLeft(1) and a 1-char left border,
-			// so the text column starts at 2.
-
 			// The bubbles library computes X as rune index + prompt width,
 			// but CJK characters occupy 2 terminal columns per rune.
 			// Add the extra columns from wide characters before the cursor.
@@ -45,12 +40,12 @@ func (m *model) View() tea.View {
 			}
 			wideDelta := uniseg.StringWidth(string(val[:pos])) - pos
 
-			c.Position.X += 1 + wideDelta // 1 for left border
+			c.Position.X += 2 + wideDelta
 			c.Position.Y += m.vpHeight() + 2
 
 			// Clamp to the visible input area to handle horizontal scroll.
 			promptWidth := lipgloss.Width(m.input.Prompt)
-			if maxX := m.input.Width() + promptWidth + 1; c.Position.X > maxX {
+			if maxX := m.input.Width() + promptWidth + 2; c.Position.X > maxX {
 				c.Position.X = maxX
 			}
 
@@ -63,26 +58,25 @@ func (m *model) View() tea.View {
 
 func (m *model) statusBar() string {
 	if m.state == stateRunning {
-		return m.styles.statusBar.Render(m.spinner.View() + " thinking…  Esc to stop")
+		return m.styles.statusBar.Render(m.spinner.View() + " thinking...  Esc to stop")
 	}
 	if m.err != nil {
-		return m.styles.statusBar.Render(m.styles.err.Render("⚠  " + m.err.Error()))
+		return m.styles.statusBar.Render(m.styles.err.Render("error: " + m.err.Error()))
 	}
 	for i := len(m.turns) - 1; i >= 0; i-- {
 		if !m.turns[i].isMeta {
 			if len(m.turns[i].tools) > 0 {
-				return m.styles.statusBar.Render(m.styles.hint.Render("1–9 toggle tools · PgUp/PgDn scroll · /help commands"))
+				return m.styles.statusBar.Render(m.styles.hint.Render("1-9 details  PgUp/PgDn scroll  /help"))
 			}
 			break
 		}
 	}
-	return m.styles.statusBar.Render(m.styles.hint.Render("PgUp/PgDn to scroll · /help for commands"))
+	return m.styles.statusBar.Render(m.styles.hint.Render("PgUp/PgDn scroll  /help"))
 }
 
 // ── Content construction ──────────────────────────────────────────────────────
 
 // vpHeight returns the height available for the viewport.
-// Footer = 1 status line + 3 input-border lines + 1 separator = 5.
 func (m *model) vpHeight() int {
 	h := m.height - 5
 	if h < 1 {
@@ -107,14 +101,10 @@ func (m *model) refreshViewport(scrollToBottom bool) {
 func (m *model) rebuildPastContent() {
 	var b strings.Builder
 
-	b.WriteString(m.styles.banner.Render("⚡ blades"))
+	b.WriteString(m.styles.header.Render("blades"))
 	b.WriteString("  ")
-	b.WriteString(m.styles.dim.Render("session: " + m.sessionID))
-	b.WriteString("\n")
-	b.WriteString(m.styles.hint.Render("Type your message · /help · Ctrl+C to quit"))
-	b.WriteString("\n")
-	b.WriteString(m.styles.dim.Render(strings.Repeat("─", m.width)))
-	b.WriteString("\n")
+	b.WriteString(m.styles.dim.Render("session " + m.sessionID))
+	b.WriteString("\n\n")
 
 	for _, t := range m.turns {
 		b.WriteString(m.renderTurn(t))
@@ -136,32 +126,42 @@ func (m *model) renderTurn(t *convTurn) string {
 		return t.metaText
 	}
 	var b strings.Builder
-	b.WriteString(m.styles.userLabel.Render("You:"))
+	b.WriteString(m.styles.userLabel.Render("User"))
 	b.WriteString(" ")
 	b.WriteString(t.user)
 	b.WriteString("\n")
-	for i := range t.tools {
-		b.WriteString(m.renderToolSection(&t.tools[i]))
+	if t.rendered != "" || len(t.tools) > 0 {
+		b.WriteString(m.styles.assistLabel.Render("Assistant"))
 		b.WriteString("\n")
-	}
-	if t.rendered != "" {
-		b.WriteString(m.styles.assistLabel.Render("Assistant:"))
-		b.WriteString("\n")
-		b.WriteString(t.rendered)
+		if t.rendered != "" {
+			b.WriteString(t.rendered)
+			if len(t.tools) > 0 {
+				b.WriteString("\n")
+			}
+		}
+		for i := range t.tools {
+			b.WriteString(m.renderToolSection(&t.tools[i]))
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
 }
 
 func (m *model) renderStreaming() string {
 	var b strings.Builder
-	for i := range m.streamTools {
-		b.WriteString(m.renderToolSection(&m.streamTools[i]))
+	if m.streamBuf.Len() > 0 || len(m.streamTools) > 0 {
+		b.WriteString(m.styles.assistLabel.Render("Assistant"))
 		b.WriteString("\n")
-	}
-	if m.streamBuf.Len() > 0 {
-		b.WriteString(m.styles.assistLabel.Render("Assistant:"))
-		b.WriteString("\n")
-		b.WriteString(m.streamBuf.String())
+		if m.streamBuf.Len() > 0 {
+			b.WriteString(m.streamBuf.String())
+			if len(m.streamTools) > 0 {
+				b.WriteString("\n")
+			}
+		}
+		for i := range m.streamTools {
+			b.WriteString(m.renderToolSection(&m.streamTools[i]))
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
 }
@@ -171,33 +171,44 @@ func (m *model) renderToolSection(ts *toolSection) string {
 	if maxW < 20 {
 		maxW = 20
 	}
-	label := fmt.Sprintf("[%d] 🔧 %s", ts.idx, ts.name)
+	label := m.styles.toolLabel.Render(fmt.Sprintf("%d. %s", ts.idx, ts.name))
 
 	if !ts.complete {
-		content := m.styles.toolHeader.Render("⠸ "+label) + "  " + m.styles.dim.Render("running…")
+		content := label + "  " + m.styles.dim.Render("running")
 		if ts.input != "" {
-			content += "\n" + m.styles.dim.Render("→ ") + truncate(ts.input, maxW-4)
+			if ts.expanded {
+				content += "\n" + m.styles.dim.Render("input: ") + ts.input
+			} else {
+				content += "\n" + m.styles.dim.Render(truncate(singleLine(ts.input), maxW-4))
+			}
 		}
-		return m.styles.toolBoxActive.Width(maxW).Render(content)
+		if ts.expanded {
+			return m.styles.toolBoxActive.Width(maxW).Render(content)
+		}
+		return m.styles.toolBox.Width(maxW).Render(content)
 	}
 
 	if !ts.expanded {
 		preview := ""
 		if ts.output != "" {
-			preview = "  " + m.styles.dim.Render(truncate(singleLine(ts.output), maxW-len(label)-10))
+			preview = "\n" + m.styles.dim.Render(truncate(singleLine(ts.output), maxW-4))
 		}
-		return m.styles.toolBox.Width(maxW).Render("▶ " + m.styles.toolHeader.Render(label) + preview)
+		return m.styles.toolBox.Width(maxW).Render(label + preview)
 	}
 
 	var content strings.Builder
-	content.WriteString("▼ " + m.styles.toolHeader.Render(label))
+	content.WriteString(label)
 	if ts.input != "" {
-		content.WriteString("\n" + m.styles.dim.Render("Input:  ") + ts.input)
+		content.WriteString("\n")
+		content.WriteString(m.styles.dim.Render("input: "))
+		content.WriteString(ts.input)
 	}
 	if ts.output != "" {
-		content.WriteString("\n" + m.styles.dim.Render("Output: ") + ts.output)
+		content.WriteString("\n")
+		content.WriteString(m.styles.dim.Render("output: "))
+		content.WriteString(ts.output)
 	}
-	return m.styles.toolBox.Width(maxW).Render(content.String())
+	return m.styles.toolBoxActive.Width(maxW).Render(content.String())
 }
 
 // toggleLastTool toggles the tool at 0-based toolIdx in the most recent real turn.
