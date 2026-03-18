@@ -104,6 +104,13 @@ func TestLarkFactoryUsesEnvFallback(t *testing.T) {
 		}
 	})
 
+	if err := os.Unsetenv("LARK_APP_ID"); err != nil {
+		t.Fatalf("unset LARK_APP_ID: %v", err)
+	}
+	if err := os.Unsetenv("LARK_APP_SECRET"); err != nil {
+		t.Fatalf("unset LARK_APP_SECRET: %v", err)
+	}
+
 	if _, err := lark.NewFromConfig(config.LarkConfig{}, nil); err == nil || !strings.Contains(err.Error(), "LARK_APP_ID") {
 		t.Fatalf("expected missing app id error, got %v", err)
 	}
@@ -256,15 +263,15 @@ func TestRuntimeDependentCommandsReturnErrorsWithoutProviderConfig(t *testing.T)
 	}
 }
 
-func TestLoadSkillsReturnsBuiltinsAndSkipsMissingDir(t *testing.T) {
+func TestLoadSkillsReturnsNilForEmptyOrMissingDir(t *testing.T) {
 	ws := setupCommandWorkspace(t)
 
 	skillList, err := appcore.LoadSkills(ws)
 	if err != nil {
 		t.Fatalf("loadSkills(existing): %v", err)
 	}
-	if len(skillList) == 0 {
-		t.Fatal("expected built-in skills to load")
+	if skillList != nil {
+		t.Fatalf("expected nil skill list for empty dir, got %v", skillList)
 	}
 
 	missing := workspace.NewWithWorkspace(filepath.Join(t.TempDir(), ".blades"), filepath.Join(t.TempDir(), "agent"))

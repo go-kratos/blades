@@ -28,7 +28,7 @@ func BuildRunner(cfg *config.Config, ws *workspace.Workspace, cronSvc *cron.Serv
 	}
 
 	if instruction, err := ws.ReadFile("AGENTS.md"); err == nil && instruction != "" {
-		spec.Instruction = instruction
+		applyWorkspaceInstruction(spec, instruction)
 	}
 
 	skillList, err := LoadSkills(ws)
@@ -163,22 +163,51 @@ func LoadAgentSpec(ws *workspace.Workspace) (*recipe.AgentSpec, error) {
 	path := ws.AgentPath()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return &recipe.AgentSpec{
-			Version:     "1.0",
-			Name:        "blades",
-			Description: "Personal AI assistant running in your local workspace.",
-			Model:       "anthropic/claude-sonnet-4-6",
-			Instruction: "You are a helpful personal AI assistant.",
-			Tools:       []string{"exec", "cron"},
-			Context: &recipe.ContextSpec{
-				Strategy:    recipe.ContextStrategyWindow,
-				MaxTokens:   80000,
-				MaxMessages: 50,
-			},
-			Middlewares: []recipe.MiddlewareSpec{
+			Version:       "1.0",
+			Name:          "blades",
+			Description:   "Personal AI assistant running in your local workspace.",
+			Model:         "anthropic/claude-sonnet-4-6",
+			Execution:     recipe.ExecutionLoop,
+			MaxIterations: 3,
+			SubAgents: []recipe.SubAgentSpec{
 				{
-					Name: "retry",
-					Options: map[string]any{
-						"attempts": 3,
+					Name:        "action",
+					Description: "Execute the next concrete step toward the user's goal.",
+					Instruction: "You are the action agent.\nProduce the best next response or action for the user's request.\nUse the available tools only when they are actually needed.\nIf prior review feedback exists, address it carefully.\nDo not rewrite a good answer just to phrase it differently.\nFor simple greetings, acknowledgements, or casual chat, answer naturally and briefly.\n\nPrevious review feedback:\n{{.review_feedback}}",
+					Tools:       []string{"exec", "cron"},
+					OutputKey:   "action_result",
+					Context: &recipe.ContextSpec{
+						Strategy:    recipe.ContextStrategyWindow,
+						MaxTokens:   80000,
+						MaxMessages: 50,
+					},
+					Middlewares: []recipe.MiddlewareSpec{
+						{
+							Name: "retry",
+							Options: map[string]any{
+								"attempts": 3,
+							},
+						},
+					},
+				},
+				{
+					Name:        "review",
+					Description: "Review the latest action result and decide whether to stop.",
+					Instruction: "You are the review agent.\nReview the latest action result:\n\n{{.action_result}}\n\nBias strongly toward stopping.\nIf the latest action result already answers the user well enough, call the exit tool immediately with a brief reason.\nThis includes greetings, casual chat, short factual answers, and responses that are already good enough.\nDo not request another iteration just for stylistic rewrites or alternate phrasing.\nOnly continue when the latest action result is clearly incomplete, incorrect, unsafe, or missed an obvious required tool/action.\nIf another iteration is needed, explain exactly what the next action iteration must improve.",
+					Tools:       []string{"exit"},
+					OutputKey:   "review_feedback",
+					Context: &recipe.ContextSpec{
+						Strategy:    recipe.ContextStrategyWindow,
+						MaxTokens:   80000,
+						MaxMessages: 50,
+					},
+					Middlewares: []recipe.MiddlewareSpec{
+						{
+							Name: "retry",
+							Options: map[string]any{
+								"attempts": 3,
+							},
+						},
 					},
 				},
 			},
@@ -189,4 +218,23 @@ func LoadAgentSpec(ws *workspace.Workspace) (*recipe.AgentSpec, error) {
 		return nil, fmt.Errorf("agent.yaml: %w", err)
 	}
 	return spec, nil
+}
+
+func applyWorkspaceInstruction(spec *recipe.AgentSpec, instruction string) {
+	instruction = strings.TrimSpace(instruction)
+	if spec == nil || instruction == "" {
+		return
+	}
+	if len(spec.SubAgents) == 0 {
+		spec.Instruction = instruction
+		return
+	}
+	for i := range spec.SubAgents {
+		subInstruction := strings.TrimSpace(spec.SubAgents[i].Instruction)
+		if subInstruction == "" {
+			spec.SubAgents[i].Instruction = instruction
+			continue
+		}
+		spec.SubAgents[i].Instruction = instruction + "\n\n" + subInstruction
+	}
 }

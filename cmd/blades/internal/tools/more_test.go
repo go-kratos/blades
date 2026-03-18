@@ -12,6 +12,20 @@ import (
 	bladestools "github.com/go-kratos/blades/tools"
 )
 
+type fixedIDSession struct {
+	id string
+}
+
+func (s *fixedIDSession) ID() string { return s.id }
+
+func (s *fixedIDSession) State() blades.State { return nil }
+
+func (s *fixedIDSession) SetState(string, any) {}
+
+func (s *fixedIDSession) History() []*blades.Message { return nil }
+
+func (s *fixedIDSession) Append(context.Context, *blades.Message) error { return nil }
+
 func TestRegistryAndNormalizeHelpers(t *testing.T) {
 	t.Parallel()
 
@@ -40,6 +54,9 @@ func TestRegistryAndNormalizeHelpers(t *testing.T) {
 	if got := normPayloadKind("message"); got != cron.PayloadAgentTurn {
 		t.Fatalf("normPayloadKind(message) = %q", got)
 	}
+	if got := normPayloadKind("social"); got != cron.PayloadNotify {
+		t.Fatalf("normPayloadKind(social) = %q", got)
+	}
 }
 
 func TestCronToolAdditionalBranches(t *testing.T) {
@@ -55,18 +72,18 @@ func TestCronToolAdditionalBranches(t *testing.T) {
 		t.Fatalf("empty list output = %q err=%v", out, err)
 	}
 
-	ctx := blades.NewSessionContext(context.Background(), blades.NewSession(nil))
-	ctxSession, _ := blades.FromSessionContext(ctx)
-	ctxSession.SetState("unused", true)
-	sessionAware := blades.NewSession(nil)
-	_ = sessionAware.Append(context.Background(), blades.UserMessage("hello"))
-	ctx = blades.NewSessionContext(context.Background(), sessionAware)
+	ctx := blades.NewSessionContext(context.Background(), &fixedIDSession{id: "chat-ctx"})
 
 	added, err := tool.add(ctx, cronInput{
-		Name:         "ctx-session",
-		ScheduleKind: "every",
-		EverySeconds: 60,
-		Message:      "ping",
+		Name: "ctx-session",
+		Schedule: &cronScheduleInput{
+			Type:         "every",
+			EverySeconds: 60,
+		},
+		Task: &cronTaskInput{
+			Type:   "agent",
+			Prompt: "ping",
+		},
 	})
 	if err != nil {
 		t.Fatalf("add agent-turn job: %v", err)
@@ -79,27 +96,73 @@ func TestCronToolAdditionalBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list non-empty: %v", err)
 	}
-	if !strings.Contains(listed, "ctx-session") || !strings.Contains(listed, "agent_turn") {
+	if !strings.Contains(listed, "ctx-session") || !strings.Contains(listed, "agent:ping") || !strings.Contains(listed, "chat-ctx") {
 		t.Fatalf("list output = %q", listed)
 	}
 
-	if _, err := tool.add(context.Background(), cronInput{ScheduleKind: "at", Message: "x"}); err == nil {
+	if _, err := tool.add(context.Background(), cronInput{
+		Name:     "missing-at",
+		Schedule: &cronScheduleInput{Type: "at"},
+		Task:     &cronTaskInput{Type: "agent", Prompt: "x"},
+	}); err == nil {
 		t.Fatal("expected missing at_ms error")
 	}
-	if _, err := tool.add(context.Background(), cronInput{ScheduleKind: "every", Message: "x"}); err == nil {
+	if _, err := tool.add(context.Background(), cronInput{
+		Name:     "missing-every",
+		Schedule: &cronScheduleInput{Type: "every"},
+		Task:     &cronTaskInput{Type: "agent", Prompt: "x"},
+	}); err == nil {
 		t.Fatal("expected missing every_seconds error")
 	}
-	if _, err := tool.add(context.Background(), cronInput{ScheduleKind: "cron", Message: "x", CronExpr: "bad"}); err == nil {
+	if _, err := tool.add(context.Background(), cronInput{
+		Name: "bad-cron",
+		Schedule: &cronScheduleInput{
+			Type:     "cron",
+			CronExpr: "bad",
+		},
+		Task: &cronTaskInput{Type: "agent", Prompt: "x"},
+	}); err == nil {
 		t.Fatal("expected invalid cron expr error")
 	}
-	if _, err := tool.add(context.Background(), cronInput{ScheduleKind: "every", EverySeconds: 1, PayloadKind: "exec"}); err == nil {
+	if _, err := tool.add(context.Background(), cronInput{
+		Name: "missing-command",
+		Schedule: &cronScheduleInput{
+			Type:         "every",
+			EverySeconds: 1,
+		},
+		Task: &cronTaskInput{Type: "exec"},
+	}); err == nil {
 		t.Fatal("expected missing command error")
 	}
-	if _, err := tool.add(context.Background(), cronInput{ScheduleKind: "every", EverySeconds: 1, PayloadKind: "agent_turn"}); err == nil {
-		t.Fatal("expected missing message error")
+	if _, err := tool.add(context.Background(), cronInput{
+		Name: "missing-prompt",
+		Schedule: &cronScheduleInput{
+			Type:         "every",
+			EverySeconds: 1,
+		},
+		Task: &cronTaskInput{Type: "agent"},
+	}); err == nil {
+		t.Fatal("expected missing prompt error")
 	}
-	if _, err := tool.add(context.Background(), cronInput{ScheduleKind: "every", EverySeconds: 1, PayloadKind: "weird", Message: "x"}); err == nil {
-		t.Fatal("expected unknown payload kind error")
+	if _, err := tool.add(context.Background(), cronInput{
+		Name: "missing-chat-target",
+		Schedule: &cronScheduleInput{
+			Type:         "every",
+			EverySeconds: 1,
+		},
+		Task: &cronTaskInput{Type: "notify", Text: "x"},
+	}); err == nil {
+		t.Fatal("expected missing chat target error")
+	}
+	if _, err := tool.add(context.Background(), cronInput{
+		Name: "bad-task",
+		Schedule: &cronScheduleInput{
+			Type:         "every",
+			EverySeconds: 1,
+		},
+		Task: &cronTaskInput{Type: "weird", Prompt: "x"},
+	}); err == nil {
+		t.Fatal("expected unknown task type error")
 	}
 
 	jobs, err := svc.ListJobs(true)

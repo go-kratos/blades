@@ -146,9 +146,10 @@ blades memory search "last week"
 ```sh
 blades cron list
 blades cron list --all
-blades cron add --name "morning-brief" --cron "0 8 * * *" --message "generate my morning brief"
-blades cron add --name "health-check" --every 1h --command "echo ok"
-blades cron add --name "test ls" --delay 10 --command "ls . > outputs/test.txt"
+blades cron add --name "morning-brief" --type agent --cron "0 8 * * *" --prompt "generate my morning brief"
+blades cron add --name "health-check" --type exec --every 1h --command "echo ok"
+blades cron add --name "post-reminder" --type notify --every 1h --text "remember to post" --chat-session "chat-id"
+blades cron add --name "test ls" --type exec --delay 10 --command "ls . > outputs/test.txt"
 blades cron heartbeat
 blades cron heartbeat --every 15m   # reuses the heartbeat job and updates its schedule
 blades cron heartbeat --run-now
@@ -158,7 +159,9 @@ blades cron run <id>
 
 Notes:
 - `blades cron add` requires exactly one schedule flag: `--cron`, `--every`, or `--delay`.
-- `blades cron add` requires exactly one payload flag: `--message` or `--command`.
+- `blades cron add` supports three task types: `--type exec`, `--type agent`, and `--type notify`.
+- Use `--command` for terminal execution, `--prompt` for assistant tasks, and `--text --chat-session` for direct chat delivery.
+- `--chat-session` is optional for `exec` and `agent` jobs; when set, the job output is pushed to that chat/session.
 - Scheduled `agent_turn` jobs persist their session history, so recurring jobs and `heartbeat` keep continuity across daemon restarts.
 
 ### `blades daemon`

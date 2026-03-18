@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-kratos/blades/recipe"
@@ -50,6 +51,12 @@ func TestLoadAgentSpecAndBuildRunner(t *testing.T) {
 	if err := recipe.Validate(spec); err != nil {
 		t.Fatalf("default spec should be valid: %v", err)
 	}
+	if spec.Execution != recipe.ExecutionLoop {
+		t.Fatalf("default execution = %q, want %q", spec.Execution, recipe.ExecutionLoop)
+	}
+	if len(spec.SubAgents) != 2 {
+		t.Fatalf("default sub_agents = %d, want 2", len(spec.SubAgents))
+	}
 
 	cfg := &config.Config{
 		Providers: []config.Provider{
@@ -64,5 +71,24 @@ func TestLoadAgentSpecAndBuildRunner(t *testing.T) {
 
 	if _, err := BuildRunner(cfg, ws, nil); err != nil {
 		t.Fatalf("BuildRunner: %v", err)
+	}
+}
+
+func TestApplyWorkspaceInstructionToLoopSubAgents(t *testing.T) {
+	spec := &recipe.AgentSpec{
+		Name:      "blades",
+		Execution: recipe.ExecutionLoop,
+		SubAgents: []recipe.SubAgentSpec{
+			{Name: "action", Instruction: "action body"},
+			{Name: "review", Instruction: "review body"},
+		},
+	}
+
+	applyWorkspaceInstruction(spec, "workspace rules")
+
+	for _, sub := range spec.SubAgents {
+		if !strings.Contains(sub.Instruction, "workspace rules") {
+			t.Fatalf("sub_agent %q instruction = %q", sub.Name, sub.Instruction)
+		}
 	}
 }

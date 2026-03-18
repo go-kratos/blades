@@ -93,7 +93,7 @@ func TestCronCommandsListRemoveAndHeartbeat(t *testing.T) {
 	}
 }
 
-func TestCronAddCommandSupportsMessagePayloadAndDeleteAfterRun(t *testing.T) {
+func TestCronAddCommandSupportsAgentPayloadAndDeleteAfterRun(t *testing.T) {
 	ws := setupCommandWorkspace(t)
 
 	out := captureStdout(t, func() {
@@ -101,12 +101,13 @@ func TestCronAddCommandSupportsMessagePayloadAndDeleteAfterRun(t *testing.T) {
 		withCommandOptions(cmd, workspaceOptions(ws))
 		cmd.SetArgs([]string{
 			"--name", "daily-brief",
+			"--type", "agent",
 			"--cron", "0 8 * * *",
-			"--message", "generate brief",
+			"--prompt", "generate brief",
 			"--delete-after-run",
 		})
 		if err := cmd.Execute(); err != nil {
-			t.Fatalf("cron add message payload: %v", err)
+			t.Fatalf("cron add agent payload: %v", err)
 		}
 	})
 	if !strings.Contains(out, "job added") {
@@ -130,6 +131,41 @@ func TestCronAddCommandSupportsMessagePayloadAndDeleteAfterRun(t *testing.T) {
 	}
 	if !job.DeleteAfterRun {
 		t.Fatal("expected DeleteAfterRun to be true")
+	}
+}
+
+func TestCronAddCommandSupportsNotifyPayload(t *testing.T) {
+	ws := setupCommandWorkspace(t)
+
+	out := captureStdout(t, func() {
+		cmd := newCronAddCmd()
+		withCommandOptions(cmd, workspaceOptions(ws))
+		cmd.SetArgs([]string{
+			"--name", "send-reminder",
+			"--type", "notify",
+			"--every", "30m",
+			"--text", "post update",
+			"--chat-session", "chat-123",
+		})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("cron add notify payload: %v", err)
+		}
+	})
+	if !strings.Contains(out, "job added") {
+		t.Fatalf("cron add output = %q", out)
+	}
+
+	svc := cron.NewService(ws.CronStorePath(), nil)
+	jobs, err := svc.ListJobs(true)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	job := jobs[0]
+	if job.Payload.Kind != cron.PayloadNotify || job.Payload.Message != "post update" || job.Payload.ReplySessionID != "chat-123" {
+		t.Fatalf("payload = %+v", job.Payload)
 	}
 }
 

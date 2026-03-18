@@ -3,11 +3,11 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"os"
 	"testing"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/recipe"
-	bladeskills "github.com/go-kratos/blades/skills"
 
 	appcore "github.com/go-kratos/blades/cmd/blades/internal/app"
 	"github.com/go-kratos/blades/cmd/blades/internal/channel"
@@ -96,7 +96,7 @@ func (a *historyAwareMathAgent) Run(_ context.Context, inv *blades.Invocation) b
 	}
 }
 
-func TestInitCreatesLoadableBuiltInSkills(t *testing.T) {
+func TestInitDoesNotInstallBuiltInCronSkill(t *testing.T) {
 	t.Parallel()
 
 	homeDir := t.TempDir()
@@ -105,18 +105,15 @@ func TestInitCreatesLoadableBuiltInSkills(t *testing.T) {
 		t.Fatalf("Init: %v", err)
 	}
 
-	skillList, err := bladeskills.NewFromDir(ws.SkillsDir())
+	entries, err := os.ReadDir(ws.SkillsDir())
 	if err != nil {
-		t.Fatalf("load built-in skills: %v", err)
+		t.Fatalf("read skills dir: %v", err)
 	}
-
-	for _, skill := range skillList {
-		if skill.Name() == "blades-cron" {
-			return
+	for _, entry := range entries {
+		if entry.Name() == "blades-cron" {
+			t.Fatalf("unexpected built-in cron skill in %s", ws.SkillsDir())
 		}
 	}
-
-	t.Fatalf("expected built-in skill %q in %s", "blades-cron", ws.SkillsDir())
 }
 
 func TestDefaultExecWorkingDirUsesWorkspaceDir(t *testing.T) {
@@ -173,8 +170,23 @@ func TestLoadAgentSpecDefaultMatchesRecipeSpec(t *testing.T) {
 	if err := recipe.Validate(spec); err != nil {
 		t.Fatalf("default spec should be valid recipe spec: %v", err)
 	}
-	if got, want := spec.Tools, []string{"exec", "cron"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("default spec tools = %v, want %v", got, want)
+	if spec.Execution != recipe.ExecutionLoop {
+		t.Fatalf("default spec execution = %q, want %q", spec.Execution, recipe.ExecutionLoop)
+	}
+	if spec.MaxIterations != 3 {
+		t.Fatalf("default spec max_iterations = %d, want 3", spec.MaxIterations)
+	}
+	if len(spec.SubAgents) != 2 {
+		t.Fatalf("default spec sub_agents = %d, want 2", len(spec.SubAgents))
+	}
+	if spec.SubAgents[0].Name != "action" || spec.SubAgents[1].Name != "review" {
+		t.Fatalf("default sub_agent names = %q, %q", spec.SubAgents[0].Name, spec.SubAgents[1].Name)
+	}
+	if got, want := spec.SubAgents[0].Tools, []string{"exec", "cron"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("default action tools = %v, want %v", got, want)
+	}
+	if got, want := spec.SubAgents[1].Tools, []string{"exit"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("default review tools = %v, want %v", got, want)
 	}
 }
 

@@ -17,27 +17,33 @@ import (
 
 type cronInput struct {
 	// Action is one of: add, list, remove, run
-	Action string `json:"action"`
+	Action string `json:"action" jsonschema:"What to do. Use exact values: add, list, remove, or run."`
 
-	// --- add ---
-	Name           string  `json:"name,omitempty"`
-	PayloadKind    string  `json:"payload_kind,omitempty"` // "exec" | "agent_turn"
-	Command        string  `json:"command,omitempty"`      // exec payload
-	Message        string  `json:"message,omitempty"`      // agent_turn payload
-	SessionID      string  `json:"session_id,omitempty"`
-	ReplySessionID string  `json:"reply_session_id,omitempty"` // where to send job output (e.g. Feishu chat)
-	ScheduleKind   string  `json:"schedule_kind,omitempty"`
-	AtMs           int64   `json:"at_ms,omitempty"`
-	DelaySeconds   float64 `json:"delay_seconds,omitempty"`
-	EverySeconds   float64 `json:"every_seconds,omitempty"`
-	CronExpr       string  `json:"cron_expr,omitempty"`
-	TZ             string  `json:"tz,omitempty"`
-	DeleteAfterRun bool    `json:"delete_after_run,omitempty"`
+	Name           string             `json:"name,omitempty" jsonschema:"Job name. Required for add. Also accepted as an identifier for remove or run when job_id is unknown."`
+	Schedule       *cronScheduleInput `json:"schedule,omitempty" jsonschema:"When the job should run."`
+	Task           *cronTaskInput     `json:"task,omitempty" jsonschema:"What the job should do. Use type=exec to run a shell command, type=agent to ask the assistant, or type=notify to send a chat message directly."`
+	DeleteAfterRun bool               `json:"delete_after_run,omitempty" jsonschema:"If true, remove the job after it runs once."`
 
 	// --- remove / run ---
-	JobID string `json:"job_id,omitempty"`
-	JobId string `json:"jobId,omitempty"`
-	ID    string `json:"id,omitempty"`
+	JobID string `json:"job_id,omitempty" jsonschema:"Preferred job identifier for remove or run."`
+}
+
+type cronScheduleInput struct {
+	Type         string  `json:"type,omitempty" jsonschema:"Schedule type. Use exact values: at, every, or cron. It may be omitted when using delay_seconds, at_ms, every_seconds, or cron_expr shorthand."`
+	AtMs         int64   `json:"at_ms,omitempty" jsonschema:"Unix timestamp in milliseconds for type=at."`
+	DelaySeconds float64 `json:"delay_seconds,omitempty" jsonschema:"One-shot shorthand: run once after N seconds. Prefer this for simple delays."`
+	EverySeconds float64 `json:"every_seconds,omitempty" jsonschema:"Repeat every N seconds for type=every."`
+	CronExpr     string  `json:"cron_expr,omitempty" jsonschema:"Standard 5-field cron expression for type=cron: min hour dom month dow."`
+	TZ           string  `json:"tz,omitempty" jsonschema:"Optional IANA timezone for cron_expr, for example Asia/Shanghai."`
+}
+
+type cronTaskInput struct {
+	Type           string `json:"type" jsonschema:"Task type. Use exact values: exec, agent, or notify."`
+	Command        string `json:"command,omitempty" jsonschema:"Shell command for type=exec. This runs in the terminal/workspace."`
+	Prompt         string `json:"prompt,omitempty" jsonschema:"Prompt text for type=agent. This asks the assistant to run a turn."`
+	Text           string `json:"text,omitempty" jsonschema:"Direct text message for type=notify. This sends to a chat/session without invoking the assistant."`
+	AgentSessionID string `json:"agent_session_id,omitempty" jsonschema:"Optional conversation/session identifier for type=agent. If omitted, a job-specific session is created automatically."`
+	ChatSessionID  string `json:"chat_session_id,omitempty" jsonschema:"Optional social/chat session identifier. For notify it is the target chat. For exec or agent it receives the job output when set. If omitted and a current chat session exists, that current chat is used automatically."`
 }
 
 type cronTool struct {
@@ -47,18 +53,258 @@ type cronTool struct {
 // NewCronTool creates a tool that lets the agent manage scheduled jobs.
 func NewCronTool(svc *cron.Service) bladestools.Tool {
 	t := &cronTool{svc: svc}
-	inputSchema, _ := jsonschema.For[cronInput](nil)
+	inputSchema := newCronInputSchema()
 	outputSchema, _ := jsonschema.For[string](nil)
 	return bladestools.NewTool(
 		"cron",
-		"Manage scheduled jobs. Use action=add to schedule a shell command or an agent message, "+
-			"action=list to see all jobs and their last status, "+
-			"action=remove to delete a job by job_id, "+
-			"action=run to execute a job immediately.",
+		`Manage scheduled jobs.
+Use action=add with a nested schedule object and a nested task object.
+Task type=exec runs a shell command, type=agent asks the assistant, type=notify sends a chat message directly.
+Use action=list to see all jobs and their last status.
+Use action=remove to delete a job by job_id.
+Use action=run to execute a job immediately.
+Prefer delay_seconds for simple one-shot delays.
+For recurring schedules use a standard 5-field cron expression.
+Use exact enum values.`,
 		bladestools.HandleFunc(t.handle),
 		bladestools.WithInputSchema(inputSchema),
 		bladestools.WithOutputSchema(outputSchema),
 	)
+}
+
+func newCronInputSchema() *jsonschema.Schema {
+	schema, err := jsonschema.For[cronInput](nil)
+	if err != nil || schema == nil {
+		return schema
+	}
+
+	schema.Description = "Cron job requests. Prefer delay_seconds for simple one-shot delays. Use exact enum values. For recurring schedules use a standard 5-field cron expression. Keep schedule and task separate."
+	schema.Examples = []any{
+		map[string]any{
+			"action": "add",
+			"name":   "morning-brief",
+			"schedule": map[string]any{
+				"type":      "cron",
+				"cron_expr": "0 8 * * *",
+				"tz":        "Asia/Shanghai",
+			},
+			"task": map[string]any{
+				"type":            "agent",
+				"prompt":          "Summarize my pending tasks.",
+				"chat_session_id": "chat-123",
+			},
+		},
+		map[string]any{
+			"action": "add",
+			"name":   "send-reminder",
+			"schedule": map[string]any{
+				"every_seconds": 3600,
+			},
+			"task": map[string]any{
+				"type":            "notify",
+				"text":            "Remember to post the daily update.",
+				"chat_session_id": "chat-123",
+			},
+		},
+	}
+
+	if action := schema.Properties["action"]; action != nil {
+		action.Enum = []any{"add", "list", "remove", "run"}
+	}
+	if schedule := schema.Properties["schedule"]; schedule != nil && schedule.Properties != nil {
+		if scheduleType := schedule.Properties["type"]; scheduleType != nil {
+			scheduleType.Enum = []any{"at", "every", "cron"}
+		}
+		if atMs := schedule.Properties["at_ms"]; atMs != nil {
+			min := float64(0)
+			atMs.ExclusiveMinimum = &min
+		}
+		if delaySeconds := schedule.Properties["delay_seconds"]; delaySeconds != nil {
+			min := float64(0)
+			delaySeconds.ExclusiveMinimum = &min
+		}
+		if everySeconds := schedule.Properties["every_seconds"]; everySeconds != nil {
+			min := float64(0)
+			everySeconds.ExclusiveMinimum = &min
+		}
+	}
+	if task := schema.Properties["task"]; task != nil && task.Properties != nil {
+		if taskType := task.Properties["type"]; taskType != nil {
+			taskType.Enum = []any{"exec", "agent", "notify"}
+		}
+	}
+
+	return schema
+}
+
+func currentChatSessionID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if sess, ok := blades.FromSessionContext(ctx); ok && sess != nil {
+		return strings.TrimSpace(sess.ID())
+	}
+	return ""
+}
+
+func fillChatSessionID(ctx context.Context, chatSessionID string) string {
+	chatSessionID = strings.TrimSpace(chatSessionID)
+	if chatSessionID != "" {
+		log.Printf("cron add: chat_session_id provided by caller: %s", chatSessionID)
+		return chatSessionID
+	}
+	if sessionID := currentChatSessionID(ctx); sessionID != "" {
+		log.Printf("cron add: chat_session_id filled from context session_id=%s", sessionID)
+		return sessionID
+	}
+	log.Printf("cron add: no chat_session_id available")
+	return ""
+}
+
+func buildSchedule(in *cronScheduleInput) (cron.Schedule, error) {
+	if in == nil {
+		return cron.Schedule{}, fmt.Errorf("schedule is required for action=add")
+	}
+
+	schedule := *in
+	if schedule.DelaySeconds > 0 && schedule.AtMs == 0 {
+		schedule.AtMs = time.Now().UnixMilli() + int64(schedule.DelaySeconds*1000)
+		if schedule.Type == "" {
+			schedule.Type = "at"
+		}
+	}
+
+	sk := normScheduleKind(schedule.Type)
+	if sk == "" {
+		switch {
+		case schedule.CronExpr != "":
+			sk = cron.ScheduleCron
+		case schedule.EverySeconds > 0:
+			sk = cron.ScheduleEvery
+		case schedule.AtMs > 0:
+			sk = cron.ScheduleAt
+		default:
+			return cron.Schedule{}, fmt.Errorf("schedule must define one of at_ms, delay_seconds, every_seconds, or cron_expr")
+		}
+	}
+
+	out := cron.Schedule{Kind: sk}
+	switch sk {
+	case cron.ScheduleAt:
+		if schedule.AtMs <= 0 {
+			return cron.Schedule{}, fmt.Errorf("schedule.at_ms is required for schedule.type=at")
+		}
+		out.AtMs = schedule.AtMs
+	case cron.ScheduleEvery:
+		if schedule.EverySeconds <= 0 {
+			return cron.Schedule{}, fmt.Errorf("schedule.every_seconds is required for schedule.type=every")
+		}
+		out.EveryMs = int64(schedule.EverySeconds * 1000)
+	case cron.ScheduleCron:
+		if schedule.CronExpr == "" {
+			return cron.Schedule{}, fmt.Errorf("schedule.cron_expr is required for schedule.type=cron")
+		}
+		parser := robfigcron.NewParser(robfigcron.Minute | robfigcron.Hour | robfigcron.Dom | robfigcron.Month | robfigcron.Dow)
+		if _, err := parser.Parse(schedule.CronExpr); err != nil {
+			return cron.Schedule{}, fmt.Errorf("invalid schedule.cron_expr %q: %w", schedule.CronExpr, err)
+		}
+		out.Expr = schedule.CronExpr
+		out.TZ = schedule.TZ
+	default:
+		return cron.Schedule{}, fmt.Errorf("unknown schedule.type %q; valid: at, every, cron", schedule.Type)
+	}
+
+	return out, nil
+}
+
+func buildTask(ctx context.Context, in *cronTaskInput) (cron.Payload, error) {
+	if in == nil {
+		return cron.Payload{}, fmt.Errorf("task is required for action=add")
+	}
+
+	taskType := strings.ToLower(strings.TrimSpace(in.Type))
+	if taskType == "" {
+		switch {
+		case strings.TrimSpace(in.Command) != "":
+			taskType = "exec"
+		case strings.TrimSpace(in.Prompt) != "":
+			taskType = "agent"
+		case strings.TrimSpace(in.Text) != "":
+			taskType = "notify"
+		}
+	}
+	chatSessionID := fillChatSessionID(ctx, in.ChatSessionID)
+
+	switch taskType {
+	case "exec":
+		command := strings.TrimSpace(in.Command)
+		if command == "" {
+			return cron.Payload{}, fmt.Errorf("task.command is required for task.type=exec")
+		}
+		return cron.Payload{
+			Kind:           cron.PayloadExec,
+			Command:        command,
+			ReplySessionID: chatSessionID,
+		}, nil
+	case "agent":
+		prompt := strings.TrimSpace(in.Prompt)
+		if prompt == "" {
+			return cron.Payload{}, fmt.Errorf("task.prompt is required for task.type=agent")
+		}
+		return cron.Payload{
+			Kind:           cron.PayloadAgentTurn,
+			Message:        prompt,
+			SessionID:      strings.TrimSpace(in.AgentSessionID),
+			ReplySessionID: chatSessionID,
+		}, nil
+	case "notify":
+		text := strings.TrimSpace(in.Text)
+		if text == "" {
+			return cron.Payload{}, fmt.Errorf("task.text is required for task.type=notify")
+		}
+		if chatSessionID == "" {
+			return cron.Payload{}, fmt.Errorf("task.chat_session_id is required for task.type=notify")
+		}
+		return cron.Payload{
+			Kind:           cron.PayloadNotify,
+			Message:        text,
+			ReplySessionID: chatSessionID,
+		}, nil
+	default:
+		return cron.Payload{}, fmt.Errorf("unknown task.type %q; valid: exec, agent, notify", in.Type)
+	}
+}
+
+func defaultJobName(payload cron.Payload) string {
+	switch payload.Kind {
+	case cron.PayloadExec:
+		return payload.Command
+	case cron.PayloadAgentTurn, cron.PayloadNotify:
+		return payload.Message
+	default:
+		return ""
+	}
+}
+
+func taskListLabel(payload cron.Payload) string {
+	switch payload.Kind {
+	case cron.PayloadExec:
+		label := "exec:" + truncStr(payload.Command, 28)
+		if payload.ReplySessionID != "" {
+			label += " -> chat:" + truncStr(payload.ReplySessionID, 12)
+		}
+		return label
+	case cron.PayloadAgentTurn:
+		label := "agent:" + truncStr(payload.Message, 28)
+		if payload.ReplySessionID != "" {
+			label += " -> chat:" + truncStr(payload.ReplySessionID, 12)
+		}
+		return label
+	case cron.PayloadNotify:
+		return "notify -> chat:" + truncStr(payload.ReplySessionID, 12)
+	default:
+		return string(payload.Kind)
+	}
 }
 
 func (t *cronTool) handle(ctx context.Context, raw string) (string, error) {
@@ -92,16 +338,10 @@ func (t *cronTool) resolveJobID(in cronInput) (string, error) {
 	if id := strings.TrimSpace(in.JobID); id != "" {
 		return id, nil
 	}
-	if id := strings.TrimSpace(in.JobId); id != "" {
-		return id, nil
-	}
-	if id := strings.TrimSpace(in.ID); id != "" {
-		return id, nil
-	}
 
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
-		return "", fmt.Errorf("job_id is required (also accepts jobId, id, or name)")
+		return "", fmt.Errorf("job_id is required (name is also accepted)")
 	}
 
 	jobs, err := t.svc.ListJobs(true)
@@ -126,95 +366,25 @@ func (t *cronTool) resolveJobID(in cronInput) (string, error) {
 }
 
 func (t *cronTool) add(ctx context.Context, a cronInput) (string, error) {
-	// When reply_session_id is not set, use current channel session so cron results
-	// are sent back to the same chat (e.g. Feishu) when daemon runs with a notifier.
-	if strings.TrimSpace(a.ReplySessionID) == "" {
-		if sess, ok := blades.FromSessionContext(ctx); ok && sess != nil && sess.ID() != "" {
-			a.ReplySessionID = sess.ID()
-			log.Printf("cron add: reply_session_id filled from context session_id=%s", a.ReplySessionID)
-		} else {
-			log.Printf("cron add: no reply_session_id (no session in context or empty session ID)")
-		}
-	} else {
-		log.Printf("cron add: reply_session_id provided by caller: %s", a.ReplySessionID)
-	}
-	// delay_seconds shorthand.
-	if a.DelaySeconds > 0 && a.AtMs == 0 {
-		a.AtMs = time.Now().UnixMilli() + int64(a.DelaySeconds*1000)
-		if a.ScheduleKind == "" {
-			a.ScheduleKind = "at"
-		}
+	sched, err := buildSchedule(a.Schedule)
+	if err != nil {
+		return "", err
 	}
 
-	sk := normScheduleKind(a.ScheduleKind)
-	if sk == "" {
-		switch {
-		case a.CronExpr != "":
-			sk = cron.ScheduleCron
-		case a.EverySeconds > 0:
-			sk = cron.ScheduleEvery
-		case a.AtMs > 0:
-			sk = cron.ScheduleAt
-		default:
-			return "", fmt.Errorf("specify schedule_kind (at/every/cron) or delay_seconds / every_seconds / cron_expr / at_ms")
-		}
-	}
-
-	sched := cron.Schedule{Kind: sk}
-	switch sk {
-	case cron.ScheduleAt:
-		if a.AtMs <= 0 {
-			return "", fmt.Errorf("at_ms is required for schedule_kind=at")
-		}
-		sched.AtMs = a.AtMs
-	case cron.ScheduleEvery:
-		if a.EverySeconds <= 0 {
-			return "", fmt.Errorf("every_seconds is required for schedule_kind=every")
-		}
-		sched.EveryMs = int64(a.EverySeconds * 1000)
-	case cron.ScheduleCron:
-		if a.CronExpr == "" {
-			return "", fmt.Errorf("cron_expr is required for schedule_kind=cron")
-		}
-		parser := robfigcron.NewParser(robfigcron.Minute | robfigcron.Hour | robfigcron.Dom | robfigcron.Month | robfigcron.Dow)
-		if _, err := parser.Parse(a.CronExpr); err != nil {
-			return "", fmt.Errorf("invalid cron_expr %q: %w", a.CronExpr, err)
-		}
-		sched.Expr = a.CronExpr
-		sched.TZ = a.TZ
-	}
-
-	pk := normPayloadKind(a.PayloadKind)
-	if pk == "" {
-		if a.Command != "" {
-			pk = cron.PayloadExec
-		} else {
-			pk = cron.PayloadAgentTurn
-		}
-	}
-
-	payload := cron.Payload{Kind: pk, SessionID: a.SessionID, ReplySessionID: strings.TrimSpace(a.ReplySessionID)}
-	switch pk {
-	case cron.PayloadExec:
-		if a.Command == "" {
-			return "", fmt.Errorf("command is required for payload_kind=exec")
-		}
-		payload.Command = a.Command
-	case cron.PayloadAgentTurn:
-		if a.Message == "" {
-			return "", fmt.Errorf("message is required for payload_kind=agent_turn")
-		}
-		payload.Message = a.Message
-	default:
-		return "", fmt.Errorf("unknown payload_kind %q; valid: exec, agent_turn", pk)
+	payload, err := buildTask(ctx, a.Task)
+	if err != nil {
+		return "", err
 	}
 
 	name := strings.TrimSpace(a.Name)
 	if name == "" {
-		name = payload.Command + payload.Message
+		name = defaultJobName(payload)
 		if len(name) > 40 {
 			name = name[:40]
 		}
+	}
+	if name == "" {
+		return "", fmt.Errorf("name is required when task content is empty")
 	}
 
 	job, err := t.svc.AddJob(context.Background(), name, sched, payload, a.DeleteAfterRun)
@@ -238,8 +408,8 @@ func (t *cronTool) list() (string, error) {
 		return "No scheduled jobs.", nil
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%-10s %-24s %-8s %-22s %-6s %s\n", "ID", "NAME", "KIND", "NEXT RUN", "ON", "PAYLOAD")
-	sb.WriteString(strings.Repeat("-", 88) + "\n")
+	fmt.Fprintf(&sb, "%-10s %-24s %-8s %-22s %-6s %s\n", "ID", "NAME", "WHEN", "NEXT RUN", "ON", "TASK")
+	sb.WriteString(strings.Repeat("-", 100) + "\n")
 	for _, j := range jobs {
 		next := "—"
 		if j.State.NextRunAtMs > 0 {
@@ -249,14 +419,8 @@ func (t *cronTool) list() (string, error) {
 		if !j.Enabled {
 			on = "off"
 		}
-		payload := string(j.Payload.Kind)
-		if j.Payload.Command != "" {
-			payload += ":" + truncStr(j.Payload.Command, 28)
-		} else if j.Payload.Message != "" {
-			payload += ":" + truncStr(j.Payload.Message, 28)
-		}
 		fmt.Fprintf(&sb, "%-10s %-24s %-8s %-22s %-6s %s\n",
-			j.ID, truncStr(j.Name, 23), string(j.Schedule.Kind), next, on, payload)
+			j.ID, truncStr(j.Name, 23), string(j.Schedule.Kind), next, on, taskListLabel(j.Payload))
 		if j.State.LastStatus != "" {
 			fmt.Fprintf(&sb, "  last=%s %s\n", j.State.LastStatus, j.State.LastError)
 		}
@@ -266,7 +430,7 @@ func (t *cronTool) list() (string, error) {
 
 func (t *cronTool) remove(ctx context.Context, id string) (string, error) {
 	if id == "" {
-		return "", fmt.Errorf("job_id is required (also accepts jobId, id, or name)")
+		return "", fmt.Errorf("job_id is required (name is also accepted)")
 	}
 	found, err := t.svc.RemoveJob(ctx, id)
 	if err != nil {
@@ -278,9 +442,10 @@ func (t *cronTool) remove(ctx context.Context, id string) (string, error) {
 	return fmt.Sprintf("Job %q removed.", id), nil
 }
 
-func (t *cronTool) run(ctx context.Context, id string) (string, error) {
+// TODO: use this context will time out
+func (t *cronTool) run(_ context.Context, id string) (string, error) {
 	if id == "" {
-		return "", fmt.Errorf("job_id is required (also accepts jobId, id, or name)")
+		return "", fmt.Errorf("job_id is required (name is also accepted)")
 	}
 	// Run the job asynchronously so the agent is not blocked waiting for
 	// potentially long-running commands or recursive agent turns.
@@ -316,6 +481,8 @@ func normPayloadKind(raw string) cron.PayloadKind {
 		return cron.PayloadExec
 	case "message", "agent_message":
 		return cron.PayloadAgentTurn
+	case "chat", "social", "channel_message":
+		return cron.PayloadNotify
 	default:
 		return cron.PayloadKind(strings.ToLower(strings.TrimSpace(raw)))
 	}

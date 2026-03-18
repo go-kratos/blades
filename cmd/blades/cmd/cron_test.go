@@ -130,48 +130,63 @@ func TestValidateCronAddFlags(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		cron    string
-		every   string
-		delay   string
-		message string
-		command string
-		wantErr string
+		name     string
+		cron     string
+		every    string
+		delay    string
+		taskType string
+		prompt   string
+		command  string
+		text     string
+		chatID   string
+		wantErr  string
 	}{
 		{
-			name:    "valid message schedule",
-			every:   "1m",
-			message: "hello",
+			name:     "valid agent schedule",
+			every:    "1m",
+			taskType: "agent",
+			prompt:   "hello",
 		},
 		{
-			name:    "conflicting schedules",
-			cron:    "* * * * *",
-			every:   "1m",
-			message: "hello",
-			wantErr: "mutually exclusive",
+			name:     "conflicting schedules",
+			cron:     "* * * * *",
+			every:    "1m",
+			taskType: "agent",
+			prompt:   "hello",
+			wantErr:  "mutually exclusive",
 		},
 		{
-			name:    "conflicting payloads",
-			delay:   "10",
-			message: "hello",
-			command: "echo ok",
-			wantErr: "mutually exclusive",
+			name:     "conflicting payloads",
+			delay:    "10",
+			taskType: "agent",
+			prompt:   "hello",
+			command:  "echo ok",
+			wantErr:  "mutually exclusive",
 		},
 		{
-			name:    "missing schedule",
-			message: "hello",
-			wantErr: "one of --cron, --every, or --delay is required",
+			name:     "missing schedule",
+			taskType: "agent",
+			prompt:   "hello",
+			wantErr:  "one of --cron, --every, or --delay is required",
 		},
 		{
 			name:    "missing payload",
 			delay:   "10",
-			wantErr: "one of --message or --command is required",
+			wantErr: "one of --command, --prompt, or --text is required",
 		},
 		{
-			name:    "zero every",
-			every:   "0s",
-			message: "hello",
-			wantErr: "--every must be > 0",
+			name:     "zero every",
+			every:    "0s",
+			taskType: "agent",
+			prompt:   "hello",
+			wantErr:  "--every must be > 0",
+		},
+		{
+			name:     "notify requires chat session",
+			delay:    "10",
+			taskType: "notify",
+			text:     "hello",
+			wantErr:  "--chat-session is required for --type notify",
 		},
 	}
 
@@ -180,7 +195,7 @@ func TestValidateCronAddFlags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := validateCronAddFlags(tt.cron, tt.every, tt.delay, tt.message, tt.command)
+			err := validateCronAddFlags(tt.cron, tt.every, tt.delay, tt.taskType, tt.prompt, tt.command, tt.text, tt.chatID)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("validateCronAddFlags returned error: %v", err)
@@ -266,7 +281,7 @@ func TestCronAddSupportsDelayFlag(t *testing.T) {
 
 	cmd := newCronAddCmd()
 	withCommandOptions(cmd, appcore.Options{WorkspaceDir: workspaceDir})
-	cmd.SetArgs([]string{"--name", "test-ls", "--delay", "10", "--command", "echo ok"})
+	cmd.SetArgs([]string{"--name", "test-ls", "--type", "exec", "--delay", "10", "--command", "echo ok"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("cron add with --delay: %v", err)
 	}

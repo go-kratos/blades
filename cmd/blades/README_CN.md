@@ -103,7 +103,9 @@ providers:
 
 补充说明：
 - `blades cron add` 的 `--cron`、`--every`、`--delay` 三者必须且只能传一个。
-- `blades cron add` 的 `--message`、`--command` 二者必须且只能传一个。
+- `blades cron add` 现在明确支持三种任务类型：`--type exec`、`--type agent`、`--type notify`。
+- 执行终端命令用 `--command`，让助手处理任务用 `--prompt`，直接发到社交/聊天软件用 `--text --chat-session`。
+- `--chat-session` 对 `exec` 和 `agent` 是可选的；设置后，任务结果会主动推送到对应聊天会话。
 - 定时 `agent_turn` 任务会持久化 session，因此 heartbeat 和周期任务在 daemon 重启后仍能保持对话连续性。
 - `blades cron heartbeat --every 15m` 会复用已有 heartbeat 任务并更新调度周期，而不是静默保留旧配置。
 

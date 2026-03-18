@@ -24,6 +24,8 @@ const (
 	PayloadExec PayloadKind = "exec"
 	// PayloadAgentTurn injects a user message into the agent.
 	PayloadAgentTurn PayloadKind = "agent_turn"
+	// PayloadNotify sends a text message directly to a chat/session.
+	PayloadNotify PayloadKind = "notify"
 )
 
 // Schedule describes when a job should run.
@@ -50,14 +52,17 @@ type Payload struct {
 	// Command is the shell command to run (kind=exec).
 	Command string `json:"command,omitempty"`
 
-	// Message is injected as a user turn into the agent (kind=agent_turn).
+	// Message is injected as a user turn into the agent (kind=agent_turn),
+	// or sent directly to chat/session (kind=notify).
 	Message string `json:"message,omitempty"`
 
 	// SessionID scopes the agent_turn to a specific conversation.
+	// It is ignored for exec and notify jobs.
 	SessionID string `json:"sessionID,omitempty"`
 
 	// ReplySessionID, when set, tells the handler to forward the job's output
 	// back to this session (e.g. via the channel's proactive send path).
+	// For notify jobs this is the target session that receives Message.
 	ReplySessionID string `json:"replySessionID,omitempty"`
 }
 

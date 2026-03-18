@@ -106,7 +106,21 @@ func TestBotAndExecHandlers(t *testing.T) {
 	if output != "cron:hello" {
 		t.Fatalf("agent_turn output = %q", output)
 	}
-	if len(notifyCalls) != 2 || notifyCalls[0] != "reply-exec:"+workDir || notifyCalls[1] != "reply-agent:cron:hello" {
+	output, err = h(context.Background(), &Job{
+		Name: "notify",
+		Payload: Payload{
+			Kind:           PayloadNotify,
+			Message:        "hello channel",
+			ReplySessionID: "reply-channel",
+		},
+	})
+	if err != nil {
+		t.Fatalf("notify handler: %v", err)
+	}
+	if output != "hello channel" {
+		t.Fatalf("notify output = %q", output)
+	}
+	if len(notifyCalls) != 3 || notifyCalls[0] != "reply-exec:"+workDir || notifyCalls[1] != "reply-agent:cron:hello" || notifyCalls[2] != "reply-channel:hello channel" {
 		t.Fatalf("notify calls = %+v", notifyCalls)
 	}
 
@@ -283,5 +297,20 @@ func TestStaleJobsAndFormatJob(t *testing.T) {
 		State: JobState{LastStatus: "ok"},
 	}); !strings.Contains(got, "cron(0 9 * * *)") || !strings.Contains(got, "ok") {
 		t.Fatalf("FormatJob cron = %q", got)
+	}
+	if got := FormatJob(&Job{
+		ID:   "notify",
+		Name: "job-notify",
+		Schedule: Schedule{
+			Kind:    ScheduleEvery,
+			EveryMs: time.Minute.Milliseconds(),
+		},
+		Payload: Payload{
+			Kind:           PayloadNotify,
+			Message:        "ping",
+			ReplySessionID: "chat-123",
+		},
+	}); !strings.Contains(got, "notify -> chat:chat-123") {
+		t.Fatalf("FormatJob notify = %q", got)
 	}
 }

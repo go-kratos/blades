@@ -126,8 +126,8 @@ func TestLoopAgent_MaxIterations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(msgs) != 3 {
-		t.Errorf("expected 3 messages (one per iteration), got %d", len(msgs))
+	if len(msgs) != 1 {
+		t.Errorf("expected 1 final message, got %d", len(msgs))
 	}
 }
 
@@ -143,7 +143,6 @@ func TestLoopAgent_ExitSignal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// ActionLoopExit set on first call → only 1 iteration → 1 message
 	if len(msgs) != 1 {
 		t.Errorf("expected 1 message (stopped after first iteration), got %d", len(msgs))
 	}
@@ -162,8 +161,11 @@ func TestLoopAgent_ExitSignal_FromEarlierSubAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(msgs) != 2 {
-		t.Errorf("expected 2 messages from one iteration, got %d", len(msgs))
+	if len(msgs) != 1 {
+		t.Errorf("expected 1 final message from one iteration, got %d", len(msgs))
+	}
+	if got := msgs[0].Text(); got != "hello" {
+		t.Errorf("final message = %q, want %q", got, "hello")
 	}
 }
 
@@ -195,8 +197,11 @@ func TestLoopAgent_ExitSignal_Escalate_FromEarlierSubAgent(t *testing.T) {
 	if !errors.Is(err, blades.ErrLoopEscalated) {
 		t.Fatalf("expected ErrLoopEscalated, got %v", err)
 	}
-	if len(msgs) != 2 {
-		t.Errorf("expected 2 messages from one iteration before escalation, got %d", len(msgs))
+	if len(msgs) != 1 {
+		t.Errorf("expected 1 final message before escalation, got %d", len(msgs))
+	}
+	if got := msgs[0].Text(); got != "hello" {
+		t.Errorf("final message = %q, want %q", got, "hello")
 	}
 }
 
@@ -238,7 +243,7 @@ func TestLoopAgent_Condition_Overrides_ExitTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(msgs) != maxIter {
-		t.Errorf("expected %d messages (condition forced all iterations), got %d", maxIter, len(msgs))
+	if len(msgs) != 1 {
+		t.Errorf("expected 1 final message after forced iterations, got %d", len(msgs))
 	}
 }

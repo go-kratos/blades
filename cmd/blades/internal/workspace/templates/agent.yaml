@@ -5,21 +5,57 @@ description: Personal AI assistant running in your local workspace.
 # model: <name>/<model-name> — resolved via the providers list in config.yaml.
 model: openai/gpt-4o
 
-instruction: |
-  You are a helpful personal AI assistant.
-  Read the AGENTS.md file in the workspace for detailed behaviour rules.
-  Be concise, accurate, and thoughtful in your responses.
+execution: loop
+max_iterations: 3
 
-tools:
-  - exec
-  - cron
+sub_agents:
+  - name: action
+    description: Execute the next concrete step toward the user's goal.
+    instruction: |
+      You are the action agent.
+      Produce the best next response or action for the user's request.
+      Use the available tools only when they are actually needed.
+      If prior review feedback exists, address it carefully.
+      Do not rewrite a good answer just to phrase it differently.
+      For simple greetings, acknowledgements, or casual chat, answer naturally and briefly.
 
-context:
-  strategy: window
-  max_tokens: 80000
-  max_messages: 50
+      Previous review feedback:
+      {{.review_feedback}}
+    tools:
+      - exec
+      - cron
+    output_key: action_result
+    context:
+      strategy: window
+      max_tokens: 80000
+      max_messages: 50
+    middlewares:
+      - name: retry
+        options:
+          attempts: 3
 
-middlewares:
-  - name: retry
-    options:
-      attempts: 3
+  - name: review
+    description: Review the latest action result and decide whether to stop.
+    instruction: |
+      You are the review agent.
+      Review the latest action result:
+
+      {{.action_result}}
+
+      Bias strongly toward stopping.
+      If the latest action result already answers the user well enough, call the exit tool immediately with a brief reason.
+      This includes greetings, casual chat, short factual answers, and responses that are already good enough.
+      Do not request another iteration just for stylistic rewrites or alternate phrasing.
+      Only continue when the latest action result is clearly incomplete, incorrect, unsafe, or missed an obvious required tool/action.
+      If another iteration is needed, explain exactly what the next action iteration must improve.
+    tools:
+      - exit
+    output_key: review_feedback
+    context:
+      strategy: window
+      max_tokens: 80000
+      max_messages: 50
+    middlewares:
+      - name: retry
+        options:
+          attempts: 3

@@ -64,21 +64,24 @@ func newCronListCmd() *cobra.Command {
 
 func newCronAddCmd() *cobra.Command {
 	var (
-		name        string
-		cronExpr    string
-		everyStr    string
-		delayStr    string
-		message     string
-		command     string
-		sessionID   string
-		deleteAfter bool
-		tz          string
+		name           string
+		cronExpr       string
+		everyStr       string
+		delayStr       string
+		taskType       string
+		prompt         string
+		command        string
+		text           string
+		agentSessionID string
+		chatSessionID  string
+		deleteAfter    bool
+		tz             string
 	)
 	cmd := newCronServiceCmd("add", "Add a scheduled job", cobra.NoArgs, func(cmd *cobra.Command, svc *cron.Service, args []string) error {
 		if name == "" {
 			return fmt.Errorf("--name is required")
 		}
-		if err := validateCronAddFlags(cronExpr, everyStr, delayStr, message, command); err != nil {
+		if err := validateCronAddFlags(cronExpr, everyStr, delayStr, taskType, prompt, command, text, chatSessionID); err != nil {
 			return err
 		}
 
@@ -87,7 +90,7 @@ func newCronAddCmd() *cobra.Command {
 			return err
 		}
 
-		payload, err := cronPayloadFromFlags(message, command, sessionID)
+		payload, err := cronPayloadFromFlags(taskType, prompt, command, text, agentSessionID, chatSessionID)
 		if err != nil {
 			return err
 		}
@@ -99,26 +102,30 @@ func newCronAddCmd() *cobra.Command {
 		fmt.Fprintf(cmd.OutOrStdout(), "✓ job added: %s\n", cron.FormatJob(job))
 		return nil
 	})
-	cmd.Example = `  blades cron add --name "daily-brief" --cron "0 8 * * *" --message "generate morning brief"
-  blades cron add --name "check" --every 1h --command "echo ok"
-  blades cron add --name "test ls" --delay 10 --command "ls . > outputs/test.txt"`
+	cmd.Example = `  blades cron add --name "daily-brief" --type agent --cron "0 8 * * *" --prompt "generate morning brief"
+  blades cron add --name "check" --type exec --every 1h --command "echo ok"
+  blades cron add --name "post-reminder" --type notify --every 1h --text "remember to post" --chat-session "chat-id"
+  blades cron add --name "test ls" --type exec --delay 10 --command "ls . > outputs/test.txt"`
 	cmd.Flags().StringVar(&name, "name", "", "job name")
 	cmd.Flags().StringVar(&cronExpr, "cron", "", "cron expression (5-field)")
 	cmd.Flags().StringVar(&everyStr, "every", "", "repeat interval, e.g. 1h, 30m")
 	cmd.Flags().StringVar(&delayStr, "delay", "", "run once after delay (seconds when unit omitted, e.g. 10 or 10s)")
-	cmd.Flags().StringVar(&message, "message", "", "agent message payload")
-	cmd.Flags().StringVar(&command, "command", "", "shell command payload")
-	cmd.Flags().StringVar(&sessionID, "session", "", "session ID for agent message jobs (default: isolated per job)")
+	cmd.Flags().StringVar(&taskType, "type", "", "task type: exec, agent, or notify (inferred from payload field when omitted)")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "agent prompt for --type agent")
+	cmd.Flags().StringVar(&command, "command", "", "shell command for --type exec")
+	cmd.Flags().StringVar(&text, "text", "", "direct chat message for --type notify")
+	cmd.Flags().StringVar(&agentSessionID, "agent-session", "", "agent session ID for --type agent (default: isolated per job)")
+	cmd.Flags().StringVar(&chatSessionID, "chat-session", "", "chat/session target for notify, or output sink for exec/agent")
 	cmd.Flags().StringVar(&tz, "tz", "", "timezone for cron expression")
 	cmd.Flags().BoolVar(&deleteAfter, "delete-after-run", false, "delete job after first execution")
 	return cmd
 }
 
-func validateCronAddFlags(cronExpr, everyStr, delayStr, message, command string) error {
+func validateCronAddFlags(cronExpr, everyStr, delayStr, taskType, prompt, command, text, chatSessionID string) error {
 	if _, err := parseScheduleFlags(cronExpr, everyStr, delayStr, "", scheduleFlagOptions{AllowDelay: true, ValidateOnly: true}); err != nil {
 		return err
 	}
-	_, err := cronPayloadFromFlags(message, command, "cron")
+	_, err := cronPayloadFromFlags(taskType, prompt, command, text, "cron-agent-session", chatSessionID)
 	return err
 }
 

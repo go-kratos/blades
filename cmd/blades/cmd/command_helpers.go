@@ -133,26 +133,69 @@ func newCronServiceCmd(use, short string, args cobra.PositionalArgs, run cronCom
 	}
 }
 
-func cronPayloadFromFlags(message, command, sessionID string) (cron.Payload, error) {
-	message = strings.TrimSpace(message)
+func cronPayloadFromFlags(taskType, prompt, command, text, agentSessionID, chatSessionID string) (cron.Payload, error) {
+	taskType = strings.ToLower(strings.TrimSpace(taskType))
+	prompt = strings.TrimSpace(prompt)
 	command = strings.TrimSpace(command)
-	sessionID = strings.TrimSpace(sessionID)
+	text = strings.TrimSpace(text)
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	chatSessionID = strings.TrimSpace(chatSessionID)
+
+	if taskType == "" {
+		switch {
+		case command != "":
+			taskType = "exec"
+		case prompt != "":
+			taskType = "agent"
+		case text != "":
+			taskType = "notify"
+		}
+	}
+
+	fields := 0
+	for _, value := range []string{command, prompt, text} {
+		if value != "" {
+			fields++
+		}
+	}
+	if fields > 1 {
+		return cron.Payload{}, fmt.Errorf("--command, --prompt, and --text are mutually exclusive")
+	}
+
 	switch {
-	case message != "" && command != "":
-		return cron.Payload{}, fmt.Errorf("--message and --command are mutually exclusive")
-	case message != "":
+	case taskType == "exec":
+		if command == "" {
+			return cron.Payload{}, fmt.Errorf("--command is required for --type exec")
+		}
 		return cron.Payload{
-			Kind:      cron.PayloadAgentTurn,
-			Message:   message,
-			SessionID: sessionID,
+			Kind:           cron.PayloadExec,
+			Command:        command,
+			ReplySessionID: chatSessionID,
 		}, nil
-	case command != "":
+	case taskType == "agent":
+		if prompt == "" {
+			return cron.Payload{}, fmt.Errorf("--prompt is required for --type agent")
+		}
 		return cron.Payload{
-			Kind:    cron.PayloadExec,
-			Command: command,
+			Kind:           cron.PayloadAgentTurn,
+			Message:        prompt,
+			SessionID:      agentSessionID,
+			ReplySessionID: chatSessionID,
+		}, nil
+	case taskType == "notify":
+		if text == "" {
+			return cron.Payload{}, fmt.Errorf("--text is required for --type notify")
+		}
+		if chatSessionID == "" {
+			return cron.Payload{}, fmt.Errorf("--chat-session is required for --type notify")
+		}
+		return cron.Payload{
+			Kind:           cron.PayloadNotify,
+			Message:        text,
+			ReplySessionID: chatSessionID,
 		}, nil
 	default:
-		return cron.Payload{}, fmt.Errorf("one of --message or --command is required")
+		return cron.Payload{}, fmt.Errorf("one of --command, --prompt, or --text is required")
 	}
 }
 

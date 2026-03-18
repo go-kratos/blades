@@ -2,6 +2,7 @@ package flow
 
 import (
 	"context"
+	"strings"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
@@ -48,16 +49,34 @@ func NewLoopAgent(config LoopConfig) blades.Agent {
 func (a *LoopAgent) Name() string        { return a.config.Name }
 func (a *LoopAgent) Description() string { return a.config.Description }
 
-// Run runs the sub-agents in a loop. After each message yielded by a sub-agent
-// the loop checks message.Actions for an ActionLoopExit signal set by ExitTool.
-// Context management across iterations is delegated to the ContextManager
-// configured on the Runner (via blades.WithContextManager).
+func loopVisibleMessage(message *blades.Message) bool {
+	return message != nil &&
+		message.Role == blades.RoleAssistant &&
+		message.Status == blades.StatusCompleted &&
+		strings.TrimSpace(message.Text()) != ""
+}
+
+func loopFinalMessage(lastVisible, lastOutput *blades.Message) *blades.Message {
+	if lastVisible != nil {
+		return lastVisible
+	}
+	return lastOutput
+}
+
+// Run runs the sub-agents in a loop. Internal sub-agent messages are buffered,
+// and only the last visible assistant message from the final iteration is
+// yielded outward. ExitTool signals are still honored based on each
+// sub-agent's emitted actions. Context management across iterations is
+// delegated to the ContextManager configured on the Runner
+// (via blades.WithContextManager).
 func (a *LoopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		state := LoopState{}
+		var lastVisible *blades.Message
 		for state.Iteration = 0; state.Iteration < a.config.MaxIterations; state.Iteration++ {
 			exitRequested := false
 			escalated := false
+			var iterationOutput *blades.Message
 			for _, agent := range a.config.SubAgents {
 				var (
 					err        error
@@ -69,8 +88,8 @@ func (a *LoopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 						yield(nil, err)
 						return
 					}
-					if !yield(message, nil) {
-						return
+					if loopVisibleMessage(message) {
+						lastVisible = message
 					}
 					if exit, ok := message.Actions[tools.ActionLoopExit]; ok {
 						if exitEscalated, ok := exit.(bool); ok {
@@ -81,25 +100,42 @@ func (a *LoopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Ge
 				}
 				state.Input = input.Message
 				state.Output = message
+				iterationOutput = message
 			}
 			if a.config.Condition != nil {
 				shouldContinue, err := a.config.Condition(ctx, state)
 				if err != nil {
+					if final := loopFinalMessage(lastVisible, iterationOutput); final != nil {
+						if !yield(final, nil) {
+							return
+						}
+					}
 					yield(nil, err)
 					return
 				}
 				if !shouldContinue {
+					if final := loopFinalMessage(lastVisible, iterationOutput); final != nil {
+						yield(final, nil)
+					}
 					return
 				}
 				continue
 			}
 			if exitRequested {
+				if final := loopFinalMessage(lastVisible, iterationOutput); final != nil {
+					if !yield(final, nil) {
+						return
+					}
+				}
 				if escalated {
 					yield(nil, blades.ErrLoopEscalated)
 					return
 				}
 				return
 			}
+		}
+		if final := loopFinalMessage(lastVisible, state.Output); final != nil {
+			yield(final, nil)
 		}
 	}
 }

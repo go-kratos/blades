@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,14 +19,18 @@ func TestCronToolAddAcceptsLegacyShellPayloadKind(t *testing.T) {
 	tool := &cronTool{svc: svc}
 
 	result, err := tool.add(context.Background(), cronInput{
-		Name:         "legacy-shell",
-		PayloadKind:  "shell",
-		Command:      "ls .",
-		ScheduleKind: "at",
-		AtMs:         time.Now().Add(time.Minute).UnixMilli(),
+		Name: "exec-task",
+		Schedule: &cronScheduleInput{
+			Type: "at",
+			AtMs: time.Now().Add(time.Minute).UnixMilli(),
+		},
+		Task: &cronTaskInput{
+			Type:    "exec",
+			Command: "ls .",
+		},
 	})
 	if err != nil {
-		t.Fatalf("add legacy shell payload kind: %v", err)
+		t.Fatalf("add exec task: %v", err)
 	}
 	if !strings.Contains(result, "Job added.") {
 		t.Fatalf("unexpected add result %q", result)
@@ -46,7 +51,7 @@ func TestCronToolAddAcceptsLegacyShellPayloadKind(t *testing.T) {
 	}
 }
 
-func TestCronToolRunAcceptsIDAliases(t *testing.T) {
+func TestCronToolRunAcceptsJobID(t *testing.T) {
 	t.Parallel()
 
 	svc := cron.NewService(filepath.Join(t.TempDir(), "cron.json"), func(ctx context.Context, job *cron.Job) (string, error) {
@@ -61,8 +66,7 @@ func TestCronToolRunAcceptsIDAliases(t *testing.T) {
 
 	for _, in := range []map[string]any{
 		{"action": "run", "job_id": job.ID},
-		{"action": "run", "jobId": job.ID},
-		{"action": "run", "id": job.ID},
+		{"action": "run", "name": job.Name},
 	} {
 		lastRunBefore := job.State.LastRunAtMs
 		raw, err := json.Marshal(in)
@@ -136,7 +140,47 @@ func TestCronToolRunWithoutIdentifierReturnsHelpfulError(t *testing.T) {
 	if !strings.Contains(err.Error(), "job_id is required") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "jobId") || !strings.Contains(err.Error(), "id") || !strings.Contains(err.Error(), "name") {
+	if !strings.Contains(err.Error(), "name") {
 		t.Fatalf("error should describe accepted identifiers, got: %v", err)
+	}
+}
+
+func TestNewCronToolSchemaIncludesActionRulesAndHints(t *testing.T) {
+	t.Parallel()
+
+	tool := NewCronTool(cron.NewService(filepath.Join(t.TempDir(), "cron.json"), nil))
+	schema := tool.InputSchema()
+	if schema == nil {
+		t.Fatal("expected input schema")
+	}
+	if !strings.Contains(schema.Description, "Prefer delay_seconds") {
+		t.Fatalf("schema description = %q", schema.Description)
+	}
+
+	action := schema.Properties["action"]
+	if action == nil {
+		t.Fatal("expected action property")
+	}
+	if got, want := action.Enum, []any{"add", "list", "remove", "run"}; !slices.Equal(got, want) {
+		t.Fatalf("action enum = %v, want %v", got, want)
+	}
+
+	schedule := schema.Properties["schedule"]
+	if schedule == nil || schedule.Properties == nil {
+		t.Fatalf("expected schedule property, got %+v", schedule)
+	}
+	if got, want := schedule.Properties["type"].Enum, []any{"at", "every", "cron"}; !slices.Equal(got, want) {
+		t.Fatalf("schedule.type enum = %v, want %v", got, want)
+	}
+
+	task := schema.Properties["task"]
+	if task == nil || task.Properties == nil {
+		t.Fatalf("expected task property, got %+v", task)
+	}
+	if got, want := task.Properties["type"].Enum, []any{"exec", "agent", "notify"}; !slices.Equal(got, want) {
+		t.Fatalf("task.type enum = %v, want %v", got, want)
+	}
+	if prop := schedule.Properties["delay_seconds"]; prop == nil || prop.ExclusiveMinimum == nil || *prop.ExclusiveMinimum != 0 {
+		t.Fatalf("schedule.delay_seconds should be > 0, got %+v", prop)
 	}
 }

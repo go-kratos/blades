@@ -152,6 +152,25 @@ func newBotHandlerWithExecWorkDir(trigger TriggerFn, notify NotifyFn, execTimeou
 			}
 			return reply, nil
 
+		case PayloadNotify:
+			text := strings.TrimSpace(job.Payload.Message)
+			if text == "" {
+				return "", fmt.Errorf("notify message is empty")
+			}
+			target := strings.TrimSpace(job.Payload.ReplySessionID)
+			if target == "" {
+				return "", fmt.Errorf("notify target session is empty")
+			}
+			if notify == nil {
+				return "", fmt.Errorf("notify handler is nil")
+			}
+			if err := notify(parentCtx, target, text); err != nil {
+				logf("cron notify %q failed: %v", job.Name, err)
+				return "", err
+			}
+			logf("cron notify %q: sent to session_id=%s", job.Name, target)
+			return text, nil
+
 		default:
 			return "", fmt.Errorf("unknown payload kind %q", job.Payload.Kind)
 		}
@@ -176,6 +195,8 @@ func normalizePayloadKind(kind PayloadKind) PayloadKind {
 		return PayloadExec
 	case "message", "agent_message":
 		return PayloadAgentTurn
+	case "chat", "social", "channel_message":
+		return PayloadNotify
 	default:
 		return kind
 	}
@@ -812,6 +833,48 @@ func FormatJob(j *Job) string {
 	if status == "" {
 		status = "pending"
 	}
-	return fmt.Sprintf("[%s] %-20s %-25s next=%-20s last=%s",
-		j.ID, j.Name, sched, msToTime(j.State.NextRunAtMs), status)
+	return fmt.Sprintf("[%s] %-20s %-25s %-30s next=%-20s last=%s",
+		j.ID, j.Name, sched, describePayload(j.Payload), msToTime(j.State.NextRunAtMs), status)
+}
+
+func describePayload(p Payload) string {
+	switch normalizePayloadKind(p.Kind) {
+	case PayloadExec:
+		text := strings.TrimSpace(p.Command)
+		if text == "" {
+			text = "(empty command)"
+		}
+		if p.ReplySessionID != "" {
+			return fmt.Sprintf("exec -> chat:%s", truncPayloadLabel(p.ReplySessionID, 12))
+		}
+		return "exec:" + truncPayloadLabel(text, 18)
+	case PayloadAgentTurn:
+		text := strings.TrimSpace(p.Message)
+		if text == "" {
+			text = "(empty prompt)"
+		}
+		base := "agent:" + truncPayloadLabel(text, 16)
+		if p.ReplySessionID != "" {
+			base += " -> chat:" + truncPayloadLabel(p.ReplySessionID, 12)
+		}
+		return base
+	case PayloadNotify:
+		target := strings.TrimSpace(p.ReplySessionID)
+		if target == "" {
+			target = "missing"
+		}
+		return "notify -> chat:" + truncPayloadLabel(target, 12)
+	default:
+		return string(p.Kind)
+	}
+}
+
+func truncPayloadLabel(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if n <= 1 {
+		return s[:n]
+	}
+	return s[:n-1] + "…"
 }
