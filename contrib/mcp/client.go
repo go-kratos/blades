@@ -33,7 +33,7 @@ type Client struct {
 // NewClient creates a new MCP client.
 func NewClient(config ClientConfig) (*Client, error) {
 	if config.Timeout <= 0 {
-		config.Timeout = 10 * time.Second
+		config.Timeout = 30 * time.Second
 	}
 	if err := config.validate(); err != nil {
 		return nil, err

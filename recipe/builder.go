@@ -16,7 +16,6 @@ type buildOptions struct {
 	toolRegistry       ToolResolver
 	middlewareRegistry MiddlewareResolver
 	params             map[string]any
-	agentOptions       []blades.AgentOption
 }
 
 // WithModelRegistry sets the model resolver for resolving model names.
@@ -44,13 +43,6 @@ func WithMiddlewareRegistry(r MiddlewareResolver) BuildOption {
 func WithParams(params map[string]any) BuildOption {
 	return func(o *buildOptions) {
 		o.params = params
-	}
-}
-
-// WithAgentOptions appends extra AgentOptions applied to the root agent.
-func WithAgentOptions(opts ...blades.AgentOption) BuildOption {
-	return func(o *buildOptions) {
-		o.agentOptions = append(o.agentOptions, opts...)
 	}
 }
 
@@ -146,9 +138,6 @@ func buildSingleAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (
 	if len(middlewares) > 0 {
 		agentOpts = append(agentOpts, blades.WithMiddleware(middlewares...))
 	}
-
-	// Apply extra agent options (e.g. runtime tools, resolvers injected by callers)
-	agentOpts = append(agentOpts, o.agentOptions...)
 
 	agent, err := blades.NewAgent(spec.Name, agentOpts...)
 	if err != nil {
