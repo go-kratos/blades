@@ -143,7 +143,7 @@ func buildSingleAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (
 	if err != nil {
 		return nil, err
 	}
-	return wrapWithContextManager(agent, spec.Context, spec.Model, o.modelRegistry)
+	return agent, nil
 }
 
 // buildSubAgent creates a blades.Agent from a SubAgentSpec.
@@ -218,7 +218,7 @@ func buildSubAgent(sub *SubAgentSpec, parentModel string, params map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	return wrapWithContextManager(agent, sub.Context, modelName, o.modelRegistry)
+	return agent, nil
 }
 
 // buildSequentialAgent creates a sequential flow from sub-agents.

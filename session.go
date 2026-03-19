@@ -13,22 +13,35 @@ type Session interface {
 	ID() string
 	State() State
 	SetState(string, any)
-	History() []*Message
 	Append(context.Context, *Message) error
+	// History returns the message history prepared for the next model call.
+	// When a ContextCompressor is configured, the history is compressed before
+	// being returned; otherwise the raw message list is returned unchanged.
+	History(ctx context.Context) ([]*Message, error)
 }
 
-// NewSession creates a new Session instance with an auto-generated UUID and optional initial state maps.
-func NewSession(states ...map[string]any) Session {
+// SessionOption configures a Session at construction time.
+type SessionOption func(*sessionInMemory)
+
+// WithContextCompressor sets the ContextCompressor used by Session.History to
+// compress the message history before returning it for each model call.
+func WithContextCompressor(c ContextCompressor) SessionOption {
+	return func(s *sessionInMemory) {
+		s.compressor = c
+	}
+}
+
+// NewSession creates a new Session instance with an auto-generated UUID.
+// Pass SessionOption values to configure the session (e.g. WithContextCompressor).
+// Legacy map arguments are still accepted for backwards compatibility.
+func NewSession(opts ...SessionOption) Session {
 	session := &sessionInMemory{id: uuid.NewString()}
-	for _, state := range states {
-		for k, v := range state {
-			session.SetState(k, v)
-		}
+	for _, opt := range opts {
+		opt(session)
 	}
 	return session
 }
 
-// ctxSessionKey is an unexported type for keys defined in this package.
 type ctxSessionKey struct{}
 
 // NewSessionContext returns a new Context that carries the session value.
@@ -36,17 +49,27 @@ func NewSessionContext(ctx context.Context, session Session) context.Context {
 	return context.WithValue(ctx, ctxSessionKey{}, session)
 }
 
-// FromSessionContext retrieves the SessionContext from the context.
-func FromSessionContext(ctx context.Context) (Session, bool) {
+// SessionFromContext retrieves the SessionContext from the context.
+func SessionFromContext(ctx context.Context) (Session, bool) {
 	session, ok := ctx.Value(ctxSessionKey{}).(Session)
 	return session, ok
 }
 
+// EnsureSession returns the Session stored in ctx, or a new in-memory Session
+// if none is present.
+func EnsureSession(ctx context.Context) Session {
+	if session, ok := SessionFromContext(ctx); ok {
+		return session
+	}
+	return NewSession()
+}
+
 // sessionInMemory is an in-memory implementation of the Session interface.
 type sessionInMemory struct {
-	id      string
-	state   maps.Map[string, any]
-	history slices.Slice[*Message]
+	id         string
+	state      maps.Map[string, any]
+	history    slices.Slice[*Message]
+	compressor ContextCompressor
 }
 
 func (s *sessionInMemory) ID() string {
@@ -55,8 +78,12 @@ func (s *sessionInMemory) ID() string {
 func (s *sessionInMemory) State() State {
 	return s.state.ToMap()
 }
-func (s *sessionInMemory) History() []*Message {
-	return s.history.ToSlice()
+func (s *sessionInMemory) History(ctx context.Context) ([]*Message, error) {
+	messages := s.history.ToSlice()
+	if s.compressor == nil {
+		return messages, nil
+	}
+	return s.compressor.Compress(ctx, messages)
 }
 func (s *sessionInMemory) SetState(key string, value any) {
 	s.state.Store(key, value)

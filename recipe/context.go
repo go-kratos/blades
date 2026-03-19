@@ -1,18 +1,16 @@
 package recipe
 
 import (
-	"context"
 	"fmt"
-	"iter"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/context/summary"
 	"github.com/go-kratos/blades/context/window"
 )
 
-// buildContextManager constructs a blades.ContextManager from a ContextSpec.
+// buildContextCompressor constructs a blades.ContextCompressor from a ContextSpec.
 // fallbackModelName is used as the summarizer model when ContextSpec.Model is empty.
-func buildContextManager(spec *ContextSpec, reg ModelResolver, fallbackModelName string) (blades.ContextManager, error) {
+func buildContextCompressor(spec *ContextSpec, reg ModelResolver, fallbackModelName string) (blades.ContextCompressor, error) {
 	if spec == nil {
 		return nil, nil
 	}
@@ -32,14 +30,11 @@ func buildContextManager(spec *ContextSpec, reg ModelResolver, fallbackModelName
 		if modelName == "" {
 			modelName = fallbackModelName
 		}
-		if modelName != "" {
-			model, err := reg.Resolve(modelName)
-			if err != nil {
-				return nil, fmt.Errorf("recipe: context model: %w", err)
-			}
-			opts = append(opts, summary.WithSummarizer(model))
+		model, err := reg.Resolve(modelName)
+		if err != nil {
+			return nil, fmt.Errorf("recipe: context model: %w", err)
 		}
-		return summary.NewContextManager(opts...), nil
+		return summary.NewContextCompressor(model, opts...), nil
 
 	case ContextStrategyWindow:
 		opts := []window.Option{}
@@ -49,36 +44,36 @@ func buildContextManager(spec *ContextSpec, reg ModelResolver, fallbackModelName
 		if spec.MaxMessages > 0 {
 			opts = append(opts, window.WithMaxMessages(spec.MaxMessages))
 		}
-		return window.NewContextManager(opts...), nil
+		return window.NewContextCompressor(opts...), nil
 
 	default:
 		return nil, fmt.Errorf("recipe: unknown context strategy %q", spec.Strategy)
 	}
 }
 
-// contextAwareAgent wraps a blades.Agent and injects a ContextManager into
-// the execution context before each run, enabling per-agent context strategies
-// independently of any Runner-level ContextManager.
-type contextAwareAgent struct {
-	blades.Agent
-	cm blades.ContextManager
-}
-
-func (a *contextAwareAgent) Run(ctx context.Context, inv *blades.Invocation) iter.Seq2[*blades.Message, error] {
-	ctx = blades.NewContextManagerContext(ctx, a.cm)
-	return a.Agent.Run(ctx, inv)
-}
-
-// wrapWithContextManager wraps agent with a contextAwareAgent when spec is non-nil.
-// Returns the original agent unchanged when spec is nil.
-// fallbackModelName is used as the summarizer model when ContextSpec.Model is empty.
-func wrapWithContextManager(agent blades.Agent, spec *ContextSpec, fallbackModelName string, reg ModelResolver) (blades.Agent, error) {
-	if spec == nil {
-		return agent, nil
+// BuildSessionOption returns a blades.SessionOption that installs the ContextCompressor
+// described by spec.Context onto a Session at creation time. Callers should use this
+// to create their session before running the agent:
+//
+//	sessOpt, err := recipe.BuildSessionOption(spec, opts...)
+//	session := blades.NewSession(sessOpt)
+//	runner.Run(ctx, msg, blades.WithSession(session))
+//
+// Returns nil when spec has no Context field; nil options are safe to pass to blades.NewSession.
+func BuildSessionOption(spec *AgentSpec, opts ...BuildOption) (blades.SessionOption, error) {
+	if spec == nil || spec.Context == nil {
+		return nil, nil
 	}
-	cm, err := buildContextManager(spec, reg, fallbackModelName)
+	o := &buildOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	if o.modelRegistry == nil && spec.Context.Strategy == ContextStrategySummarize {
+		return nil, fmt.Errorf("recipe: model registry is required for summarize context strategy")
+	}
+	c, err := buildContextCompressor(spec.Context, o.modelRegistry, spec.Model)
 	if err != nil {
 		return nil, err
 	}
-	return &contextAwareAgent{Agent: agent, cm: cm}, nil
+	return blades.WithContextCompressor(c), nil
 }

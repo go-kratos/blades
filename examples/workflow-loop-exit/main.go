@@ -20,7 +20,7 @@ import (
 // Context management:
 //   - Cross-iteration history is accumulated by the loop and injected into
 //     each sub-agent's invocation context automatically.
-//   - blades.WithContextManager on the Runner trims the context window before
+//   - blades.WithContextCompressor on the Session trims the context window before
 //     every model call, preventing unbounded growth over many iterations.
 func main() {
 	model := openai.NewModel(os.Getenv("OPENAI_MODEL"), openai.Config{
@@ -59,12 +59,11 @@ Review the most recent draft in the conversation history and decide:
 		SubAgents:     []blades.Agent{writerAgent, reviewerAgent},
 	})
 
-	// WithContextManager is configured once on the Runner and applies to all
-	// agents in the pipeline. Keep at most 8 messages (~4 write-review pairs).
-	runner := blades.NewRunner(loopAgent,
-		blades.WithContextManager(window.NewContextManager(window.WithMaxMessages(8))),
-	)
-	stream := runner.RunStream(context.Background(), blades.UserMessage("Write about the impact of climate change on coastal cities."))
+	// The session carries the ContextCompressor that trims the context window before
+	// every model call. Keep at most 8 messages (~4 write-review pairs).
+	session := blades.NewSession(blades.WithContextCompressor(window.NewContextCompressor(window.WithMaxMessages(8))))
+	runner := blades.NewRunner(loopAgent)
+	stream := runner.RunStream(context.Background(), blades.UserMessage("Write about the impact of climate change on coastal cities."), blades.WithSession(session))
 	for message, err := range stream {
 		if errors.Is(err, blades.ErrLoopEscalated) {
 			log.Println("Escalated — requires human review.")

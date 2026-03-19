@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"slices"
+	"sync/atomic"
 
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/uuid"
@@ -19,6 +20,11 @@ type Invocation struct {
 	Instruction *Message
 	Message     *Message
 	Tools       []tools.Tool
+	// committed tracks whether the initial user message has been (or will be)
+	// appended to the session. All clones share the same *atomic.Bool pointer,
+	// so CompareAndSwap guarantees exactly-once append even under concurrent
+	// goroutines. Initialized by prepareInvocation when nil.
+	committed *atomic.Bool
 }
 
 // Generator is a generic type representing a sequence generator that yields values of type T or errors of type E.
@@ -40,6 +46,9 @@ func NewInvocationID() string {
 }
 
 // Clone creates a deep copy of the Invocation.
+// All clones share the same committed *atomic.Bool pointer. The first agent
+// (original or any clone) to call CompareAndSwap(false, true) on it will
+// perform the session append; all others skip. This is safe for concurrent use.
 func (inv *Invocation) Clone() *Invocation {
 	return &Invocation{
 		ID:          inv.ID,
@@ -49,6 +58,7 @@ func (inv *Invocation) Clone() *Invocation {
 		Stream:      inv.Stream,
 		Message:     inv.Message.Clone(),
 		Instruction: inv.Instruction.Clone(),
+		committed:   inv.committed,
 		Tools:       slices.Clone(inv.Tools),
 	}
 }

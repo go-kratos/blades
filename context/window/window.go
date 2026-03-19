@@ -8,14 +8,14 @@ import (
 
 const defaultMaxMessages = 100
 
-// Option configures a window ContextManager.
-type Option func(*contextManager)
+// Option configures a window ContextCompressor.
+type Option func(*contextCompressor)
 
 // WithMaxMessages sets the maximum number of messages to retain.
 // Oldest messages are dropped first when the limit is exceeded.
 // Default is 100. Set to 0 to disable message count limiting.
 func WithMaxMessages(n int) Option {
-	return func(c *contextManager) {
+	return func(c *contextCompressor) {
 		c.maxMessages = n
 	}
 }
@@ -24,7 +24,7 @@ func WithMaxMessages(n int) Option {
 // Messages are dropped from the front until the budget is met.
 // Default is 0 (no limit).
 func WithMaxTokens(tokens int64) Option {
-	return func(c *contextManager) {
+	return func(c *contextCompressor) {
 		c.maxTokens = tokens
 	}
 }
@@ -32,30 +32,30 @@ func WithMaxTokens(tokens int64) Option {
 // WithTokenCounter sets the TokenCounter used to estimate token usage.
 // Defaults to a character-based counter (1 token ≈ 4 chars).
 func WithTokenCounter(counter blades.TokenCounter) Option {
-	return func(c *contextManager) {
+	return func(c *contextCompressor) {
 		c.counter = counter
 	}
 }
 
-type contextManager struct {
+type contextCompressor struct {
 	maxMessages int
 	maxTokens   int64
 	counter     blades.TokenCounter
 }
 
-// NewContextManager returns a ContextManager that keeps the most recent
-// messages within the configured token or message count limits. Messages are
-// dropped from the front (oldest first) when limits are exceeded.
-func NewContextManager(opts ...Option) blades.ContextManager {
-	cm := &contextManager{maxMessages: defaultMaxMessages}
+// NewContextCompressor returns a ContextCompressor that keeps the most recent messages within the
+// configured token or message count limits. Messages are dropped from the
+// front (oldest first) when limits are exceeded.
+func NewContextCompressor(opts ...Option) blades.ContextCompressor {
+	c := &contextCompressor{maxMessages: defaultMaxMessages}
 	for _, opt := range opts {
-		opt(cm)
+		opt(c)
 	}
-	return cm
+	return c
 }
 
-// Prepare retains the most recent messages that fit the configured limits.
-func (w *contextManager) Prepare(_ context.Context, messages []*blades.Message) ([]*blades.Message, error) {
+// Compress retains the most recent messages that fit the configured limits.
+func (w *contextCompressor) Compress(_ context.Context, messages []*blades.Message) ([]*blades.Message, error) {
 	if len(messages) == 0 {
 		return messages, nil
 	}

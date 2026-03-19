@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-kratos/blades/skills"
 	"github.com/go-kratos/blades/tools"
@@ -175,6 +176,9 @@ func (a *agent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
 
 // prepareInvocation prepares the invocation by resolving tools and applying instructions.
 func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) error {
+	if invocation.committed == nil {
+		invocation.committed = new(atomic.Bool)
+	}
 	resolvedTools, err := a.resolveTools(ctx)
 	if err != nil {
 		return err
@@ -212,43 +216,34 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 	return nil
 }
 
-// findResumeMessages checks if the invocation can be resumed from a previous state by looking for completed assistant messages in the session history.
-func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
-	if !invocation.Resume || invocation.Session == nil {
-		return nil, false
-	}
-	resumeHistory := invocation.Session.History()
-	resumeMessages := make([]*Message, 0, len(resumeHistory))
-	for _, m := range resumeHistory {
-		if m.InvocationID != invocation.ID {
-			continue
-		}
-		if m.Author == a.name {
-			resumeMessages = append(resumeMessages, m)
-			// If we find a completed assistant message, we can resume from here.
-			if m.Role == RoleAssistant && m.Status == StatusCompleted {
-				return resumeMessages, true
-			}
-		}
-	}
-	return resumeMessages, false
-}
-
 // Run runs the agent with the given prompt and options, returning a streamable response.
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
-		resumeMessages, ok := a.findResumeMessages(invocation)
-		if ok {
-			for _, resumeMessage := range resumeMessages {
-				if !yield(resumeMessage, nil) {
-					return
-				}
-			}
-			return
+		// Ensure a session exists in context so every phase of this Run (including
+		// the iteration loop in handle) uses the same session instance.
+		if _, ok := SessionFromContext(ctx); !ok {
+			ctx = NewSessionContext(ctx, NewSession())
 		}
+		session := EnsureSession(ctx)
+		// prepareInvocation initializes committed if nil, so the CAS below is safe.
 		if err := a.prepareInvocation(ctx, invocation); err != nil {
 			yield(nil, err)
 			return
+		}
+		// Append the initial user message exactly once per run lifecycle.
+		// All clones share the same *atomic.Bool; the first CompareAndSwap wins.
+		if !invocation.Resume && invocation.Message != nil && invocation.committed.CompareAndSwap(false, true) {
+			msg := invocation.Message
+			if msg.Author == "" {
+				msg.Author = "user"
+			}
+			if msg.InvocationID == "" {
+				msg.InvocationID = invocation.ID
+			}
+			if err := session.Append(ctx, msg); err != nil {
+				yield(nil, err)
+				return
+			}
 		}
 		ctx = NewAgentContext(ctx, a)
 		handler := Handler(HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
@@ -258,13 +253,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 				InputSchema:  a.inputSchema,
 				OutputSchema: a.outputSchema,
 			}
-			switch {
-			case len(resumeMessages) > 0:
-				req.Messages = AppendMessages(req.Messages, resumeMessages...)
-			case invocation.Message != nil:
-				req.Messages = AppendMessages(req.Messages, invocation.Message)
-			}
-			return a.handle(ctx, invocation, req)
+			return a.handle(ctx, session, invocation, req)
 		}))
 		if len(a.middlewares) > 0 {
 			handler = ChainMiddlewares(a.middlewares...)(handler)
@@ -278,16 +267,13 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 	}
 }
 
-func (a *agent) saveOutputState(ctx context.Context, invocation *Invocation, message *Message) error {
-	// Save output to session state if outputKey is set
+func (a *agent) saveOutputState(ctx context.Context, invocation *Invocation, message *Message) {
 	if a.outputKey != "" &&
 		invocation.Session != nil &&
 		message.Role == RoleAssistant &&
 		message.Status == StatusCompleted {
-		// Store the text content of the message under the specified output key
 		invocation.Session.SetState(a.outputKey, message.Text())
 	}
-	return nil
 }
 
 func (a *agent) handleTools(ctx context.Context, invocation *Invocation, part ToolPart) (ToolPart, error) {
@@ -348,21 +334,17 @@ func messageFromResponse(response *ModelResponse) (*Message, error) {
 }
 
 // handle constructs the default handlers for Run and Stream using the provider.
-func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
+func (a *agent) handle(ctx context.Context, session Session, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
-		contextManager, _ := ContextManagerFromContext(ctx)
 		for i := 0; i < a.maxIterations; i++ {
-			// Apply context window management before each model call.
-			// This handles both the initial history and messages that accumulate
-			// during tool calls across iterations.
-			if contextManager != nil {
-				prepared, err := contextManager.Prepare(ctx, req.Messages)
-				if err != nil {
-					yield(nil, err)
-					return
-				}
-				req.Messages = prepared
+			// Rebuild req.Messages each iteration so context compression
+			// (applied inside session.History) can re-run on the growing list.
+			prepared, err := session.History(ctx)
+			if err != nil {
+				yield(nil, err)
+				return
 			}
+			req.Messages = prepared
 			var finalMessage *Message
 			if !invocation.Stream {
 				finalResponse, err := a.model.Generate(ctx, req)
@@ -381,10 +363,7 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 				finalMessage.InvocationID = invocation.ID
 				// Skip saving tool intermediate states
 				if finalMessage.Role == RoleAssistant {
-					if err := a.saveOutputState(ctx, invocation, finalMessage); err != nil {
-						yield(nil, err)
-						return
-					}
+					a.saveOutputState(ctx, invocation, finalMessage)
 					if !yield(finalMessage, nil) {
 						return
 					}
@@ -409,10 +388,7 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 					if finalMessage.Role == RoleTool && finalMessage.Status == StatusCompleted {
 						continue
 					}
-					if err := a.saveOutputState(ctx, invocation, finalMessage); err != nil {
-						yield(nil, err)
-						return
-					}
+					a.saveOutputState(ctx, invocation, finalMessage)
 					if !yield(finalMessage, nil) {
 						return // early termination
 					}
@@ -435,9 +411,19 @@ func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRe
 				if !yield(toolMessage, nil) {
 					return
 				}
-				// Append the tool response to the message history for the next iteration
-				req.Messages = append(req.Messages, toolMessage)
+				// Persist the tool response; the next iteration's session.History()
+				// call will include it automatically.
+				if err := session.Append(ctx, toolMessage); err != nil {
+					yield(nil, err)
+					return
+				}
 				continue // continue to the next iteration
+			}
+			// Persist the final assistant message so future invocations can
+			// access the full conversation history via session.History().
+			if err := session.Append(ctx, finalMessage); err != nil {
+				yield(nil, err)
+				return
 			}
 			return
 		}

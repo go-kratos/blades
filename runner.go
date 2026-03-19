@@ -2,8 +2,6 @@ package blades
 
 import (
 	"context"
-
-	"github.com/go-kratos/blades/stream"
 )
 
 // RunOption defines options for configuring the Runner.
@@ -40,20 +38,9 @@ type RunOptions struct {
 // RunnerOption configures a Runner at construction time.
 type RunnerOption func(*Runner)
 
-// WithContextManager sets a Manager that is applied before each model
-// call across all agents executed by this Runner. It is injected into the
-// execution context so every agent in the pipeline (including loop sub-agents)
-// benefits without per-agent configuration.
-func WithContextManager(contextManager ContextManager) RunnerOption {
-	return func(r *Runner) {
-		r.contextManager = contextManager
-	}
-}
-
 // Runner is responsible for executing a Runnable agent within a session context.
 type Runner struct {
-	rootAgent      Agent
-	contextManager ContextManager
+	rootAgent Agent
 }
 
 // NewRunner creates a new Runner with the given agent and options.
@@ -68,30 +55,14 @@ func NewRunner(rootAgent Agent, opts ...RunnerOption) *Runner {
 }
 
 // buildInvocation constructs an Invocation object for the given message and options.
-func (r *Runner) buildInvocation(ctx context.Context, message *Message, stream bool, o *RunOptions) (*Invocation, error) {
-	invocation := &Invocation{
+func (r *Runner) buildInvocation(message *Message, stream bool, o *RunOptions) *Invocation {
+	return &Invocation{
 		ID:      o.InvocationID,
 		Session: o.Session,
 		Resume:  o.Resume,
 		Stream:  stream,
 		Message: message,
 	}
-	if message != nil {
-		message.Author = "user"
-		if err := r.appendNewMessage(ctx, invocation, message); err != nil {
-			return nil, err
-		}
-	}
-	return invocation, nil
-}
-
-// appendNewMessage appends a new message to the session history.
-func (r *Runner) appendNewMessage(ctx context.Context, invocation *Invocation, message *Message) error {
-	if invocation.Session == nil || message == nil {
-		return nil
-	}
-	message.InvocationID = invocation.ID
-	return invocation.Session.Append(ctx, message)
 }
 
 // Run executes the agent with the provided prompt and options within the session context.
@@ -107,23 +78,12 @@ func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (
 		err    error
 		output *Message
 	)
-	invocation, err := r.buildInvocation(ctx, message, false, o)
-	if err != nil {
-		return nil, err
-	}
+	invocation := r.buildInvocation(message, false, o)
 	runCtx := NewSessionContext(ctx, o.Session)
-	if r.contextManager != nil {
-		runCtx = NewContextManagerContext(runCtx, r.contextManager)
-	}
 	iter := r.rootAgent.Run(runCtx, invocation)
 	for output, err = range iter {
 		if err != nil {
 			return nil, err
-		}
-		if output.Status == StatusCompleted {
-			if err := r.appendNewMessage(ctx, invocation, output); err != nil {
-				return nil, err
-			}
 		}
 	}
 	if output == nil {
@@ -141,26 +101,14 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 	for _, opt := range opts {
 		opt(o)
 	}
-	invocation, err := r.buildInvocation(ctx, message, true, o)
-	if err != nil {
-		return stream.Error[*Message](err)
-	}
+	invocation := r.buildInvocation(message, true, o)
 	runCtx := NewSessionContext(ctx, o.Session)
-	if r.contextManager != nil {
-		runCtx = NewContextManagerContext(runCtx, r.contextManager)
-	}
 	return func(yield func(*Message, error) bool) {
 		iter := r.rootAgent.Run(runCtx, invocation)
 		for output, err := range iter {
 			if err != nil {
 				yield(nil, err)
 				return
-			}
-			if output.Status == StatusCompleted {
-				if err := r.appendNewMessage(ctx, invocation, output); err != nil {
-					yield(nil, err)
-					return
-				}
 			}
 			if !yield(output, nil) {
 				return

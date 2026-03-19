@@ -36,7 +36,7 @@ type LeaveApprovalState struct {
 }
 
 func requestLeaveApproval(ctx context.Context, req LeaveApprovalRequest) (LeaveApprovalResult, error) {
-	session, ok := blades.FromSessionContext(ctx)
+	session, ok := blades.SessionFromContext(ctx)
 	if !ok {
 		return LeaveApprovalResult{}, blades.ErrNoSessionContext
 	}
