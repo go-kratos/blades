@@ -19,15 +19,11 @@ func TestCronToolAddAcceptsLegacyShellPayloadKind(t *testing.T) {
 	tool := &cronTool{svc: svc}
 
 	result, err := tool.add(context.Background(), cronInput{
-		Name: "exec-task",
-		Schedule: &cronScheduleInput{
-			Type: "at",
-			AtMs: time.Now().Add(time.Minute).UnixMilli(),
-		},
-		Task: &cronTaskInput{
-			Type:    "exec",
-			Command: "ls .",
-		},
+		Name:         "exec-task",
+		ScheduleType: "at",
+		At:           time.Now().Add(time.Minute).Format(time.RFC3339Nano),
+		TaskType:     "exec",
+		Command:      "ls .",
 	})
 	if err != nil {
 		t.Fatalf("add exec task: %v", err)
@@ -42,6 +38,42 @@ func TestCronToolAddAcceptsLegacyShellPayloadKind(t *testing.T) {
 	}
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if got := jobs[0].Payload.Kind; got != cron.PayloadExec {
+		t.Fatalf("payload kind = %q, want %q", got, cron.PayloadExec)
+	}
+	if got := jobs[0].Payload.Command; got != "ls ." {
+		t.Fatalf("payload command = %q, want %q", got, "ls .")
+	}
+}
+
+func TestCronToolAddSupportsFlatDelayMinutesExecInput(t *testing.T) {
+	t.Parallel()
+
+	svc := cron.NewService(filepath.Join(t.TempDir(), "cron.json"), nil)
+	tool := &cronTool{svc: svc}
+
+	result, err := tool.add(context.Background(), cronInput{
+		Name:         "exec-later",
+		DelayMinutes: 10,
+		Command:      "ls .",
+	})
+	if err != nil {
+		t.Fatalf("add flat exec task: %v", err)
+	}
+	if !strings.Contains(result, "Job added.") {
+		t.Fatalf("unexpected add result %q", result)
+	}
+
+	jobs, err := svc.ListJobs(true)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if got := jobs[0].Schedule.Kind; got != cron.ScheduleAt {
+		t.Fatalf("schedule kind = %q, want %q", got, cron.ScheduleAt)
 	}
 	if got := jobs[0].Payload.Kind; got != cron.PayloadExec {
 		t.Fatalf("payload kind = %q, want %q", got, cron.PayloadExec)
@@ -68,7 +100,7 @@ func TestCronToolRunAcceptsJobID(t *testing.T) {
 		{"action": "run", "job_id": job.ID},
 		{"action": "run", "name": job.Name},
 	} {
-		lastRunBefore := job.State.LastRunAtMs
+		lastRunBefore := job.State.LastRunAt
 		raw, err := json.Marshal(in)
 		if err != nil {
 			t.Fatalf("marshal input: %v", err)
@@ -87,13 +119,13 @@ func TestCronToolRunAcceptsJobID(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ListJobs after run: %v", err)
 			}
-			if len(jobs) == 1 && jobs[0].State.LastRunAtMs > lastRunBefore {
+			if len(jobs) == 1 && jobs[0].State.LastRunAt.After(lastRunBefore) {
 				job = jobs[0]
 				break
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		if job.State.LastRunAtMs <= lastRunBefore {
+		if !job.State.LastRunAt.After(lastRunBefore) {
 			t.Fatalf("job %q did not finish running for input %v", job.ID, in)
 		}
 	}
@@ -153,7 +185,7 @@ func TestNewCronToolSchemaIncludesActionRulesAndHints(t *testing.T) {
 	if schema == nil {
 		t.Fatal("expected input schema")
 	}
-	if !strings.Contains(schema.Description, "Prefer delay_seconds") {
+	if !strings.Contains(schema.Description, "delay_minutes") {
 		t.Fatalf("schema description = %q", schema.Description)
 	}
 
@@ -165,22 +197,22 @@ func TestNewCronToolSchemaIncludesActionRulesAndHints(t *testing.T) {
 		t.Fatalf("action enum = %v, want %v", got, want)
 	}
 
-	schedule := schema.Properties["schedule"]
-	if schedule == nil || schedule.Properties == nil {
-		t.Fatalf("expected schedule property, got %+v", schedule)
+	scheduleType := schema.Properties["schedule_type"]
+	if scheduleType == nil {
+		t.Fatal("expected schedule_type property")
 	}
-	if got, want := schedule.Properties["type"].Enum, []any{"at", "every", "cron"}; !slices.Equal(got, want) {
-		t.Fatalf("schedule.type enum = %v, want %v", got, want)
+	if got, want := scheduleType.Enum, []any{"at", "every", "cron"}; !slices.Equal(got, want) {
+		t.Fatalf("schedule_type enum = %v, want %v", got, want)
 	}
 
-	task := schema.Properties["task"]
-	if task == nil || task.Properties == nil {
-		t.Fatalf("expected task property, got %+v", task)
+	taskType := schema.Properties["task_type"]
+	if taskType == nil {
+		t.Fatal("expected task_type property")
 	}
-	if got, want := task.Properties["type"].Enum, []any{"exec", "agent", "notify"}; !slices.Equal(got, want) {
-		t.Fatalf("task.type enum = %v, want %v", got, want)
+	if got, want := taskType.Enum, []any{"exec", "agent", "notify"}; !slices.Equal(got, want) {
+		t.Fatalf("task_type enum = %v, want %v", got, want)
 	}
-	if prop := schedule.Properties["delay_seconds"]; prop == nil || prop.ExclusiveMinimum == nil || *prop.ExclusiveMinimum != 0 {
-		t.Fatalf("schedule.delay_seconds should be > 0, got %+v", prop)
+	if prop := schema.Properties["delay_minutes"]; prop == nil || prop.ExclusiveMinimum == nil || *prop.ExclusiveMinimum != 0 {
+		t.Fatalf("delay_minutes should be > 0, got %+v", prop)
 	}
 }

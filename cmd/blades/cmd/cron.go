@@ -192,7 +192,7 @@ func parseScheduleFlagsWithNow(now func() time.Time, cronExpr, everyStr, delaySt
 		if now == nil {
 			now = time.Now
 		}
-		return cron.Schedule{Kind: cron.ScheduleAt, AtMs: now().Add(d).UnixMilli()}, nil
+		return cron.Schedule{Kind: cron.ScheduleAt, At: now().Add(d)}, nil
 	default:
 		return cron.Schedule{}, fmt.Errorf("one of --cron, --every, or --delay is required")
 	}

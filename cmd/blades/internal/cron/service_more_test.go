@@ -25,25 +25,25 @@ func writeCronStore(t *testing.T, path string, st store) {
 func TestComputeNextRunAndHelpers(t *testing.T) {
 	t.Parallel()
 
-	base := time.Date(2026, 3, 18, 10, 0, 0, 0, time.UTC).UnixMilli()
+	base := time.Date(2026, 3, 18, 10, 0, 0, 0, time.UTC)
 
-	if got := computeNextRun(Schedule{Kind: ScheduleKind("once"), AtMs: base + 1_000}, base); got != base+1_000 {
-		t.Fatalf("computeNextRun once = %d", got)
+	if got := computeNextRun(Schedule{Kind: ScheduleKind("once"), At: base.Add(time.Second)}, base); !got.Equal(base.Add(time.Second)) {
+		t.Fatalf("computeNextRun once = %s", got)
 	}
-	if got := computeNextRun(Schedule{Kind: ScheduleAt, AtMs: base - 1}, base); got != 0 {
-		t.Fatalf("computeNextRun past at = %d", got)
+	if got := computeNextRun(Schedule{Kind: ScheduleAt, At: base.Add(-time.Millisecond)}, base); !got.IsZero() {
+		t.Fatalf("computeNextRun past at = %s", got)
 	}
-	if got := computeNextRun(Schedule{Kind: ScheduleEvery, EveryMs: 2_500}, base); got != base+2_500 {
-		t.Fatalf("computeNextRun every = %d", got)
+	if got := computeNextRun(Schedule{Kind: ScheduleEvery, EveryMs: 2_500}, base); !got.Equal(base.Add(2500 * time.Millisecond)) {
+		t.Fatalf("computeNextRun every = %s", got)
 	}
-	if got := computeNextRun(Schedule{Kind: ScheduleCron, Expr: "*/5 * * * *", TZ: "UTC"}, base); got <= base {
-		t.Fatalf("computeNextRun cron = %d", got)
+	if got := computeNextRun(Schedule{Kind: ScheduleCron, Expr: "*/5 * * * *", TZ: "UTC"}, base); !got.After(base) {
+		t.Fatalf("computeNextRun cron = %s", got)
 	}
-	if got := computeNextRun(Schedule{Kind: ScheduleCron, Expr: "*/5 * * * *", TZ: "Bad/Zone"}, base); got <= base {
-		t.Fatalf("computeNextRun invalid tz = %d", got)
+	if got := computeNextRun(Schedule{Kind: ScheduleCron, Expr: "*/5 * * * *", TZ: "Bad/Zone"}, base); !got.After(base) {
+		t.Fatalf("computeNextRun invalid tz = %s", got)
 	}
-	if got := computeNextRun(Schedule{Kind: ScheduleCron, Expr: "not-a-cron", TZ: "UTC"}, base); got != 0 {
-		t.Fatalf("computeNextRun invalid expr = %d", got)
+	if got := computeNextRun(Schedule{Kind: ScheduleCron, Expr: "not-a-cron", TZ: "UTC"}, base); !got.IsZero() {
+		t.Fatalf("computeNextRun invalid expr = %s", got)
 	}
 
 	jobs := []*Job{{ID: "a"}, {ID: "b"}}
@@ -51,11 +51,11 @@ func TestComputeNextRunAndHelpers(t *testing.T) {
 	if len(gotJobs) != 1 || gotJobs[0].ID != "b" {
 		t.Fatalf("removeJobSlice = %+v", gotJobs)
 	}
-	if got := msToTime(0); got != "never" {
-		t.Fatalf("msToTime(0) = %q", got)
+	if got := formatTime(time.Time{}); got != "never" {
+		t.Fatalf("formatTime(zero) = %q", got)
 	}
-	if got := msToTime(base); !strings.Contains(got, "2026-03-18") {
-		t.Fatalf("msToTime(base) = %q", got)
+	if got := formatTime(base); !strings.Contains(got, "2026-03-18") {
+		t.Fatalf("formatTime(base) = %q", got)
 	}
 	if ids := jobIDSet(gotJobs); len(ids) != 1 {
 		t.Fatalf("jobIDSet = %+v", ids)
@@ -192,7 +192,7 @@ func TestServiceManagementAndRunNow(t *testing.T) {
 		t.Fatalf("ListJobs after enable: %v", err)
 	}
 	for _, job := range jobs {
-		if job.ID == keepJob.ID && job.State.NextRunAtMs == 0 {
+		if job.ID == keepJob.ID && job.State.NextRunAt.IsZero() {
 			t.Fatalf("re-enabled job missing next run: %+v", job)
 		}
 	}
@@ -240,7 +240,7 @@ func TestStaleJobsAndFormatJob(t *testing.T) {
 					EveryMs: time.Minute.Milliseconds(),
 				},
 				State: JobState{
-					LastRunAtMs: now.Add(-2 * time.Hour).UnixMilli(),
+					LastRunAt: now.Add(-2 * time.Hour),
 				},
 			},
 			{
@@ -252,8 +252,8 @@ func TestStaleJobsAndFormatJob(t *testing.T) {
 					Expr: "0 9 * * *",
 				},
 				State: JobState{
-					LastRunAtMs: now.Add(-10 * time.Minute).UnixMilli(),
-					LastStatus:  "ok",
+					LastRunAt:  now.Add(-10 * time.Minute),
+					LastStatus: "ok",
 				},
 			},
 			{
@@ -262,10 +262,10 @@ func TestStaleJobsAndFormatJob(t *testing.T) {
 				Enabled: false,
 				Schedule: Schedule{
 					Kind: ScheduleAt,
-					AtMs: now.Add(time.Hour).UnixMilli(),
+					At:   now.Add(time.Hour),
 				},
 				State: JobState{
-					LastRunAtMs: now.Add(-3 * time.Hour).UnixMilli(),
+					LastRunAt: now.Add(-3 * time.Hour),
 				},
 			},
 		},

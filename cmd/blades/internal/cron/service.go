@@ -19,14 +19,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// nowMs returns the current time as a Unix millisecond timestamp.
-func nowMs() int64 { return time.Now().UnixMilli() }
-
 type logFn func(string, ...any)
 
-// computeNextRun returns the next fire time in ms for a given schedule, relative to base.
-// Returns 0 if the schedule cannot produce a future run.
-func computeNextRun(s Schedule, baseMs int64) int64 {
+// computeNextRun returns the next fire time for a given schedule, relative to base.
+// Returns the zero time if the schedule cannot produce a future run.
+func computeNextRun(s Schedule, base time.Time) time.Time {
 	// Normalize legacy "once" to "at" so one-shot jobs get a valid next run.
 	kind := s.Kind
 	if kind == ScheduleKind("once") {
@@ -34,16 +31,16 @@ func computeNextRun(s Schedule, baseMs int64) int64 {
 	}
 	switch kind {
 	case ScheduleAt:
-		if s.AtMs > baseMs {
-			return s.AtMs
+		if !s.At.IsZero() && s.At.After(base) {
+			return s.At
 		}
 	case ScheduleEvery:
 		if s.EveryMs > 0 {
-			return baseMs + s.EveryMs
+			return base.Add(time.Duration(s.EveryMs) * time.Millisecond)
 		}
 	case ScheduleCron:
 		if s.Expr == "" {
-			return 0
+			return time.Time{}
 		}
 		loc := time.Local
 		if s.TZ != "" {
@@ -57,11 +54,11 @@ func computeNextRun(s Schedule, baseMs int64) int64 {
 		sched, err := parser.Parse(s.Expr)
 		if err != nil {
 			log.Printf("cron: invalid cron expression %q: %v", s.Expr, err)
-			return 0
+			return time.Time{}
 		}
-		return sched.Next(time.UnixMilli(baseMs).In(loc)).UnixMilli()
+		return sched.Next(base.In(loc))
 	}
-	return 0
+	return time.Time{}
 }
 
 // Handler is called whenever a job fires. The returned string is stored as LastOutput.
@@ -328,9 +325,9 @@ func (s *Service) AddJob(ctx context.Context, name string, schedule Schedule, pa
 		return nil, err
 	}
 
-	now := s.nowMs()
+	now := s.currentTime()
 	next := computeNextRun(schedule, now)
-	if next <= 0 {
+	if next.IsZero() {
 		return nil, fmt.Errorf("cron: schedule %q does not produce a future run", schedule.Kind)
 	}
 
@@ -340,9 +337,9 @@ func (s *Service) AddJob(ctx context.Context, name string, schedule Schedule, pa
 		Enabled:        true,
 		Schedule:       schedule,
 		Payload:        payload,
-		State:          JobState{NextRunAtMs: next},
-		CreatedAtMs:    now,
-		UpdatedAtMs:    now,
+		State:          JobState{NextRunAt: next},
+		CreatedAt:      now,
+		UpdatedAt:      now,
 		DeleteAfterRun: deleteAfterRun,
 	}
 	if normalizePayloadKind(job.Payload.Kind) == PayloadAgentTurn && strings.TrimSpace(job.Payload.SessionID) == "" {
@@ -357,7 +354,7 @@ func (s *Service) AddJob(ctx context.Context, name string, schedule Schedule, pa
 		s.knownIDs[job.ID] = struct{}{}
 	}
 	s.armTimerLocked(ctx)
-	s.printf("cron: added job %q (%s) schedule_kind=%s next=%s", name, job.ID, schedule.Kind, msToTime(next))
+	s.printf("cron: added job %q (%s) schedule_kind=%s next=%s", name, job.ID, schedule.Kind, formatTime(next))
 	return job, nil
 }
 
@@ -395,11 +392,11 @@ func (s *Service) EnableJob(ctx context.Context, id string, enable bool) (bool, 
 	for _, j := range s.st.Jobs {
 		if j.ID == id {
 			j.Enabled = enable
-			j.UpdatedAtMs = s.nowMs()
+			j.UpdatedAt = s.currentTime()
 			if enable {
-				j.State.NextRunAtMs = computeNextRun(j.Schedule, s.nowMs())
+				j.State.NextRunAt = computeNextRun(j.Schedule, s.currentTime())
 			} else {
-				j.State.NextRunAtMs = 0
+				j.State.NextRunAt = time.Time{}
 			}
 			if err := s.saveLocked(); err != nil {
 				return false, err
@@ -428,14 +425,14 @@ func (s *Service) ListJobs(includeDisabled bool) ([]*Job, error) {
 		out = append(out, &cp)
 	}
 	sort.Slice(out, func(i, k int) bool {
-		a, b := out[i].State.NextRunAtMs, out[k].State.NextRunAtMs
-		if a == 0 {
+		a, b := out[i].State.NextRunAt, out[k].State.NextRunAt
+		if a.IsZero() {
 			return false
 		}
-		if b == 0 {
+		if b.IsZero() {
 			return true
 		}
-		return a < b
+		return a.Before(b)
 	})
 	return out, nil
 }
@@ -498,17 +495,6 @@ func (s *Service) loadLocked() error {
 	s.st = st
 	if s.st.Version == 0 {
 		s.st.Version = 1
-	}
-	// Normalize legacy "once" jobs so they get a valid next run time.
-	now := s.nowMs()
-	for _, j := range s.st.Jobs {
-		if j.Schedule.Kind == ScheduleKind("once") {
-			j.Schedule.Kind = ScheduleAt
-			if j.State.NextRunAtMs == 0 && j.Schedule.AtMs > 0 && j.Schedule.AtMs > now {
-				j.State.NextRunAtMs = j.Schedule.AtMs
-				s.printf("cron load: job %q (once) fixed nextRunAtMs=%d", j.Name, j.State.NextRunAtMs)
-			}
-		}
 	}
 	return nil
 }
@@ -606,14 +592,14 @@ func encodeStore(st store, path string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (s *Service) nextWakeLocked() int64 {
-	var min int64
+func (s *Service) nextWakeLocked() time.Time {
+	var min time.Time
 	for _, j := range s.st.Jobs {
-		if !j.Enabled || j.State.NextRunAtMs == 0 {
+		if !j.Enabled || j.State.NextRunAt.IsZero() {
 			continue
 		}
-		if min == 0 || j.State.NextRunAtMs < min {
-			min = j.State.NextRunAtMs
+		if min.IsZero() || j.State.NextRunAt.Before(min) {
+			min = j.State.NextRunAt
 		}
 	}
 	return min
@@ -628,10 +614,10 @@ func (s *Service) armTimerLocked(ctx context.Context) {
 		return
 	}
 	next := s.nextWakeLocked()
-	if next == 0 {
+	if next.IsZero() {
 		return
 	}
-	delay := time.Duration(next-s.nowMs()) * time.Millisecond
+	delay := next.Sub(s.currentTime())
 	if delay < 0 {
 		delay = 0
 	}
@@ -647,11 +633,11 @@ func (s *Service) tick(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
-	now := s.nowMs()
+	now := s.currentTime()
 
 	var due []*Job
 	for _, j := range s.st.Jobs {
-		if j.Enabled && j.State.NextRunAtMs > 0 && now >= j.State.NextRunAtMs {
+		if j.Enabled && !j.State.NextRunAt.IsZero() && !now.Before(j.State.NextRunAt) {
 			cp := *j
 			due = append(due, &cp)
 		}
@@ -668,9 +654,9 @@ func (s *Service) tick(ctx context.Context) {
 			}
 			if j.Schedule.Kind == ScheduleAt {
 				j.Enabled = false
-				j.State.NextRunAtMs = 0
+				j.State.NextRunAt = time.Time{}
 			} else {
-				j.State.NextRunAtMs = computeNextRun(j.Schedule, now)
+				j.State.NextRunAt = computeNextRun(j.Schedule, now)
 			}
 		}
 		if err := s.saveLocked(); err != nil {
@@ -701,7 +687,7 @@ func (s *Service) tick(ctx context.Context) {
 }
 
 func (s *Service) execute(ctx context.Context, job *Job) (string, error) {
-	startMs := s.nowMs()
+	startAt := s.currentTime()
 	s.printf("cron: executing job %q (%s)", job.Name, job.ID)
 
 	var output string
@@ -716,9 +702,9 @@ func (s *Service) execute(ctx context.Context, job *Job) (string, error) {
 		if j.ID != job.ID {
 			continue
 		}
-		j.State.LastRunAtMs = startMs
+		j.State.LastRunAt = startAt
 		j.State.LastOutput = output
-		j.UpdatedAtMs = s.nowMs()
+		j.UpdatedAt = s.currentTime()
 		if execErr != nil {
 			j.State.LastStatus = "error"
 			j.State.LastError = execErr.Error()
@@ -735,9 +721,9 @@ func (s *Service) execute(ctx context.Context, job *Job) (string, error) {
 			s.st.Jobs = removeJobSlice(s.st.Jobs, j.ID)
 		} else if j.Schedule.Kind == ScheduleAt {
 			j.Enabled = false
-			j.State.NextRunAtMs = 0
+			j.State.NextRunAt = time.Time{}
 		} else {
-			j.State.NextRunAtMs = computeNextRun(j.Schedule, s.nowMs())
+			j.State.NextRunAt = computeNextRun(j.Schedule, s.currentTime())
 		}
 		break
 	}
@@ -759,11 +745,11 @@ func removeJobSlice(jobs []*Job, id string) []*Job {
 	return out
 }
 
-func msToTime(ms int64) string {
-	if ms == 0 {
+func formatTime(t time.Time) string {
+	if t.IsZero() {
 		return "never"
 	}
-	return time.UnixMilli(ms).Format(time.RFC3339)
+	return t.Format(time.RFC3339)
 }
 
 func jobIDSet(jobs []*Job) map[string]struct{} {
@@ -824,7 +810,7 @@ func (s *Service) watchFile(ctx context.Context, interval time.Duration) {
 			for _, j := range jobs {
 				if _, existed := prev[j.ID]; !existed {
 					s.printf("cron: detected new job %q (%s) kind=%s next=%s",
-						j.Name, j.ID, j.Schedule.Kind, msToTime(j.State.NextRunAtMs))
+						j.Name, j.ID, j.Schedule.Kind, formatTime(j.State.NextRunAt))
 				}
 			}
 		}
@@ -833,7 +819,7 @@ func (s *Service) watchFile(ctx context.Context, interval time.Duration) {
 
 // StaleJobs returns jobs whose last run was more than threshold ago. Used by doctor.
 func (s *Service) StaleJobs(threshold time.Duration) []*Job {
-	cutoff := s.currentTime().Add(-threshold).UnixMilli()
+	cutoff := s.currentTime().Add(-threshold)
 	jobs, err := s.ListJobs(false)
 	if err != nil {
 		s.printf("cron: StaleJobs: list jobs failed: %v", err)
@@ -841,7 +827,7 @@ func (s *Service) StaleJobs(threshold time.Duration) []*Job {
 	}
 	var stale []*Job
 	for _, j := range jobs {
-		if j.State.LastRunAtMs > 0 && j.State.LastRunAtMs < cutoff {
+		if !j.State.LastRunAt.IsZero() && j.State.LastRunAt.Before(cutoff) {
 			stale = append(stale, j)
 		}
 	}
@@ -855,10 +841,6 @@ func (s *Service) currentTime() time.Time {
 	return time.Now()
 }
 
-func (s *Service) nowMs() int64 {
-	return s.currentTime().UnixMilli()
-}
-
 func (s *Service) printf(format string, args ...any) {
 	if s != nil && s.logf != nil {
 		s.logf(format, args...)
@@ -870,12 +852,12 @@ func FormatJob(j *Job) string {
 	var sched string
 	switch j.Schedule.Kind {
 	case ScheduleAt:
-		if j.Schedule.AtMs <= 0 {
+		if j.Schedule.At.IsZero() {
 			sched = "at (never)"
-		} else if j.Schedule.AtMs < nowMs() {
+		} else if j.Schedule.At.Before(time.Now()) {
 			sched = "at (past)"
 		} else {
-			sched = fmt.Sprintf("at %s", msToTime(j.Schedule.AtMs))
+			sched = fmt.Sprintf("at %s", formatTime(j.Schedule.At))
 		}
 	case ScheduleEvery:
 		sched = fmt.Sprintf("every %s", time.Duration(j.Schedule.EveryMs)*time.Millisecond)
@@ -887,7 +869,7 @@ func FormatJob(j *Job) string {
 		status = "pending"
 	}
 	return fmt.Sprintf("[%s] %-20s %-25s %-30s next=%-20s last=%s",
-		j.ID, j.Name, sched, describePayload(j.Payload), msToTime(j.State.NextRunAtMs), status)
+		j.ID, j.Name, sched, describePayload(j.Payload), formatTime(j.State.NextRunAt), status)
 }
 
 func describePayload(p Payload) string {

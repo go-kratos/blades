@@ -308,8 +308,8 @@ func TestCronAddSupportsDelayFlag(t *testing.T) {
 		t.Fatalf("expected payload kind %q, got %q", cron.PayloadExec, job.Payload.Kind)
 	}
 
-	delta := job.Schedule.AtMs - time.Now().UnixMilli()
-	if delta < 8000 || delta > 12000 {
-		t.Fatalf("expected run time around 10s in the future, got delta=%dms", delta)
+	delta := time.Until(job.Schedule.At)
+	if delta < 8*time.Second || delta > 12*time.Second {
+		t.Fatalf("expected run time around 10s in the future, got delta=%s", delta)
 	}
 }

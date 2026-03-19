@@ -7,6 +7,7 @@ import (
 	"time"
 
 	appcore "github.com/go-kratos/blades/cmd/blades/internal/app"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +19,7 @@ func resolveRunSessionID(sessionID string, now func() time.Time) string {
 	if now == nil {
 		now = time.Now
 	}
-	return fmt.Sprintf("run-%d", now().UnixNano())
+	return fmt.Sprintf("run-%s", uuid.NewString()[:8])
 }
 
 func newRunCmd() *cobra.Command {

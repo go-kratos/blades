@@ -216,6 +216,14 @@ func (c *Channel) startSimple(ctx context.Context, handler channel.StreamHandler
 
 		fmt.Fprintln(c.output)
 		w := &simpleWriter{out: c.output}
+		if handler == nil {
+			err := fmt.Errorf("stream handler is nil")
+			fmt.Fprintln(c.output)
+			if ctx.Err() == nil {
+				fmt.Fprintln(c.errOutput, "error:", err)
+			}
+			return err
+		}
 		_, err := handler(ctx, c.sessionID, line, w)
 		fmt.Fprintln(c.output)
 		if err != nil && ctx.Err() == nil {

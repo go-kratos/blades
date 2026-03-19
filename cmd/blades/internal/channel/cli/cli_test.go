@@ -92,6 +92,33 @@ func TestChannelOptionsAndSimpleMode(t *testing.T) {
 	}
 }
 
+func TestSimpleModeRejectsNilHandler(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	if _, err := w.WriteString("hello\n"); err != nil {
+		t.Fatalf("stdin write: %v", err)
+	}
+	_ = w.Close()
+
+	var startErr error
+	_, errOut := captureStdIO(t, func() {
+		ch := New("session-1",
+			WithNoAltScreen(),
+			WithIO(r, os.Stdout, os.Stderr),
+		)
+		startErr = ch.Start(context.Background(), nil)
+	})
+
+	if startErr == nil || !strings.Contains(startErr.Error(), "stream handler is nil") {
+		t.Fatalf("Start nil handler error = %v", startErr)
+	}
+	if !strings.Contains(errOut, "stream handler is nil") {
+		t.Fatalf("stderr = %q", errOut)
+	}
+}
+
 func TestModelRenderingAndHelpers(t *testing.T) {
 	mod := newModel(context.Background(), func(context.Context, string, string, channel.Writer) (string, error) {
 		return "ok", nil

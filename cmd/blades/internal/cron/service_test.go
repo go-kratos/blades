@@ -53,12 +53,11 @@ func TestFormatJobAtPast(t *testing.T) {
 	j := &Job{
 		ID:       "abc",
 		Name:     "ls after 2min",
-		Schedule: Schedule{Kind: ScheduleAt, AtMs: 120_000},
-		State:    JobState{NextRunAtMs: 0},
+		Schedule: Schedule{Kind: ScheduleAt, At: time.Unix(120, 0).UTC()},
 	}
 	out := FormatJob(j)
 	if !strings.Contains(out, "at (past)") {
-		t.Errorf("FormatJob with past AtMs should contain %q, got %q", "at (past)", out)
+		t.Errorf("FormatJob with past At should contain %q, got %q", "at (past)", out)
 	}
 	if strings.Contains(out, "1970-01-01") {
 		t.Errorf("FormatJob should not show Unix zero time, got %q", out)
@@ -78,8 +77,8 @@ func TestServiceTimerFires(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	defer svc.Stop()
-	runAt := time.Now().Add(50 * time.Millisecond).UnixMilli()
-	_, err := svc.AddJob(ctx, "soon", Schedule{Kind: ScheduleAt, AtMs: runAt}, Payload{Kind: PayloadExec, Command: "true"}, false)
+	runAt := time.Now().Add(50 * time.Millisecond)
+	_, err := svc.AddJob(ctx, "soon", Schedule{Kind: ScheduleAt, At: runAt}, Payload{Kind: PayloadExec, Command: "true"}, false)
 	if err != nil {
 		t.Fatalf("AddJob: %v", err)
 	}
@@ -124,8 +123,8 @@ func TestServiceWatchFileReloadsWhenMtimeUnchanged(t *testing.T) {
 	}
 	defer svc.Stop()
 
-	now := time.Now().UnixMilli()
-	runAt := now + 120
+	now := time.Now()
+	runAt := now.Add(120 * time.Millisecond)
 	external := map[string]any{
 		"version": 1,
 		"jobs": []any{map[string]any{
@@ -134,17 +133,17 @@ func TestServiceWatchFileReloadsWhenMtimeUnchanged(t *testing.T) {
 			"enabled": true,
 			"schedule": map[string]any{
 				"kind": "at",
-				"atMs": runAt,
+				"at":   runAt,
 			},
 			"payload": map[string]any{
 				"kind":    "exec",
 				"command": "true",
 			},
 			"state": map[string]any{
-				"nextRunAtMs": runAt,
+				"nextRunAt": runAt,
 			},
-			"createdAtMs":    now,
-			"updatedAtMs":    now,
+			"createdAt":      now,
+			"updatedAt":      now,
 			"deleteAfterRun": false,
 		}},
 	}

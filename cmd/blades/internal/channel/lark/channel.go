@@ -10,7 +10,6 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
@@ -38,9 +37,10 @@ type Channel struct {
 	sessions sync.Map // messageID -> *sessionState
 
 	// message de-duplication for retried/replayed events
-	processedMessages sync.Map // messageID -> first seen unix nanos
+	processedMessages sync.Map // messageID -> first seen time.Time
 	dedupeTTL         time.Duration
-	lastPruneAt       int64
+	pruneMu           sync.Mutex
+	lastPruneAt       time.Time
 
 	// command handling
 	cmdProc      *command.Processor
@@ -155,6 +155,9 @@ func (c *Channel) Start(ctx context.Context, handler channel.StreamHandler) erro
 
 // handleMessage processes a received message.
 func (c *Channel) handleMessage(ctx context.Context, event *larkim.P2MessageReceiveV1, handler channel.StreamHandler) error {
+	if event == nil || event.Event == nil {
+		return nil
+	}
 	message := event.Event.Message
 	if message == nil {
 		return nil
@@ -198,6 +201,9 @@ func (c *Channel) handleMessage(ctx context.Context, event *larkim.P2MessageRece
 	}()
 
 	// Process the message with the handler
+	if handler == nil {
+		return fmt.Errorf("stream handler is nil")
+	}
 	_, err := handler(ctx, sessionID, content, writer)
 	if err != nil {
 		// Send error message
@@ -264,35 +270,34 @@ func (c *Channel) markMessageIfNew(messageID string, now time.Time) bool {
 		c.dedupeTTL = 2 * time.Minute
 	}
 
-	nowNanos := now.UnixNano()
-	if _, loaded := c.processedMessages.LoadOrStore(messageID, nowNanos); loaded {
+	if _, loaded := c.processedMessages.LoadOrStore(messageID, now); loaded {
 		// Already seen this message (within or past TTL); do not reprocess.
-		c.pruneProcessedMessages(nowNanos)
+		c.pruneProcessedMessages(now)
 		return false
 	}
 
-	c.pruneProcessedMessages(nowNanos)
+	c.pruneProcessedMessages(now)
 	return true
 }
 
-func (c *Channel) pruneProcessedMessages(nowNanos int64) {
-	interval := c.dedupeTTL.Nanoseconds()
+func (c *Channel) pruneProcessedMessages(now time.Time) {
+	interval := c.dedupeTTL
 	if interval <= 0 {
-		interval = (2 * time.Minute).Nanoseconds()
+		interval = 2 * time.Minute
 	}
 
-	last := atomic.LoadInt64(&c.lastPruneAt)
-	if last != 0 && nowNanos-last < interval {
+	c.pruneMu.Lock()
+	if !c.lastPruneAt.IsZero() && now.Sub(c.lastPruneAt) < interval {
+		c.pruneMu.Unlock()
 		return
 	}
-	if !atomic.CompareAndSwapInt64(&c.lastPruneAt, last, nowNanos) {
-		return
-	}
+	c.lastPruneAt = now
+	c.pruneMu.Unlock()
 
-	cutoff := nowNanos - interval
+	cutoff := now.Add(-interval)
 	c.processedMessages.Range(func(key, value any) bool {
-		firstSeen, ok := value.(int64)
-		if !ok || firstSeen < cutoff {
+		firstSeen, ok := value.(time.Time)
+		if !ok || firstSeen.Before(cutoff) {
 			c.processedMessages.Delete(key)
 		}
 		return true

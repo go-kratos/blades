@@ -68,6 +68,21 @@ func TestContextCompressor_MaxTokens(t *testing.T) {
 	}
 }
 
+func TestContextCompressor_MaxTokens_UsesDefaultCounter(t *testing.T) {
+	c := window.NewContextCompressor(window.WithMaxTokens(1))
+	msgs := makeMessages(5)
+	got, err := c.Compress(context.Background(), msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) < 1 {
+		t.Errorf("should keep at least 1 message, got 0")
+	}
+	if len(got) >= len(msgs) {
+		t.Errorf("should have truncated, len = %d", len(got))
+	}
+}
+
 func TestContextCompressor_Empty(t *testing.T) {
 	c := window.NewContextCompressor(window.WithMaxMessages(5))
 	got, err := c.Compress(context.Background(), nil)

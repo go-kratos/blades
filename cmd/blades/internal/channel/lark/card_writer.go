@@ -66,20 +66,25 @@ func NewCardWriter(ctx context.Context, client *lark.Client, messageID, chatID, 
 // WriteText implements channel.Writer.
 func (w *CardWriter) WriteText(chunk string) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	w.textBuf.WriteString(chunk)
+	sendReaction := false
 
 	// Send OK reaction on first write
 	if !w.reactionSent {
 		w.reactionSent = true
-		go w.sendReaction("👍")
+		sendReaction = true
 	}
 
 	if w.flushTimer == nil {
 		w.flushTimer = time.AfterFunc(w.flushInterval, w.flush)
 	} else {
 		w.flushTimer.Reset(w.flushInterval)
+	}
+	w.mu.Unlock()
+
+	if sendReaction {
+		_ = w.sendReaction("👍")
 	}
 }
 
@@ -249,13 +254,17 @@ func (w *CardWriter) sendReaction(emoji string) error {
 
 // deleteReaction removes the reaction from the message.
 func (w *CardWriter) deleteReaction() error {
-	if w.reactionID == "" {
+	w.mu.Lock()
+	reactionID := w.reactionID
+	w.mu.Unlock()
+
+	if reactionID == "" {
 		return nil
 	}
 
 	req := larkim.NewDeleteMessageReactionReqBuilder().
 		MessageId(w.messageID).
-		ReactionId(w.reactionID).
+		ReactionId(reactionID).
 		Build()
 
 	_, err := w.client.Im.MessageReaction.Delete(w.ctx, req)
@@ -267,13 +276,18 @@ func (w *CardWriter) deleteReaction() error {
 func (w *CardWriter) Close() error {
 	var err error
 	w.closeOnce.Do(func() {
+		w.mu.Lock()
+		reactionSent := w.reactionSent
+		flushTimer := w.flushTimer
+		w.mu.Unlock()
+
 		close(w.done)
-		if w.flushTimer != nil {
-			w.flushTimer.Stop()
+		if flushTimer != nil {
+			flushTimer.Stop()
 		}
 
 		// Remove OK reaction
-		if w.reactionSent {
+		if reactionSent {
 			_ = w.deleteReaction()
 		}
 

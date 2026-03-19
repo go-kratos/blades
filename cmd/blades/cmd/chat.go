@@ -3,8 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	appcore "github.com/go-kratos/blades/cmd/blades/internal/app"
@@ -24,7 +24,7 @@ func newChatCmd() *cobra.Command {
 				appcore.ConfigureRuntimeCron(rt, nil)
 
 				if sessionID == "" {
-					sessionID = fmt.Sprintf("chat-%d", time.Now().Unix())
+					sessionID = fmt.Sprintf("chat-%s", uuid.NewString()[:8])
 				}
 
 				handler := appcore.NewTurnExecutor(rt.Runner, rt.Sessions, appcore.TurnOptions{

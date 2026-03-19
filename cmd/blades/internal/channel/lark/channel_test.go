@@ -1,8 +1,13 @@
 package lark
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
+
+	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
 func TestChannelName(t *testing.T) {
@@ -61,5 +66,36 @@ func TestSetSessionOverridesChatSession(t *testing.T) {
 
 	if got := ch.getOrCreateSession("chat-1", "p2p"); got != "custom-session" {
 		t.Fatalf("overridden session = %q, want %q", got, "custom-session")
+	}
+}
+
+func TestHandleMessageIgnoresNilEvent(t *testing.T) {
+	ch := New()
+
+	if err := ch.handleMessage(context.Background(), nil, nil); err != nil {
+		t.Fatalf("handleMessage(nil): %v", err)
+	}
+	if err := ch.handleMessage(context.Background(), &larkim.P2MessageReceiveV1{}, nil); err != nil {
+		t.Fatalf("handleMessage(nil event data): %v", err)
+	}
+}
+
+func TestHandleMessageRejectsNilHandler(t *testing.T) {
+	ch := New()
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				MessageId:   larkcore.StringPtr("msg-1"),
+				ChatId:      larkcore.StringPtr("chat-1"),
+				ChatType:    larkcore.StringPtr("p2p"),
+				MessageType: larkcore.StringPtr("text"),
+				Content:     larkcore.StringPtr(`{"text":"hello"}`),
+			},
+		},
+	}
+
+	err := ch.handleMessage(context.Background(), event, nil)
+	if err == nil || !strings.Contains(err.Error(), "stream handler is nil") {
+		t.Fatalf("handleMessage nil handler error = %v", err)
 	}
 }

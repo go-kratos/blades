@@ -75,15 +75,11 @@ func TestCronToolAdditionalBranches(t *testing.T) {
 	ctx := blades.NewSessionContext(context.Background(), &fixedIDSession{id: "chat-ctx"})
 
 	added, err := tool.add(ctx, cronInput{
-		Name: "ctx-session",
-		Schedule: &cronScheduleInput{
-			Type:         "every",
-			EverySeconds: 60,
-		},
-		Task: &cronTaskInput{
-			Type:   "agent",
-			Prompt: "ping",
-		},
+		Name:         "ctx-session",
+		ScheduleType: "every",
+		EverySeconds: 60,
+		TaskType:     "agent",
+		Prompt:       "ping",
 	})
 	if err != nil {
 		t.Fatalf("add agent-turn job: %v", err)
@@ -101,66 +97,61 @@ func TestCronToolAdditionalBranches(t *testing.T) {
 	}
 
 	if _, err := tool.add(context.Background(), cronInput{
-		Name:     "missing-at",
-		Schedule: &cronScheduleInput{Type: "at"},
-		Task:     &cronTaskInput{Type: "agent", Prompt: "x"},
+		Name:         "missing-at",
+		ScheduleType: "at",
+		TaskType:     "agent",
+		Prompt:       "x",
 	}); err == nil {
-		t.Fatal("expected missing at_ms error")
+		t.Fatal("expected missing at error")
 	}
 	if _, err := tool.add(context.Background(), cronInput{
-		Name:     "missing-every",
-		Schedule: &cronScheduleInput{Type: "every"},
-		Task:     &cronTaskInput{Type: "agent", Prompt: "x"},
+		Name:         "missing-every",
+		ScheduleType: "every",
+		TaskType:     "agent",
+		Prompt:       "x",
 	}); err == nil {
 		t.Fatal("expected missing every_seconds error")
 	}
 	if _, err := tool.add(context.Background(), cronInput{
-		Name: "bad-cron",
-		Schedule: &cronScheduleInput{
-			Type:     "cron",
-			CronExpr: "bad",
-		},
-		Task: &cronTaskInput{Type: "agent", Prompt: "x"},
+		Name:         "bad-cron",
+		ScheduleType: "cron",
+		CronExpr:     "bad",
+		TaskType:     "agent",
+		Prompt:       "x",
 	}); err == nil {
 		t.Fatal("expected invalid cron expr error")
 	}
 	if _, err := tool.add(context.Background(), cronInput{
-		Name: "missing-command",
-		Schedule: &cronScheduleInput{
-			Type:         "every",
-			EverySeconds: 1,
-		},
-		Task: &cronTaskInput{Type: "exec"},
+		Name:         "missing-command",
+		ScheduleType: "every",
+		EverySeconds: 1,
+		TaskType:     "exec",
 	}); err == nil {
 		t.Fatal("expected missing command error")
 	}
 	if _, err := tool.add(context.Background(), cronInput{
-		Name: "missing-prompt",
-		Schedule: &cronScheduleInput{
-			Type:         "every",
-			EverySeconds: 1,
-		},
-		Task: &cronTaskInput{Type: "agent"},
+		Name:         "missing-prompt",
+		ScheduleType: "every",
+		EverySeconds: 1,
+		TaskType:     "agent",
 	}); err == nil {
 		t.Fatal("expected missing prompt error")
 	}
 	if _, err := tool.add(context.Background(), cronInput{
-		Name: "missing-chat-target",
-		Schedule: &cronScheduleInput{
-			Type:         "every",
-			EverySeconds: 1,
-		},
-		Task: &cronTaskInput{Type: "notify", Text: "x"},
+		Name:         "missing-chat-target",
+		ScheduleType: "every",
+		EverySeconds: 1,
+		TaskType:     "notify",
+		Text:         "x",
 	}); err == nil {
 		t.Fatal("expected missing chat target error")
 	}
 	if _, err := tool.add(context.Background(), cronInput{
-		Name: "bad-task",
-		Schedule: &cronScheduleInput{
-			Type:         "every",
-			EverySeconds: 1,
-		},
-		Task: &cronTaskInput{Type: "weird", Prompt: "x"},
+		Name:         "bad-task",
+		ScheduleType: "every",
+		EverySeconds: 1,
+		TaskType:     "weird",
+		Prompt:       "x",
 	}); err == nil {
 		t.Fatal("expected unknown task type error")
 	}

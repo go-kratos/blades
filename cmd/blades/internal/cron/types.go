@@ -4,11 +4,13 @@
 
 package cron
 
+import "time"
+
 // ScheduleKind identifies how a job is scheduled.
 type ScheduleKind string
 
 const (
-	// ScheduleAt fires the job once at an absolute Unix-millisecond timestamp.
+	// ScheduleAt fires the job once at an absolute time.
 	ScheduleAt ScheduleKind = "at"
 	// ScheduleEvery repeats the job on a fixed interval.
 	ScheduleEvery ScheduleKind = "every"
@@ -32,8 +34,8 @@ const (
 type Schedule struct {
 	Kind ScheduleKind `json:"kind" yaml:"kind"`
 
-	// AtMs is the target Unix timestamp in milliseconds (kind=at).
-	AtMs int64 `json:"atMs,omitempty" yaml:"atMs,omitempty"`
+	// At is the target time (kind=at).
+	At time.Time `json:"at,omitempty" yaml:"at,omitempty"`
 
 	// EveryMs is the repeat interval in milliseconds (kind=every).
 	EveryMs int64 `json:"everyMs,omitempty" yaml:"everyMs,omitempty"`
@@ -68,24 +70,24 @@ type Payload struct {
 
 // JobState holds mutable runtime information updated after each execution.
 type JobState struct {
-	NextRunAtMs int64  `json:"nextRunAtMs,omitempty" yaml:"nextRunAtMs,omitempty"`
-	LastRunAtMs int64  `json:"lastRunAtMs,omitempty" yaml:"lastRunAtMs,omitempty"`
-	LastStatus  string `json:"lastStatus,omitempty" yaml:"lastStatus,omitempty"` // "ok" | "error"
-	LastError   string `json:"lastError,omitempty" yaml:"lastError,omitempty"`
-	LastOutput  string `json:"lastOutput,omitempty" yaml:"lastOutput,omitempty"`
+	NextRunAt  time.Time `json:"nextRunAt,omitempty" yaml:"nextRunAt,omitempty"`
+	LastRunAt  time.Time `json:"lastRunAt,omitempty" yaml:"lastRunAt,omitempty"`
+	LastStatus string    `json:"lastStatus,omitempty" yaml:"lastStatus,omitempty"` // "ok" | "error"
+	LastError  string    `json:"lastError,omitempty" yaml:"lastError,omitempty"`
+	LastOutput string    `json:"lastOutput,omitempty" yaml:"lastOutput,omitempty"`
 }
 
 // Job is a fully-described scheduled task.
 type Job struct {
-	ID             string   `json:"id" yaml:"id"`
-	Name           string   `json:"name" yaml:"name"`
-	Enabled        bool     `json:"enabled" yaml:"enabled"`
-	Schedule       Schedule `json:"schedule" yaml:"schedule"`
-	Payload        Payload  `json:"payload" yaml:"payload"`
-	State          JobState `json:"state" yaml:"state"`
-	CreatedAtMs    int64    `json:"createdAtMs" yaml:"createdAtMs"`
-	UpdatedAtMs    int64    `json:"updatedAtMs" yaml:"updatedAtMs"`
-	DeleteAfterRun bool     `json:"deleteAfterRun" yaml:"deleteAfterRun"`
+	ID             string    `json:"id" yaml:"id"`
+	Name           string    `json:"name" yaml:"name"`
+	Enabled        bool      `json:"enabled" yaml:"enabled"`
+	Schedule       Schedule  `json:"schedule" yaml:"schedule"`
+	Payload        Payload   `json:"payload" yaml:"payload"`
+	State          JobState  `json:"state" yaml:"state"`
+	CreatedAt      time.Time `json:"createdAt" yaml:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt" yaml:"updatedAt"`
+	DeleteAfterRun bool      `json:"deleteAfterRun" yaml:"deleteAfterRun"`
 }
 
 // store is the on-disk cron store envelope.

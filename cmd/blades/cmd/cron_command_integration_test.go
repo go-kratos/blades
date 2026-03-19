@@ -194,7 +194,7 @@ func TestParseScheduleFlagsAdditionalPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse delay schedule: %v", err)
 	}
-	if delay.Kind != cron.ScheduleAt || delay.AtMs != time.Date(2026, time.March, 18, 9, 0, 10, 0, time.UTC).UnixMilli() {
+	if delay.Kind != cron.ScheduleAt || !delay.At.Equal(time.Date(2026, time.March, 18, 9, 0, 10, 0, time.UTC)) {
 		t.Fatalf("delay schedule = %+v", delay)
 	}
 
