@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/internal/counter"
 )
 
 const defaultMaxMessages = 100
@@ -44,33 +43,15 @@ type contextCompressor struct {
 	counter     blades.TokenCounter
 }
 
-<<<<<<< HEAD
-// NewContextManager returns a ContextManager that keeps the most recent
-// messages within the configured token or message count limits. Messages are
-// dropped from the front (oldest first) when limits are exceeded.
-func NewContextManager(opts ...Option) blades.ContextManager {
-	cm := &contextManager{
-		maxMessages: defaultMaxMessages,
-		counter:     counter.NewCharBasedCounter(),
-	}
-=======
 // NewContextCompressor returns a ContextCompressor that keeps the most recent messages within the
 // configured token or message count limits. Messages are dropped from the
 // front (oldest first) when limits are exceeded.
 func NewContextCompressor(opts ...Option) blades.ContextCompressor {
 	c := &contextCompressor{maxMessages: defaultMaxMessages}
->>>>>>> origin
 	for _, opt := range opts {
 		opt(c)
 	}
-<<<<<<< HEAD
-	if cm.counter == nil {
-		cm.counter = counter.NewCharBasedCounter()
-	}
-	return cm
-=======
 	return c
->>>>>>> origin
 }
 
 // Compress retains the most recent messages that fit the configured limits.

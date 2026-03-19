@@ -216,48 +216,6 @@ func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) e
 	return nil
 }
 
-<<<<<<< HEAD
-// findResumeMessages checks if the invocation can be resumed from a previous state by looking for completed assistant messages in the session history.
-func (a *agent) findResumeMessages(invocation *Invocation) ([]*Message, bool) {
-	if !invocation.Resume || invocation.Session == nil {
-		return nil, false
-	}
-	resumeHistory := invocation.Session.History()
-	resumeMessages := make([]*Message, 0, len(resumeHistory))
-	for _, m := range resumeHistory {
-		if m.InvocationID != invocation.ID {
-			continue
-		}
-		if m.Author == a.name {
-			resumeMessages = append(resumeMessages, m)
-			// If we find a completed assistant message, we can resume from here.
-			if m.Role == RoleAssistant && m.Status == StatusCompleted {
-				return resumeMessages, true
-			}
-		}
-	}
-	return resumeMessages, false
-}
-
-func invocationMessages(invocation *Invocation) []*Message {
-	if invocation == nil {
-		return nil
-	}
-	if invocation.Session != nil {
-		history := invocation.Session.History()
-		if invocation.Message != nil {
-			return AppendMessages(history, invocation.Message)
-		}
-		return history
-	}
-	if invocation.Message != nil {
-		return []*Message{invocation.Message}
-	}
-	return nil
-}
-
-=======
->>>>>>> origin
 // Run runs the agent with the given prompt and options, returning a streamable response.
 func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
@@ -295,17 +253,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 				InputSchema:  a.inputSchema,
 				OutputSchema: a.outputSchema,
 			}
-<<<<<<< HEAD
-			switch {
-			case len(resumeMessages) > 0:
-				req.Messages = AppendMessages(req.Messages, resumeMessages...)
-			default:
-				req.Messages = AppendMessages(req.Messages, invocationMessages(invocation)...)
-			}
-			return a.handle(ctx, invocation, req)
-=======
 			return a.handle(ctx, session, invocation, req)
->>>>>>> origin
 		}))
 		if len(a.middlewares) > 0 {
 			handler = ChainMiddlewares(a.middlewares...)(handler)

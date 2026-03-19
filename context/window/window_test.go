@@ -68,45 +68,9 @@ func TestContextCompressor_MaxTokens(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-func TestContextManager_MaxTokens_DefaultCounter(t *testing.T) {
-	cm := window.NewContextManager(window.WithMaxTokens(1))
-	msgs := makeMessages(5)
-	got, err := cm.Prepare(context.Background(), msgs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) < 1 {
-		t.Errorf("should keep at least 1 message, got 0")
-	}
-	if len(got) >= len(msgs) {
-		t.Errorf("should have truncated with default counter, len = %d", len(got))
-	}
-}
-
-func TestContextManager_MaxTokens_NilCounterFallback(t *testing.T) {
-	cm := window.NewContextManager(
-		window.WithTokenCounter(nil),
-		window.WithMaxTokens(1),
-	)
-	msgs := makeMessages(5)
-	got, err := cm.Prepare(context.Background(), msgs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) < 1 {
-		t.Errorf("should keep at least 1 message, got 0")
-	}
-}
-
-func TestContextManager_Empty(t *testing.T) {
-	cm := window.NewContextManager(window.WithMaxMessages(5))
-	got, err := cm.Prepare(context.Background(), nil)
-=======
 func TestContextCompressor_Empty(t *testing.T) {
 	c := window.NewContextCompressor(window.WithMaxMessages(5))
 	got, err := c.Compress(context.Background(), nil)
->>>>>>> origin
 	if err != nil {
 		t.Fatal(err)
 	}
