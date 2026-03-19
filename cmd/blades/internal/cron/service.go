@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	robfigcron "github.com/robfig/cron/v3"
+	"gopkg.in/yaml.v3"
 )
 
 // nowMs returns the current time as a Unix millisecond timestamp.
@@ -465,15 +466,6 @@ func (s *Service) RunNow(ctx context.Context, id string) (string, error) {
 // ---- internal ---------------------------------------------------------------
 
 func (s *Service) loadLocked() error {
-	// BUG FIX 2: The original logic checked mtime to decide if a reload was needed, but then
-	// checked `s.st.Version != 0` to skip the actual disk read. This means a file that had been
-	// loaded (Version=1) would never be re-read even when mtime changed — because setting
-	// `s.st = store{}` resets Version to 0, but then the Version check exits before reading.
-	// The two conditions were logically correct when combined, but subtle: clear st on mtime
-	// change, then fall through to read when Version==0. The original code was actually correct
-	// but the watchFile goroutine bypasses this by forcibly clearing s.st before calling
-	// loadLocked. No change needed here — kept as-is for clarity.
-
 	if info, err := os.Stat(s.storePath); err == nil {
 		if mt := info.ModTime(); mt != s.lastMtime {
 			s.st = store{}
@@ -497,10 +489,15 @@ func (s *Service) loadLocked() error {
 		s.st = store{Version: 1}
 		return nil
 	}
-	if err := json.Unmarshal(data, &s.st); err != nil {
+	st, err := decodeStore(data, s.storePath)
+	if err != nil {
 		s.printf("cron: corrupt store, starting fresh: %v", err)
 		s.st = store{Version: 1}
 		return nil
+	}
+	s.st = st
+	if s.st.Version == 0 {
+		s.st.Version = 1
 	}
 	// Normalize legacy "once" jobs so they get a valid next run time.
 	now := s.nowMs()
@@ -521,20 +518,17 @@ func (s *Service) saveLocked() error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(s.st); err != nil {
+	data, err := encodeStore(s.st, s.storePath)
+	if err != nil {
 		return err
 	}
 	// Atomic write: write to temp file then rename to avoid partial reads.
-	tmp, err := os.CreateTemp(dir, ".cron-*.json.tmp")
+	tmp, err := os.CreateTemp(dir, cronTempPattern(s.storePath))
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
-	if _, err := tmp.Write(buf.Bytes()); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
 		return err
@@ -551,6 +545,65 @@ func (s *Service) saveLocked() error {
 		s.lastMtime = info.ModTime()
 	}
 	return nil
+}
+
+func cronTempPattern(path string) string {
+	if isYAMLStorePath(path) {
+		return ".cron-*.yaml.tmp"
+	}
+	return ".cron-*.json.tmp"
+}
+
+func isYAMLStorePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml":
+		return true
+	default:
+		return false
+	}
+}
+
+func decodeStore(data []byte, path string) (store, error) {
+	var st store
+	if err := unmarshalStore(data, path, &st); err == nil {
+		return st, nil
+	} else {
+		var fallbackErr error
+		if isYAMLStorePath(path) {
+			fallbackErr = json.Unmarshal(data, &st)
+		} else {
+			fallbackErr = yaml.Unmarshal(data, &st)
+		}
+		if fallbackErr == nil {
+			return st, nil
+		}
+		return store{}, fmt.Errorf("decode %s: %v; fallback: %w", path, err, fallbackErr)
+	}
+}
+
+func unmarshalStore(data []byte, path string, out *store) error {
+	if isYAMLStorePath(path) {
+		return yaml.Unmarshal(data, out)
+	}
+	return json.Unmarshal(data, out)
+}
+
+func encodeStore(st store, path string) ([]byte, error) {
+	if isYAMLStorePath(path) {
+		data, err := yaml.Marshal(st)
+		if err != nil {
+			return nil, err
+		}
+		return append(bytes.TrimRight(data, "\n"), '\n'), nil
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(st); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func (s *Service) nextWakeLocked() int64 {

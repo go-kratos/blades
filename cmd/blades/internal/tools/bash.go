@@ -15,17 +15,17 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// ExecConfig configures the exec tool behaviour.
+// ExecConfig configures the local tool behaviour.
 type ExecConfig struct {
 	// Timeout is the maximum time a command may run (default: 60s).
 	Timeout time.Duration
-	// WorkingDir is the default working directory.
+	// WorkingDir is the workspace root used by read/write/edit/bash.
 	WorkingDir string
-	// DenyPatterns are regex patterns for commands to block.
+	// DenyPatterns are regex patterns for bash commands to block.
 	DenyPatterns []string
-	// AllowPatterns, when non-empty, restricts commands to those matching at least one pattern.
+	// AllowPatterns, when non-empty, restrict bash commands to those matching at least one pattern.
 	AllowPatterns []string
-	// RestrictToWorkspace blocks path-traversal sequences when true.
+	// RestrictToWorkspace blocks workspace escapes when true.
 	RestrictToWorkspace bool
 }
 
@@ -42,11 +42,11 @@ func DefaultExecConfig(workingDir string) ExecConfig {
 			`\bdd\s+if=`,
 			`>\s*/dev/sd`,
 			`\b(shutdown|reboot|poweroff)\b`,
-			`:\(\)\s*\{.*\};\s*:`,   // fork bomb
-			`\b(export|set)\s+\w+=`, // env manipulation
-			`(?:^|[;&|]\s*)\benv\b`, // env dump
+			`:\(\)\s*\{.*\};\s*:`,
+			`\b(export|set)\s+\w+=`,
+			`(?:^|[;&|]\s*)\benv\b`,
 			`\b(printenv)\b`,
-			`\becho\s+["']?\$\{?\w`, // echo $VAR
+			`\becho\s+["']?\$\{?\w`,
 			`/etc/(passwd|shadow|sudoers)`,
 			`\~/?\.(ssh|aws|kube|gnupg)\b`,
 			`\b(id_rsa|id_ecdsa|id_ed25519|authorized_keys)\b`,
@@ -54,12 +54,13 @@ func DefaultExecConfig(workingDir string) ExecConfig {
 	}
 }
 
-type execInput struct {
+type bashInput struct {
 	Command    string `json:"command"`
 	WorkingDir string `json:"working_dir,omitempty"`
+	TimeoutMs  int    `json:"timeout_ms,omitempty"`
 }
 
-type execTool struct {
+type bashTool struct {
 	cfg        ExecConfig
 	denyRegex  []*regexp.Regexp
 	allowRegex []*regexp.Regexp
@@ -78,12 +79,12 @@ func compileRegexList(patterns []string) ([]*regexp.Regexp, error) {
 	return compiled, nil
 }
 
-// NewExecTool returns a tool that executes shell commands with safety guards.
-func NewExecTool(cfg ExecConfig) bladestools.Tool {
+// NewBashTool returns a tool that executes shell commands with safety guards.
+func NewBashTool(cfg ExecConfig) bladestools.Tool {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 60 * time.Second
 	}
-	t := &execTool{cfg: cfg}
+	t := &bashTool{cfg: cfg}
 	if denyRegex, err := compileRegexList(cfg.DenyPatterns); err != nil {
 		t.regexErr = err
 	} else {
@@ -94,47 +95,51 @@ func NewExecTool(cfg ExecConfig) bladestools.Tool {
 	} else {
 		t.allowRegex = allowRegex
 	}
-	inputSchema, _ := jsonschema.For[execInput](nil)
+	inputSchema, _ := jsonschema.For[bashInput](nil)
 	outputSchema, _ := jsonschema.For[string](nil)
 	return bladestools.NewTool(
-		"exec",
-		"Execute a shell command and return its combined stdout+stderr output. "+
-			"Use for file operations, running scripts, checking system state, etc.",
+		"bash",
+		"Execute a shell command and return combined stdout+stderr output. "+
+			"Use for commands and scripts. Do not use it for normal file reads or edits when read/write/edit are enough.",
 		bladestools.HandleFunc(t.handle),
 		bladestools.WithInputSchema(inputSchema),
 		bladestools.WithOutputSchema(outputSchema),
 	)
 }
 
-func (t *execTool) handle(ctx context.Context, raw string) (string, error) {
-	var in execInput
+func (t *bashTool) handle(ctx context.Context, raw string) (string, error) {
+	var in bashInput
 	if err := json.Unmarshal([]byte(raw), &in); err != nil {
-		return "", fmt.Errorf("exec: parse input: %w", err)
+		return "", fmt.Errorf("bash: parse input: %w", err)
 	}
-	if in.Command == "" {
-		return "", fmt.Errorf("exec: command is required")
+	if strings.TrimSpace(in.Command) == "" {
+		return "", fmt.Errorf("bash: command is required")
 	}
 
-	// Safety check.
 	if msg := t.guard(in.Command); msg != "" {
 		return msg, nil
 	}
-
-	cwd := in.WorkingDir
-	if cwd == "" {
-		cwd = t.cfg.WorkingDir
-	}
-	if cwd == "" {
-		cwd = "."
+	if t.cfg.RestrictToWorkspace && (strings.Contains(in.Command, "../") || strings.Contains(in.Command, `..\`)) {
+		return "Error: path traversal blocked by safety guard", nil
 	}
 
-	if t.cfg.RestrictToWorkspace {
-		if strings.Contains(in.Command, "../") || strings.Contains(in.Command, `..\\`) {
-			return "Error: path traversal blocked by safety guard", nil
+	cwd, err := resolveWorkingDir(t.cfg, in.WorkingDir)
+	if err != nil {
+		return "", fmt.Errorf("bash: %w", err)
+	}
+
+	timeout := t.cfg.Timeout
+	if in.TimeoutMs > 0 {
+		override := time.Duration(in.TimeoutMs) * time.Millisecond
+		if timeout <= 0 || override < timeout {
+			timeout = override
 		}
 	}
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
 
-	tCtx, cancel := context.WithTimeout(ctx, t.cfg.Timeout)
+	tCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(tCtx, "sh", "-c", in.Command)
@@ -143,7 +148,7 @@ func (t *execTool) handle(ctx context.Context, raw string) (string, error) {
 
 	out, err := cmd.CombinedOutput()
 	if tCtx.Err() == context.DeadlineExceeded {
-		return fmt.Sprintf("Error: command timed out after %s", t.cfg.Timeout), nil
+		return fmt.Sprintf("Error: command timed out after %s", timeout), nil
 	}
 	result := string(out)
 	if err != nil {
@@ -156,9 +161,9 @@ func (t *execTool) handle(ctx context.Context, raw string) (string, error) {
 	return result, nil
 }
 
-func (t *execTool) guard(command string) string {
+func (t *bashTool) guard(command string) string {
 	if t.regexErr != nil {
-		return "Error: exec tool misconfigured: " + t.regexErr.Error()
+		return "Error: bash tool misconfigured: " + t.regexErr.Error()
 	}
 
 	lower := strings.ToLower(strings.TrimSpace(command))

@@ -13,7 +13,7 @@
 - **流式对话** — 带动画 spinner，逐 token 流式输出，支持 ANSI 彩色
 - **持久记忆** — `MEMORY.md`（L1）、`memory/` 每日会话日志（L2）、知识文件（L3）
 - **技能系统** — 在任意 skills 目录放入 `SKILL.md`，Agent 自动发现
-- **Cron 调度** — 定时执行 Shell 或 Agent 对话，配置存于 `cron.json`
+- **Cron 调度** — 定时执行 Shell 或 Agent 对话，配置存于 `cron.yaml`
 - **Daemon 模式** — 常驻进程运行调度器与可选通道（如 Lark）
 - **多 LLM** — Anthropic、OpenAI、Google Gemini，在 `agent.yaml` 中切换
 
@@ -51,7 +51,7 @@ blades chat
 ```
 ~/.blades/                    ← 根目录（home）
 ├── agent.yaml
-├── cron.json
+├── cron.yaml
 ├── skills/
 ├── sessions/
 ├── logs/                     ← 运行日志 YYYY-MM-DD.log

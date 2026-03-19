@@ -86,7 +86,7 @@ func TestWorkspaceDefaultLayout(t *testing.T) {
 	if got := ws.Root(); got != ws.WorkspaceDir() {
 		t.Fatalf("Root = %q, want %q", got, ws.WorkspaceDir())
 	}
-	if got := ws.CronStorePath(); got != filepath.Join(home, "cron.json") {
+	if got := ws.CronStorePath(); got != filepath.Join(home, "cron.yaml") {
 		t.Fatalf("CronStorePath = %q", got)
 	}
 }

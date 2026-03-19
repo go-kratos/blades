@@ -141,7 +141,7 @@ func currentChatSessionID(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
-	if sess, ok := blades.FromSessionContext(ctx); ok && sess != nil {
+	if sess, ok := blades.SessionFromContext(ctx); ok && sess != nil {
 		return strings.TrimSpace(sess.ID())
 	}
 	return ""

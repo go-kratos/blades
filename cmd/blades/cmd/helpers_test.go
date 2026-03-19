@@ -84,8 +84,12 @@ func (a *historyAwareMathAgent) Run(_ context.Context, inv *blades.Invocation) b
 		case "1+1=?":
 			reply = "2"
 		case "再加一呢":
-			history := inv.Session.History()
-			if len(history) >= 3 && history[0].Text() == "1+1=?" && history[1].Text() == "2" && history[2].Text() == "再加一呢" {
+			history, err := inv.Session.History(context.Background())
+			if err != nil {
+				reply = "missing context"
+				break
+			}
+			if len(history) >= 2 && history[0].Text() == "1+1=?" && history[1].Text() == "2" {
 				reply = "3"
 			}
 		}
@@ -142,7 +146,7 @@ func TestBuildToolRegistryRegistersRecipeTools(t *testing.T) {
 
 	registry := appcore.BuildToolRegistry(bldtools.DefaultExecConfig(t.TempDir()), nil)
 
-	for _, name := range []string{"exec", "cron", "exit"} {
+	for _, name := range []string{"read", "write", "edit", "bash", "cron", "exit"} {
 		if _, err := registry.Resolve(name); err != nil {
 			t.Fatalf("expected tool %q to be registered: %v", name, err)
 		}
@@ -182,8 +186,14 @@ func TestLoadAgentSpecDefaultMatchesRecipeSpec(t *testing.T) {
 	if spec.SubAgents[0].Name != "action" || spec.SubAgents[1].Name != "review" {
 		t.Fatalf("default sub_agent names = %q, %q", spec.SubAgents[0].Name, spec.SubAgents[1].Name)
 	}
-	if got, want := spec.SubAgents[0].Tools, []string{"exec", "cron"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	if got, want := spec.SubAgents[0].Tools, []string{"read", "write", "edit", "bash", "cron"}; len(got) != len(want) {
 		t.Fatalf("default action tools = %v, want %v", got, want)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("default action tools = %v, want %v", got, want)
+			}
+		}
 	}
 	if got, want := spec.SubAgents[1].Tools, []string{"exit"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("default review tools = %v, want %v", got, want)
@@ -237,7 +247,11 @@ func TestMakeTriggerPersistsSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload session: %v", err)
 	}
-	if got := len(reloaded.History()); got == 0 {
+	history, err := reloaded.History(context.Background())
+	if err != nil {
+		t.Fatalf("reloaded history: %v", err)
+	}
+	if got := len(history); got == 0 {
 		t.Fatalf("expected persisted session history, got %d messages", got)
 	}
 }
@@ -302,7 +316,11 @@ func TestSimpleChatChannelPreservesContextAcrossTurns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload session: %v", err)
 	}
-	if got := len(reloaded.History()); got != 4 {
+	history, err := reloaded.History(context.Background())
+	if err != nil {
+		t.Fatalf("reloaded history: %v", err)
+	}
+	if got := len(history); got != 4 {
 		t.Fatalf("history len = %d, want 4", got)
 	}
 }

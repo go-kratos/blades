@@ -22,7 +22,7 @@ func (s *fixedIDSession) State() blades.State { return nil }
 
 func (s *fixedIDSession) SetState(string, any) {}
 
-func (s *fixedIDSession) History() []*blades.Message { return nil }
+func (s *fixedIDSession) History(context.Context) ([]*blades.Message, error) { return nil, nil }
 
 func (s *fixedIDSession) Append(context.Context, *blades.Message) error { return nil }
 

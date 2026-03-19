@@ -286,11 +286,11 @@ func TestCronAddSupportsDelayFlag(t *testing.T) {
 		t.Fatalf("cron add with --delay: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(workspaceDir, "cron.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(workspaceDir, "cron.yaml")); err == nil {
 		t.Fatalf("cron store should not be written to workspace directory %q", workspaceDir)
 	}
 
-	storePath := filepath.Join(newHome, ".blades", "cron.json")
+	storePath := filepath.Join(newHome, ".blades", "cron.yaml")
 	svc := cron.NewService(storePath, nil)
 	jobs, err := svc.ListJobs(true)
 	if err != nil {

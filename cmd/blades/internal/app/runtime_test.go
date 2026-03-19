@@ -83,7 +83,11 @@ func TestTurnExecutorRunPersistsSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload session: %v", err)
 	}
-	if got := len(reloaded.History()); got == 0 {
+	history, err := reloaded.History(context.Background())
+	if err != nil {
+		t.Fatalf("reloaded history: %v", err)
+	}
+	if got := len(history); got == 0 {
 		t.Fatalf("expected persisted session history, got %d messages", got)
 	}
 }

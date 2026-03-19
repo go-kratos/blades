@@ -73,16 +73,16 @@ func TestMiddlewareAttemptsExecConfigAndToolRegistry(t *testing.T) {
 		t.Fatalf("allow patterns = %v", execCfg.AllowPatterns)
 	}
 
-	extraTool := bladestools.NewTool("exec", "override", bladestools.HandleFunc(func(context.Context, string) (string, error) {
+	extraTool := bladestools.NewTool("bash", "override", bladestools.HandleFunc(func(context.Context, string) (string, error) {
 		return `{"ok":true}`, nil
 	}))
 	registry := appcore.BuildToolRegistry(execCfg, nil, nil, extraTool)
-	gotTool, err := registry.Resolve("exec")
+	gotTool, err := registry.Resolve("bash")
 	if err != nil {
-		t.Fatalf("Resolve(exec): %v", err)
+		t.Fatalf("Resolve(bash): %v", err)
 	}
 	if gotTool.Description() != "override" {
-		t.Fatalf("exec tool description = %q, want override", gotTool.Description())
+		t.Fatalf("bash tool description = %q, want override", gotTool.Description())
 	}
 }
 

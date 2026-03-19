@@ -10,6 +10,17 @@ import (
 	"github.com/go-kratos/blades"
 )
 
+type keepLastMessages struct {
+	max int
+}
+
+func (k keepLastMessages) Compress(_ context.Context, messages []*blades.Message) ([]*blades.Message, error) {
+	if len(messages) <= k.max {
+		return messages, nil
+	}
+	return messages[len(messages)-k.max:], nil
+}
+
 func TestManagerGetOrNewUsesRequestedSessionID(t *testing.T) {
 	t.Parallel()
 
@@ -69,7 +80,10 @@ func TestManagerSaveAndReloadPreservesHistory(t *testing.T) {
 		t.Fatalf("reloaded state = %v, want %v", got, want)
 	}
 
-	history := reloaded.History()
+	history, err := reloaded.History(context.Background())
+	if err != nil {
+		t.Fatalf("reloaded history: %v", err)
+	}
 	if got, want := len(history), 2; got != want {
 		t.Fatalf("history len = %d, want %d", got, want)
 	}
@@ -165,5 +179,49 @@ func TestManagerGetReturnsErrorForCorruptSessionFile(t *testing.T) {
 
 	if _, err := NewManager(dir).Get("broken"); err == nil {
 		t.Fatal("expected corrupt session file to return an error")
+	}
+}
+
+func TestManagerSavePersistsRawHistoryWhenContextCompressionIsEnabled(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	mgr := NewManager(dir, blades.WithContextCompressor(keepLastMessages{max: 1}))
+	sess := mgr.GetOrNew("chat")
+
+	for _, text := range []string{"one", "two", "three"} {
+		if err := sess.Append(context.Background(), blades.UserMessage(text)); err != nil {
+			t.Fatalf("append %q: %v", text, err)
+		}
+	}
+
+	compressed, err := sess.History(context.Background())
+	if err != nil {
+		t.Fatalf("compressed history: %v", err)
+	}
+	if got, want := len(compressed), 1; got != want {
+		t.Fatalf("compressed history len = %d, want %d", got, want)
+	}
+
+	if err := mgr.Save(sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	reloaded, err := NewManager(dir).Get("chat")
+	if err != nil {
+		t.Fatalf("reload session without compressor: %v", err)
+	}
+	history, err := reloaded.History(context.Background())
+	if err != nil {
+		t.Fatalf("reloaded history: %v", err)
+	}
+	if got, want := len(history), 3; got != want {
+		t.Fatalf("reloaded raw history len = %d, want %d", got, want)
+	}
+	if got, want := history[0].Text(), "one"; got != want {
+		t.Fatalf("first reloaded text = %q, want %q", got, want)
+	}
+	if got, want := history[2].Text(), "three"; got != want {
+		t.Fatalf("last reloaded text = %q, want %q", got, want)
 	}
 }

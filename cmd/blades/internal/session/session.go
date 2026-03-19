@@ -52,8 +52,9 @@ type persistedPart struct {
 }
 
 type managedSession struct {
-	id   string
-	base blades.Session
+	id         string
+	base       blades.Session
+	rawHistory []*blades.Message
 }
 
 func (s *managedSession) ID() string { return s.id }
@@ -62,10 +63,16 @@ func (s *managedSession) State() blades.State { return s.base.State() }
 
 func (s *managedSession) SetState(key string, value any) { s.base.SetState(key, value) }
 
-func (s *managedSession) History() []*blades.Message { return s.base.History() }
+func (s *managedSession) History(ctx context.Context) ([]*blades.Message, error) {
+	return s.base.History(ctx)
+}
 
 func (s *managedSession) Append(ctx context.Context, message *blades.Message) error {
-	return s.base.Append(ctx, message)
+	if err := s.base.Append(ctx, message); err != nil {
+		return err
+	}
+	s.rawHistory = append(s.rawHistory, message)
+	return nil
 }
 
 // Manager manages CLI sessions with optional file persistence.
@@ -73,14 +80,22 @@ type Manager struct {
 	dir string
 	mu  sync.Mutex
 	// in-memory sessions keyed by id
-	sessions map[string]blades.Session
+	sessions    map[string]blades.Session
+	sessionOpts []blades.SessionOption
 }
 
 // NewManager creates a Manager that persists sessions to dir.
-func NewManager(dir string) *Manager {
+func NewManager(dir string, opts ...blades.SessionOption) *Manager {
+	filtered := make([]blades.SessionOption, 0, len(opts))
+	for _, opt := range opts {
+		if opt != nil {
+			filtered = append(filtered, opt)
+		}
+	}
 	return &Manager{
-		dir:      dir,
-		sessions: make(map[string]blades.Session),
+		dir:         dir,
+		sessions:    make(map[string]blades.Session),
+		sessionOpts: filtered,
 	}
 }
 
@@ -98,7 +113,7 @@ func (m *Manager) Get(id string) (blades.Session, error) {
 	sess, err := m.loadFromDisk(id)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			sess = newManagedSession(id, nil, nil)
+			sess = newManagedSession(id, nil, nil, m.sessionOpts...)
 		} else {
 			return nil, err
 		}
@@ -135,14 +150,19 @@ func (m *Manager) Save(sess blades.Session) error {
 	if createdAt.IsZero() {
 		createdAt = now
 	}
+	history, err := historyForPersistence(sess)
+	if err != nil {
+		return fmt.Errorf("session: collect history: %w", err)
+	}
 
 	ps := persistedSession{
 		ID:           sess.ID(),
 		CreatedAt:    createdAt,
 		LastAccessAt: now,
 		State:        sess.State(),
-		History:      makePersistedHistory(sess.History()),
+		History:      makePersistedHistory(history),
 	}
+
 	data, err := json.MarshalIndent(ps, "", "  ")
 	if err != nil {
 		return fmt.Errorf("session: marshal: %w", err)
@@ -165,7 +185,7 @@ func (m *Manager) loadFromDisk(id string) (blades.Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session: decode history %s: %w", id, err)
 	}
-	return newManagedSession(id, ps.State, history), nil
+	return newManagedSession(id, ps.State, history, m.sessionOpts...), nil
 }
 
 // SessionInfo holds metadata for a persisted session (for listing and archival).
@@ -233,15 +253,33 @@ func (m *Manager) Delete(id string) error {
 	return nil
 }
 
-func newManagedSession(id string, state map[string]any, history []*blades.Message) blades.Session {
-	base := blades.NewSession(state)
+func newManagedSession(id string, state map[string]any, history []*blades.Message, opts ...blades.SessionOption) blades.Session {
+	base := blades.NewSession(opts...)
+	for key, value := range state {
+		base.SetState(key, value)
+	}
 	for _, message := range history {
 		if err := base.Append(context.Background(), message); err != nil {
 			// Log the error but continue loading other messages to avoid losing the entire session
 			fmt.Fprintf(os.Stderr, "warn: session %s: failed to append message %s: %v\n", id, message.ID, err)
 		}
 	}
-	return &managedSession{id: id, base: base}
+	return &managedSession{
+		id:         id,
+		base:       base,
+		rawHistory: append([]*blades.Message(nil), history...),
+	}
+}
+
+func historyForPersistence(sess blades.Session) ([]*blades.Message, error) {
+	if managed, ok := sess.(*managedSession); ok {
+		return append([]*blades.Message(nil), managed.rawHistory...), nil
+	}
+	history, err := sess.History(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return history, nil
 }
 
 func makePersistedHistory(history []*blades.Message) []persistedMessage {

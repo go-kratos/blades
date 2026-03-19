@@ -20,7 +20,7 @@ var templateFS embed.FS
 //
 //	├── config.yaml          provider credentials and defaults
 //	├── agent.yaml           agent recipe (model ref, workflow, tools)
-//	├── cron.json            scheduled tasks
+//	├── cron.yaml            scheduled tasks
 //	├── skills/              global skills (shared across workspaces)
 //	├── sessions/            conversation session files
 //	└── logs/                runtime logs
@@ -84,8 +84,8 @@ func (w *Workspace) ConfigPath() string { return filepath.Join(w.home, "config.y
 // AgentPath returns the path to ~/.blades/agent.yaml.
 func (w *Workspace) AgentPath() string { return filepath.Join(w.home, "agent.yaml") }
 
-// CronStorePath returns the path to the cron jobs store file.
-func (w *Workspace) CronStorePath() string { return filepath.Join(w.home, "cron.json") }
+// CronStorePath returns the preferred path to the cron jobs store file.
+func (w *Workspace) CronStorePath() string { return filepath.Join(w.home, "cron.yaml") }
 
 // SkillsDir returns the global skills directory.
 func (w *Workspace) SkillsDir() string { return filepath.Join(w.home, "skills") }

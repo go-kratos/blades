@@ -24,7 +24,7 @@ channels:
     # verificationToken: ${LARK_VERIFICATION_TOKEN}
   # weixin: {}  # not yet supported
 
-# exec: exec tool security settings (optional).
+# exec: local tool security settings for bash/read/write/edit (optional).
 # exec:
 #   timeoutSeconds: 60
 #   restrictToWorkspace: false

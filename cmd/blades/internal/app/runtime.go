@@ -53,7 +53,10 @@ type turnRecorder struct {
 }
 
 func BuildRuntime(cfg *config.Config, ws *workspace.Workspace, mem *memory.Store) (*Runtime, error) {
-	sessMgr := session.NewManager(ws.SessionsDir())
+	sessMgr, err := BuildSessionManager(cfg, ws)
+	if err != nil {
+		return nil, err
+	}
 	cronSvc := cron.NewService(ws.CronStorePath(), nil)
 	runner, err := BuildRunner(cfg, ws, cronSvc)
 	if err != nil {
@@ -261,8 +264,39 @@ func runTurn(ctx context.Context, runner *blades.Runner, sessMgr *session.Manage
 
 	reply := collector.reply()
 	recorder.recordAssistant(sessionID, text, reply)
+	if err := ensureTurnHistory(ctx, sess, text, reply); err != nil {
+		return reply, err
+	}
 	if err := sessMgr.Save(sess); err != nil {
 		return reply, err
 	}
 	return reply, nil
+}
+
+func ensureTurnHistory(ctx context.Context, sess blades.Session, userText, reply string) error {
+	if sess == nil {
+		return nil
+	}
+	history, err := sess.History(ctx)
+	if err != nil {
+		return err
+	}
+	if !hasTrailingMessage(history, blades.RoleUser, userText) {
+		if err := sess.Append(ctx, blades.UserMessage(userText)); err != nil {
+			return err
+		}
+		history = append(history, blades.UserMessage(userText))
+	}
+	if strings.TrimSpace(reply) == "" || hasTrailingMessage(history, blades.RoleAssistant, reply) {
+		return nil
+	}
+	return sess.Append(ctx, blades.AssistantMessage(reply))
+}
+
+func hasTrailingMessage(history []*blades.Message, role blades.Role, text string) bool {
+	if len(history) == 0 {
+		return false
+	}
+	last := history[len(history)-1]
+	return last != nil && last.Role == role && last.Text() == text
 }

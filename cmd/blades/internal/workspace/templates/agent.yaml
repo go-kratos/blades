@@ -7,6 +7,10 @@ model: openai/gpt-4o
 
 execution: loop
 max_iterations: 3
+context:
+  strategy: window
+  max_tokens: 80000
+  max_messages: 50
 
 sub_agents:
   - name: action
@@ -22,13 +26,12 @@ sub_agents:
       Previous review feedback:
       {{.review_feedback}}
     tools:
-      - exec
+      - read
+      - write
+      - edit
+      - bash
       - cron
     output_key: action_result
-    context:
-      strategy: window
-      max_tokens: 80000
-      max_messages: 50
     middlewares:
       - name: retry
         options:
@@ -51,10 +54,6 @@ sub_agents:
     tools:
       - exit
     output_key: review_feedback
-    context:
-      strategy: window
-      max_tokens: 80000
-      max_messages: 50
     middlewares:
       - name: retry
         options:

@@ -135,7 +135,7 @@ func cronDoctorCheck() DoctorCheck {
 			if _, err := os.Stat(storePath); err != nil {
 				return []DoctorResult{{
 					Label:  "Cron",
-					Detail: "no cron.json (add jobs with 'blades cron add')",
+					Detail: "no cron.yaml (add jobs with 'blades cron add')",
 					OK:     true,
 				}}, nil
 			}
@@ -238,7 +238,7 @@ func agentRecipeDoctorCheck() DoctorCheck {
 
 func execDoctorCheck() DoctorCheck {
 	return DoctorCheck{
-		Name: "Exec",
+		Name: "Tools",
 		Run: func(ctx *DoctorContext) ([]DoctorResult, error) {
 			execCfg := config.ExecConfig{}
 			if ctx != nil && ctx.Config != nil {
@@ -254,7 +254,7 @@ func execDoctorCheck() DoctorCheck {
 				detail = "workspace restriction disabled"
 			}
 			return []DoctorResult{{
-				Label:  "Exec",
+				Label:  "Tools",
 				Detail: detail,
 				OK:     ok,
 				Follow: follow,

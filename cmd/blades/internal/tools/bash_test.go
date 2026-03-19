@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestExecToolHelpersAndGuard(t *testing.T) {
+func TestBashToolHelpersAndGuard(t *testing.T) {
 	t.Parallel()
 
 	cfg := DefaultExecConfig("/workspace")
@@ -18,15 +18,15 @@ func TestExecToolHelpersAndGuard(t *testing.T) {
 		t.Fatalf("DefaultExecConfig working dir = %q", cfg.WorkingDir)
 	}
 
-	if tool := NewExecTool(cfg); tool.Name() != "exec" || tool.Description() == "" {
-		t.Fatalf("NewExecTool metadata = name:%q desc:%q", tool.Name(), tool.Description())
+	if tool := NewBashTool(cfg); tool.Name() != "bash" || tool.Description() == "" {
+		t.Fatalf("NewBashTool metadata = name:%q desc:%q", tool.Name(), tool.Description())
 	}
 
 	if _, err := compileRegexList([]string{"["}); err == nil {
 		t.Fatal("expected invalid regex error")
 	}
 
-	tool := &execTool{cfg: cfg}
+	tool := &bashTool{cfg: cfg}
 	if deny, err := compileRegexList(cfg.DenyPatterns); err != nil {
 		t.Fatalf("compile deny regex: %v", err)
 	} else {
@@ -58,11 +58,11 @@ func TestExecToolHelpersAndGuard(t *testing.T) {
 	}
 }
 
-func TestExecToolHandleBranches(t *testing.T) {
+func TestBashToolHandleBranches(t *testing.T) {
 	t.Parallel()
 
 	t.Run("invalid json and required command", func(t *testing.T) {
-		tool := &execTool{cfg: ExecConfig{Timeout: time.Second}}
+		tool := &bashTool{cfg: ExecConfig{Timeout: time.Second}}
 		if _, err := tool.handle(context.Background(), `{"command":`); err == nil {
 			t.Fatal("expected parse error")
 		}
@@ -72,7 +72,7 @@ func TestExecToolHandleBranches(t *testing.T) {
 	})
 
 	t.Run("path traversal and timeout", func(t *testing.T) {
-		tool := &execTool{cfg: ExecConfig{
+		tool := &bashTool{cfg: ExecConfig{
 			Timeout:             10 * time.Millisecond,
 			WorkingDir:          ".",
 			RestrictToWorkspace: true,
@@ -86,7 +86,7 @@ func TestExecToolHandleBranches(t *testing.T) {
 	})
 
 	t.Run("command error and success", func(t *testing.T) {
-		tool := &execTool{cfg: ExecConfig{
+		tool := &bashTool{cfg: ExecConfig{
 			Timeout:    time.Second,
 			WorkingDir: ".",
 		}}

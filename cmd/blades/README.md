@@ -13,7 +13,7 @@
 - **Streaming chat** — animated spinner → token-by-token streaming with ANSI colour support
 - **Persistent memory** — `MEMORY.md` (L1), daily session logs in `memory/` (L2), knowledge files (L3)
 - **Skill system** — drop a `SKILL.md` into any skills directory and the agent picks it up automatically
-- **Cron scheduler** — run shell commands or agent turns on a schedule; backed by `cron.json`
+- **Cron scheduler** — run shell commands or agent turns on a schedule; backed by `cron.yaml`
 - **Daemon mode** — keep the scheduler running as a long-lived background process
 - **Multi-provider** — Anthropic Claude, OpenAI, Google Gemini; switch in `agent.yaml`
 
@@ -59,7 +59,7 @@ Default layout when no custom `--workspace` is set:
 ```
 ~/.blades/                    ← home (root)
 ├── agent.yaml                ← LLM provider, model, API key
-├── cron.json                 ← persistent cron job store
+├── cron.yaml                 ← persistent cron job store
 ├── skills/                   ← global skills (all workspaces)
 ├── sessions/                 ← conversation state per session ID
 ├── logs/                     ← runtime logs (YYYY-MM-DD.log)
