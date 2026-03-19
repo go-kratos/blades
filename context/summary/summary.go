@@ -115,7 +115,7 @@ func NewContextCompressor(model blades.ModelProvider, opts ...Option) blades.Con
 // ensureSession returns the Session from ctx. If none is present a temporary
 // in-memory session is returned so the rest of Compress never has to branch.
 func (s *contextCompressor) ensureSession(ctx context.Context) blades.Session {
-	if session, ok := blades.FromSessionContext(ctx); ok {
+	if session, ok := blades.SessionFromContext(ctx); ok {
 		return session
 	}
 	return blades.NewSession()

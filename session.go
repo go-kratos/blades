@@ -49,10 +49,19 @@ func NewSessionContext(ctx context.Context, session Session) context.Context {
 	return context.WithValue(ctx, ctxSessionKey{}, session)
 }
 
-// FromSessionContext retrieves the SessionContext from the context.
-func FromSessionContext(ctx context.Context) (Session, bool) {
+// SessionFromContext retrieves the SessionContext from the context.
+func SessionFromContext(ctx context.Context) (Session, bool) {
 	session, ok := ctx.Value(ctxSessionKey{}).(Session)
 	return session, ok
+}
+
+// EnsureSession returns the Session stored in ctx, or a new in-memory Session
+// if none is present.
+func EnsureSession(ctx context.Context) Session {
+	if session, ok := SessionFromContext(ctx); ok {
+		return session
+	}
+	return NewSession()
 }
 
 // sessionInMemory is an in-memory implementation of the Session interface.

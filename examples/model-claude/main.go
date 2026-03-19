@@ -23,7 +23,7 @@ type WeatherRes struct {
 // weatherHandle is the function that handles weather requests.
 func weatherHandle(ctx context.Context, req WeatherReq) (WeatherRes, error) {
 	log.Println("Fetching weather for:", req.Location)
-	session, ok := blades.FromSessionContext(ctx)
+	session, ok := blades.SessionFromContext(ctx)
 	if !ok {
 		return WeatherRes{}, blades.ErrNoSessionContext
 	}
