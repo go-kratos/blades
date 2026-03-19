@@ -9,10 +9,10 @@ import (
 	"github.com/go-kratos/blades/internal/counter"
 )
 
-func TestContextManager_NoLimits(t *testing.T) {
-	cm := window.NewContextManager()
+func TestContextCompressor_NoLimits(t *testing.T) {
+	c := window.NewContextCompressor()
 	msgs := makeMessages(5)
-	got, err := cm.Prepare(context.Background(), msgs)
+	got, err := c.Compress(context.Background(), msgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,10 +21,10 @@ func TestContextManager_NoLimits(t *testing.T) {
 	}
 }
 
-func TestContextManager_MaxMessages(t *testing.T) {
-	cm := window.NewContextManager(window.WithMaxMessages(3))
+func TestContextCompressor_MaxMessages(t *testing.T) {
+	c := window.NewContextCompressor(window.WithMaxMessages(3))
 	msgs := makeMessages(5)
-	got, err := cm.Prepare(context.Background(), msgs)
+	got, err := c.Compress(context.Background(), msgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,10 +38,10 @@ func TestContextManager_MaxMessages(t *testing.T) {
 	}
 }
 
-func TestContextManager_MaxMessages_BelowLimit(t *testing.T) {
-	cm := window.NewContextManager(window.WithMaxMessages(10))
+func TestContextCompressor_MaxMessages_BelowLimit(t *testing.T) {
+	c := window.NewContextCompressor(window.WithMaxMessages(10))
 	msgs := makeMessages(3)
-	got, err := cm.Prepare(context.Background(), msgs)
+	got, err := c.Compress(context.Background(), msgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,13 +50,13 @@ func TestContextManager_MaxMessages_BelowLimit(t *testing.T) {
 	}
 }
 
-func TestContextManager_MaxTokens(t *testing.T) {
-	cm := window.NewContextManager(
+func TestContextCompressor_MaxTokens(t *testing.T) {
+	c := window.NewContextCompressor(
 		window.WithTokenCounter(counter.NewCharBasedCounter()),
 		window.WithMaxTokens(1),
 	)
 	msgs := makeMessages(5)
-	got, err := cm.Prepare(context.Background(), msgs)
+	got, err := c.Compress(context.Background(), msgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +68,7 @@ func TestContextManager_MaxTokens(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestContextManager_MaxTokens_DefaultCounter(t *testing.T) {
 	cm := window.NewContextManager(window.WithMaxTokens(1))
 	msgs := makeMessages(5)
@@ -101,6 +102,11 @@ func TestContextManager_MaxTokens_NilCounterFallback(t *testing.T) {
 func TestContextManager_Empty(t *testing.T) {
 	cm := window.NewContextManager(window.WithMaxMessages(5))
 	got, err := cm.Prepare(context.Background(), nil)
+=======
+func TestContextCompressor_Empty(t *testing.T) {
+	c := window.NewContextCompressor(window.WithMaxMessages(5))
+	got, err := c.Compress(context.Background(), nil)
+>>>>>>> origin
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,10 +115,10 @@ func TestContextManager_Empty(t *testing.T) {
 	}
 }
 
-func TestContextManager_DefaultMaxMessages(t *testing.T) {
-	cm := window.NewContextManager()
+func TestContextCompressor_DefaultMaxMessages(t *testing.T) {
+	c := window.NewContextCompressor()
 	msgs := makeMessages(150)
-	got, err := cm.Prepare(context.Background(), msgs)
+	got, err := c.Compress(context.Background(), msgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,10 +127,10 @@ func TestContextManager_DefaultMaxMessages(t *testing.T) {
 	}
 }
 
-func TestContextManager_MaxMessagesZero_NoLimit(t *testing.T) {
-	cm := window.NewContextManager(window.WithMaxMessages(0))
+func TestContextCompressor_MaxMessagesZero_NoLimit(t *testing.T) {
+	c := window.NewContextCompressor(window.WithMaxMessages(0))
 	msgs := makeMessages(150)
-	got, err := cm.Prepare(context.Background(), msgs)
+	got, err := c.Compress(context.Background(), msgs)
 	if err != nil {
 		t.Fatal(err)
 	}

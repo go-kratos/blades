@@ -10,15 +10,15 @@ import (
 	"github.com/go-kratos/blades/internal/counter"
 )
 
-func TestContextManager_BelowBudget(t *testing.T) {
+func TestContextCompressor_BelowBudget(t *testing.T) {
 	s := &mockSummarizer{}
-	cm := summary.NewContextManager(
-		summary.WithSummarizer(s),
+	c := summary.NewContextCompressor(
+		s,
 		summary.WithMaxTokens(1_000_000),
 		summary.WithKeepRecent(5),
 	)
 	msgs := makeMessages(3)
-	got, err := cm.Prepare(context.Background(), msgs)
+	got, err := c.Compress(context.Background(), msgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,17 +30,17 @@ func TestContextManager_BelowBudget(t *testing.T) {
 	}
 }
 
-func TestContextManager_CompressesOldMessages(t *testing.T) {
+func TestContextCompressor_CompressesOldMessages(t *testing.T) {
 	s := &mockSummarizer{}
-	cm := summary.NewContextManager(
-		summary.WithSummarizer(s),
+	c := summary.NewContextCompressor(
+		s,
 		summary.WithMaxTokens(10),
 		summary.WithKeepRecent(2),
 		summary.WithBatchSize(3),
 		summary.WithTokenCounter(counter.NewCharBasedCounter()),
 	)
 	msgs := makeMessages(8)
-	got, err := cm.Prepare(context.Background(), msgs)
+	got, err := c.Compress(context.Background(), msgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,11 +52,11 @@ func TestContextManager_CompressesOldMessages(t *testing.T) {
 	}
 }
 
-func TestContextManager_ZeroMaxTokens_NoOp(t *testing.T) {
+func TestContextCompressor_ZeroMaxTokens_NoOp(t *testing.T) {
 	s := &mockSummarizer{}
-	cm := summary.NewContextManager(summary.WithSummarizer(s)) // MaxTokens=0 → no-op
+	c := summary.NewContextCompressor(s) // MaxTokens=0 → no-op
 	msgs := makeMessages(20)
-	got, err := cm.Prepare(context.Background(), msgs)
+	got, err := c.Compress(context.Background(), msgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,12 +65,12 @@ func TestContextManager_ZeroMaxTokens_NoOp(t *testing.T) {
 	}
 }
 
-// TestContextManager_SessionPersistsOffset verifies that the compressed offset and
+// TestCompressor_SessionPersistsOffset verifies that the compressed offset and
 // rolling summary are persisted in session.State() and reused on subsequent calls.
-func TestContextManager_SessionPersistsOffset(t *testing.T) {
+func TestContextCompressor_SessionPersistsOffset(t *testing.T) {
 	s := &mockSummarizer{}
-	cm := summary.NewContextManager(
-		summary.WithSummarizer(s),
+	c := summary.NewContextCompressor(
+		s,
 		summary.WithMaxTokens(10),
 		summary.WithKeepRecent(2),
 		summary.WithBatchSize(3),
@@ -82,7 +82,7 @@ func TestContextManager_SessionPersistsOffset(t *testing.T) {
 
 	// First call: 8 messages, should compress.
 	msgs := makeMessages(8)
-	got1, err := cm.Prepare(ctx, msgs)
+	got1, err := c.Compress(ctx, msgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,18 +95,18 @@ func TestContextManager_SessionPersistsOffset(t *testing.T) {
 	state := session.State()
 	offsetVal, hasOffset := state["__summary_offset__"]
 	if !hasOffset {
-		t.Fatal("offset key not set in session state after first Prepare")
+		t.Fatal("offset key not set in session state after first Compress")
 	}
 	if offset, ok := offsetVal.(int); !ok || offset == 0 {
 		t.Errorf("offset = %v, want non-zero int", offsetVal)
 	}
 	if _, hasContent := state["__summary_content__"]; !hasContent {
-		t.Fatal("summary content key not set in session state after first Prepare")
+		t.Fatal("summary content key not set in session state after first Compress")
 	}
 
 	// Second call with the same messages: already within budget (offset consumed the old ones),
 	// so no additional LLM calls should be made.
-	got2, err := cm.Prepare(ctx, msgs)
+	got2, err := c.Compress(ctx, msgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,12 +122,12 @@ func TestContextManager_SessionPersistsOffset(t *testing.T) {
 	}
 }
 
-// TestContextManager_NoSession_Stateless verifies that without a session the
-// context manager behaves statelessly (no state keys are set, no panic).
-func TestContextManager_NoSession_Stateless(t *testing.T) {
+// TestCompressor_NoSession_Stateless verifies that without a session the
+// compressor behaves statelessly (no state keys are set, no panic).
+func TestContextCompressor_NoSession_Stateless(t *testing.T) {
 	s := &mockSummarizer{}
-	cm := summary.NewContextManager(
-		summary.WithSummarizer(s),
+	c := summary.NewContextCompressor(
+		s,
 		summary.WithMaxTokens(10),
 		summary.WithKeepRecent(2),
 		summary.WithBatchSize(3),
@@ -135,7 +135,7 @@ func TestContextManager_NoSession_Stateless(t *testing.T) {
 	)
 	// No session in context — must not panic and must still compress.
 	msgs := makeMessages(8)
-	got, err := cm.Prepare(context.Background(), msgs)
+	got, err := c.Compress(context.Background(), msgs)
 	if err != nil {
 		t.Fatal(err)
 	}

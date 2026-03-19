@@ -49,6 +49,7 @@ func NewLoopAgent(config LoopConfig) blades.Agent {
 func (a *LoopAgent) Name() string        { return a.config.Name }
 func (a *LoopAgent) Description() string { return a.config.Description }
 
+<<<<<<< HEAD
 func loopVisibleMessage(message *blades.Message) bool {
 	return message != nil &&
 		message.Role == blades.RoleAssistant &&
@@ -69,6 +70,12 @@ func loopFinalMessage(lastVisible, lastOutput *blades.Message) *blades.Message {
 // sub-agent's emitted actions. Context management across iterations is
 // delegated to the ContextManager configured on the Runner
 // (via blades.WithContextManager).
+=======
+// Run runs the sub-agents in a loop. After each message yielded by a sub-agent
+// the loop checks message.Actions for an ActionLoopExit signal set by ExitTool.
+// Context compression across iterations is delegated to the ContextCompressor
+// configured on the Session (via blades.WithContextCompressor).
+>>>>>>> origin
 func (a *LoopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
 	return func(yield func(*blades.Message, error) bool) {
 		state := LoopState{}
