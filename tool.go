@@ -38,8 +38,16 @@ func (a *agentTool) OutputSchema() *jsonschema.Schema {
 }
 
 // Handle runs the underlying Agent with the given input and returns the output.
+// The sub-agent runs in an isolated session so its internal conversation history
+// does not pollute the calling agent's session.
 func (a *agentTool) Handle(ctx context.Context, input string) (string, error) {
-	iter := a.Agent.Run(ctx, &Invocation{Message: UserMessage(input)})
+	msg := UserMessage(input)
+	// Attribute the delegation message to the calling agent rather than "user".
+	if caller, ok := FromAgentContext(ctx); ok {
+		msg.Author = caller.Name()
+	}
+	subCtx := NewSessionContext(ctx, NewSession())
+	iter := a.Agent.Run(subCtx, &Invocation{Message: msg})
 	var (
 		err   error
 		final *Message
