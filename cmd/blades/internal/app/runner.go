@@ -221,7 +221,8 @@ func LoadAgentSpec(ws *workspace.Workspace) (*recipe.AgentSpec, error) {
 				{
 					Name:        "review",
 					Description: "Review the latest action result and decide whether to stop.",
-					Instruction: "You are the review agent.\nReview the latest action result:\n\n{{.action_result}}\n\nBias strongly toward stopping.\nIf the latest action result already answers the user well enough, call the exit tool immediately with a brief reason.\nThis includes greetings, casual chat, short factual answers, and responses that are already good enough.\nDo not request another iteration just for stylistic rewrites or alternate phrasing.\nOnly continue when the latest action result is clearly incomplete, incorrect, unsafe, or missed an obvious required tool/action.\nIf another iteration is needed, explain exactly what the next action iteration must improve.",
+					Instruction: "You are the review agent.\nBias strongly toward stopping.\nIf the latest action result already answers the user well enough, call the exit tool immediately with a brief reason.\nThis includes greetings, casual chat, short factual answers, and responses that are already good enough.\nDo not request another iteration just for stylistic rewrites or alternate phrasing.\nOnly continue when the latest action result is clearly incomplete, incorrect, unsafe, or missed an obvious required tool/action.\nIf another iteration is needed, explain exactly what the next action iteration must improve.",
+					Prompt:      "Review the latest action result below.\n\nACTION_RESULT_BEGIN\n{{.action_result}}\nACTION_RESULT_END\n\nPlease review the action output above. Decide whether to stop or continue.",
 					Tools:       []string{"exit"},
 					OutputKey:   "review_feedback",
 					Middlewares: []recipe.MiddlewareSpec{

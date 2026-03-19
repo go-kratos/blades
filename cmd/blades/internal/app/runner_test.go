@@ -68,6 +68,9 @@ func TestLoadAgentSpecAndBuildRunner(t *testing.T) {
 			t.Fatalf("default sub_agent %q should not define its own context", sub.Name)
 		}
 	}
+	if got := spec.SubAgents[1].Prompt; !strings.Contains(got, "{{.action_result}}") {
+		t.Fatalf("default review prompt = %q, want action_result placeholder", got)
+	}
 
 	cfg := &config.Config{
 		Providers: []config.Provider{

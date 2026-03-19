@@ -214,7 +214,7 @@ func buildSubAgent(sub *SubAgentSpec, parentModel string, params map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	agent, err = withPromptTemplate(agent, fmt.Sprintf("sub_agent %q", sub.Name), sub.Prompt, subParams)
+	agent, err = withUserPromptTemplate(agent, fmt.Sprintf("sub_agent %q", sub.Name), sub.Prompt, subParams)
 	if err != nil {
 		return nil, err
 	}

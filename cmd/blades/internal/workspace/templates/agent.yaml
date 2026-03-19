@@ -41,16 +41,20 @@ sub_agents:
     description: Review the latest action result and decide whether to stop.
     instruction: |
       You are the review agent.
-      Review the latest action result:
-
-      {{.action_result}}
-
       Bias strongly toward stopping.
       If the latest action result already answers the user well enough, call the exit tool immediately with a brief reason.
       This includes greetings, casual chat, short factual answers, and responses that are already good enough.
       Do not request another iteration just for stylistic rewrites or alternate phrasing.
       Only continue when the latest action result is clearly incomplete, incorrect, unsafe, or missed an obvious required tool/action.
       If another iteration is needed, explain exactly what the next action iteration must improve.
+    prompt: |
+      Review the latest action result below.
+
+      ACTION_RESULT_BEGIN
+      {{.action_result}}
+      ACTION_RESULT_END
+
+      Please review the action output above. Decide whether to stop or continue.
     tools:
       - exit
     output_key: review_feedback

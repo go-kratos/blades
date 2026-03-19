@@ -344,7 +344,7 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 				yield(nil, err)
 				return
 			}
-			req.Messages = prepared
+			req.Messages = AppendMessages(prepared, invocation.EphemeralMessages...)
 			var finalMessage *Message
 			if !invocation.Stream {
 				finalResponse, err := a.model.Generate(ctx, req)
@@ -415,6 +415,9 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 				// call will include it automatically.
 				if err := session.Append(ctx, toolMessage); err != nil {
 					yield(nil, err)
+					return
+				}
+				if _, ok := toolMessage.Actions[tools.ActionLoopExit]; ok {
 					return
 				}
 				continue // continue to the next iteration
