@@ -221,11 +221,11 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			ctx = NewSessionContext(ctx, NewSession())
 		}
 		// Append the initial user message exactly once per run lifecycle.
-		// shouldCommitInitialMsg uses a per-run atomic flag (injected by Runner)
-		// so that multi-agent trees (Sequential, Parallel, etc.) only append once.
-		// For direct agent.Run() calls without a Runner the flag is absent and this
-		// always returns true, so the message is still persisted correctly.
-		if !invocation.Resume && invocation.Message != nil && shouldCommitInitialMsg(ctx) {
+		// Clone transfers committed=false to the first clone (responsible for append)
+		// and marks the original as committed=true (skip). Default false means a
+		// freshly constructed Invocation (no Clone) always appends.
+		if !invocation.Resume && invocation.Message != nil && !invocation.committed {
+			invocation.committed = true
 			msg := invocation.Message
 			if msg.Author == "" {
 				msg.Author = "user"

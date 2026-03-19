@@ -80,7 +80,6 @@ func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (
 	)
 	invocation := r.buildInvocation(message, false, o)
 	runCtx := NewSessionContext(ctx, o.Session)
-	runCtx = withInitialMsgCommit(runCtx)
 	iter := r.rootAgent.Run(runCtx, invocation)
 	for output, err = range iter {
 		if err != nil {
@@ -104,7 +103,6 @@ func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOpt
 	}
 	invocation := r.buildInvocation(message, true, o)
 	runCtx := NewSessionContext(ctx, o.Session)
-	runCtx = withInitialMsgCommit(runCtx)
 	return func(yield func(*Message, error) bool) {
 		iter := r.rootAgent.Run(runCtx, invocation)
 		for output, err := range iter {
