@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/middleware"
 	"github.com/go-kratos/blades/recipe"
-	recipeMiddleware "github.com/go-kratos/blades/recipe/middleware"
 	bladeskills "github.com/go-kratos/blades/skills"
 	bladestools "github.com/go-kratos/blades/tools"
 	coretools "github.com/go-kratos/blades/tools"
@@ -81,7 +81,7 @@ func BuildMiddlewareRegistry() *recipe.MiddlewareRegistry {
 		if err != nil {
 			return nil, err
 		}
-		return recipeMiddleware.Retry(attempts), nil
+		return middleware.Retry(attempts), nil
 	})
 	return registry
 }
