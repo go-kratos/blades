@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-kratos/blades/skills"
 	"github.com/go-kratos/blades/tools"
@@ -175,6 +176,9 @@ func (a *agent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
 
 // prepareInvocation prepares the invocation by resolving tools and applying instructions.
 func (a *agent) prepareInvocation(ctx context.Context, invocation *Invocation) error {
+	if invocation.committed == nil {
+		invocation.committed = new(atomic.Bool)
+	}
 	resolvedTools, err := a.resolveTools(ctx)
 	if err != nil {
 		return err
@@ -220,12 +224,15 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 		if _, ok := SessionFromContext(ctx); !ok {
 			ctx = NewSessionContext(ctx, NewSession())
 		}
+		session := EnsureSession(ctx)
+		// prepareInvocation initializes committed if nil, so the CAS below is safe.
+		if err := a.prepareInvocation(ctx, invocation); err != nil {
+			yield(nil, err)
+			return
+		}
 		// Append the initial user message exactly once per run lifecycle.
-		// Clone transfers committed=false to the first clone (responsible for append)
-		// and marks the original as committed=true (skip). Default false means a
-		// freshly constructed Invocation (no Clone) always appends.
-		if !invocation.Resume && invocation.Message != nil && !invocation.committed {
-			invocation.committed = true
+		// All clones share the same *atomic.Bool; the first CompareAndSwap wins.
+		if !invocation.Resume && invocation.Message != nil && invocation.committed.CompareAndSwap(false, true) {
 			msg := invocation.Message
 			if msg.Author == "" {
 				msg.Author = "user"
@@ -233,15 +240,10 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 			if msg.InvocationID == "" {
 				msg.InvocationID = invocation.ID
 			}
-			session := EnsureSession(ctx)
 			if err := session.Append(ctx, msg); err != nil {
 				yield(nil, err)
 				return
 			}
-		}
-		if err := a.prepareInvocation(ctx, invocation); err != nil {
-			yield(nil, err)
-			return
 		}
 		ctx = NewAgentContext(ctx, a)
 		handler := Handler(HandleFunc(func(ctx context.Context, invocation *Invocation) Generator[*Message, error] {
@@ -251,7 +253,7 @@ func (a *agent) Run(ctx context.Context, invocation *Invocation) Generator[*Mess
 				InputSchema:  a.inputSchema,
 				OutputSchema: a.outputSchema,
 			}
-			return a.handle(ctx, invocation, req)
+			return a.handle(ctx, session, invocation, req)
 		}))
 		if len(a.middlewares) > 0 {
 			handler = ChainMiddlewares(a.middlewares...)(handler)
@@ -332,9 +334,8 @@ func messageFromResponse(response *ModelResponse) (*Message, error) {
 }
 
 // handle constructs the default handlers for Run and Stream using the provider.
-func (a *agent) handle(ctx context.Context, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
+func (a *agent) handle(ctx context.Context, session Session, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
-		session := EnsureSession(ctx)
 		for i := 0; i < a.maxIterations; i++ {
 			// Rebuild req.Messages each iteration so context compression
 			// (applied inside session.History) can re-run on the growing list.
