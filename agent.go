@@ -349,14 +349,10 @@ func messageFromResponse(response *ModelResponse) (*Message, error) {
 // handle constructs the default handlers for Run and Stream using the provider.
 func (a *agent) handle(ctx context.Context, session Session, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
-		// localMessages accumulates within-invocation messages when loadHistory
-		// is false (the default). It is seeded with the current user message on
-		// the first iteration and grows as tool-call results are appended.
-		var localMessages []*Message
-		// loadHistory is true when the model call should be backed by the full
-		// session history: either the agent has context enabled, or this is a
-		// resume run that must pick up previously stored intermediate messages.
-		loadHistory := a.useContext || invocation.Resume
+		var (
+			loadHistory   = a.useContext || invocation.Resume
+			localMessages = []*Message{invocation.Message}
+		)
 		for i := 0; i < a.maxIterations; i++ {
 			// Rebuild req.Messages each iteration.
 			if loadHistory {
@@ -369,11 +365,6 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 				req.Messages = prepared
 			} else {
 				// Stateless mode: only include messages from this invocation.
-				if localMessages == nil {
-					if invocation.Message != nil {
-						localMessages = []*Message{invocation.Message}
-					}
-				}
 				req.Messages = localMessages
 			}
 			var finalMessage *Message
