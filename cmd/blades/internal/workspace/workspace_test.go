@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-kratos/blades/recipe"
 )
 
 func TestWorkspaceInitLoadAndReadFile(t *testing.T) {
@@ -67,6 +69,17 @@ func TestWorkspaceInitLoadAndReadFile(t *testing.T) {
 
 	if got := filepath.Base(ws.DailyLogPath()); got != time.Now().Format("2006-01-02")+".md" {
 		t.Fatalf("DailyLogPath filename = %q", got)
+	}
+
+	spec, err := recipe.LoadFromFile(ws.AgentPath())
+	if err != nil {
+		t.Fatalf("LoadFromFile agent.yaml: %v", err)
+	}
+	if err := recipe.Validate(spec); err != nil {
+		t.Fatalf("init-generated agent.yaml should be valid: %v", err)
+	}
+	if spec.Execution != "" {
+		t.Fatalf("single-agent template execution = %q, want empty", spec.Execution)
 	}
 }
 

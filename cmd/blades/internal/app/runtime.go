@@ -281,11 +281,15 @@ func ensureTurnHistory(ctx context.Context, sess blades.Session, userText, reply
 	if err != nil {
 		return err
 	}
+	if hasTrailingTurn(history, userText, reply) {
+		return nil
+	}
 	if !hasTrailingMessage(history, blades.RoleUser, userText) {
-		if err := sess.Append(ctx, blades.UserMessage(userText)); err != nil {
+		userMessage := blades.UserMessage(userText)
+		if err := sess.Append(ctx, userMessage); err != nil {
 			return err
 		}
-		history = append(history, blades.UserMessage(userText))
+		history = append(history, userMessage)
 	}
 	if strings.TrimSpace(reply) == "" || hasTrailingMessage(history, blades.RoleAssistant, reply) {
 		return nil
@@ -299,4 +303,22 @@ func hasTrailingMessage(history []*blades.Message, role blades.Role, text string
 	}
 	last := history[len(history)-1]
 	return last != nil && last.Role == role && last.Text() == text
+}
+
+func hasTrailingTurn(history []*blades.Message, userText, reply string) bool {
+	if len(history) < 2 {
+		return false
+	}
+	prev := history[len(history)-2]
+	last := history[len(history)-1]
+	if prev == nil || last == nil {
+		return false
+	}
+	if prev.Role != blades.RoleUser || prev.Text() != userText {
+		return false
+	}
+	if strings.TrimSpace(reply) == "" {
+		return last.Role == blades.RoleUser && last.Text() == userText
+	}
+	return last.Role == blades.RoleAssistant && last.Text() == reply
 }

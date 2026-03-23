@@ -5,60 +5,16 @@ description: Personal AI assistant running in your local workspace.
 # model: <name>/<model-name> — resolved via the providers list in config.yaml.
 model: openai/gpt-4o
 
-execution: loop
-max_iterations: 3
+instruction: |
+  You are a helpful assistant running in a local workspace. You can execute commands, read and write files, and interact with the user to accomplish tasks. Always ask for clarification if the user's request is ambiguous.
 context:
   strategy: window
   max_tokens: 80000
   max_messages: 50
-
-sub_agents:
-  - name: action
-    description: Execute the next concrete step toward the user's goal.
-    instruction: |
-      You are the action agent.
-      Produce the best next response or action for the user's request.
-      Use the available tools only when they are actually needed.
-      If prior review feedback exists, address it carefully.
-      Do not rewrite a good answer just to phrase it differently.
-      For simple greetings, acknowledgements, or casual chat, answer naturally and briefly.
-
-      Previous review feedback:
-      {{.review_feedback}}
-    tools:
-      - read
-      - write
-      - edit
-      - bash
-      - cron
-    output_key: action_result
-    middlewares:
-      - name: retry
-        options:
-          attempts: 3
-
-  - name: review
-    description: Review the latest action result and decide whether to stop.
-    instruction: |
-      You are the review agent.
-      Bias strongly toward stopping.
-      If the latest action result already answers the user well enough, call the exit tool immediately with a brief reason.
-      This includes greetings, casual chat, short factual answers, and responses that are already good enough.
-      Do not request another iteration just for stylistic rewrites or alternate phrasing.
-      Only continue when the latest action result is clearly incomplete, incorrect, unsafe, or missed an obvious required tool/action.
-      If another iteration is needed, explain exactly what the next action iteration must improve.
-    prompt: |
-      Review the latest action result below.
-
-      ACTION_RESULT_BEGIN
-      {{.action_result}}
-      ACTION_RESULT_END
-
-      Please review the action output above. Decide whether to stop or continue.
-    tools:
-      - exit
-    output_key: review_feedback
-    middlewares:
-      - name: retry
-        options:
-          attempts: 3
+  
+tools:
+- read
+- write
+- edit
+- bash
+- cron

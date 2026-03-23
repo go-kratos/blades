@@ -54,22 +54,20 @@ func TestLoadAgentSpecAndBuildRunner(t *testing.T) {
 	if err := recipe.Validate(spec); err != nil {
 		t.Fatalf("default spec should be valid: %v", err)
 	}
-	if spec.Execution != recipe.ExecutionLoop {
-		t.Fatalf("default execution = %q, want %q", spec.Execution, recipe.ExecutionLoop)
+	if spec.Execution != "" {
+		t.Fatalf("default execution = %q, want empty", spec.Execution)
 	}
 	if spec.Context == nil {
 		t.Fatal("default spec should define top-level context")
 	}
-	if len(spec.SubAgents) != 2 {
-		t.Fatalf("default sub_agents = %d, want 2", len(spec.SubAgents))
+	if len(spec.SubAgents) != 0 {
+		t.Fatalf("default sub_agents = %d, want 0", len(spec.SubAgents))
 	}
-	for _, sub := range spec.SubAgents {
-		if sub.Context != nil {
-			t.Fatalf("default sub_agent %q should not define its own context", sub.Name)
-		}
+	if spec.Model == "" {
+		t.Fatal("default spec should define a model")
 	}
-	if got := spec.SubAgents[1].Prompt; !strings.Contains(got, "{{.action_result}}") {
-		t.Fatalf("default review prompt = %q, want action_result placeholder", got)
+	if strings.TrimSpace(spec.Instruction) == "" {
+		t.Fatal("default spec should define an instruction")
 	}
 
 	cfg := &config.Config{

@@ -11,6 +11,30 @@ import (
 	"github.com/go-kratos/blades/cmd/blades/internal/session"
 )
 
+type fixedReplyModel struct {
+	text string
+}
+
+func (m *fixedReplyModel) Name() string { return "fixed-reply-model" }
+
+func (m *fixedReplyModel) Generate(context.Context, *blades.ModelRequest) (*blades.ModelResponse, error) {
+	msg := blades.NewAssistantMessage(blades.StatusCompleted)
+	msg.Parts = append(msg.Parts, blades.TextPart{Text: m.text})
+	return &blades.ModelResponse{
+		Message: msg,
+	}, nil
+}
+
+func (m *fixedReplyModel) NewStreaming(context.Context, *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
+	return func(yield func(*blades.ModelResponse, error) bool) {
+		msg := blades.NewAssistantMessage(blades.StatusCompleted)
+		msg.Parts = append(msg.Parts, blades.TextPart{Text: m.text})
+		yield(&blades.ModelResponse{
+			Message: msg,
+		}, nil)
+	}
+}
+
 type fixedReplyAgent struct {
 	text string
 }
@@ -87,8 +111,68 @@ func TestTurnExecutorRunPersistsSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reloaded history: %v", err)
 	}
-	if got := len(history); got == 0 {
-		t.Fatalf("expected persisted session history, got %d messages", got)
+	if got, want := len(history), 2; got != want {
+		t.Fatalf("persisted history len = %d, want %d", got, want)
+	}
+	if got, want := history[0].Text(), "hello"; got != want {
+		t.Fatalf("history[0] text = %q, want %q", got, want)
+	}
+	if got, want := history[1].Text(), "saved reply"; got != want {
+		t.Fatalf("history[1] text = %q, want %q", got, want)
+	}
+}
+
+func TestTurnExecutorRunDoesNotDuplicateHistoryForManagedBladesAgent(t *testing.T) {
+	model := &fixedReplyModel{text: "saved reply"}
+	agent, err := blades.NewAgent("assistant", blades.WithModel(model))
+	if err != nil {
+		t.Fatalf("NewAgent: %v", err)
+	}
+	runner := blades.NewRunner(agent)
+	sessMgr := session.NewManager(t.TempDir())
+
+	executor := NewTurnExecutor(runner, sessMgr, TurnOptions{})
+	if _, err := executor.Run(context.Background(), "chat", "hello"); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if _, err := executor.Run(context.Background(), "chat", "who are you"); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	sess, err := sessMgr.Get("chat")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	history, err := sess.History(context.Background())
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if got, want := len(history), 4; got != want {
+		t.Fatalf("history len = %d, want %d", got, want)
+	}
+	if got, want := history[0].Role, blades.RoleUser; got != want {
+		t.Fatalf("history[0] role = %q, want %q", got, want)
+	}
+	if got, want := history[0].Text(), "hello"; got != want {
+		t.Fatalf("history[0] text = %q, want %q", got, want)
+	}
+	if got, want := history[1].Role, blades.RoleAssistant; got != want {
+		t.Fatalf("history[1] role = %q, want %q", got, want)
+	}
+	if got, want := history[1].Text(), "saved reply"; got != want {
+		t.Fatalf("history[1] text = %q, want %q", got, want)
+	}
+	if got, want := history[2].Role, blades.RoleUser; got != want {
+		t.Fatalf("history[2] role = %q, want %q", got, want)
+	}
+	if got, want := history[2].Text(), "who are you"; got != want {
+		t.Fatalf("history[2] text = %q, want %q", got, want)
+	}
+	if got, want := history[3].Role, blades.RoleAssistant; got != want {
+		t.Fatalf("history[3] role = %q, want %q", got, want)
+	}
+	if got, want := history[3].Text(), "saved reply"; got != want {
+		t.Fatalf("history[3] text = %q, want %q", got, want)
 	}
 }
 
