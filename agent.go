@@ -108,6 +108,18 @@ func WithMaxIterations(n int) AgentOption {
 	}
 }
 
+// WithContext controls whether the Agent loads the full session history into
+// each model call. When enabled (true), session.History is called before every
+// model request so the model has the complete conversation context. When
+// disabled (false, the default), only the messages produced within the current
+// invocation are sent to the model, making the agent stateless with respect to
+// prior turns.
+func WithContext(enabled bool) AgentOption {
+	return func(a *agent) {
+		a.useContext = enabled
+	}
+}
+
 // agent is a struct that represents an AI agent.
 type agent struct {
 	name                string
@@ -124,6 +136,7 @@ type agent struct {
 	skills              []skills.Skill
 	skillToolset        *skills.Toolset
 	toolsResolver       tools.Resolver // Optional resolver for dynamic tools (e.g., MCP servers)
+	useContext          bool           // Whether to load session history into each model call
 }
 
 // NewAgent creates a new Agent with the given name and options.
@@ -336,15 +349,33 @@ func messageFromResponse(response *ModelResponse) (*Message, error) {
 // handle constructs the default handlers for Run and Stream using the provider.
 func (a *agent) handle(ctx context.Context, session Session, invocation *Invocation, req *ModelRequest) Generator[*Message, error] {
 	return func(yield func(*Message, error) bool) {
+		// localMessages accumulates within-invocation messages when loadHistory
+		// is false (the default). It is seeded with the current user message on
+		// the first iteration and grows as tool-call results are appended.
+		var localMessages []*Message
+		// loadHistory is true when the model call should be backed by the full
+		// session history: either the agent has context enabled, or this is a
+		// resume run that must pick up previously stored intermediate messages.
+		loadHistory := a.useContext || invocation.Resume
 		for i := 0; i < a.maxIterations; i++ {
-			// Rebuild req.Messages each iteration so context compression
-			// (applied inside session.History) can re-run on the growing list.
-			prepared, err := session.History(ctx)
-			if err != nil {
-				yield(nil, err)
-				return
+			// Rebuild req.Messages each iteration.
+			if loadHistory {
+				// Load the full session history (may be compressed).
+				prepared, err := session.History(ctx)
+				if err != nil {
+					yield(nil, err)
+					return
+				}
+				req.Messages = prepared
+			} else {
+				// Stateless mode: only include messages from this invocation.
+				if localMessages == nil {
+					if invocation.Message != nil {
+						localMessages = []*Message{invocation.Message}
+					}
+				}
+				req.Messages = localMessages
 			}
-			req.Messages = prepared
 			var finalMessage *Message
 			if !invocation.Stream {
 				finalResponse, err := a.model.Generate(ctx, req)
@@ -411,11 +442,17 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 				if !yield(toolMessage, nil) {
 					return
 				}
-				// Persist the tool response; the next iteration's session.History()
-				// call will include it automatically.
+				// Persist the tool response to the session for logging.
 				if err := session.Append(ctx, toolMessage); err != nil {
 					yield(nil, err)
 					return
+				}
+				// In stateless mode, accumulate the tool result into the local slice
+				// so the next iteration can supply it to the model without loading
+				// session history. executeTools mutates finalMessage in-place and
+				// returns the same pointer, so we only append once.
+				if !loadHistory {
+					localMessages = append(localMessages, toolMessage)
 				}
 				continue // continue to the next iteration
 			}

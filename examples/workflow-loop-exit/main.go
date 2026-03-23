@@ -30,6 +30,7 @@ func main() {
 	writerAgent, err := blades.NewAgent(
 		"WriterAgent",
 		blades.WithModel(model),
+		blades.WithContext(true),
 		blades.WithInstruction(`You are a skilled writer.
 Write a short paragraph on the topic given by the user.
 If conversation history contains reviewer feedback, revise accordingly.`),
@@ -41,6 +42,7 @@ If conversation history contains reviewer feedback, revise accordingly.`),
 	reviewerAgent, err := blades.NewAgent(
 		"ReviewerAgent",
 		blades.WithModel(model),
+		blades.WithContext(true),
 		blades.WithInstruction(`You are a critical editor.
 Review the most recent draft in the conversation history and decide:
 - If it meets a high standard, call the exit tool with a brief reason.
