@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	weixinch "github.com/go-kratos/blades/cmd/blades/internal/channel/weixin"
 	"github.com/go-kratos/blades/cmd/blades/internal/config"
 	"github.com/go-kratos/blades/cmd/blades/internal/cron"
 	"github.com/go-kratos/blades/cmd/blades/internal/workspace"
@@ -68,6 +69,7 @@ func DefaultDoctorChecks() []DoctorCheck {
 		agentRecipeDoctorCheck(),
 		execDoctorCheck(),
 		larkDoctorCheck(),
+		weixinDoctorCheck(),
 		cronDoctorCheck(),
 	}
 }
@@ -301,6 +303,70 @@ func larkDoctorCheck() DoctorCheck {
 			}
 			return []DoctorResult{{
 				Label:  "Lark",
+				Detail: detail,
+				OK:     ok,
+				Follow: follow,
+			}}, nil
+		},
+	}
+}
+
+func weixinDoctorCheck() DoctorCheck {
+	return DoctorCheck{
+		Name: "Weixin",
+		Run: func(ctx *DoctorContext) ([]DoctorResult, error) {
+			if ctx == nil || ctx.Config == nil || !ctx.Config.Channels.Weixin.Enabled {
+				return []DoctorResult{{
+					Label:  "Weixin",
+					Detail: "disabled",
+					OK:     true,
+				}}, nil
+			}
+
+			getenv := os.Getenv
+			if ctx.Getenv != nil {
+				getenv = ctx.Getenv
+			}
+			cfg := ctx.Config.Channels.Weixin
+			accountID := strings.TrimSpace(cfg.AccountID)
+			if accountID == "" {
+				accountID = strings.TrimSpace(getenv("WEIXIN_ACCOUNT_ID"))
+			}
+			botToken := strings.TrimSpace(cfg.BotToken)
+			if botToken == "" {
+				botToken = strings.TrimSpace(getenv("WEIXIN_BOT_TOKEN"))
+			}
+			accountDir := strings.TrimSpace(cfg.AccountDir)
+			if accountDir == "" {
+				accountDir = strings.TrimSpace(getenv("WEIXIN_ACCOUNT_DIR"))
+			}
+			if accountDir == "" {
+				accountDir = weixinch.DefaultAccountDir()
+			}
+			accountDir = config.ExpandTilde(accountDir)
+			savedAccounts, _ := weixinch.ListSavedAccounts(accountDir)
+			ok := botToken != "" || len(savedAccounts) == 1 || (len(savedAccounts) > 1 && accountID != "")
+			follow := []string{
+				fmt.Sprintf("accountID=%t", accountID != ""),
+				fmt.Sprintf("botToken=%t", botToken != ""),
+				fmt.Sprintf("accountDir=%s", accountDir),
+				fmt.Sprintf("savedAccounts=%d", len(savedAccounts)),
+				fmt.Sprintf("cdnBaseURL=%t", strings.TrimSpace(cfg.CDNBaseURL) != ""),
+				fmt.Sprintf("stateDir=%t", strings.TrimSpace(cfg.StateDir) != ""),
+			}
+			detail := "enabled"
+			if !ok {
+				switch {
+				case len(savedAccounts) > 1 && accountID == "":
+					detail = "enabled but multiple saved accounts need accountID"
+				case len(savedAccounts) == 0 && botToken == "":
+					detail = "enabled but no saved account found"
+				default:
+					detail = "enabled but account credentials missing"
+				}
+			}
+			return []DoctorResult{{
+				Label:  "Weixin",
 				Detail: detail,
 				OK:     ok,
 				Follow: follow,

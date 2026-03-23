@@ -17,7 +17,9 @@ Before doing anything else, **without asking permission**:
 4. Read `MEMORY.md` — your long-term memory (only in direct/main sessions)
 5. Read `TOOLS.md` — machine-specific setup notes
 6. Read `HEARTBEAT.md` when the turn is a heartbeat or proactive check
-7. Read `memory/YYYY-MM-DD.md` for today and yesterday — recent context
+7. Inspect `memory/` and read the newest one or two daily log files that actually exist
+
+Do not guess dates. Missing daily log files are normal — skip them.
 
 Don't ask permission. Just do it. Then say hello and get to work.
 

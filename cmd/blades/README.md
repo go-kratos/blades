@@ -96,7 +96,45 @@ providers:
 #     enabled: true
 #     appID: ${LARK_APP_ID}
 #     appSecret: ${LARK_APP_SECRET}
+#
+# Optional: Weixin/iLink channel (long polling) for `blades daemon`
+# channels:
+#   weixin:
+#     enabled: true
+#     # accountID: user@im.wechat
+#     # botToken: ${WEIXIN_BOT_TOKEN}   # optional when not using QR login
+#     # baseURL: https://ilinkai.weixin.qq.com
+#     # routeTag: ""
+#     # accountDir: ~/.blades/weixin/account
+#     # stateDir: ~/.blades/weixin
+#     # mediaDir: ~/.blades/weixin/media
+#     # cdnBaseURL: https://your-cdn.example.com
+#     # allowFrom: ["user@im.wechat"]
 ```
+
+---
+
+Scan-login flow:
+
+```sh
+blades weixin login
+blades weixin list
+```
+
+By default blades stores Weixin files here:
+
+- accounts: `~/.blades/weixin/account`
+- sync state: `~/.blades/weixin/sync`
+- media cache: `~/.blades/weixin/media`
+
+Notes:
+
+- `blades weixin login` performs QR-code login and persists the account locally; it supports `--base-url`, `--bot-type`, `--route-tag`, `--account-hint`, `--save-dir`, and `--timeout`.
+- `blades weixin list` shows the saved local accounts.
+- If `~/.blades/weixin/account` contains exactly one saved account, the daemon selects it automatically, so `accountID` is usually unnecessary.
+- If you keep multiple saved accounts, set `channels.weixin.accountID`. If you do not use QR login, you can also provide `channels.weixin.botToken` directly.
+- `stateDir` defaults to `~/.blades/weixin`, and the sync buffer is written to `stateDir/sync/<accountID>.sync.json`; `mediaDir` defaults to `stateDir/media`.
+- When `cdnBaseURL` is configured, inbound media files are downloaded into `mediaDir`.
 
 ---
 
@@ -166,14 +204,14 @@ Notes:
 
 ### `blades daemon`
 
-Run the cron scheduler and optional channels (e.g. Lark) as a long-lived process.
+Run the cron scheduler and optional channels (e.g. Lark or Weixin) as a long-lived process.
 
 ```sh
 blades daemon
 # systemd example: ExecStart=/usr/local/bin/blades daemon --workspace /home/user/my-agent
 ```
 
-Lark uses **WebSocket only**. In Feishu, choose “Receive events through persistent connection” (no request URL).
+Lark uses **WebSocket only**. In Feishu, choose “Receive events through persistent connection” (no request URL). Weixin uses iLink **long polling** and is intended to be used via QR-code login (`blades weixin login`). By default it reads accounts from `~/.blades/weixin/account` and writes sync state to `~/.blades/weixin/sync`. `accountID` is only needed when you keep multiple saved accounts in that account directory.
 
 ### `blades doctor`
 
@@ -183,6 +221,8 @@ Check health: blades home, workspace directory, required files, stale cron jobs.
 blades doctor
 blades doctor --config ~/custom-blades-config.yaml
 ```
+
+When the Weixin channel is enabled, `blades doctor` also checks the account directory, saved account count, and whether `accountID` / `botToken` can be resolved.
 
 ---
 

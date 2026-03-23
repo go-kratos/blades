@@ -13,6 +13,7 @@ import (
 	appcore "github.com/go-kratos/blades/cmd/blades/internal/app"
 	"github.com/go-kratos/blades/cmd/blades/internal/channel"
 	"github.com/go-kratos/blades/cmd/blades/internal/channel/lark"
+	weixinch "github.com/go-kratos/blades/cmd/blades/internal/channel/weixin"
 	"github.com/go-kratos/blades/cmd/blades/internal/cron"
 	"github.com/go-kratos/blades/cmd/blades/internal/logger"
 	"github.com/go-kratos/blades/cmd/blades/internal/memory"
@@ -35,17 +36,28 @@ func newDaemonCmd() *cobra.Command {
 
 			return runWithRuntimeCommand(cmd, func(ctx context.Context, cmd *cobra.Command, rt *appcore.Runtime) error {
 				var notify cron.NotifyFn
-				var larkCh channel.Channel
+				var channels []channel.Channel
 				if rt.Config.Channels.Lark.Enabled {
 					var err error
-					larkCh, err = lark.NewFromConfig(rt.Config.Channels.Lark, func(sessionID string) error {
+					larkCh, err := lark.NewFromConfig(rt.Config.Channels.Lark, func(sessionID string) error {
 						return rt.Sessions.Delete(sessionID)
 					}, lark.WithOutput(commandOut(cmd)), lark.WithLogf(log.Printf))
 					if err != nil {
 						return err
 					}
-					if sn, ok := larkCh.(channel.SessionNotifier); ok {
-						notify = sn.SendToSession
+					channels = append(channels, larkCh)
+					notify = larkCh.SendToSession
+				}
+				if rt.Config.Channels.Weixin.Enabled {
+					weixinCh, err := weixinch.NewFromConfig(rt.Config.Channels.Weixin, func(sessionID string) error {
+						return rt.Sessions.Delete(sessionID)
+					}, weixinch.WithOutput(commandOut(cmd)), weixinch.WithLogf(log.Printf))
+					if err != nil {
+						return err
+					}
+					channels = append(channels, weixinCh)
+					if notify == nil {
+						notify = weixinCh.SendToSession
 					}
 				}
 				appcore.ConfigureRuntimeCron(rt, notify)
@@ -59,13 +71,23 @@ func newDaemonCmd() *cobra.Command {
 				streamHandler := createStreamHandler(rt.Runner, rt.Sessions, rt.Memory, rtLog, true)
 
 				var channelDone <-chan struct{}
-				if rt.Config.Channels.Lark.Enabled && larkCh != nil {
+				if len(channels) > 0 {
 					done := make(chan struct{})
 					channelDone = done
 					go func() {
 						defer close(done)
-						if err := larkCh.Start(ctx, streamHandler); err != nil && ctx.Err() == nil {
-							warnCommandf(cmd, "lark channel error: %v\n", err)
+						errCh := make(chan error, len(channels))
+						for _, ch := range channels {
+							go func(ch channel.Channel) {
+								if err := ch.Start(ctx, streamHandler); err != nil && ctx.Err() == nil {
+									errCh <- fmt.Errorf("%s channel error: %w", ch.Name(), err)
+								}
+							}(ch)
+						}
+						select {
+						case err := <-errCh:
+							warnCommandf(cmd, "%v\n", err)
+						case <-ctx.Done():
 						}
 					}()
 				}
@@ -73,6 +95,9 @@ func newDaemonCmd() *cobra.Command {
 				printCommandf(cmd, "blades daemon running (workspace: %s) — Ctrl-C to stop\n", rt.Workspace.WorkspaceDir())
 				if rt.Config.Channels.Lark.Enabled {
 					printCommandln(cmd, "lark channel enabled (websocket mode)")
+				}
+				if rt.Config.Channels.Weixin.Enabled {
+					printCommandln(cmd, "weixin channel enabled (long polling mode)")
 				}
 				<-ctx.Done()
 				printCommandln(cmd, "\nShutting down…")

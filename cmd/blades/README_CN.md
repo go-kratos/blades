@@ -87,7 +87,45 @@ providers:
 #     enabled: true
 #     appID: ${LARK_APP_ID}
 #     appSecret: ${LARK_APP_SECRET}
+#
+# 可选：blades daemon 的微信 / iLink 通道（长轮询）
+# channels:
+#   weixin:
+#     enabled: true
+#     # accountID: user@im.wechat   # 只有 ~/.blades/weixin/account 下多账号时才需要指定
+#     # botToken: ${WEIXIN_BOT_TOKEN}   # 不走扫码登录时可直接配置
+#     # baseURL: https://ilinkai.weixin.qq.com
+#     # routeTag: ""
+#     # accountDir: ~/.blades/weixin/account
+#     # stateDir: ~/.blades/weixin
+#     # mediaDir: ~/.blades/weixin/media
+#     # cdnBaseURL: https://your-cdn.example.com
+#     # allowFrom: ["user@im.wechat"]
 ```
+
+---
+
+扫码登录流程：
+
+```sh
+blades weixin login
+blades weixin list
+```
+
+默认目录结构：
+
+- 账号：`~/.blades/weixin/account`
+- sync：`~/.blades/weixin/sync`
+- 媒体缓存：`~/.blades/weixin/media`
+
+说明：
+
+- `blades weixin login` 会扫码登录并把账号信息保存到本地；支持 `--base-url`、`--bot-type`、`--route-tag`、`--account-hint`、`--save-dir`、`--timeout`。
+- `blades weixin list` 用来检查当前保存了哪些账号。
+- 如果 `~/.blades/weixin/account` 下只有一个已保存账号，daemon 会自动选中它，一般不需要再手填 `accountID`。
+- 如果保存了多个账号，需要显式设置 `channels.weixin.accountID`；如果不走扫码登录，也可以直接提供 `channels.weixin.botToken`。
+- `stateDir` 默认是 `~/.blades/weixin`，实际同步文件写到 `stateDir/sync/<accountID>.sync.json`；`mediaDir` 默认为 `stateDir/media`。
+- 配置了 `cdnBaseURL` 后，收到的图片/文件等媒体消息会下载到 `mediaDir`。
 
 ---
 
@@ -111,11 +149,11 @@ providers:
 
 ### `blades daemon`
 
-以常驻进程运行 cron 与可选通道（如 Lark）。Lark 仅支持 **WebSocket**，飞书后台选择「通过长连接接收事件」。
+以常驻进程运行 cron 与可选通道（如 Lark、微信/iLink）。Lark 仅支持 **WebSocket**，飞书后台选择「通过长连接接收事件」；微信通道走 iLink **长轮询**，推荐先执行 `blades weixin login` 扫码，默认从 `~/.blades/weixin/account` 读取账号，在 `~/.blades/weixin/sync` 下维护同步状态，并可用 `allowFrom` 限制允许接入的微信用户。
 
 ### `blades doctor`
 
-检查 blades 根目录、工作空间、必要文件及过期 cron 任务。传入 `--config` 时，会按实际配置文件路径检查。
+检查 blades 根目录、工作空间、必要文件及过期 cron 任务。传入 `--config` 时，会按实际配置文件路径检查；如果启用了微信通道，还会检查账号目录、已保存账号数量，以及是否已经能确定 `accountID` / `botToken`。
 
 ---
 

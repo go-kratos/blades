@@ -49,6 +49,9 @@ func (c *Config) Normalize() error {
 		}
 		seenNames[p.Name] = struct{}{}
 	}
+	c.Channels.Weixin.AccountDir = ExpandTilde(strings.TrimSpace(c.Channels.Weixin.AccountDir))
+	c.Channels.Weixin.StateDir = ExpandTilde(strings.TrimSpace(c.Channels.Weixin.StateDir))
+	c.Channels.Weixin.MediaDir = ExpandTilde(strings.TrimSpace(c.Channels.Weixin.MediaDir))
 	return nil
 }
 
@@ -63,7 +66,8 @@ func isSupportedProvider(name string) bool {
 
 // ChannelConfig groups all channel integrations.
 type ChannelConfig struct {
-	Lark LarkConfig `yaml:"lark"`
+	Lark   LarkConfig   `yaml:"lark"`
+	Weixin WeixinConfig `yaml:"weixin"`
 }
 
 // ExecConfig holds exec tool settings. When empty, built-in defaults are used.
@@ -87,6 +91,22 @@ type LarkConfig struct {
 	Enabled           bool   `yaml:"enabled"`
 	// Debug, when true, logs received messages and other watch events to the logger.
 	Debug bool `yaml:"debug"`
+}
+
+// WeixinConfig configures the Weixin/iLink polling channel.
+type WeixinConfig struct {
+	AccountID      string   `yaml:"accountID"`
+	BotToken       string   `yaml:"botToken"`
+	BaseURL        string   `yaml:"baseURL"`
+	RouteTag       string   `yaml:"routeTag"`
+	ChannelVersion string   `yaml:"channelVersion"`
+	AccountDir     string   `yaml:"accountDir"`
+	CDNBaseURL     string   `yaml:"cdnBaseURL"`
+	StateDir       string   `yaml:"stateDir"`
+	MediaDir       string   `yaml:"mediaDir"`
+	AllowFrom      []string `yaml:"allowFrom"`
+	Enabled        bool     `yaml:"enabled"`
+	Debug          bool     `yaml:"debug"`
 }
 
 // ExecTimeout returns the exec tool timeout duration.

@@ -7,6 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.2
 	charm.land/glamour/v2 v2.0.0
 	charm.land/lipgloss/v2 v2.0.2
+	github.com/daemon365/weixin-clawbot v0.0.1
 	github.com/go-kratos/blades v0.4.0
 	github.com/go-kratos/blades/contrib/anthropic v0.3.0
 	github.com/go-kratos/blades/contrib/gemini v0.3.0
@@ -50,6 +51,7 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-runewidth v0.0.20 // indirect
+	github.com/mdp/qrterminal/v3 v3.2.1 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/openai/openai-go/v3 v3.8.1 // indirect
@@ -66,10 +68,12 @@ require (
 	golang.org/x/net v0.44.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/term v0.35.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250908214217-97024824d090 // indirect
 	google.golang.org/grpc v1.75.1 // indirect
 	google.golang.org/protobuf v1.36.9 // indirect
+	rsc.io/qr v0.2.0 // indirect
 )
 
 replace (

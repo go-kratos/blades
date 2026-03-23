@@ -22,7 +22,13 @@ channels:
     appSecret: ${LARK_APP_SECRET}
     # encryptKey: ${LARK_ENCRYPT_KEY}
     # verificationToken: ${LARK_VERIFICATION_TOKEN}
-  # weixin: {}  # not yet supported
+  weixin:
+    enabled: false
+  #   # accountID: user@im.wechat   # only needed when ~/.blades/weixin/account has multiple accounts
+  #   # baseURL: https://ilinkai.weixin.qq.com
+  #   # routeTag: ""
+  #   # cdnBaseURL: https://your-cdn.example.com
+  #   # allowFrom: ["user@im.wechat"]
 
 # exec: local tool security settings for bash/read/write/edit (optional).
 # exec:

@@ -19,7 +19,7 @@ func TestRootCommandTreeIncludesExpectedCommands(t *testing.T) {
 		}
 	}
 
-	wantRootSubs := []string{"init", "chat", "run", "memory", "cron", "daemon", "doctor"}
+	wantRootSubs := []string{"init", "chat", "run", "memory", "cron", "weixin", "daemon", "doctor"}
 	gotRootSubs := subcommandNames(root)
 	for _, name := range wantRootSubs {
 		if !slices.Contains(gotRootSubs, name) {
@@ -42,6 +42,13 @@ func TestRootCommandTreeIncludesExpectedCommands(t *testing.T) {
 	for _, name := range []string{"list", "add", "heartbeat", "remove", "run"} {
 		if !slices.Contains(subcommandNames(cronCmd), name) {
 			t.Fatalf("cron subcommands = %v, want to contain %q", subcommandNames(cronCmd), name)
+		}
+	}
+
+	weixinCmd := mustSubcommand(t, root, "weixin")
+	for _, name := range []string{"login", "list"} {
+		if !slices.Contains(subcommandNames(weixinCmd), name) {
+			t.Fatalf("weixin subcommands = %v, want to contain %q", subcommandNames(weixinCmd), name)
 		}
 	}
 }

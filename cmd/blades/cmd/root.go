@@ -63,6 +63,7 @@ Use --workspace to specify a custom workspace directory (e.g., ~/my-agent).`,
 		newRunCmd(),
 		newMemoryCmd(),
 		newCronCmd(),
+		newWeixinCmd(),
 		newDaemonCmd(),
 		newDoctorCmd(),
 	)

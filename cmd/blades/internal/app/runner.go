@@ -22,6 +22,14 @@ import (
 	"github.com/go-kratos/blades/cmd/blades/internal/workspace"
 )
 
+const memoryStartupGuardInstruction = `
+Memory startup guard:
+- Never guess ` + "`memory/YYYY-MM-DD.md`" + ` filenames from the calendar.
+- First inspect the ` + "`memory/`" + ` directory and only read daily log files that actually exist.
+- Missing daily log files are normal. Skip them without failing the turn.
+- Prefer the newest one or two existing daily log files instead of constructing dates yourself.
+`
+
 func BuildRunner(cfg *config.Config, ws *workspace.Workspace, cronSvc *cron.Service, extraTools ...bladestools.Tool) (*blades.Runner, error) {
 	spec, err := LoadAgentSpec(ws)
 	if err != nil {
@@ -46,6 +54,7 @@ func BuildRunner(cfg *config.Config, ws *workspace.Workspace, cronSvc *cron.Serv
 		skillTools = append(skillTools, toolset.Tools()...)
 	}
 	extraTools = append(skillTools, extraTools...)
+	applyWorkspaceInstruction(spec, memoryStartupGuardInstruction)
 
 	toolRegistry := BuildToolRegistry(ExecConfigFromDefaults(DefaultExecWorkingDir(ws), cfg.Exec), cronSvc, extraTools...)
 	middlewareRegistry := BuildMiddlewareRegistry()
