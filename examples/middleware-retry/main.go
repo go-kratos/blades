@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
-	"github.com/go-kratos/blades/recipe/middleware"
+	"github.com/go-kratos/blades/middleware"
 	"github.com/go-kratos/blades/stream"
 )
 

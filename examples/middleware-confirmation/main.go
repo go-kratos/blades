@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/contrib/openai"
-	"github.com/go-kratos/blades/recipe/middleware"
+	"github.com/go-kratos/blades/middleware"
 )
 
 // confirmPrompt is a simple interactive confirmer that asks the user
