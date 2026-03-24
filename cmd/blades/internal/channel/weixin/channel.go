@@ -28,11 +28,13 @@ type Channel struct {
 	mediaDir       string
 	allowFrom      []string
 	httpClient     *http.Client
+	sender         *wx.Sender
 
 	cmdProc      *command.Processor
 	stop         func() error
 	clearSession func(string) error
 
+	senderMu sync.Mutex
 	sessions sync.Map // userID -> sessionID
 
 	debug  bool
@@ -302,16 +304,29 @@ func (c *Channel) sendText(ctx context.Context, toUserID, text string) error {
 	if contextToken == "" {
 		return fmt.Errorf("weixin context token missing for %s", toUserID)
 	}
-	_, err := wx.SendMessageWeixin(ctx, toUserID, wx.MarkdownToPlainText(text), wx.SendOptions{
+	_, err := c.getSender().Conversation(wx.Target{
+		ToUserID:     toUserID,
+		ContextToken: contextToken,
+	}).SendText(ctx, wx.MarkdownToPlainText(text))
+	return err
+}
+
+func (c *Channel) getSender() *wx.Sender {
+	c.senderMu.Lock()
+	defer c.senderMu.Unlock()
+	if c.sender != nil {
+		return c.sender
+	}
+	c.sender = wx.NewSender(wx.SenderOptions{
 		BaseURL:        c.account.BaseURL,
 		Token:          c.account.BotToken,
 		RouteTag:       c.routeTag,
 		ChannelVersion: c.channelVersion,
 		HTTPClient:     c.httpClient,
-		ContextToken:   contextToken,
 		AccountID:      c.account.AccountID,
+		CDNBaseURL:     c.cdnBaseURL,
 	})
-	return err
+	return c.sender
 }
 
 func (c *Channel) resolveUserID(sessionID string) string {

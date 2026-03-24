@@ -42,6 +42,28 @@ func TestHandleMessagesContinuesAfterHandlerError(t *testing.T) {
 	}
 }
 
+func TestGetSenderReusesInstance(t *testing.T) {
+	t.Parallel()
+
+	ch := New(wx.Account{
+		AccountID: "bot@im.wechat",
+		BotToken:  "token",
+		BaseURL:   "https://example.weixin.local",
+	}, "")
+	ch.routeTag = "route-a"
+	ch.channelVersion = "blades"
+	ch.cdnBaseURL = "https://cdn.weixin.local"
+
+	first := ch.getSender()
+	second := ch.getSender()
+	if first == nil || second == nil {
+		t.Fatalf("getSender returned nil")
+	}
+	if first != second {
+		t.Fatalf("getSender did not reuse sender instance")
+	}
+}
+
 func textMessage(fromUserID, text string) wx.WeixinMessage {
 	return wx.WeixinMessage{
 		FromUserID:  fromUserID,

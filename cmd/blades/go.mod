@@ -7,7 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.2
 	charm.land/glamour/v2 v2.0.0
 	charm.land/lipgloss/v2 v2.0.2
-	github.com/daemon365/weixin-clawbot v0.0.1
+	github.com/daemon365/weixin-clawbot v0.0.2
 	github.com/go-kratos/blades v0.4.0
 	github.com/go-kratos/blades/contrib/anthropic v0.3.0
 	github.com/go-kratos/blades/contrib/gemini v0.3.0

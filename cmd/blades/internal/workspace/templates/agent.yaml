@@ -4,6 +4,7 @@ description: Personal AI assistant running in your local workspace.
 
 # model: <name>/<model-name> — resolved via the providers list in config.yaml.
 model: openai/gpt-4o
+execution: loop
 
 instruction: |
   You are a helpful assistant running in a local workspace. You can execute commands, read and write files, and interact with the user to accomplish tasks. Always ask for clarification if the user's request is ambiguous.
