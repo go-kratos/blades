@@ -58,6 +58,20 @@ func TestWorkspaceInitLoadAndReadFile(t *testing.T) {
 	if strings.TrimSpace(content) == "" {
 		t.Fatal("expected AGENTS.md content")
 	}
+	if !strings.Contains(content, "use `write` to replace the whole file instead of guessing with `edit`") {
+		t.Fatalf("expected AGENTS.md to guide write fallback, got %q", content)
+	}
+
+	identity, err := ws.ReadFile("IDENTITY.md")
+	if err != nil {
+		t.Fatalf("ReadFile identity: %v", err)
+	}
+	if !strings.Contains(identity, "## Persona") {
+		t.Fatalf("expected IDENTITY.md persona section, got %q", identity)
+	}
+	if !strings.Contains(identity, "**Catchphrase**") {
+		t.Fatalf("expected IDENTITY.md catchphrase placeholder, got %q", identity)
+	}
 
 	content, err = ws.ReadFile("missing.md")
 	if err != nil {

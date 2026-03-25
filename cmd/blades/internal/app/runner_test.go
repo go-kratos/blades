@@ -139,6 +139,46 @@ sub_agents:
 	}
 }
 
+func TestBuildRunnerDisablesContextWhenSpecHasNoContext(t *testing.T) {
+	ws := workspace.New(t.TempDir())
+	if err := ws.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := os.WriteFile(ws.AgentPath(), []byte(`version: "1.0"
+name: blades
+model: openai/gpt-4o
+instruction: |
+  Answer.
+tools:
+  - read
+`), 0o644); err != nil {
+		t.Fatalf("Write agent.yaml: %v", err)
+	}
+
+	cfg := &config.Config{
+		Providers: []config.Provider{
+			{
+				Name:     "openai",
+				Provider: "openai",
+				Models:   []string{"gpt-4o"},
+				APIKey:   "test-key",
+			},
+		},
+	}
+
+	if _, err := BuildRunner(cfg, ws, nil); err != nil {
+		t.Fatalf("BuildRunner: %v", err)
+	}
+
+	spec, err := LoadAgentSpec(ws)
+	if err != nil {
+		t.Fatalf("LoadAgentSpec: %v", err)
+	}
+	if spec.Context != nil {
+		t.Fatalf("expected no top-level context, got %+v", spec.Context)
+	}
+}
+
 func TestApplyWorkspaceInstructionToLoopSubAgents(t *testing.T) {
 	spec := &recipe.AgentSpec{
 		Name:      "blades",

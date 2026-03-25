@@ -53,6 +53,22 @@ func TestWriteToolHandle(t *testing.T) {
 	}
 }
 
+func TestFileToolDescriptionsClarifyConstraints(t *testing.T) {
+	t.Parallel()
+
+	cfg := ExecConfig{WorkingDir: t.TempDir(), RestrictToWorkspace: true}
+
+	if got := NewWriteTool(cfg).Description(); !strings.Contains(got, "overwrite or error") {
+		t.Fatalf("write description = %q", got)
+	}
+	if got := NewEditTool(cfg).Description(); !strings.Contains(got, "cannot be empty") {
+		t.Fatalf("edit description = %q", got)
+	}
+	if got := NewEditTool(cfg).Description(); !strings.Contains(got, "use read first") {
+		t.Fatalf("edit description = %q", got)
+	}
+}
+
 func TestEditToolHandle(t *testing.T) {
 	t.Parallel()
 
@@ -80,6 +96,28 @@ func TestEditToolHandle(t *testing.T) {
 	}
 	if string(data) != "alpha\ngamma\ngamma\n" {
 		t.Fatalf("edited content = %q", string(data))
+	}
+}
+
+func TestEditToolTargetNotFoundIncludesRecoveryGuidance(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	path := filepath.Join(root, "edit.txt")
+	if err := os.WriteFile(path, []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+
+	tool := &editTool{cfg: ExecConfig{WorkingDir: root, RestrictToWorkspace: true}}
+	_, err := tool.handle(context.Background(), `{"path":"edit.txt","edits":[{"old_string":"gamma","new_string":"delta"}]}`)
+	if err == nil {
+		t.Fatal("expected target not found error")
+	}
+	if !strings.Contains(err.Error(), "Read the file for the exact text") {
+		t.Fatalf("edit error = %q", err)
+	}
+	if !strings.Contains(err.Error(), "use write to replace the whole file") {
+		t.Fatalf("edit error = %q", err)
 	}
 }
 

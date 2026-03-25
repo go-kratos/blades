@@ -88,7 +88,9 @@ func ToolEventKey(tp blades.ToolPart, ordinal int) string {
 	if strings.TrimSpace(tp.ID) != "" {
 		return tp.ID
 	}
-	return tp.Name + "\n" + tp.Request + "\n#" + strconv.Itoa(ordinal)
+	// Requests can stream in incrementally, so they are not stable enough to
+	// identify a single tool invocation. Fall back to tool order instead.
+	return tp.Name + "\n#" + strconv.Itoa(ordinal)
 }
 
 func NewTurnExecutor(runner *blades.Runner, sessMgr *session.Manager, opts TurnOptions) *TurnExecutor {

@@ -287,6 +287,15 @@ func (m *model) handleStream(msg streamMsg) (tea.Model, tea.Cmd) {
 		e := msg.event
 		switch e.Kind {
 		case channel.EventToolStart:
+			for i := len(m.streamTools) - 1; i >= 0; i-- {
+				if !m.streamTools[i].complete && sameToolInvocation(m.streamTools[i], *e) {
+					if e.Input != "" {
+						m.streamTools[i].input = e.Input
+					}
+					m.refreshViewport(false)
+					return m, waitStreamOrStop(m.streamCh, m.stopCh)
+				}
+			}
 			m.toolCounter++
 			m.streamTools = append(m.streamTools, toolSection{
 				idx:      m.toolCounter,
@@ -297,7 +306,10 @@ func (m *model) handleStream(msg streamMsg) (tea.Model, tea.Cmd) {
 			})
 		case channel.EventToolEnd:
 			for i := len(m.streamTools) - 1; i >= 0; i-- {
-				if !m.streamTools[i].complete && (m.streamTools[i].id == e.ID || m.streamTools[i].name == e.Name) {
+				if !m.streamTools[i].complete && sameToolInvocation(m.streamTools[i], *e) {
+					if e.Input != "" {
+						m.streamTools[i].input = e.Input
+					}
 					m.streamTools[i].output = e.Output
 					m.streamTools[i].complete = true
 					m.streamTools[i].expanded = false
@@ -311,6 +323,13 @@ func (m *model) handleStream(msg streamMsg) (tea.Model, tea.Cmd) {
 
 	m.refreshViewport(false)
 	return m, waitStreamOrStop(m.streamCh, m.stopCh)
+}
+
+func sameToolInvocation(section toolSection, event channel.Event) bool {
+	if section.id != "" && event.ID != "" {
+		return section.id == event.ID
+	}
+	return section.name == event.Name
 }
 
 func (m *model) finishTurn(turnErr error) (tea.Model, tea.Cmd) {

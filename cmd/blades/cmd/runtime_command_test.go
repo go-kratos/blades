@@ -199,7 +199,7 @@ func TestConfigureRootLoggerDebugAndRuntimeHelpers(t *testing.T) {
 	if got := appcore.ToolEventKey(blades.ToolPart{ID: "known"}, 1); got != "known" {
 		t.Fatalf("toolEventKey with ID = %q, want known", got)
 	}
-	if got := appcore.ToolEventKey(blades.ToolPart{Name: "search", Request: `{"q":"x"}`}, 2); got != "search\n{\"q\":\"x\"}\n#2" {
+	if got := appcore.ToolEventKey(blades.ToolPart{Name: "search", Request: `{"q":"x"}`}, 2); got != "search\n#2" {
 		t.Fatalf("toolEventKey without ID = %q", got)
 	}
 

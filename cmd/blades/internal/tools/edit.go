@@ -12,15 +12,15 @@ import (
 )
 
 type editInput struct {
-	Path  string       `json:"path"`
-	Edits []stringEdit `json:"edits"`
+	Path  string       `json:"path" jsonschema:"Workspace-relative file path to modify."`
+	Edits []stringEdit `json:"edits" jsonschema:"One or more exact string replacements to apply in order."`
 }
 
 type stringEdit struct {
-	OldString            string `json:"old_string"`
-	NewString            string `json:"new_string"`
-	ReplaceAll           bool   `json:"replace_all,omitempty"`
-	ExpectedReplacements int    `json:"expected_replacements,omitempty"`
+	OldString            string `json:"old_string" jsonschema:"Exact existing text to replace. Required and must be non-empty. edit cannot insert text by using an empty old_string."`
+	NewString            string `json:"new_string" jsonschema:"Replacement text. May be empty to delete the matched text."`
+	ReplaceAll           bool   `json:"replace_all,omitempty" jsonschema:"Replace every occurrence of old_string when true."`
+	ExpectedReplacements int    `json:"expected_replacements,omitempty" jsonschema:"Expected number of matches. Use this to guard against ambiguous edits."`
 }
 
 type editTool struct {
@@ -33,7 +33,7 @@ func NewEditTool(cfg ExecConfig) bladestools.Tool {
 	outputSchema, _ := jsonschema.For[string](nil)
 	return bladestools.NewTool(
 		"edit",
-		"Precisely edit an existing text file by replacing exact text snippets. Fails when the target text is missing or ambiguous unless expected_replacements or replace_all is set.",
+		"Precisely edit an existing text file by replacing exact non-empty text snippets. old_string must already exist in the file and cannot be empty. Use replace_all or expected_replacements when a snippet appears multiple times. If you have not read the file yet, or need to add a new section, use read first or replace the whole file with write instead.",
 		bladestools.HandleFunc((&editTool{cfg: cfg}).handle),
 		bladestools.WithInputSchema(inputSchema),
 		bladestools.WithOutputSchema(outputSchema),
@@ -74,7 +74,7 @@ func (t *editTool) handle(ctx context.Context, raw string) (string, error) {
 		}
 		count := strings.Count(content, change.OldString)
 		if count == 0 {
-			return "", fmt.Errorf("edit: edits[%d] target not found", i)
+			return "", fmt.Errorf("edit: edits[%d] target not found; old_string must match existing text exactly. Read the file for the exact text, or use write to replace the whole file", i)
 		}
 
 		expected := change.ExpectedReplacements

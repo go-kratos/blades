@@ -13,10 +13,10 @@ import (
 )
 
 type writeInput struct {
-	Path       string `json:"path"`
-	Content    string `json:"content"`
-	IfExists   string `json:"if_exists,omitempty"`
-	CreateDirs bool   `json:"create_dirs,omitempty"`
+	Path       string `json:"path" jsonschema:"Workspace-relative file path to write."`
+	Content    string `json:"content" jsonschema:"Full text content to write to the file."`
+	IfExists   string `json:"if_exists,omitempty" jsonschema:"Behavior when the file already exists. Use exact values overwrite or error. Omit to default to overwrite."`
+	CreateDirs bool   `json:"create_dirs,omitempty" jsonschema:"Create missing parent directories before writing when true."`
 }
 
 type writeTool struct {
@@ -29,7 +29,7 @@ func NewWriteTool(cfg ExecConfig) bladestools.Tool {
 	outputSchema, _ := jsonschema.For[string](nil)
 	return bladestools.NewTool(
 		"write",
-		"Create a text file or overwrite an existing one atomically. Use this when replacing the whole file. Use edit for partial changes.",
+		"Create a text file or overwrite an existing one atomically. Use this when replacing the whole file. if_exists only accepts overwrite or error. For partial changes or anchored replacements, use edit instead.",
 		bladestools.HandleFunc((&writeTool{cfg: cfg}).handle),
 		bladestools.WithInputSchema(inputSchema),
 		bladestools.WithOutputSchema(outputSchema),

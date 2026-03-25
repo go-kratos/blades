@@ -215,14 +215,26 @@ func TestModelStreamLifecycle(t *testing.T) {
 	if _, cmd := mod.handleStream(streamMsg{text: "chunk"}); cmd == nil || !strings.Contains(mod.streamBuf.String(), "chunk") {
 		t.Fatalf("handleStream text failed: buf=%q", mod.streamBuf.String())
 	}
-	if _, cmd := mod.handleStream(streamMsg{event: &channel.Event{Kind: channel.EventToolStart, ID: "1", Name: "exec", Input: "pwd"}}); cmd == nil || len(mod.streamTools) != 1 {
+	if _, cmd := mod.handleStream(streamMsg{event: &channel.Event{Kind: channel.EventToolStart, ID: "1", Name: "exec", Input: "{\"pa"}}); cmd == nil || len(mod.streamTools) != 1 {
 		t.Fatalf("handleStream tool start failed: %+v", mod.streamTools)
 	}
 	if mod.streamTools[0].expanded {
 		t.Fatalf("tool should start collapsed: %+v", mod.streamTools[0])
 	}
-	if _, cmd := mod.handleStream(streamMsg{event: &channel.Event{Kind: channel.EventToolEnd, ID: "1", Name: "exec", Output: "ok"}}); cmd == nil || !mod.streamTools[0].complete {
+	if _, cmd := mod.handleStream(streamMsg{event: &channel.Event{Kind: channel.EventToolStart, ID: "1", Name: "exec", Input: "{\"path\":\"file.txt\"}"}}); cmd == nil {
+		t.Fatal("expected duplicate tool start to return command")
+	}
+	if got, want := len(mod.streamTools), 1; got != want {
+		t.Fatalf("duplicate tool start created extra sections: got %d want %d", got, want)
+	}
+	if got, want := mod.streamTools[0].input, "{\"path\":\"file.txt\"}"; got != want {
+		t.Fatalf("tool input after duplicate start = %q, want %q", got, want)
+	}
+	if _, cmd := mod.handleStream(streamMsg{event: &channel.Event{Kind: channel.EventToolEnd, ID: "1", Name: "exec", Input: "{\"path\":\"file.txt\"}", Output: "ok"}}); cmd == nil || !mod.streamTools[0].complete {
 		t.Fatalf("handleStream tool end failed: %+v", mod.streamTools)
+	}
+	if got, want := mod.streamTools[0].input, "{\"path\":\"file.txt\"}"; got != want {
+		t.Fatalf("tool input after end = %q, want %q", got, want)
 	}
 
 	if _, cmd := mod.finishTurn(context.Canceled); cmd == nil {

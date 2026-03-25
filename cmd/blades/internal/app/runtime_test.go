@@ -74,6 +74,42 @@ func (a *toolStreamingAgent) Run(context.Context, *blades.Invocation) blades.Gen
 	}
 }
 
+type partialToolStreamingAgent struct{}
+
+func (a *partialToolStreamingAgent) Name() string        { return "partial-tool-streaming" }
+func (a *partialToolStreamingAgent) Description() string { return "" }
+func (a *partialToolStreamingAgent) Run(context.Context, *blades.Invocation) blades.Generator[*blades.Message, error] {
+	return func(yield func(*blades.Message, error) bool) {
+		yield(&blades.Message{
+			Role:   blades.RoleAssistant,
+			Status: blades.StatusInProgress,
+			Parts: []blades.Part{
+				blades.NewToolPart("", "edit", `{"pa`),
+			},
+		}, nil)
+		yield(&blades.Message{
+			Role:   blades.RoleAssistant,
+			Status: blades.StatusInProgress,
+			Parts: []blades.Part{
+				blades.NewToolPart("", "edit", `{"path":"IDENTITY.md","edits":[{"old_string":"title"`),
+			},
+		}, nil)
+		yield(&blades.Message{
+			Role:   blades.RoleAssistant,
+			Status: blades.StatusCompleted,
+			Parts: []blades.Part{
+				blades.TextPart{Text: "done"},
+				blades.ToolPart{
+					Name:      "edit",
+					Request:   `{"path":"IDENTITY.md","edits":[{"old_string":"title","new_string":"标题"}]}`,
+					Response:  "ok",
+					Completed: true,
+				},
+			},
+		}, nil)
+	}
+}
+
 type eventCaptureWriter struct {
 	events []channel.Event
 }
@@ -85,7 +121,7 @@ func TestToolEventKey(t *testing.T) {
 	if got := ToolEventKey(blades.ToolPart{ID: "known"}, 1); got != "known" {
 		t.Fatalf("ToolEventKey with ID = %q, want known", got)
 	}
-	if got := ToolEventKey(blades.ToolPart{Name: "search", Request: `{"q":"x"}`}, 2); got != "search\n{\"q\":\"x\"}\n#2" {
+	if got := ToolEventKey(blades.ToolPart{Name: "search", Request: `{"q":"x"}`}, 2); got != "search\n#2" {
 		t.Fatalf("ToolEventKey without ID = %q", got)
 	}
 }
@@ -199,6 +235,32 @@ func TestTurnExecutorStreamHandlerTracksDuplicateToolRequestsSeparately(t *testi
 	}
 	if writer.events[3].ID != writer.events[1].ID {
 		t.Fatalf("second tool end ID = %q, want %q", writer.events[3].ID, writer.events[1].ID)
+	}
+}
+
+func TestTurnExecutorStreamHandlerDoesNotDuplicateGrowingToolRequests(t *testing.T) {
+	runner := blades.NewRunner(&partialToolStreamingAgent{})
+	sessMgr := session.NewManager(t.TempDir())
+	writer := &eventCaptureWriter{}
+
+	reply, err := NewTurnExecutor(runner, sessMgr, TurnOptions{}).StreamHandler()(context.Background(), "partial-tool", "hello", writer)
+	if err != nil {
+		t.Fatalf("StreamHandler: %v", err)
+	}
+	if reply != "done" {
+		t.Fatalf("reply = %q, want %q", reply, "done")
+	}
+	if got := len(writer.events); got != 2 {
+		t.Fatalf("event count = %d, want 2", got)
+	}
+	if writer.events[0].Kind != channel.EventToolStart || writer.events[1].Kind != channel.EventToolEnd {
+		t.Fatalf("events = %+v", writer.events)
+	}
+	if writer.events[0].ID != writer.events[1].ID {
+		t.Fatalf("start/end IDs differ: start=%q end=%q", writer.events[0].ID, writer.events[1].ID)
+	}
+	if got, want := writer.events[1].Input, `{"path":"IDENTITY.md","edits":[{"old_string":"title","new_string":"标题"}]}`; got != want {
+		t.Fatalf("end input = %q, want %q", got, want)
 	}
 }
 

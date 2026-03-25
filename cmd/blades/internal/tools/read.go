@@ -12,9 +12,9 @@ import (
 )
 
 type readInput struct {
-	Path      string `json:"path"`
-	StartLine int    `json:"start_line,omitempty"`
-	EndLine   int    `json:"end_line,omitempty"`
+	Path      string `json:"path" jsonschema:"Workspace-relative file path to read."`
+	StartLine int    `json:"start_line,omitempty" jsonschema:"Optional 1-based first line to include."`
+	EndLine   int    `json:"end_line,omitempty" jsonschema:"Optional 1-based last line to include. Omit to read through the end of the file."`
 }
 
 type readTool struct {
@@ -27,7 +27,7 @@ func NewReadTool(cfg ExecConfig) bladestools.Tool {
 	outputSchema, _ := jsonschema.For[string](nil)
 	return bladestools.NewTool(
 		"read",
-		"Read a UTF-8 text file from the workspace. Supports optional line ranges. Use this instead of bash for normal file reads.",
+		"Read a UTF-8 text file from the workspace. Supports optional 1-based line ranges. Use this instead of bash for normal file reads.",
 		bladestools.HandleFunc((&readTool{cfg: cfg}).handle),
 		bladestools.WithInputSchema(inputSchema),
 		bladestools.WithOutputSchema(outputSchema),
