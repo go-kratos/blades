@@ -78,8 +78,8 @@ func TestWorkspaceInitLoadAndReadFile(t *testing.T) {
 	if err := recipe.Validate(spec); err != nil {
 		t.Fatalf("init-generated agent.yaml should be valid: %v", err)
 	}
-	if spec.Execution != "" {
-		t.Fatalf("single-agent template execution = %q, want empty", spec.Execution)
+	if got, want := spec.Execution, recipe.ExecutionLoop; got != want {
+		t.Fatalf("single-agent template execution = %q, want %q", got, want)
 	}
 }
 

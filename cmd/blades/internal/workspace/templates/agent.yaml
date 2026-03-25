@@ -9,9 +9,10 @@ execution: loop
 instruction: |
   You are a helpful assistant running in a local workspace. You can execute commands, read and write files, and interact with the user to accomplish tasks. Always ask for clarification if the user's request is ambiguous.
 context:
-  strategy: window
+  strategy: summarize
   max_tokens: 80000
-  max_messages: 50
+  keep_recent: 10
+  batch_size: 20
   
 tools:
 - read

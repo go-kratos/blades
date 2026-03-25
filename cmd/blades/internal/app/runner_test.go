@@ -54,11 +54,14 @@ func TestLoadAgentSpecAndBuildRunner(t *testing.T) {
 	if err := recipe.Validate(spec); err != nil {
 		t.Fatalf("default spec should be valid: %v", err)
 	}
-	if spec.Execution != "" {
-		t.Fatalf("default execution = %q, want empty", spec.Execution)
+	if got, want := spec.Execution, recipe.ExecutionLoop; got != want {
+		t.Fatalf("default execution = %q, want %q", got, want)
 	}
 	if spec.Context == nil {
 		t.Fatal("default spec should define top-level context")
+	}
+	if got, want := spec.Context.Strategy, recipe.ContextStrategySummarize; got != want {
+		t.Fatalf("default context strategy = %q, want %q", got, want)
 	}
 	if len(spec.SubAgents) != 0 {
 		t.Fatalf("default sub_agents = %d, want 0", len(spec.SubAgents))
