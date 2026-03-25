@@ -7,6 +7,116 @@ import (
 	bladestools "github.com/go-kratos/blades/tools"
 )
 
+// captureMessagesModel records req.Messages from every Generate call.
+type captureMessagesModel struct {
+	calls    int
+	captured [][]*Message
+}
+
+func (m *captureMessagesModel) Name() string { return "capture-messages" }
+
+func (m *captureMessagesModel) Generate(_ context.Context, req *ModelRequest) (*ModelResponse, error) {
+	m.calls++
+	snapshot := make([]*Message, len(req.Messages))
+	copy(snapshot, req.Messages)
+	m.captured = append(m.captured, snapshot)
+
+	msg := NewAssistantMessage(StatusCompleted)
+	msg.Parts = append(msg.Parts, TextPart{Text: "reply"})
+	return &ModelResponse{Message: msg}, nil
+}
+
+func (m *captureMessagesModel) NewStreaming(context.Context, *ModelRequest) Generator[*ModelResponse, error] {
+	return nil
+}
+
+// TestWithContextFalse_DefaultStateless verifies that with the default
+// (useContext=false) the model receives only the current invocation message
+// and no prior history, even when a session with existing history is supplied.
+func TestWithContextFalse_DefaultStateless(t *testing.T) {
+	t.Parallel()
+
+	model := &captureMessagesModel{}
+	a, err := NewAgent("ctx-false-agent", WithModel(model))
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+	runner := NewRunner(a)
+	session := NewSession()
+
+	// First run – "turn 1"
+	if _, err := runner.Run(context.Background(), UserMessage("turn1"), WithSession(session)); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	// Second run – "turn 2". Prior history must NOT be included.
+	if _, err := runner.Run(context.Background(), UserMessage("turn2"), WithSession(session)); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	if got, want := model.calls, 2; got != want {
+		t.Fatalf("model calls = %d, want %d", got, want)
+	}
+	// Each run should see exactly one message (the current user message).
+	if got, want := len(model.captured[0]), 1; got != want {
+		t.Fatalf("first call messages len = %d, want %d", got, want)
+	}
+	if got, want := model.captured[0][0].Text(), "turn1"; got != want {
+		t.Fatalf("first call message = %q, want %q", got, want)
+	}
+	if got, want := len(model.captured[1]), 1; got != want {
+		t.Fatalf("second call messages len = %d, want %d", got, want)
+	}
+	if got, want := model.captured[1][0].Text(), "turn2"; got != want {
+		t.Fatalf("second call message = %q, want %q", got, want)
+	}
+}
+
+// TestWithContextTrue_LoadsSessionHistory verifies that WithContext(true)
+// causes the model to receive the full session history on each call.
+func TestWithContextTrue_LoadsSessionHistory(t *testing.T) {
+	t.Parallel()
+
+	model := &captureMessagesModel{}
+	a, err := NewAgent("ctx-true-agent", WithModel(model), WithContext(true))
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+	runner := NewRunner(a)
+	session := NewSession()
+
+	// First run – "turn 1"
+	if _, err := runner.Run(context.Background(), UserMessage("turn1"), WithSession(session)); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	// Second run – "turn 2". Session history (user1 + assistant1) must be included.
+	if _, err := runner.Run(context.Background(), UserMessage("turn2"), WithSession(session)); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	if got, want := model.calls, 2; got != want {
+		t.Fatalf("model calls = %d, want %d", got, want)
+	}
+	// First call: only the first user message.
+	if got, want := len(model.captured[0]), 1; got != want {
+		t.Fatalf("first call messages len = %d, want %d", got, want)
+	}
+	// Second call: user1 + assistant1 + user2 = 3 messages.
+	if got, want := len(model.captured[1]), 3; got != want {
+		t.Fatalf("second call messages len = %d, want %d", got, want)
+	}
+	if got, want := model.captured[1][0].Text(), "turn1"; got != want {
+		t.Fatalf("second call message[0] = %q, want %q", got, want)
+	}
+	if got, want := model.captured[1][1].Text(), "reply"; got != want {
+		t.Fatalf("second call message[1] = %q, want %q", got, want)
+	}
+	if got, want := model.captured[1][2].Text(), "turn2"; got != want {
+		t.Fatalf("second call message[2] = %q, want %q", got, want)
+	}
+}
+
 type toolLoopSessionModel struct {
 	calls       int
 	secondInput []*Message
