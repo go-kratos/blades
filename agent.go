@@ -2,6 +2,7 @@ package blades
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"strings"
@@ -296,13 +297,18 @@ func (a *agent) handleTools(ctx context.Context, invocation *Invocation, part To
 		if tool.Name() == part.Name {
 			response, err := tool.Handle(ctx, part.Request)
 			if err != nil {
-				return part, err
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return part, err
+				}
+				part.Response = "Tool error: " + err.Error()
+				return part, nil
 			}
 			part.Response = response
 			return part, nil
 		}
 	}
-	return part, fmt.Errorf("agent: tool %s not found", part.Name)
+	part.Response = fmt.Sprintf("Tool error: agent: tool %s not found", part.Name)
+	return part, nil
 }
 
 // executeTools executes the tools specified in the tool parts.
@@ -437,6 +443,9 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 				// Persist the tool response to the session for logging.
 				if err := session.Append(ctx, toolMessage); err != nil {
 					yield(nil, err)
+					return
+				}
+				if _, ok := toolMessage.Actions[tools.ActionLoopExit]; ok {
 					return
 				}
 				// In stateless mode, accumulate the tool result into the local slice

@@ -1919,6 +1919,40 @@ func TestContextSpecBuildWithNoContext(t *testing.T) {
 	}
 }
 
+func TestBuildOptionWithContextFalseKeepsAgentStateless(t *testing.T) {
+	model := &captureRequestModel{name: "m", response: "ok"}
+	registry := NewModelRegistry()
+	registry.Register("m", model)
+
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "stateless",
+		Model:       "m",
+		Instruction: "do something",
+	}
+
+	agent, err := Build(spec, WithModelRegistry(registry), WithContext(false))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+
+	session := blades.NewSession()
+	runner := blades.NewRunner(agent)
+	if _, err := runner.Run(context.Background(), blades.UserMessage("turn1"), blades.WithSession(session)); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if _, err := runner.Run(context.Background(), blades.UserMessage("turn2"), blades.WithSession(session)); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	if got, want := len(model.messages), 1; got != want {
+		t.Fatalf("second request messages len = %d, want %d", got, want)
+	}
+	if got, want := model.messages[0].Text(), "turn2"; got != want {
+		t.Fatalf("second request message = %q, want %q", got, want)
+	}
+}
+
 func TestContextSpecBuildSubAgentWithContext(t *testing.T) {
 	spec := &AgentSpec{
 		Version:     "1.0",

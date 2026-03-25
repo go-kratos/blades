@@ -2,6 +2,7 @@ package blades
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	bladestools "github.com/go-kratos/blades/tools"
@@ -189,6 +190,73 @@ func TestAgentRunWithSessionAndNilPreparedContextKeepsInvocationMessagesAcrossTo
 		t.Fatalf("tool completed = %t, want %t", got, want)
 	}
 	if got, want := part.Response, `{"ok":true}`; got != want {
+		t.Fatalf("tool response = %q, want %q", got, want)
+	}
+}
+
+type recoverableToolErrorModel struct {
+	calls       int
+	secondInput []*Message
+}
+
+func (m *recoverableToolErrorModel) Name() string { return "recoverable-tool-error" }
+
+func (m *recoverableToolErrorModel) Generate(_ context.Context, req *ModelRequest) (*ModelResponse, error) {
+	m.calls++
+	if m.calls == 2 {
+		m.secondInput = append(m.secondInput[:0], req.Messages...)
+	}
+
+	msg := NewAssistantMessage(StatusCompleted)
+	if m.calls == 1 {
+		msg.Role = RoleTool
+		msg.Parts = append(msg.Parts, NewToolPart("call_1", "edit", `{"path":"IDENTITY.md"}`))
+		return &ModelResponse{Message: msg}, nil
+	}
+
+	msg.Parts = append(msg.Parts, TextPart{Text: "recovered"})
+	return &ModelResponse{Message: msg}, nil
+}
+
+func (m *recoverableToolErrorModel) NewStreaming(context.Context, *ModelRequest) Generator[*ModelResponse, error] {
+	return nil
+}
+
+func TestAgentRunKeepsGoingAfterRecoverableToolError(t *testing.T) {
+	t.Parallel()
+
+	model := &recoverableToolErrorModel{}
+	tool := bladestools.NewTool("edit", "edit", bladestools.HandleFunc(func(context.Context, string) (string, error) {
+		return "", fmt.Errorf("edit: edits[0] target not found")
+	}))
+	agent, err := NewAgent("tool-agent", WithModel(model), WithTools(tool))
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+
+	runner := NewRunner(agent)
+	session := NewSession()
+	output, err := runner.Run(context.Background(), UserMessage("set persona"), WithSession(session))
+	if err != nil {
+		t.Fatalf("runner run: %v", err)
+	}
+	if got, want := output.Text(), "recovered"; got != want {
+		t.Fatalf("output text = %q, want %q", got, want)
+	}
+	if got, want := model.calls, 2; got != want {
+		t.Fatalf("model calls = %d, want %d", got, want)
+	}
+	if got, want := len(model.secondInput), 2; got != want {
+		t.Fatalf("second input len = %d, want %d", got, want)
+	}
+	part, ok := model.secondInput[1].Parts[0].(ToolPart)
+	if !ok {
+		t.Fatalf("second input second part type = %T, want ToolPart", model.secondInput[1].Parts[0])
+	}
+	if got, want := part.Completed, true; got != want {
+		t.Fatalf("tool completed = %t, want %t", got, want)
+	}
+	if got, want := part.Response, "Tool error: edit: edits[0] target not found"; got != want {
 		t.Fatalf("tool response = %q, want %q", got, want)
 	}
 }
