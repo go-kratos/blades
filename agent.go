@@ -109,11 +109,11 @@ func WithMaxIterations(n int) AgentOption {
 }
 
 // WithContext controls whether the Agent loads the full session history into
-// each model call. When enabled (true, the default), session.History is called
-// before every model request so the model has the complete conversation context.
-// When disabled (false), only the messages produced within the current
-// invocation are sent to the model, making the agent stateless with respect to
-// prior turns.
+// each model call. When enabled (true), session.History is called before every
+// model request so the model has the complete conversation context. By default
+// (when WithContext is not used or enabled is false), only the messages
+// produced within the current invocation are sent to the model, making the
+// agent stateless with respect to prior turns.
 func WithContext(enabled bool) AgentOption {
 	return func(a *agent) {
 		a.useContext = enabled
