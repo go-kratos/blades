@@ -156,14 +156,48 @@ func TestRunnerRunStream_AllowsIncompleteThenCompleted(t *testing.T) {
 	if gotErr != nil {
 		t.Fatalf("expected no error, got %v", gotErr)
 	}
-	if got, want := len(statuses), 2; got != want {
+	// Only the incomplete chunk is yielded; the completed message is consumed internally.
+	if got, want := len(statuses), 1; got != want {
 		t.Fatalf("statuses len = %d, want %d", got, want)
 	}
 	if got, want := statuses[0], StatusIncomplete; got != want {
 		t.Fatalf("first status = %q, want %q", got, want)
 	}
-	if got, want := statuses[1], StatusCompleted; got != want {
-		t.Fatalf("second status = %q, want %q", got, want)
+}
+
+func TestRunnerRunStream_NoDuplicateOutput(t *testing.T) {
+	t.Parallel()
+
+	model := &scriptedStreamingModel{
+		streamResponses: []*ModelResponse{
+			streamingResponse(StatusIncomplete, "chunk1"),
+			streamingResponse(StatusIncomplete, "chunk2"),
+			streamingResponse(StatusCompleted, "chunk1chunk2"),
+		},
+	}
+	agent, err := NewAgent("stream-agent", WithModel(model))
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+	runner := NewRunner(agent)
+
+	var texts []string
+	for output, err := range runner.RunStream(context.Background(), UserMessage("hi")) {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, p := range output.Parts {
+			if tp, ok := p.(TextPart); ok {
+				texts = append(texts, tp.Text)
+			}
+		}
+	}
+
+	if got, want := len(texts), 2; got != want {
+		t.Fatalf("texts len = %d, want %d; got %v", got, want, texts)
+	}
+	if texts[0] != "chunk1" || texts[1] != "chunk2" {
+		t.Fatalf("texts = %v, want [chunk1, chunk2]", texts)
 	}
 }
 

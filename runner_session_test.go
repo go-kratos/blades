@@ -35,10 +35,18 @@ func (m *countingSessionModel) NewStreaming(context.Context, *ModelRequest) Gene
 	m.mu.Unlock()
 
 	return func(yield func(*ModelResponse, error) bool) {
-		msg := NewAssistantMessage(StatusCompleted)
-		msg.ID = "shared-stream-message-id"
-		msg.Parts = append(msg.Parts, TextPart{Text: fmt.Sprintf("stream-%d", call)})
-		yield(&ModelResponse{Message: msg}, nil)
+		text := fmt.Sprintf("stream-%d", call)
+		// Emit an incomplete chunk first, then the completed message.
+		inc := NewAssistantMessage(StatusIncomplete)
+		inc.ID = "shared-stream-message-id"
+		inc.Parts = append(inc.Parts, TextPart{Text: text})
+		if !yield(&ModelResponse{Message: inc}, nil) {
+			return
+		}
+		done := NewAssistantMessage(StatusCompleted)
+		done.ID = "shared-stream-message-id"
+		done.Parts = append(done.Parts, TextPart{Text: text})
+		yield(&ModelResponse{Message: done}, nil)
 	}
 }
 

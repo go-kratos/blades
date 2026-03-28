@@ -407,11 +407,11 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 						finalMessage.Author = a.name
 					}
 					finalMessage.InvocationID = invocation.ID
-					// Skip saving tool intermediate states
-					if finalMessage.Role == RoleTool && finalMessage.Status == StatusCompleted {
+					// Skip completed messages; only yield incremental chunks.
+					if finalMessage.Status == StatusCompleted {
+						a.saveOutputState(ctx, invocation, finalMessage)
 						continue
 					}
-					a.saveOutputState(ctx, invocation, finalMessage)
 					if !yield(finalMessage, nil) {
 						return // early termination
 					}
