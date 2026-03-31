@@ -144,7 +144,6 @@ func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 	a := &agent{
 		name:          name,
 		maxIterations: 10,
-		useContext:    true,
 	}
 	for _, opt := range opts {
 		opt(a)

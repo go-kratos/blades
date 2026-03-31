@@ -18,8 +18,9 @@ import (
 // reviewer is satisfied.
 //
 // Context management:
-//   - Cross-iteration history is accumulated by the loop and injected into
-//     each sub-agent's invocation context automatically.
+//   - Both sub-agents use blades.WithContext(true) so each model call loads the
+//     full session history, allowing the writer to see reviewer feedback and the
+//     reviewer to see the latest draft across iterations.
 //   - blades.WithContextCompressor on the Session trims the context window before
 //     every model call, preventing unbounded growth over many iterations.
 func main() {
@@ -30,6 +31,7 @@ func main() {
 	writerAgent, err := blades.NewAgent(
 		"WriterAgent",
 		blades.WithModel(model),
+		blades.WithContext(true),
 		blades.WithInstruction(`You are a skilled writer.
 Write a short paragraph on the topic given by the user.
 If conversation history contains reviewer feedback, revise accordingly.`),
@@ -41,6 +43,7 @@ If conversation history contains reviewer feedback, revise accordingly.`),
 	reviewerAgent, err := blades.NewAgent(
 		"ReviewerAgent",
 		blades.WithModel(model),
+		blades.WithContext(true),
 		blades.WithInstruction(`You are a critical editor.
 Review the most recent draft in the conversation history and decide:
 - If it meets a high standard, call the exit tool with a brief reason.
