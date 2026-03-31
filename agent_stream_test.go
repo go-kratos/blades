@@ -201,6 +201,42 @@ func TestRunnerRunStream_NoDuplicateOutput(t *testing.T) {
 	}
 }
 
+func TestRunnerRunStream_CompletedOnlyYieldsOutput(t *testing.T) {
+	t.Parallel()
+
+	model := &scriptedStreamingModel{
+		streamResponses: []*ModelResponse{
+			streamingResponse(StatusCompleted, "hello"),
+		},
+	}
+	agent, err := NewAgent("stream-agent", WithModel(model))
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+	runner := NewRunner(agent)
+
+	var statuses []Status
+	var texts []string
+	for output, err := range runner.RunStream(context.Background(), UserMessage("hi")) {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		statuses = append(statuses, output.Status)
+		texts = append(texts, output.Text())
+	}
+
+	// A provider that only emits a single completed message must still produce output.
+	if got, want := len(statuses), 1; got != want {
+		t.Fatalf("statuses len = %d, want %d; got %v", got, want, statuses)
+	}
+	if got, want := statuses[0], StatusCompleted; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if got, want := texts[0], "hello"; got != want {
+		t.Fatalf("text = %q, want %q", got, want)
+	}
+}
+
 func TestRunnerRunStream_ReturnsNoFinalResponseWhenChunkMessageNil(t *testing.T) {
 	t.Parallel()
 

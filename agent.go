@@ -393,6 +393,7 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 				}
 			} else {
 				streaming := a.model.NewStreaming(ctx, req)
+				hasChunks := false
 				for response, err := range streaming {
 					if err != nil {
 						yield(nil, err)
@@ -407,10 +408,18 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 						finalMessage.Author = a.name
 					}
 					finalMessage.InvocationID = invocation.ID
-					// Skip completed messages; only yield incremental chunks.
+					// When incremental chunks have already been yielded, skip the
+					// final completed message to avoid sending duplicate accumulated
+					// text. If no chunks were yielded yet, deliver the completed
+					// message so that completed-only providers still produce output.
 					if finalMessage.Status == StatusCompleted {
 						a.saveOutputState(ctx, invocation, finalMessage)
-						continue
+						if hasChunks {
+							continue
+						}
+					}
+					if finalMessage.Status == StatusIncomplete {
+						hasChunks = true
 					}
 					if !yield(finalMessage, nil) {
 						return // early termination
