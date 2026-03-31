@@ -156,12 +156,16 @@ func TestRunnerRunStream_AllowsIncompleteThenCompleted(t *testing.T) {
 	if gotErr != nil {
 		t.Fatalf("expected no error, got %v", gotErr)
 	}
-	// Only the incomplete chunk is yielded; the completed message is consumed internally.
-	if got, want := len(statuses), 1; got != want {
-		t.Fatalf("statuses len = %d, want %d", got, want)
+	// Both the incomplete and completed messages are yielded; the completed
+	// message has its text stripped to avoid duplicating the incremental chunks.
+	if got, want := len(statuses), 2; got != want {
+		t.Fatalf("statuses len = %d, want %d; got %v", got, want, statuses)
 	}
 	if got, want := statuses[0], StatusIncomplete; got != want {
 		t.Fatalf("first status = %q, want %q", got, want)
+	}
+	if got, want := statuses[1], StatusCompleted; got != want {
+		t.Fatalf("second status = %q, want %q", got, want)
 	}
 }
 
@@ -181,11 +185,15 @@ func TestRunnerRunStream_NoDuplicateOutput(t *testing.T) {
 	}
 	runner := NewRunner(agent)
 
-	var texts []string
+	var (
+		texts    []string
+		statuses []Status
+	)
 	for output, err := range runner.RunStream(context.Background(), UserMessage("hi")) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+		statuses = append(statuses, output.Status)
 		for _, p := range output.Parts {
 			if tp, ok := p.(TextPart); ok {
 				texts = append(texts, tp.Text)
@@ -193,6 +201,14 @@ func TestRunnerRunStream_NoDuplicateOutput(t *testing.T) {
 		}
 	}
 
+	// All three messages are yielded, but the completed one has text stripped.
+	if got, want := len(statuses), 3; got != want {
+		t.Fatalf("statuses len = %d, want %d; got %v", got, want, statuses)
+	}
+	if got, want := statuses[2], StatusCompleted; got != want {
+		t.Fatalf("last status = %q, want %q", got, want)
+	}
+	// Only the two incomplete chunks contribute text — no duplicate.
 	if got, want := len(texts), 2; got != want {
 		t.Fatalf("texts len = %d, want %d; got %v", got, want, texts)
 	}

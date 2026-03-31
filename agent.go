@@ -408,13 +408,21 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 						finalMessage.Author = a.name
 					}
 					finalMessage.InvocationID = invocation.ID
-					// When incremental chunks have already been yielded, skip the
-					// final completed message to avoid sending duplicate accumulated
-					// text. If no chunks were yielded yet, deliver the completed
-					// message so that completed-only providers still produce output.
+					// When incremental chunks have already been yielded, strip text
+					// parts from the completed message to avoid duplicate output
+					// while still yielding it as a completion signal so consumers
+					// can access status and metadata. Completed-only providers
+					// (no prior chunks) retain their text.
 					if finalMessage.Status == StatusCompleted {
 						a.saveOutputState(ctx, invocation, finalMessage)
 						if hasChunks {
+							// Yield a copy with text stripped to avoid duplicate
+							// output while preserving the original for session state.
+							signal := *finalMessage
+							signal.Parts = nil
+							if !yield(&signal, nil) {
+								return // early termination
+							}
 							continue
 						}
 					}

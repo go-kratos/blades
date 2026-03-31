@@ -145,10 +145,12 @@ func TestRunnerRunStream_RerunsWithSameSession(t *testing.T) {
 		secondTexts = append(secondTexts, output.Text())
 	}
 
-	if got, want := len(firstTexts), 1; got != want {
+	// Two messages per stream: the incomplete chunk (with text) and the
+	// completed signal (text stripped to avoid duplication).
+	if got, want := len(firstTexts), 2; got != want {
 		t.Fatalf("first stream output len = %d, want %d", got, want)
 	}
-	if got, want := len(secondTexts), 1; got != want {
+	if got, want := len(secondTexts), 2; got != want {
 		t.Fatalf("second stream output len = %d, want %d", got, want)
 	}
 	if got, want := firstTexts[0], "stream-1"; got != want {
