@@ -416,10 +416,17 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 					if finalMessage.Status == StatusCompleted {
 						a.saveOutputState(ctx, invocation, finalMessage)
 						if hasChunks {
-							// Yield a copy with text stripped to avoid duplicate
-							// output while preserving the original for session state.
+							// Yield a copy with only text parts stripped to avoid
+							// duplicate output while preserving non-text parts
+							// (e.g., ToolPart, FilePart, DataPart) and metadata.
 							signal := *finalMessage
-							signal.Parts = nil
+							filtered := signal.Parts[:0:0]
+							for _, part := range signal.Parts {
+								if _, ok := part.(TextPart); !ok {
+									filtered = append(filtered, part)
+								}
+							}
+							signal.Parts = filtered
 							if !yield(&signal, nil) {
 								return // early termination
 							}
