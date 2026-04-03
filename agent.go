@@ -420,13 +420,17 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 							// duplicate output while preserving non-text parts
 							// (e.g., ToolPart, FilePart, DataPart) and metadata.
 							signal := *finalMessage
-							filtered := signal.Parts[:0:0]
+							var filtered []Part
 							for _, part := range signal.Parts {
 								if _, ok := part.(TextPart); !ok {
 									filtered = append(filtered, part)
 								}
 							}
-							signal.Parts = filtered
+							if len(filtered) == 0 {
+								signal.Parts = nil
+							} else {
+								signal.Parts = filtered
+							}
 							if !yield(&signal, nil) {
 								return // early termination
 							}
