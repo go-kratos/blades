@@ -1,0 +1,70 @@
+# github.com/go-kratos/blades v0.4.1-0.20260310115102-d87d0212ee57
+## explicit; go 1.24.0
+github.com/go-kratos/blades
+github.com/go-kratos/blades/skills
+github.com/go-kratos/blades/stream
+github.com/go-kratos/blades/tools
+# github.com/go-kratos/blades/contrib/openai v0.3.0
+## explicit; go 1.24.0
+github.com/go-kratos/blades/contrib/openai
+# github.com/go-kratos/kit v0.0.0-20260206070956-76ccc5d3d1e9
+## explicit; go 1.24.0
+github.com/go-kratos/kit/container/maps
+github.com/go-kratos/kit/container/slices
+# github.com/google/jsonschema-go v0.3.0
+## explicit; go 1.23.0
+github.com/google/jsonschema-go/jsonschema
+# github.com/google/uuid v1.6.0
+## explicit
+github.com/google/uuid
+# github.com/inconshreveable/mousetrap v1.1.0
+## explicit; go 1.18
+github.com/inconshreveable/mousetrap
+# github.com/openai/openai-go/v3 v3.8.1
+## explicit; go 1.22
+github.com/openai/openai-go/v3
+github.com/openai/openai-go/v3/conversations
+github.com/openai/openai-go/v3/internal
+github.com/openai/openai-go/v3/internal/apierror
+github.com/openai/openai-go/v3/internal/apiform
+github.com/openai/openai-go/v3/internal/apijson
+github.com/openai/openai-go/v3/internal/apiquery
+github.com/openai/openai-go/v3/internal/encoding/json
+github.com/openai/openai-go/v3/internal/encoding/json/sentinel
+github.com/openai/openai-go/v3/internal/encoding/json/shims
+github.com/openai/openai-go/v3/internal/paramutil
+github.com/openai/openai-go/v3/internal/requestconfig
+github.com/openai/openai-go/v3/option
+github.com/openai/openai-go/v3/packages/pagination
+github.com/openai/openai-go/v3/packages/param
+github.com/openai/openai-go/v3/packages/respjson
+github.com/openai/openai-go/v3/packages/ssestream
+github.com/openai/openai-go/v3/realtime
+github.com/openai/openai-go/v3/responses
+github.com/openai/openai-go/v3/shared
+github.com/openai/openai-go/v3/shared/constant
+github.com/openai/openai-go/v3/webhooks
+# github.com/spf13/cobra v1.10.1
+## explicit; go 1.15
+github.com/spf13/cobra
+# github.com/spf13/pflag v1.0.10
+## explicit; go 1.12
+github.com/spf13/pflag
+# github.com/tidwall/gjson v1.18.0
+## explicit; go 1.12
+github.com/tidwall/gjson
+# github.com/tidwall/match v1.2.0
+## explicit; go 1.15
+github.com/tidwall/match
+# github.com/tidwall/pretty v1.2.1
+## explicit; go 1.16
+github.com/tidwall/pretty
+# github.com/tidwall/sjson v1.2.5
+## explicit; go 1.14
+github.com/tidwall/sjson
+# golang.org/x/sync v0.18.0
+## explicit; go 1.24.0
+golang.org/x/sync/errgroup
+# gopkg.in/yaml.v3 v3.0.1
+## explicit
+gopkg.in/yaml.v3

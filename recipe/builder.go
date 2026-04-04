@@ -16,6 +16,7 @@ type buildOptions struct {
 	toolRegistry       ToolResolver
 	middlewareRegistry MiddlewareResolver
 	params             map[string]any
+	contextEnabled     *bool
 }
 
 // WithModelRegistry sets the model resolver for resolving model names.
@@ -43,6 +44,14 @@ func WithMiddlewareRegistry(r MiddlewareResolver) BuildOption {
 func WithParams(params map[string]any) BuildOption {
 	return func(o *buildOptions) {
 		o.params = params
+	}
+}
+
+// WithContext explicitly controls whether built agents load session history.
+// When omitted, the underlying agent default behavior is preserved.
+func WithContext(enabled bool) BuildOption {
+	return func(o *buildOptions) {
+		o.contextEnabled = &enabled
 	}
 }
 
@@ -120,6 +129,9 @@ func buildSingleAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (
 	if spec.MaxIterations > 0 {
 		agentOpts = append(agentOpts, blades.WithMaxIterations(spec.MaxIterations))
 	}
+	if o.contextEnabled != nil {
+		agentOpts = append(agentOpts, blades.WithContext(*o.contextEnabled))
+	}
 
 	// Resolve external tools
 	resolvedTools, err := resolveTools(spec.Tools, o)
@@ -192,6 +204,9 @@ func buildSubAgent(sub *SubAgentSpec, parentModel string, params map[string]any,
 	if sub.MaxIterations > 0 {
 		agentOpts = append(agentOpts, blades.WithMaxIterations(sub.MaxIterations))
 	}
+	if o.contextEnabled != nil {
+		agentOpts = append(agentOpts, blades.WithContext(*o.contextEnabled))
+	}
 
 	resolvedTools, err := resolveTools(sub.Tools, o)
 	if err != nil {
@@ -214,7 +229,7 @@ func buildSubAgent(sub *SubAgentSpec, parentModel string, params map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	agent, err = withPromptTemplate(agent, fmt.Sprintf("sub_agent %q", sub.Name), sub.Prompt, subParams)
+	agent, err = withUserPromptTemplate(agent, fmt.Sprintf("sub_agent %q", sub.Name), sub.Prompt, subParams)
 	if err != nil {
 		return nil, err
 	}
@@ -317,6 +332,9 @@ func buildToolAgent(spec *AgentSpec, params map[string]any, o *buildOptions) (bl
 	}
 	if spec.MaxIterations > 0 {
 		agentOpts = append(agentOpts, blades.WithMaxIterations(spec.MaxIterations))
+	}
+	if o.contextEnabled != nil {
+		agentOpts = append(agentOpts, blades.WithContext(*o.contextEnabled))
 	}
 
 	// Resolve middlewares
