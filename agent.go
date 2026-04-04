@@ -398,6 +398,7 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 				}
 			} else {
 				streaming := a.model.NewStreaming(ctx, req)
+				hasChunks := false
 				for response, err := range streaming {
 					if err != nil {
 						yield(nil, err)
@@ -412,11 +413,38 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 						finalMessage.Author = a.name
 					}
 					finalMessage.InvocationID = invocation.ID
-					// Skip saving tool intermediate states
-					if finalMessage.Role == RoleTool && finalMessage.Status == StatusCompleted {
-						continue
+					// When incremental chunks have already been yielded, strip text
+					// parts from the completed message to avoid duplicate output
+					// while still yielding it as a completion signal so consumers
+					// can access status and metadata. Completed-only providers
+					// (no prior chunks) retain their text.
+					if finalMessage.Status == StatusCompleted {
+						a.saveOutputState(ctx, invocation, finalMessage)
+						if hasChunks {
+							// Yield a copy with only text parts stripped to avoid
+							// duplicate output while preserving non-text parts
+							// (e.g., ToolPart, FilePart, DataPart) and metadata.
+							signal := *finalMessage
+							var filtered []Part
+							for _, part := range signal.Parts {
+								if _, ok := part.(TextPart); !ok {
+									filtered = append(filtered, part)
+								}
+							}
+							if len(filtered) == 0 {
+								signal.Parts = nil
+							} else {
+								signal.Parts = filtered
+							}
+							if !yield(&signal, nil) {
+								return // early termination
+							}
+							continue
+						}
 					}
-					a.saveOutputState(ctx, invocation, finalMessage)
+					if finalMessage.Status == StatusIncomplete {
+						hasChunks = true
+					}
 					if !yield(finalMessage, nil) {
 						return // early termination
 					}

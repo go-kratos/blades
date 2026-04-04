@@ -35,10 +35,18 @@ func (m *countingSessionModel) NewStreaming(context.Context, *ModelRequest) Gene
 	m.mu.Unlock()
 
 	return func(yield func(*ModelResponse, error) bool) {
-		msg := NewAssistantMessage(StatusCompleted)
-		msg.ID = "shared-stream-message-id"
-		msg.Parts = append(msg.Parts, TextPart{Text: fmt.Sprintf("stream-%d", call)})
-		yield(&ModelResponse{Message: msg}, nil)
+		text := fmt.Sprintf("stream-%d", call)
+		// Emit an incomplete chunk first, then the completed message.
+		inc := NewAssistantMessage(StatusIncomplete)
+		inc.ID = "shared-stream-message-id"
+		inc.Parts = append(inc.Parts, TextPart{Text: text})
+		if !yield(&ModelResponse{Message: inc}, nil) {
+			return
+		}
+		done := NewAssistantMessage(StatusCompleted)
+		done.ID = "shared-stream-message-id"
+		done.Parts = append(done.Parts, TextPart{Text: text})
+		yield(&ModelResponse{Message: done}, nil)
 	}
 }
 
@@ -137,10 +145,12 @@ func TestRunnerRunStream_RerunsWithSameSession(t *testing.T) {
 		secondTexts = append(secondTexts, output.Text())
 	}
 
-	if got, want := len(firstTexts), 1; got != want {
+	// Two messages per stream: the incomplete chunk (with text) and the
+	// completed signal (text stripped to avoid duplication).
+	if got, want := len(firstTexts), 2; got != want {
 		t.Fatalf("first stream output len = %d, want %d", got, want)
 	}
-	if got, want := len(secondTexts), 1; got != want {
+	if got, want := len(secondTexts), 2; got != want {
 		t.Fatalf("second stream output len = %d, want %d", got, want)
 	}
 	if got, want := firstTexts[0], "stream-1"; got != want {
