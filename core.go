@@ -19,7 +19,10 @@ type Invocation struct {
 	Session     Session
 	Instruction *Message
 	Message     *Message
-	Tools       []tools.Tool
+	// EphemeralMessages are appended to the next model request only.
+	// They are not persisted into the session history.
+	EphemeralMessages []*Message
+	Tools             []tools.Tool
 	// committed tracks whether the initial user message has been (or will be)
 	// appended to the session. All clones share the same *atomic.Bool pointer,
 	// so CompareAndSwap guarantees exactly-once append even under concurrent
@@ -50,15 +53,23 @@ func NewInvocationID() string {
 // (original or any clone) to call CompareAndSwap(false, true) on it will
 // perform the session append; all others skip. This is safe for concurrent use.
 func (inv *Invocation) Clone() *Invocation {
+	var ephemeral []*Message
+	if len(inv.EphemeralMessages) > 0 {
+		ephemeral = make([]*Message, 0, len(inv.EphemeralMessages))
+		for _, message := range inv.EphemeralMessages {
+			ephemeral = append(ephemeral, message.Clone())
+		}
+	}
 	return &Invocation{
-		ID:          inv.ID,
-		Model:       inv.Model,
-		Session:     inv.Session,
-		Resume:      inv.Resume,
-		Stream:      inv.Stream,
-		Message:     inv.Message.Clone(),
-		Instruction: inv.Instruction.Clone(),
-		committed:   inv.committed,
-		Tools:       slices.Clone(inv.Tools),
+		ID:                inv.ID,
+		Model:             inv.Model,
+		Session:           inv.Session,
+		Resume:            inv.Resume,
+		Stream:            inv.Stream,
+		Message:           inv.Message.Clone(),
+		Instruction:       inv.Instruction.Clone(),
+		EphemeralMessages: ephemeral,
+		committed:         inv.committed,
+		Tools:             slices.Clone(inv.Tools),
 	}
 }

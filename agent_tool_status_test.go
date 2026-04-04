@@ -2,6 +2,8 @@ package blades
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	bladestools "github.com/go-kratos/blades/tools"
@@ -104,5 +106,50 @@ func TestAgentExecuteToolsSkipsCompletedToolPart(t *testing.T) {
 	}
 	if gotResp, want := toolPart.Response, `{"cached":true}`; gotResp != want {
 		t.Fatalf("tool response = %q, want %q", gotResp, want)
+	}
+}
+
+func TestAgentExecuteToolsCapturesToolErrorsInResponse(t *testing.T) {
+	t.Parallel()
+
+	tool := bladestools.NewTool("edit", "edit", bladestools.HandleFunc(func(context.Context, string) (string, error) {
+		return "", context.DeadlineExceeded
+	}))
+	invocation := &Invocation{Tools: []bladestools.Tool{tool}}
+	message := NewAssistantMessage(StatusCompleted)
+	message.Role = RoleTool
+	message.Parts = append(message.Parts, NewToolPart("call_1", "edit", `{"path":"IDENTITY.md"}`))
+
+	_, err := (&agent{}).executeTools(context.Background(), invocation, message)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("executeTools error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestAgentExecuteToolsTurnsRecoverableErrorsIntoCompletedToolResults(t *testing.T) {
+	t.Parallel()
+
+	tool := bladestools.NewTool("edit", "edit", bladestools.HandleFunc(func(context.Context, string) (string, error) {
+		return "", fmt.Errorf("edit: edits[0] target not found")
+	}))
+	invocation := &Invocation{Tools: []bladestools.Tool{tool}}
+	message := NewAssistantMessage(StatusCompleted)
+	message.Role = RoleTool
+	message.Parts = append(message.Parts, NewToolPart("call_1", "edit", `{"path":"IDENTITY.md"}`))
+
+	got, err := (&agent{}).executeTools(context.Background(), invocation, message)
+	if err != nil {
+		t.Fatalf("executeTools returned error: %v", err)
+	}
+
+	toolPart, ok := got.Parts[0].(ToolPart)
+	if !ok {
+		t.Fatalf("part type = %T, want ToolPart", got.Parts[0])
+	}
+	if got, want := toolPart.Completed, true; got != want {
+		t.Fatalf("tool completed = %t, want %t", got, want)
+	}
+	if got, want := toolPart.Response, "Tool error: edit: edits[0] target not found"; got != want {
+		t.Fatalf("tool response = %q, want %q", got, want)
 	}
 }

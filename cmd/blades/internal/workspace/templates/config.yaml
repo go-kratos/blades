@@ -1,0 +1,38 @@
+# config.yaml — providers and channel integrations
+# Place this file at ~/.blades/config.yaml
+#
+# providers: list of model providers available to the agent.
+# The first entry is used as the default model unless overridden in agent.yaml.
+providers:
+  - name: openai
+    provider: openai
+    baseUrl: https://api.openai.com/v1
+    apiKey: ${OPENAI_API_KEY}
+    models: [gpt-4o, gpt-4o-mini]
+  - name: anthropic
+    provider: anthropic
+    apiKey: ${ANTHROPIC_API_KEY}
+    models: [claude-sonnet-4-6, claude-opus-4-6]
+
+# channels: channel integrations (optional).
+channels:
+  lark:
+    enabled: false
+    appID: ${LARK_APP_ID}
+    appSecret: ${LARK_APP_SECRET}
+    # encryptKey: ${LARK_ENCRYPT_KEY}
+    # verificationToken: ${LARK_VERIFICATION_TOKEN}
+  weixin:
+    enabled: false
+  #   # accountID: user@im.wechat   # only needed when ~/.blades/weixin/account has multiple accounts
+  #   # baseURL: https://ilinkai.weixin.qq.com
+  #   # routeTag: ""
+  #   # cdnBaseURL: https://your-cdn.example.com
+  #   # allowFrom: ["user@im.wechat"]
+
+# exec: local tool security settings for bash/read/write/edit (optional).
+# exec:
+#   timeoutSeconds: 60
+#   restrictToWorkspace: false
+#   denyPatterns: []
+#   allowPatterns: []

@@ -629,7 +629,7 @@ func TestBuildInjectsPromptAsInstruction(t *testing.T) {
 	}
 }
 
-func TestBuildInjectsSubRecipePromptAsInstruction(t *testing.T) {
+func TestBuildInjectsSubRecipePromptAsTrailingUserMessage(t *testing.T) {
 	model := &captureRequestModel{name: "m1"}
 	registry := NewModelRegistry()
 	registry.Register("m1", model)
@@ -660,14 +660,17 @@ func TestBuildInjectsSubRecipePromptAsInstruction(t *testing.T) {
 	if _, err := runner.Run(context.Background(), blades.UserMessage("Then suggest improvements.")); err != nil {
 		t.Fatalf("run failed: %v", err)
 	}
-	if len(model.messages) != 1 {
-		t.Fatalf("expected 1 message (user), got %d", len(model.messages))
+	if len(model.messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(model.messages))
 	}
 	if got := model.messages[0].Text(); got != "Then suggest improvements." {
-		t.Fatalf("unexpected user message: %q", got)
+		t.Fatalf("unexpected original user message: %q", got)
 	}
-	if !strings.Contains(model.instruction, "First focus on go code style.") {
-		t.Fatalf("expected instruction to contain sub-agent prompt, got: %q", model.instruction)
+	if got := model.messages[1].Text(); got != "First focus on go code style." {
+		t.Fatalf("unexpected trailing prompt message: %q", got)
+	}
+	if strings.Contains(model.instruction, "First focus on go code style.") {
+		t.Fatalf("expected sub-agent prompt to stay out of instruction, got: %q", model.instruction)
 	}
 }
 
@@ -685,24 +688,47 @@ func TestBuildFailsWhenPromptRenderHasMissingParam(t *testing.T) {
 	}
 }
 
-func TestBuildFailsWhenSubRecipePromptRenderHasMissingParam(t *testing.T) {
+func TestBuildSubRecipePromptPreservesUnknownForRuntimeState(t *testing.T) {
+	first := &captureRequestModel{name: "m1", response: "analysis-result"}
+	second := &captureRequestModel{name: "m2", response: "done"}
+	registry := NewModelRegistry()
+	registry.Register("m1", first)
+	registry.Register("m2", second)
+
 	spec := &AgentSpec{
 		Version:     "1.0",
-		Name:        "bad-sub-prompt",
-		Model:       "gpt-4o",
+		Name:        "pipeline",
+		Model:       "m1",
 		Instruction: "instruction",
 		Execution:   ExecutionSequential,
 		SubAgents: []SubAgentSpec{
 			{
 				Name:        "step-1",
-				Instruction: "check",
-				Prompt:      "missing={{.unknown}}",
+				Model:       "m1",
+				Instruction: "analyze",
+				OutputKey:   "analysis",
+			},
+			{
+				Name:        "step-2",
+				Model:       "m2",
+				Instruction: "review",
+				Prompt:      "Review {{.analysis}}",
 			},
 		},
 	}
-	_, err := Build(spec, WithModelRegistry(newTestModelRegistry()))
-	if err == nil {
-		t.Fatal("expected sub-agent prompt render error")
+
+	agent, err := Build(spec, WithModelRegistry(registry))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+	if _, err := blades.NewRunner(agent).Run(context.Background(), blades.UserMessage("start")); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(second.messages) < 2 {
+		t.Fatalf("expected prior history plus trailing prompt, got %d messages", len(second.messages))
+	}
+	if got := second.messages[len(second.messages)-1].Text(); got != "Review analysis-result" {
+		t.Fatalf("runtime prompt = %q, want %q", got, "Review analysis-result")
 	}
 }
 
@@ -1890,6 +1916,40 @@ func TestContextSpecBuildWithNoContext(t *testing.T) {
 	}
 	if sessOpt != nil {
 		t.Fatal("expected nil SessionOption for spec with no context")
+	}
+}
+
+func TestBuildOptionWithContextFalseKeepsAgentStateless(t *testing.T) {
+	model := &captureRequestModel{name: "m", response: "ok"}
+	registry := NewModelRegistry()
+	registry.Register("m", model)
+
+	spec := &AgentSpec{
+		Version:     "1.0",
+		Name:        "stateless",
+		Model:       "m",
+		Instruction: "do something",
+	}
+
+	agent, err := Build(spec, WithModelRegistry(registry), WithContext(false))
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+
+	session := blades.NewSession()
+	runner := blades.NewRunner(agent)
+	if _, err := runner.Run(context.Background(), blades.UserMessage("turn1"), blades.WithSession(session)); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if _, err := runner.Run(context.Background(), blades.UserMessage("turn2"), blades.WithSession(session)); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	if got, want := len(model.messages), 1; got != want {
+		t.Fatalf("second request messages len = %d, want %d", got, want)
+	}
+	if got, want := model.messages[0].Text(), "turn2"; got != want {
+		t.Fatalf("second request message = %q, want %q", got, want)
 	}
 }
 
