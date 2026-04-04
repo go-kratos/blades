@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -67,4 +69,31 @@ func TestReconnectStopsOnContextCancel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("reconnect did not stop after context cancellation")
 	}
+}
+
+func TestNewClientWithSelfHttpClient(t *testing.T) {
+	proxyURL, _ := url.Parse("socks5://127.0.0.1:7890")
+	cfg := ClientConfig{
+		Name:      "test",
+		Transport: TransportHTTP,
+		Endpoint:  "http://127.0.0.1:4502/mcp",
+		HTTPClient: &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyURL(proxyURL),
+			},
+			Timeout: 30 * time.Second,
+		},
+		Headers: map[string]string{
+			"envT": "test",
+		},
+	}
+	mcpCli, err := NewClient(cfg)
+	if err != nil {
+		t.Fatalf("failed to init client: %s\n", err.Error())
+	}
+	tools, err := mcpCli.ListTools(context.Background())
+	if err != nil {
+		t.Fatalf("failed to list tools: %s\n", err.Error())
+	}
+	t.Logf("tool list: %v\n", tools)
 }

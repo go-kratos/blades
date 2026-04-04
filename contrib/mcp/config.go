@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"net/http"
 	"time"
 )
 
@@ -35,10 +36,12 @@ type ClientConfig struct {
 	// === HTTP Configuration (when Transport = TransportHTTP) ===
 	// URL is the MCP server endpoint
 	Endpoint string
-	// Headers are custom HTTP headers to include in requests
+	// Headers are custom HTTP headers to include in requests.
 	Headers map[string]string
 	// Timeout is the request timeout duration
 	Timeout time.Duration
+	//Self-httpClent
+	HTTPClient *http.Client
 }
 
 // validate checks if the configuration is valid
