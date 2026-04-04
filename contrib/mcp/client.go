@@ -121,12 +121,24 @@ func (c *Client) createStreamableTransport() (mcp.Transport, error) {
 	transport := &mcp.StreamableClientTransport{
 		Endpoint: c.config.Endpoint,
 	}
+	if c.config.HTTPClient != nil {
+		transport.HTTPClient = c.config.HTTPClient
+	}
 	if len(c.config.Headers) > 0 {
-		baseTransport := http.DefaultTransport
-		httpClient := &http.Client{
-			Transport: newHeaderRoundTripper(c.config.Headers, baseTransport),
+		if transport.HTTPClient != nil {
+			cloned := *transport.HTTPClient
+			base := cloned.Transport
+			if base == nil {
+				base = http.DefaultTransport
+			}
+			cloned.Transport = newHeaderRoundTripper(c.config.Headers, base)
+			transport.HTTPClient = &cloned
+		} else {
+			httpClient := &http.Client{
+				Transport: newHeaderRoundTripper(c.config.Headers, http.DefaultTransport),
+			}
+			transport.HTTPClient = httpClient
 		}
-		transport.HTTPClient = httpClient
 	}
 	return transport, nil
 }
