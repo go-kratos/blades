@@ -28,6 +28,7 @@ type AudioConfig struct {
 	BaseURL        string
 	APIKey         string
 	Voice          string
+	VoiceID        string
 	ResponseFormat string
 	StreamFormat   string
 	Speed          float64
@@ -68,7 +69,16 @@ func (m *audioModel) buildAudioParams(req *blades.ModelRequest) openai.AudioSpee
 	params := openai.AudioSpeechNewParams{
 		Input: promptFromMessages(req.Messages),
 		Model: m.model,
-		Voice: openai.AudioSpeechNewParamsVoice(m.config.Voice),
+		Voice: openai.AudioSpeechNewParamsVoiceUnion{},
+	}
+	if m.config.Voice != "" {
+		//voiceStr := openai.AudioSpeechNewParamsVoiceString(m.config.Voice)
+		params.Voice.OfAudioSpeechNewsVoiceString = param.NewOpt(m.config.Voice)
+	}
+	if m.config.VoiceID != "" {
+		params.Voice.OfAudioSpeechNewsVoiceID = &openai.AudioSpeechNewParamsVoiceID{
+			ID: m.config.VoiceID,
+		}
 	}
 	if req.Instruction != nil {
 		params.Instructions = param.NewOpt(req.Instruction.Text())
@@ -96,7 +106,7 @@ func (m *audioModel) Generate(ctx context.Context, req *blades.ModelRequest) (*b
 	if m.model == "" {
 		return nil, ErrAudioModelRequired
 	}
-	if m.config.Voice == "" {
+	if m.config.Voice == "" && m.config.VoiceID == "" {
 		return nil, ErrAudioVoiceRequired
 	}
 	params := m.buildAudioParams(req)
