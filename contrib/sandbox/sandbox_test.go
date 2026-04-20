@@ -4,27 +4,27 @@ import (
 	"testing"
 )
 
-func TestNew_defaults(t *testing.T) {
-	sb := New()
+// asFence extracts the underlying *fenceSandbox for internal field inspection.
+func asFence(s Sandbox) *localSandbox {
+	return s.(*localSandbox)
+}
+
+func TestNewLocalSandbox_defaults(t *testing.T) {
+	sb := NewLocalSandbox()
 	defer sb.Close()
-	if sb.debug {
-		t.Error("debug should default to false")
-	}
-	if sb.monitor {
-		t.Error("monitor should default to false")
-	}
-	if len(sb.config.Network.AllowedDomains) != 0 {
+	f := asFence(sb)
+	if len(f.config.Network.AllowedDomains) != 0 {
 		t.Error("allowed domains should be empty by default")
 	}
 }
 
 func TestAllowDomains_accumulates(t *testing.T) {
-	sb := New(
+	sb := NewLocalSandbox(
 		AllowDomains("a.com"),
 		AllowDomains("b.com", "c.com"),
 	)
 	defer sb.Close()
-	got := sb.config.Network.AllowedDomains
+	got := asFence(sb).config.Network.AllowedDomains
 	want := []string{"a.com", "b.com", "c.com"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -37,77 +37,50 @@ func TestAllowDomains_accumulates(t *testing.T) {
 }
 
 func TestDenyDomains(t *testing.T) {
-	sb := New(DenyDomains("evil.com"))
+	sb := NewLocalSandbox(DenyDomains("evil.com"))
 	defer sb.Close()
-	if len(sb.config.Network.DeniedDomains) != 1 || sb.config.Network.DeniedDomains[0] != "evil.com" {
-		t.Errorf("unexpected denied domains: %v", sb.config.Network.DeniedDomains)
+	f := asFence(sb)
+	if len(f.config.Network.DeniedDomains) != 1 || f.config.Network.DeniedDomains[0] != "evil.com" {
+		t.Errorf("unexpected denied domains: %v", f.config.Network.DeniedDomains)
 	}
 }
 
 func TestFilesystemOptions(t *testing.T) {
-	sb := New(
+	sb := NewLocalSandbox(
 		AllowWrite(".", "/tmp"),
 		DenyWrite("/etc"),
 		DenyRead("~/.ssh"),
 	)
 	defer sb.Close()
-	if len(sb.config.Filesystem.AllowWrite) != 2 {
-		t.Errorf("unexpected allow write: %v", sb.config.Filesystem.AllowWrite)
+	f := asFence(sb)
+	if len(f.config.Filesystem.AllowWrite) != 2 {
+		t.Errorf("unexpected allow write: %v", f.config.Filesystem.AllowWrite)
 	}
-	if len(sb.config.Filesystem.DenyWrite) != 1 {
-		t.Errorf("unexpected deny write: %v", sb.config.Filesystem.DenyWrite)
+	if len(f.config.Filesystem.DenyWrite) != 1 {
+		t.Errorf("unexpected deny write: %v", f.config.Filesystem.DenyWrite)
 	}
-	if len(sb.config.Filesystem.DenyRead) != 1 {
-		t.Errorf("unexpected deny read: %v", sb.config.Filesystem.DenyRead)
+	if len(f.config.Filesystem.DenyRead) != 1 {
+		t.Errorf("unexpected deny read: %v", f.config.Filesystem.DenyRead)
 	}
 }
 
 func TestCommandOptions(t *testing.T) {
-	sb := New(
+	sb := NewLocalSandbox(
 		DenyCommands("rm -rf /"),
 		AllowCommands("rm -rf /tmp"),
 	)
 	defer sb.Close()
-	if len(sb.config.Command.Deny) != 1 || sb.config.Command.Deny[0] != "rm -rf /" {
-		t.Errorf("unexpected deny commands: %v", sb.config.Command.Deny)
+	f := asFence(sb)
+	if len(f.config.Command.Deny) != 1 || f.config.Command.Deny[0] != "rm -rf /" {
+		t.Errorf("unexpected deny commands: %v", f.config.Command.Deny)
 	}
-	if len(sb.config.Command.Allow) != 1 || sb.config.Command.Allow[0] != "rm -rf /tmp" {
-		t.Errorf("unexpected allow commands: %v", sb.config.Command.Allow)
-	}
-}
-
-func TestWithConfig_replaces(t *testing.T) {
-	sb := New(
-		AllowDomains("first.com"),
-		WithConfig(Config{
-			Network: NetworkConfig{AllowedDomains: []string{"second.com"}},
-		}),
-	)
-	defer sb.Close()
-	got := sb.config.Network.AllowedDomains
-	if len(got) != 1 || got[0] != "second.com" {
-		t.Errorf("WithConfig should replace: got %v", got)
-	}
-}
-
-func TestWithDebug(t *testing.T) {
-	sb := New(WithDebug(true))
-	defer sb.Close()
-	if !sb.debug {
-		t.Error("debug should be true")
-	}
-}
-
-func TestWithMonitor(t *testing.T) {
-	sb := New(WithMonitor(true))
-	defer sb.Close()
-	if !sb.monitor {
-		t.Error("monitor should be true")
+	if len(f.config.Command.Allow) != 1 || f.config.Command.Allow[0] != "rm -rf /tmp" {
+		t.Errorf("unexpected allow commands: %v", f.config.Command.Allow)
 	}
 }
 
 func TestBuildFenceConfig(t *testing.T) {
-	sb := New(
+	sb := NewLocalSandbox(
 		AllowDomains("example.com"),
 		DenyDomains("evil.com"),
 		AllowWrite("."),
@@ -117,7 +90,7 @@ func TestBuildFenceConfig(t *testing.T) {
 		AllowCommands("rm -rf /tmp"),
 	)
 	defer sb.Close()
-	cfg := sb.buildFenceConfig()
+	cfg := asFence(sb).buildFenceConfig()
 	if len(cfg.Network.AllowedDomains) != 1 {
 		t.Errorf("fence config allowed domains: %v", cfg.Network.AllowedDomains)
 	}
@@ -141,7 +114,9 @@ func TestBuildFenceConfig(t *testing.T) {
 	}
 }
 
-func TestIsSupported(t *testing.T) {
+func TestSupported(t *testing.T) {
+	sb := NewLocalSandbox()
+	defer sb.Close()
 	// Just verify it doesn't panic; actual value depends on platform.
-	_ = IsSupported()
+	_ = sb.Supported()
 }

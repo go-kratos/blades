@@ -1,4 +1,4 @@
-module github.com/go-kratos/blades/sandbox
+module github.com/go-kratos/blades/contrib/sandbox
 
 go 1.25.0
 
