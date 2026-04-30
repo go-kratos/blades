@@ -16,8 +16,8 @@ tags: [agent, framework, architecture, core, tools, context, session, sandbox]
 
 ### 设计原则
 
-1. **每轮状态不可变** — 每次循环迭代产生新的 `TurnState` 快照，不原地修改
-2. **纯循环 + 有状态包装分离** — `RunLoop()` 是无副作用的纯函数，`Agent` 管理可变状态
+1. **每轮状态不可变** — 每次循环迭代产生新的 `TurnSnapshot` 快照，不原地修改
+2. **无状态循环 + 有状态包装分离** — `RunLoop()` 不持有可变状态，副作用通过回调注入；`llmAgent` 管理 Session 等有状态资源
 3. **分层架构** — Provider → Core → Application，严格单向依赖
 4. **事件驱动生命周期** — 通过 Hook 系统实现可扩展的生命周期管理
 5. **缓存感知上下文管理** — 多策略分层压缩，prompt cache 友好
@@ -41,6 +41,12 @@ tags: [agent, framework, architecture, core, tools, context, session, sandbox]
 │  │  │ Manager  │ │ Executor │ │  System  │ │  Manager   │   │   │
 │  │  └─────────┘ └──────────┘ └──────────┘ └────────────┘   │   │
 │  ├──────────────────────────────────────────────────────────┤   │
+│  │  Interfaces (定义在 Core，实现在各层)                     │   │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌────────────────┐   │   │
+│  │  │ModelProvider │ │  Executor    │ │ SessionStore   │   │   │
+│  │  │  (interface) │ │  (interface) │ │  (interface)   │   │   │
+│  │  └──────────────┘ └──────────────┘ └────────────────┘   │   │
+│  ├──────────────────────────────────────────────────────────┤   │
 │  │  Flow Orchestration                                      │   │
 │  │  ┌────────┐ ┌────────┐ ┌──────┐ ┌────────┐ ┌──────┐    │   │
 │  │  │Sequent.│ │Parallel│ │ Loop │ │Routing │ │ Deep │    │   │
@@ -49,16 +55,19 @@ tags: [agent, framework, architecture, core, tools, context, session, sandbox]
 │  │  Graph DAG Engine                                        │   │
 │  └──────────────────────────────────────────────────────────┘   │
 ├─────────────────────────────────────────────────────────────────┤
-│                      Provider Layer                             │
+│                  Provider Layer (具体实现)                       │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │
 │  │ Anthropic│ │  OpenAI  │ │  Gemini  │ │  Custom Provider │   │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘   │
 ├─────────────────────────────────────────────────────────────────┤
-│                      Sandbox Layer                              │
+│                  Sandbox Layer (具体实现)                        │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐                        │
 │  │  Local   │ │  Docker  │ │   SSH    │                        │
 │  └──────────┘ └──────────┘ └──────────┘                        │
 └─────────────────────────────────────────────────────────────────┘
+
+依赖方向: Application → Core ← Provider/Sandbox
+Core 定义接口，Provider/Sandbox 提供实现（依赖反转）。
 ```
 
 ---
@@ -67,14 +76,17 @@ tags: [agent, framework, architecture, core, tools, context, session, sandbox]
 
 ### 设计目标
 
-Agent Loop 是整个框架的心脏。将循环拆分为 **纯函数 `RunLoop()`** 和 **有状态 `Agent` 包装器** 两部分，使循环逻辑可独立测试，同时保持 Go 惯用的 `iter.Seq2` 流式接口。
+Agent Loop 是整个框架的心脏。将循环拆分为 **无状态 `RunLoop()`** 和 **有状态 `llmAgent` 包装器** 两部分，使循环逻辑可用 mock 回调独立测试，同时保持 Go 惯用的 `iter.Seq2` 流式接口。
 
-### 1.1 TurnState — 不可变轮次快照
+### 1.1 TurnSnapshot — 不可变轮次快照
+
+`TurnSnapshot` 是循环内部的轮次快照，与 `Session.State()` 返回的 `State`（`map[string]any`）不同：
+`State` 是跨 Run 持久化的键值对，`TurnSnapshot` 是单轮的只读视图，循环结束即丢弃。
 
 ```go
-// TurnState 是每轮迭代的不可变快照。
-// 每次循环产生新的 TurnState，不原地修改。
-type TurnState struct {
+// TurnSnapshot 是每轮迭代的不可变快照。
+// 每次循环产生新的 TurnSnapshot，不原地修改。
+type TurnSnapshot struct {
     Messages    []*Message     // 当前对话消息（不可变切片）
     TurnCount   int            // 当前轮次
     Transition  Transition     // 状态转换信号
@@ -82,25 +94,30 @@ type TurnState struct {
     Metadata    map[string]any // 扩展元数据
 }
 
-// Transition 表示循环的状态转换。
+// Transition 表示循环的状态转换。实现 fmt.Stringer 以便日志输出。
 type Transition int
 
 const (
-    TransitionContinue      Transition = iota // 继续下一轮
-    TransitionCompleted                        // 正常完成
-    TransitionAborted                          // 中止
-    TransitionMaxTurns                         // 达到最大轮次
-    TransitionHookStopped                      // Hook 中止
-    TransitionPromptTooLong                    // 上下文超限
-    TransitionModelError                       // 模型错误
-    TransitionEscalated                        // 升级到外层循环
+    TransitionContinue  Transition = iota // 继续下一轮
+    TransitionCompleted                    // 正常完成
+    TransitionAborted                      // 中止
+    TransitionMaxTurns                     // 达到最大轮次
+    TransitionHookStopped                  // Hook 中止
+    TransitionOverflow                     // 上下文超限
+    TransitionModelError                   // 模型错误
+    TransitionEscalated                    // 升级到外层循环
 )
+
+func (t Transition) String() string // go:generate stringer
 ```
 
-### 1.2 RunLoop — 纯函数核心循环
+### 1.2 RunLoop — 无状态核心循环
+
+`RunLoop` 本身不持有可变状态，也不直接操作 Session。它通过回调将副作用（session 持久化、
+hook 触发）推给调用方。这使得循环逻辑可以用 mock 回调独立测试。
 
 ```go
-// LoopConfig 是 RunLoop 的配置，纯数据结构，无副作用。
+// LoopConfig 是 RunLoop 的配置。
 type LoopConfig struct {
     MaxIterations    int
     MaxTokens        int64
@@ -109,68 +126,102 @@ type LoopConfig struct {
     Instruction      *Message
     InputSchema      *jsonschema.Schema
     OutputSchema     *jsonschema.Schema
-    Hooks            *HookRegistry
-    ContextManager   ContextManager
     ConcurrencyLimit int // 工具最大并发数，默认 10
 }
 
-// RunLoop 是核心循环的纯函数实现。
-// 接收不可变的配置和初始状态，通过 iter.Seq2 yield 每轮产生的消息。
-// 所有副作用（session 持久化、hook 执行）通过回调注入。
-func RunLoop(ctx context.Context, config LoopConfig, initial TurnState) Generator[*Message, error]
+// LoopCallbacks 将副作用从循环中解耦。
+// llmAgent.Run 提供真实实现，测试时替换为 mock。
+type LoopCallbacks struct {
+    // EmitEvent 触发生命周期事件，返回 HookResult 控制后续行为。
+    EmitEvent func(ctx context.Context, event Event) (HookResult, error)
+    // PrepareMessages 执行上下文转换和压缩，返回模型输入消息。
+    PrepareMessages func(ctx context.Context, snap TurnSnapshot) ([]*Message, error)
+    // OnMessage 在循环产生消息后调用，负责 session.Append 等持久化。
+    OnMessage func(ctx context.Context, msg *Message) error
+}
+
+// RunLoop 是核心循环的无状态实现。
+// 不直接操作 Session，所有副作用通过 LoopCallbacks 注入。
+// 通过 iter.Seq2 yield 每轮产生的消息。
+func RunLoop(ctx context.Context, config LoopConfig, callbacks LoopCallbacks, initial TurnSnapshot) Generator[*Message, error]
+```
+
+Session 持久化边界：
+
+```
+RunLoop                              llmAgent.Run
+  │                                     │
+  ├── yield(assistantMsg) ──────────→  callbacks.OnMessage(assistantMsg)
+  │                                     └── session.Append(ctx, assistantMsg)
+  ├── yield(toolResultMsg) ─────────→  callbacks.OnMessage(toolResultMsg)
+  │                                     └── session.Append(ctx, toolResultMsg)
+  └── (RunLoop 不感知 Session)
 ```
 
 循环流程：
 
 ```
-RunLoop(ctx, config, initialState)
+RunLoop(ctx, config, callbacks, initialSnapshot)
   │
   ├── for turn := 0; turn < config.MaxIterations; turn++
   │     │
-  │     ├── 1. Context Prepare ────────── 两阶段上下文转换
+  │     ├── 1. PrepareMessages ────────── callbacks.PrepareMessages(snapshot)
   │     │     ├── TransformContext()     Agent 消息层面：裁剪、注入、压缩
   │     │     └── ConvertToLLM()        转换为 LLM 可理解的标准消息
   │     │
-  │     ├── 2. Apply Compression ──────── 多策略分层压缩
-  │     │     ├── ToolResultBudget      裁剪超大工具结果
-  │     │     ├── SlidingWindow         滑动窗口丢弃最旧消息
-  │     │     ├── RollingSummary        LLM 摘要压缩
-  │     │     └── ReactiveCompact       紧急恢复（API 413 错误）
+  │     ├── 2. EmitEvent(PreGenerate)
   │     │
-  │     ├── 3. Emit PreGenerate Hook
-  │     │
-  │     ├── 4. Model Generate ─────────── 流式 API 调用
+  │     ├── 3. Model Generate ─────────── 流式 API 调用
   │     │     └── yield MessageUpdate（流式 delta）
   │     │
-  │     ├── 5. Emit PostGenerate Hook
+  │     ├── 4. EmitEvent(PostGenerate)
   │     │
-  │     ├── 6. Execute Tools ──────────── 并发 + 串行分区执行
-  │     │     ├── PartitionToolCalls()  按 ConcurrencySafe 分区
-  │     │     ├── RunConcurrent()       并发安全组并行执行
-  │     │     └── RunSequential()       串行组顺序执行
+  │     ├── 5. Execute Tools ──────────── 并发 + 串行分区执行
+  │     │     ├── EmitEvent(PreToolUse)  每个工具调用前
+  │     │     ├── PartitionToolCalls()   按 ConcurrencySafe 分区
+  │     │     ├── RunConcurrent()        并发安全组并行执行
+  │     │     ├── RunSequential()        串行组顺序执行
+  │     │     └── EmitEvent(PostToolUse) 每个工具调用后
   │     │
-  │     ├── 7. Emit PostToolUse Hook
+  │     ├── 6. callbacks.OnMessage ────── 调用方负责 session 持久化
   │     │
-  │     ├── 8. Build Next TurnState ──── 产生新的不可变快照
+  │     ├── 7. Build Next TurnSnapshot ── 产生新的不可变快照
   │     │
-  │     └── 9. Check Transition ──────── 判断是否继续
+  │     └── 8. Check Transition ──────── 判断是否继续
   │
   └── return Terminal
 ```
 
-恢复路径：
+恢复路径（在 `RunLoop` 内部处理，不经过压缩管道）：
 
 | 错误场景 | 恢复策略 |
 |---------|---------|
 | `max_output_tokens` | 升级到更大输出限制，重试当前轮 |
 | 多轮失败 | 最多 3 次续接尝试 |
-| `prompt_too_long` (API 413) | 触发 ReactiveCompact，压缩后重试 |
+| `prompt_too_long` (API 413) | 调用 `ReactiveCompact` 紧急压缩后重试（不在常规管道中） |
 | 上下文耗尽 | Fork 子 Agent 继续执行 |
 
-### 1.3 Agent 包装器
+错误类型：
+
+```go
+var (
+    ErrModelProviderRequired = errors.New("blades: model provider is required")
+    ErrMaxIterationsExceeded = errors.New("blades: maximum iterations exceeded")
+    ErrNoFinalResponse       = errors.New("blades: no final response from model")
+    ErrHookStopped           = errors.New("blades: hook stopped execution")
+    ErrPermissionDenied      = errors.New("blades: permission denied")
+    ErrContextOverflow       = errors.New("blades: context window overflow")
+    ErrLoopEscalated         = errors.New("blades: loop escalated to outer agent")
+    ErrSpawnFailed           = errors.New("blades: failed to spawn sub-agent")
+    ErrExecTimeout           = errors.New("blades: executor timed out")
+)
+```
+
+### 1.3 Agent 与 Runner
 
 ```go
 // Agent 接口 — 框架的统一抽象。
+// llmAgent、SequentialAgent、RoutingAgent 等均实现此接口。
 type Agent interface {
     Name() string
     Description() string
@@ -191,12 +242,43 @@ type Invocation struct {
     committed         *atomic.Bool // 跨克隆共享，保证 exactly-once append
 }
 
+// Runner 是应用层的入口，包装 Agent 并管理 Session 生命周期。
+// 提供 Run（同步）和 RunStream（流式）两个便捷方法。
+type Runner struct {
+    rootAgent Agent
+}
+
+func NewRunner(rootAgent Agent, opts ...RunnerOption) *Runner
+
+// Run 创建 Invocation、建立 Session、调用 Agent.Run、收集最终结果。
+func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (*Message, error)
+
+// RunStream 流式版本，yield 每条消息。
+func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOption) Generator[*Message, error]
+```
+
+context.Context 传播：
+
+```
+context.Context
+  ├── SessionContext  — NewSessionContext(ctx, session)
+  │                     SessionFromContext(ctx) → Session
+  ├── AgentContext    — NewAgentContext(ctx, agent)
+  │                     FromAgentContext(ctx) → Agent
+  └── ToolContext     — tools.NewContext(ctx, toolCtx)
+                        tools.FromContext(ctx) → ToolContext
+                        ToolContext.SetAction(key, value) → 控制流信号
+```
+
+`ToolContext.SetAction` 是工具向循环发送控制流信号的机制（如 `ExitTool` 设置 `ActionLoopExit`），
+与 Hook 系统互补：Hook 在工具执行前拦截，`SetAction` 在工具执行中发出信号，循环在工具执行后检查 `Message.Actions`。
+
 // llmAgent 是唯一直接调用 LLM 的 Agent 实现，包装 RunLoop。
 // 与 flow 包中的编排类 Agent（SequentialAgent、RoutingAgent 等）形成对比，
 // 它们负责编排，而 llmAgent 负责实际的模型交互。
 // Run 方法负责：
 // 1. 准备 Invocation（解析工具、注入指令、合并 Skills）
-// 2. 构建初始 TurnState
+// 2. 构建初始 TurnSnapshot
 // 3. 调用 RunLoop() 纯函数
 // 4. 处理 session 持久化等副作用
 type llmAgent struct {
@@ -237,21 +319,43 @@ func ChainMiddlewares(mws ...Middleware) Middleware
 ```go
 package tools
 
-// Tool 接口 — 扩展并发安全声明和权限元数据。
+// Tool 接口 — 保持与现有代码兼容的核心接口。
 type Tool interface {
     Name() string
     Description() string
     InputSchema() *jsonschema.Schema
     OutputSchema() *jsonschema.Schema
     Handler
+}
 
-    // ConcurrencySafe 声明此工具是否可与其他工具并发执行。
-    // 默认 false（串行执行）。
+// ConcurrencyDeclarer 是可选接口，声明工具是否可并发执行。
+// 未实现此接口的工具默认为串行执行。
+type ConcurrencyDeclarer interface {
     ConcurrencySafe() bool
+}
 
-    // ReadOnly 声明此工具是否为只读操作。
-    // 用于权限系统和沙箱决策。
+// ReadOnlyDeclarer 是可选接口，声明工具是否为只读操作。
+// 未实现此接口的工具默认为非只读。
+// 用于权限系统和沙箱决策。
+type ReadOnlyDeclarer interface {
     ReadOnly() bool
+}
+
+// IsConcurrencySafe 检查工具是否声明了并发安全。
+// 未实现 ConcurrencyDeclarer 的工具返回 false。
+func IsConcurrencySafe(t Tool) bool {
+    if d, ok := t.(ConcurrencyDeclarer); ok {
+        return d.ConcurrencySafe()
+    }
+    return false
+}
+
+// IsReadOnly 检查工具是否声明了只读。
+func IsReadOnly(t Tool) bool {
+    if d, ok := t.(ReadOnlyDeclarer); ok {
+        return d.ReadOnly()
+    }
+    return false
 }
 
 // StreamingHandler 支持工具执行过程中的流式进度更新。
@@ -335,10 +439,11 @@ func (t *Toolset) ComposeTools(base []tools.Tool) []tools.Tool
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
-| 循环实现 | 纯函数 `RunLoop()` + 有状态 `agent` 包装 | 纯函数可独立测试，有状态包装管理副作用（来自 pi-agent） |
-| 状态管理 | 每轮不可变 `TurnState` | 避免并发修改，简化调试和回放（来自 Claude Code） |
+| 循环实现 | 无状态 `RunLoop()` + 有状态 `llmAgent` 包装 | 循环逻辑可用 mock 回调独立测试（来自 pi-agent） |
+| 状态管理 | 每轮不可变 `TurnSnapshot` | 避免并发修改，简化调试和回放（来自 Claude Code） |
+| 副作用边界 | `LoopCallbacks` 回调注入 | RunLoop 不感知 Session，持久化由调用方负责 |
 | 流式接口 | `iter.Seq2[*Message, error]` | Go 1.23+ 惯用模式 |
-| 工具并发 | 工具自声明 `ConcurrencySafe()` | 编排器无需了解工具内部实现（来自 Claude Code） |
+| 工具并发 | 可选接口 `ConcurrencyDeclarer` | 向后兼容，编排器通过类型断言检查（来自 Claude Code） |
 | 工具分区 | 连续并发安全工具分组并行 | 最大化并行度，保证串行工具的执行顺序 |
 | Skills | 独立于 Tool 的高级抽象 | 支持自包含的能力包分发和加载 |
 
@@ -376,10 +481,10 @@ type SpawnConfig struct {
 type SpawnStrategy int
 
 const (
-    SpawnSynchronous SpawnStrategy = iota // 同步执行，阻塞父 Agent
-    SpawnBackground                       // 后台执行，不阻塞父 Agent
-    SpawnForked                           // 缓存感知 fork，共享 prompt cache 前缀
-    SpawnIsolated                         // 完全隔离（独立 session、独立沙箱）
+    Synchronous SpawnStrategy = iota // 同步执行，阻塞父 Agent
+    Background                       // 后台执行，不阻塞父 Agent
+    Forked                           // 缓存感知 fork，共享 prompt cache 前缀
+    Isolated                         // 完全隔离（独立 session、独立沙箱）
 )
 
 // AgentHandle 是子 Agent 的句柄。
@@ -389,6 +494,26 @@ type AgentHandle struct {
     Strategy SpawnStrategy
     Done     <-chan struct{}
 }
+```
+
+默认 Coordinator 实现：
+
+```go
+// defaultCoordinator 是 Coordinator 的默认实现。
+type defaultCoordinator struct {
+    mu      sync.Mutex
+    handles map[string]*agentTask
+}
+
+// Spawn 根据 Strategy 选择执行方式：
+// - Synchronous: 在当前 goroutine 调用 agent.Run，阻塞直到完成
+// - Background:  启动新 goroutine + 可取消 context，立即返回 handle
+// - Forked:      调用 ForkSession(parentSession) 创建缓存感知子 session，
+//                然后按 Synchronous 或 Background 执行
+// - Isolated:    创建全新 Session，在独立 context 中执行
+//
+// Cancel 通过 context.CancelFunc 传播取消信号到运行中的 agent。
+// Wait 阻塞在 handle.Done channel 上。
 ```
 
 ### 2.2 Flow 编排模式
@@ -448,6 +573,7 @@ type AgentTool struct {
 
 func NewAgentTool(agent Agent) tools.Tool
 
+// 实现可选接口声明：AgentTool 不可并发、非只读。
 func (t *AgentTool) ConcurrencySafe() bool { return false }
 func (t *AgentTool) ReadOnly() bool        { return false }
 
@@ -498,11 +624,11 @@ func ForkSession(parent Session, opts ...SessionOption) Session
 // ContextManager 是上下文管理的顶层接口。
 // 协调两阶段转换和多策略压缩。
 type ContextManager interface {
-    // Prepare 执行完整的上下文准备流程：
-    // 1. TransformContext — Agent 消息层面的转换
-    // 2. Compress — 多策略压缩
+    // PrepareMessages 执行完整的上下文准备流程：
+    // 1. TransformContext — Agent 消息层面的转换（裁剪、注入）
+    // 2. Compress — 多策略压缩管道
     // 3. ConvertToLLM — 转换为 LLM 可理解的格式
-    Prepare(ctx context.Context, state TurnState) ([]*Message, error)
+    PrepareMessages(ctx context.Context, snap TurnSnapshot) ([]*Message, error)
 }
 
 // ContextTransformer 在 Agent 消息层面操作。
@@ -526,7 +652,7 @@ type TokenCounter interface {
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Context Compression Pipeline                │
+│           Context Compression Pipeline (主动)            │
 │                                                          │
 │  输入: []*Message (完整对话历史)                          │
 │                                                          │
@@ -550,15 +676,16 @@ type TokenCounter interface {
 │  │ 触发: token 用量超过阈值                          │   │
 │  │ 粒度: 批量消息 → 摘要消息                         │   │
 │  └──────────────────────────────────────────────────┘   │
-│                        ↓                                 │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │ Stage 4: ReactiveCompact                         │   │
-│  │ 紧急恢复：API 返回 413 错误时触发                 │   │
-│  │ 触发: prompt_too_long 错误                        │   │
-│  │ 粒度: 全部对话                                    │   │
-│  └──────────────────────────────────────────────────┘   │
 │                                                          │
 │  输出: []*Message (压缩后的消息列表)                     │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│           ReactiveCompact (被动，错误恢复路径)           │
+│                                                          │
+│  触发: Model API 返回 prompt_too_long (413) 错误         │
+│  不在常规管道中，由 RunLoop 的错误恢复逻辑直接调用       │
+│  对全部对话生成 LLM 摘要，然后重试模型调用               │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -605,7 +732,7 @@ type ReactiveCompact struct {
 // Pipeline 将多个压缩策略组合为管道。
 // 按顺序执行，每个策略的输出作为下一个策略的输入。
 type Pipeline struct {
-    Stages []ContextCompressor
+    stages []ContextCompressor // 未导出，通过 NewPipeline 构造
 }
 
 func NewPipeline(stages ...ContextCompressor) *Pipeline
@@ -641,10 +768,11 @@ type LLMConverter interface {
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
-| 压缩架构 | 管道式多策略分层 | 每个策略独立、可组合、可测试（融合 Claude Code 6 策略 + pi-agent 管道） |
+| 压缩架构 | 管道式 3 级主动压缩 + 1 级被动恢复 | 主动管道每轮执行，ReactiveCompact 仅在 API 413 错误时触发 |
 | 上下文转换 | 两阶段分离 | Agent 消息和 LLM 消息解耦，支持自定义消息类型（来自 pi-agent） |
 | 摘要状态 | 持久化到 Session | 跨 Run 存活，避免重复压缩 |
 | Token 计数 | 接口抽象 | 支持精确 tokenizer 和启发式近似 |
+| ModelProvider 位置 | 接口定义在 Core 层 | RollingSummary 依赖接口而非具体实现，符合依赖反转 |
 
 ---
 
@@ -662,6 +790,15 @@ type Event interface {
     Type() EventType
     Timestamp() time.Time
 }
+
+// BaseEvent 提供 Event 接口的通用实现，具体事件嵌入它。
+type BaseEvent struct {
+    EventType  EventType
+    OccurredAt time.Time
+}
+
+func (e BaseEvent) Type() EventType      { return e.EventType }
+func (e BaseEvent) Timestamp() time.Time { return e.OccurredAt }
 
 // EventType 定义事件类型。
 type EventType string
@@ -691,7 +828,6 @@ const (
     // 上下文事件
     EventPreCompact      EventType = "pre_compact"
     EventPostCompact     EventType = "post_compact"
-    EventContextTransform EventType = "context_transform"
 
     // 消息事件
     EventMessageStream   EventType = "message_stream"
@@ -699,35 +835,93 @@ const (
 )
 ```
 
+具体事件类型携带类型化的 payload：
+
+```go
+// PreToolUseEvent 在工具执行前触发。
+type PreToolUseEvent struct {
+    BaseEvent
+    ToolName string
+    ToolID   string
+    Input    string
+}
+
+// PostToolUseEvent 在工具执行后触发。
+type PostToolUseEvent struct {
+    BaseEvent
+    ToolName string
+    ToolID   string
+    Input    string
+    Output   string
+    Duration time.Duration
+    Err      error
+}
+
+// PreGenerateEvent 在模型调用前触发。
+type PreGenerateEvent struct {
+    BaseEvent
+    Model       string
+    MessageCount int
+    TokenEstimate int64
+}
+
+// PostGenerateEvent 在模型调用后触发。
+type PostGenerateEvent struct {
+    BaseEvent
+    Model      string
+    TokenUsage TokenUsage
+    Message    *Message
+}
+
+// TurnStartEvent 在每轮开始时触发。
+type TurnStartEvent struct {
+    BaseEvent
+    TurnCount int
+    Snapshot  TurnSnapshot
+}
+
+// SubagentStartEvent 在子 Agent 启动时触发。
+type SubagentStartEvent struct {
+    BaseEvent
+    AgentName string
+    Strategy  SpawnStrategy
+}
+```
+
 ### 4.2 Hook 系统
 
 ```go
+// HookEmitter 是事件触发的接口抽象。
+// LoopCallbacks.EmitEvent 接受此接口，测试时可替换为 no-op 实现。
+type HookEmitter interface {
+    Emit(ctx context.Context, event Event) (HookResult, error)
+}
+
 // Hook 是事件处理器，可以拦截和修改 Agent 行为。
 type Hook interface {
-    // Handle 处理事件，返回 HookResult 控制后续行为。
-    Handle(ctx context.Context, event Event) (*HookResult, error)
+    Handle(ctx context.Context, event Event) (HookResult, error)
 }
 
 // HookResult 控制 Hook 处理后的行为。
+// 零值表示"继续执行，不做任何修改"（ShouldStop=false）。
 type HookResult struct {
-    // Continue 为 false 时阻止后续执行（如阻止工具调用）。
-    Continue bool
+    // ShouldStop 为 true 时阻止后续执行（如阻止工具调用）。
+    // 零值 false 表示继续，避免遗漏设置导致意外阻断。
+    ShouldStop bool
     // SystemMessage 注入系统消息到对话中。
     SystemMessage string
     // ModifiedInput 修改工具输入（仅 PreToolUse 有效）。
     ModifiedInput string
-    // Decision 覆盖权限决策（仅权限相关 Hook 有效）。
-    Decision *PermissionDecision
 }
 
 // HookFunc 是 Hook 的函数适配器。
-type HookFunc func(ctx context.Context, event Event) (*HookResult, error)
+type HookFunc func(ctx context.Context, event Event) (HookResult, error)
 
-func (f HookFunc) Handle(ctx context.Context, event Event) (*HookResult, error) {
+func (f HookFunc) Handle(ctx context.Context, event Event) (HookResult, error) {
     return f(ctx, event)
 }
 
-// HookRegistry 管理事件到 Hook 的映射。
+// HookRegistry 是 HookEmitter 的默认实现。
 type HookRegistry struct {
     hooks map[EventType][]Hook
 }
@@ -738,8 +932,15 @@ func NewHookRegistry() *HookRegistry
 func (r *HookRegistry) On(eventType EventType, hook Hook)
 
 // Emit 触发指定事件，按注册顺序执行所有 Hook。
-// 任何 Hook 返回 Continue=false 时短路后续 Hook。
-func (r *HookRegistry) Emit(ctx context.Context, event Event) (*HookResult, error)
+// 任何 Hook 返回 ShouldStop=true 时短路后续 Hook。
+func (r *HookRegistry) Emit(ctx context.Context, event Event) (HookResult, error)
+
+// NoopEmitter 是不做任何事的 HookEmitter，用于测试。
+type NoopEmitter struct{}
+
+func (NoopEmitter) Emit(context.Context, Event) (HookResult, error) {
+    return HookResult{}, nil
+}
 ```
 
 事件流转：
@@ -840,9 +1041,10 @@ func ForkSession(parent Session, opts ...SessionOption) Session
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
-| 事件系统 | 统一 Event 接口 + HookRegistry | 比 27 种独立 hook 更简洁，同时保持完整的生命周期覆盖 |
-| Hook 能力 | 拦截 + 修改 + 注入 | 覆盖 Claude Code 的 hook 能力（block、override、inject） |
-| Session 持久化 | Append-only JSONL | 并发安全、增量写入、易于恢复（来自 Claude Code） |
+| 事件系统 | `Event` 接口 + `BaseEvent` 嵌入 + 具体事件类型 | 类型安全的 payload，Hook 通过类型断言获取事件数据 |
+| Hook 抽象 | `HookEmitter` 接口 + `HookRegistry` 默认实现 | 接口便于测试替换（NoopEmitter），符合 Go 惯用法 |
+| Hook 语义 | 值类型 `HookResult`，`ShouldStop` 零值为 false | 避免 nil 指针歧义，零值即"继续执行" |
+| Session 持久化 | Append-only JSONL + `SessionStore` 接口 | 并发安全、增量写入，接口支持多种后端 |
 | Session 分支 | Branch + Fork | 支持对话路径分支和缓存感知子 session |
 
 ---
@@ -1147,21 +1349,24 @@ type SSHExecutor struct {
 // PermissionChecker 检查工具执行权限。
 type PermissionChecker interface {
     // Check 检查是否允许执行指定的工具调用。
-    Check(ctx context.Context, req *PermissionRequest) (*PermissionDecision, error)
+    // 返回零值 PermissionDecision{Decided: false} 表示"无意见，交给下一个 checker"。
+    Check(ctx context.Context, req PermissionRequest) (PermissionDecision, error)
 }
 
 // PermissionRequest 是权限检查请求。
 type PermissionRequest struct {
-    Tool      string // 工具名称
-    Input     string // 工具输入
-    ReadOnly  bool   // 工具是否只读
-    Agent     string // 发起调用的 Agent 名称
+    Tool     string // 工具名称
+    Input    string // 工具输入
+    ReadOnly bool   // 工具是否只读
+    Agent    string // 发起调用的 Agent 名称
 }
 
 // PermissionDecision 是权限检查结果。
+// 零值表示"未做出决策"（Decided=false），链式 checker 会继续到下一个。
 type PermissionDecision struct {
-    Allowed bool
-    Reason  string
+    Decided bool   // 是否做出了明确决策
+    Allowed bool   // 是否允许（仅 Decided=true 时有意义）
+    Reason  string // 决策原因
 }
 
 // PermissionMode 定义权限模式。
@@ -1192,17 +1397,17 @@ type PermissionChain struct {
     Checkers []PermissionChecker
 }
 
-func (c *PermissionChain) Check(ctx context.Context, req *PermissionRequest) (*PermissionDecision, error) {
+func (c *PermissionChain) Check(ctx context.Context, req PermissionRequest) (PermissionDecision, error) {
     for _, checker := range c.Checkers {
         decision, err := checker.Check(ctx, req)
         if err != nil {
-            return nil, err
+            return PermissionDecision{}, err
         }
-        if decision != nil {
+        if decision.Decided {
             return decision, nil // 短路：第一个有明确决策的 checker 生效
         }
     }
-    return nil, nil // 所有 checker 都未做出决策，回退到默认行为
+    return PermissionDecision{}, nil // 所有 checker 都未做出决策，回退到默认行为
 }
 ```
 
