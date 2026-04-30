@@ -13,6 +13,7 @@
 ## 📝 设计文档 (Design)
 
 - [流式响应优化设计](./design-streaming-optimization.md) - 优化流式响应的性能和稳定性 `[implemented]`
+- [Blades Agent Framework 设计](./design-agent-framework.md) - Agent Loop、Tool、Context、Event、Coordinator、Sandbox 全框架设计 `[draft]`
 
 ## ✨ 功能文档 (Feature)
 
@@ -20,7 +21,8 @@
 
 ## 📚 参考文档 (Reference)
 
-暂无
+- [pi-agent Agent Framework 参考设计](./reference-pi-agent-framework.md) - 基于 pi-mono 的 Agent Loop、上下文管理、Memory、Tool、Extension 分层设计参考 `[draft]`
+- [Claude Code Agent 参考设计](./reference-claude-code-agent.md) - Claude Code 的 Agent Loop、多策略压缩、Memory、Tool、权限、Hook 系统设计参考 `[draft]`
 
 ## 🎯 技术决策 (Decision)
 
@@ -34,12 +36,18 @@
 ### 性能优化
 - [流式响应优化设计](./design-streaming-optimization.md)
 
+### 架构设计
+- [Blades Agent Framework 设计](./design-agent-framework.md)
+- [pi-agent Agent Framework 参考设计](./reference-pi-agent-framework.md)
+- [Claude Code Agent 参考设计](./reference-claude-code-agent.md)
+
 ### 工具集成
-暂无
+- [pi-agent Agent Framework 参考设计](./reference-pi-agent-framework.md)
+- [Claude Code Agent 参考设计](./reference-claude-code-agent.md)
 
 ## 📊 文档状态统计
 
-- Draft: 0
+- Draft: 3
 - Review: 0
 - Approved: 0
 - Implemented: 1
