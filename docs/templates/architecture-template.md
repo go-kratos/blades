@@ -1,9 +1,9 @@
 ---
 type: architecture
-title: [架构名称]
+title: "[架构名称]"
 date: YYYY-MM-DD
 status: draft
-author: [作者名]
+author: "[作者名]"
 related: []
 tags: []
 ---

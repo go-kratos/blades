@@ -2,7 +2,7 @@
 type: decision
 title: [决策名称]
 date: YYYY-MM-DD
-status: approved
+status: draft
 author: [作者名]
 related: []
 tags: []
@@ -12,7 +12,7 @@ tags: []
 
 ## 状态
 
-**已批准** | 日期: YYYY-MM-DD
+**草案** | 日期: YYYY-MM-DD
 
 ## 背景
 

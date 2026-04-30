@@ -43,18 +43,20 @@ vim design-my-feature.md
 
 ## 文档规范
 
-所有文档必须包含 frontmatter 元数据：
+所有文档必须包含 frontmatter 元数据，其中必填字段为 `type`、`title`、`date`、`status`；`author`、`related`、`tags` 为可选字段：
 
 ```yaml
 ---
-type: design
-title: 文档标题
-date: 2024-11-16
-status: draft
-author: 作者名
-related: []
-tags: []
+type: design      # 必填
+title: 文档标题    # 必填
+date: 2024-11-16 # 必填
+status: draft    # 必填
+author: 作者名    # 可选
+related: []      # 可选
+tags: []         # 可选
 ---
 ```
+
+编写文档时请至少填写必填字段；如有作者、关联文档或标签信息，建议一并补充。
 
 详细规范请参考 [开发规范](./DEVELOPMENT_GUIDE.md)。
