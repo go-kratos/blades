@@ -1,15 +1,15 @@
 ---
 type: reference
-title: [参考名称]
+title: "[参考名称]"
 date: YYYY-MM-DD
 status: draft
-author: [作者名]
+author: "[作者名]"
 related: []
 tags: []
 source:
-  project: [参考项目名称]
-  url: [参考链接]
-  version: [参考版本]
+  project: "[参考项目名称]"
+  url: "[参考链接]"
+  version: "[参考版本]"
 ---
 
 # [参考名称]
