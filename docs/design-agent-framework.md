@@ -32,7 +32,7 @@ Blades 是一个基于 Go 构建的 Agent 框架，当前已具备：
 通过对 Claude Code Agent 和 pi-agent 两个成熟框架的深入分析，发现当前 Blades 在以下方面存在差距：
 
 1. **Agent Loop 过于简单** — 当前 `handle()` 是平坦的迭代循环，缺少 steering/follow-up 注入、多策略压缩、事件发射
-2. **无上下文压缩管线** — 仅有单一 `ContextCompressor` 接口，缺少 Claude Code 的 6 策略分层压缩
+2. **无上下文压缩管线** — 仅有单一 `ContextCompressor` 接口，缺少 Claude Code 的多策略分层压缩
 3. **工具执行无流式重叠** — 必须等模型完成才执行工具，无法在流式输出时提前启动并发安全工具
 4. **无 Hook/事件系统** — 仅有 Middleware 洋葱模型，缺少生命周期事件订阅
 5. **无权限系统** — 仅有 `Confirm` 中间件，缺少分层权限决策链
@@ -75,12 +75,11 @@ Blades 是一个基于 Go 构建的 Agent 框架，当前已具备：
 │    └── streamAndRecord     Provider Stream → Event + Session     │
 ├─────────────────────────────────────────────────────────────────┤
 │  Capability Service Layer（用户可配置能力层）                     │
-│    ├── Compression         6 策略分层压缩管线                    │
+│    ├── Compression         5 策略分层压缩管线                    │
 │    ├── Tool Orchestrator   流式执行 + 并发分区                   │
 │    ├── Permission Chain    分层权限决策                           │
 │    ├── Hook Registry       生命周期事件订阅                      │
 │    ├── Retry Policy        API 错误处理与重试                    │
-│    ├── Extension API       扩展注册（工具/命令/Provider/Hook）   │
 │    └── Sub-Agent Manager   Fork/Background/Worktree              │
 ├─────────────────────────────────────────────────────────────────┤
 │  基础设施层                                                      │
@@ -161,7 +160,7 @@ Event 系统是整个框架的顶层架构。核心思想：**类型安全的双
 │    streamAndRecord:   Provider Stream → Event + Session    │
 ├──────────────────────────────────────────────────────────┤
 │  Capability Service Layer（用户可配置能力层）              │
-│    Compression:       6 策略分层压缩管线                  │
+│    Compression:       5 策略分层压缩管线                  │
 │    ToolOrchestrator:  流式执行 + 并发分区                 │
 │    PermissionChain:   分层权限决策                         │
 │    HookRegistry:      生命周期事件订阅                     │
@@ -750,19 +749,13 @@ blades/                         根包：用户 API（Agent + Event）
 │   └── provider.go             Provider 原生计数适配
 │
 ├── hook/                       Hook 系统
-│   ├── event.go                hook.Event 类型（20+ 种生命周期事件）
+│   ├── event.go                hook.Event 类型（Agent/Model/Tool 核心事件）
 │   ├── registry.go             hook.Registry
 │   └── handler.go              hook.ObserveHandler / 拦截型 Handler
-│
-├── extension/                  扩展 API
-│   ├── api.go                  extension.API
-│   ├── command.go              extension.Command
-│   └── bus.go                  extension.Bus（跨扩展通信）
 │
 ├── permission/                 权限系统
 │   ├── chain.go                permission.Chain
 │   ├── rule.go                 permission.Rule
-│   ├── classifier.go           permission.Classifier
 │   └── mode.go                 permission.Mode
 │
 ├── retry/                      API 错误处理与重试
@@ -845,7 +838,6 @@ model/（叶子包：Message + Provider + Request/Response，不依赖任何 bla
   ├── retry/（独立）
   ├── memory/（独立）
   ↑
-  ├── extension/（依赖 hook/, tools/）
   ├── skills/（依赖 tools/）
   ↑
   ├── blades/（根包：依赖 model/, session/, compact/, tools/, hook/, permission/, prompt/, retry/）
@@ -875,11 +867,10 @@ model/（叶子包：Message + Provider + Request/Response，不依赖任何 bla
 | `compact` | `Pipeline`, `Strategy` | `compact.Pipeline` |
 | `token` | `Counter` | `token.Counter` |
 | `hook` | `Event`, `Registry`, `ObserveHandler` | `hook.Registry` |
-| `permission` | `Chain`, `Rule`, `Classifier`, `Mode` | `permission.Chain` |
+| `permission` | `Chain`, `Rule`, `Mode` | `permission.Chain` |
 | `prompt` | `Builder`, `Section`, `SystemPrompt` | `prompt.Builder` |
 | `retry` | `Policy`, `Backoff` | `retry.Policy` |
 | `memory` | `Store`, `Loader`, `Entry`, `Extractor` | `memory.Store` |
-| `extension` | `API`, `Command`, `Bus` | `extension.API` |
 | `flow` | `SequentialAgent`, `ParallelAgent`, `LoopAgent` | `flow.LoopAgent` |
 | `graph` | `Graph`, `Executor`, `Checkpointer` | `graph.Executor` |
 | `middleware` | `Retry`, `Logging`, `OTel` | `middleware.Retry` |
@@ -894,7 +885,7 @@ model/（叶子包：Message + Provider + Request/Response，不依赖任何 bla
 |------|------------|--------|
 | 消息类型 | `Part` 密封接口（4 种类型） | 内置 7 种 Part 类型，暂不开放注册 |
 | 消息过滤 | 无（直接发给 Provider） | ContextBuilder 内部 `filterForProvider` 私有方法 |
-| 上下文压缩 | 单一 `ContextCompressor` | 6 策略 `CompressionPipeline` |
+| 上下文压缩 | 单一 `ContextCompressor` | 5 策略 `CompressionPipeline` |
 | System Prompt | 简单字符串 | 缓存感知 `prompt.Builder` |
 
 ### 2.1 内置消息类型
@@ -980,14 +971,13 @@ func (p *CompressionPipeline) Compress(
 }
 ```
 
-#### 6 种内置策略
+#### 5 种内置策略
 
 | 策略 | 触发条件 | 作用范围 | 说明 |
 |------|---------|---------|------|
 | `ToolResultBudget` | 每轮开始 | 单个工具结果 | 超大结果持久化到磁盘，向模型发送截断预览 + 磁盘路径 |
 | `Snip` | 每轮开始 | 最旧消息 | 硬限制：当消息数超过阈值时丢弃最旧消息 |
 | `MicroCompact` | 每轮开始 | 小窗口旧消息 | 对小窗口内的旧消息做内联摘要替换，不调用 LLM |
-| `SegmentCollapse` | 特性门控 | 指定 UUID 范围 | 将标记的消息段折叠为摘要（用于长工具输出序列） |
 | `AutoCompact` | token 阈值 | 全部/部分对话 | 通过 Fork Agent 调用 LLM 生成完整摘要 |
 | `ReactiveCompact` | API 413 错误 | 全部对话 | 紧急恢复：强制全量压缩 |
 
@@ -1006,11 +996,6 @@ type SnipStrategy struct {
 // MicroCompactStrategy 对小窗口旧消息做内联摘要。
 type MicroCompactStrategy struct {
     WindowSize int // 每次处理的消息窗口大小
-}
-
-// SegmentCollapseStrategy 折叠标记的消息段。
-type SegmentCollapseStrategy struct {
-    Enabled bool // 特性门控
 }
 
 // AutoCompactStrategy 通过 LLM 生成摘要。
@@ -1090,7 +1075,7 @@ func (b *Builder) Build(ctx context.Context) (*SystemPrompt, error)
 
 2. **消息过滤内聚于 ContextBuilder** — 消息过滤/转换（ThinkingPart 处理、CompactionSummaryPart 转换等）作为 `ContextBuilder.Build()` 的私有方法实现，不暴露独立的 `MessageConverter` 接口。Provider 特定的格式差异（Anthropic tool_use/tool_result 拆分、OpenAI function_call 格式等）由各 `contrib/*` 包在实现 `model.Provider` 时内部处理。
 
-3. **管线式压缩而非单一压缩器** — 当前 `ContextCompressor` 是全有或全无的单一接口。新设计将压缩分解为 6 个独立策略，按成本从低到高排列，token 降到预算内即短路。轻量策略（Snip、MicroCompact）每轮都运行，重量策略（AutoCompact）仅在阈值触发时运行。压缩策略通过 `Summarizer` 函数注入 LLM 能力，避免与根包循环依赖。
+3. **管线式压缩而非单一压缩器** — 当前 `ContextCompressor` 是全有或全无的单一接口。新设计将压缩分解为 5 个独立策略，按成本从低到高排列，token 降到预算内即短路。轻量策略（Snip、MicroCompact）每轮都运行，重量策略（AutoCompact）仅在阈值触发时运行。压缩策略通过 `Summarizer` 函数注入 LLM 能力，避免与根包循环依赖。
 
 4. **缓存感知 System Prompt** — 当前 system prompt 是简单字符串，每次调用都完整发送。新设计将 prompt 分为静态前缀（跨会话不变）和动态后缀（每会话变化），配合 Provider 的 prompt cache 机制（如 Anthropic 的 cache_control），显著降低重复 token 消耗。
 
@@ -1313,19 +1298,15 @@ type AfterToolHook func(ctx context.Context, call *ToolCall, result *ToolResult)
 | 维度 | 当前 Blades | 新设计 |
 |------|------------|--------|
 | 事件系统 | 无 | 类型化 HookEvent + HookRegistry |
-| 扩展机制 | 仅 Middleware | Extension API（工具/命令/Provider/Hook） |
-| 生命周期覆盖 | 无 | 20+ 种生命周期事件 |
-| 扩展层级 | 无 | Prompt → Skill → Extension → Package |
+| 扩展机制 | 仅 Middleware | Hook 系统 + Skill 系统 |
+| 生命周期覆盖 | 无 | Agent/Model/Tool 核心事件（按需扩展） |
+| 扩展层级 | 无 | Prompt → Skill 两层渐进 |
 
 ### 4.1 Hook 事件系统
 
 ```go
 // HookEvent 是所有生命周期事件的判别联合。
 type HookEvent interface{ hookEvent() }
-
-// --- Session 生命周期 ---
-type HookSessionStart       struct{ SessionID string; CWD string }
-type HookSessionEnd         struct{ SessionID string }
 
 // --- Agent 生命周期 ---
 type HookAgentStart         struct{ AgentName string; Turn int }
@@ -1342,22 +1323,9 @@ type HookPreToolUse         struct{ ToolName string; Input string }
 type HookPostToolUse        struct{ ToolName string; Result string; Err error }
 type HookPostToolUseFailure struct{ ToolName string; Err error }
 
-// --- 压缩生命周期 ---
-type HookPreCompact         struct{ Strategy string; TokensBefore int64 }
-type HookPostCompact        struct{ Strategy string; TokensAfter int64 }
-
-// --- 权限生命周期 ---
-type HookPermissionRequest  struct{ ToolName string; Input string }
-type HookPermissionDecision struct{ ToolName string; Decision PermissionDecision; Source string }
-
-// --- Memory 生命周期 ---
-type HookMemoryLoaded       struct{ Entries []memory.Entry }
-type HookMemoryExtracted    struct{ Entries []memory.Entry }
-
-// --- 配置与文件 ---
-type HookConfigChange       struct{ Key string; OldValue, NewValue any }
-type HookInstructionsLoaded struct{ Sources []string }
-type HookCwdChanged         struct{ OldCwd, NewCwd string }
+// 其他生命周期事件（Session、压缩、权限、Memory、配置等）
+// 在对应模块实现时按需添加。Hook 注册机制是开放的，
+// 新增事件类型不需要修改接口。
 ```
 
 ### 4.2 Hook 注册与执行
@@ -1430,64 +1398,15 @@ func WithHookPriority(priority int) HookOption
 func WithHookScope(scope string) HookOption
 ```
 
-### 4.3 Extension API
-
-```go
-// Extension 是注册能力的工厂函数。
-// 这是 pi-agent ExtensionFactory 的 Go 等价实现。
-type Extension func(api *ExtensionAPI) error
-
-// ExtensionAPI 提供扩展注册方法。
-type ExtensionAPI struct {
-    hooks     *HookRegistry
-    tools     *ToolRegistry
-    commands  *CommandRegistry
-    providers *ProviderRegistry
-    eventBus  *EventBus
-}
-
-// Hook 订阅
-func (api *ExtensionAPI) OnHook(event HookEvent, handler HookHandler, opts ...HookOption)
-
-// 工具注册
-func (api *ExtensionAPI) RegisterTool(tool Tool)
-
-// 命令注册（斜杠命令）
-func (api *ExtensionAPI) RegisterCommand(name string, cmd Command)
-
-// Provider 注册
-func (api *ExtensionAPI) RegisterProvider(name string, provider model.Provider)
-
-// 跨扩展通信
-func (api *ExtensionAPI) EventBus() *EventBus
-
-// Shell 执行
-func (api *ExtensionAPI) Exec(ctx context.Context, cmd string, args ...string) (*ExecResult, error)
-
-// Command 定义
-type Command struct {
-    Description string
-    Execute     func(ctx context.Context, args string) error
-}
-
-// EventBus 用于扩展间通信（pi-agent 的 emit/on 模式）。
-type EventBus struct {
-    mu       sync.RWMutex
-    handlers map[string][]func(any)
-}
-
-func (b *EventBus) Emit(channel string, data any)
-func (b *EventBus) On(channel string, handler func(any)) func() // 返回取消函数
-```
-
-### 4.4 四层渐进式扩展
+### 4.3 两层渐进式扩展
 
 | 层级 | 形式 | 位置 | 能力 | 复杂度 |
 |------|------|------|------|--------|
 | Prompt 模板 | Markdown 文件 | `.blades/prompts/` | 可作为 `/name` 斜杠命令调用的提示模板 | 最低 |
 | Skill | Markdown + YAML frontmatter | `.blades/skills/`, `skills/` | 按需加载的可复用指令，含资源和脚本 | 低 |
-| Extension | Go 模块 | `.blades/extensions/` | 完整 API：工具、命令、Hook、Provider | 中 |
-| Package | Go module / git | `blades install` | 打包分发 extension/skill/prompt | 高 |
+
+当前阶段工具通过 `tools.Tool` 接口注册，Provider 通过构造函数注入，这些已经够用。
+等真正有第三方扩展生态需求时，再设计 Extension API（工具/命令/Provider/Hook 注册）和 Package 分发机制。
 
 #### Skill frontmatter 增强
 
@@ -1516,9 +1435,9 @@ max-turns: 20                      # 最大轮次
 
 3. **Hook 与 Middleware 共存** — Middleware 是洋葱模型（包装 Handler），适合横切关注点（重试、追踪）。Hook 是事件订阅模型，适合观察和拦截特定生命周期节点。两者互补而非替代。
 
-4. **EventBus 跨扩展通信** — 扩展之间不直接依赖，通过 EventBus 的 channel 机制松耦合通信。这是 pi-agent 的设计，避免扩展间的循环依赖。
+4. **先核心事件，按需扩展** — 初始只定义 Agent/Model/Tool 核心路径事件。压缩、权限、Memory、配置等事件在对应模块实现时按需添加。Hook 注册机制是开放的，新增事件类型不需要修改接口。
 
-5. **四层渐进式复杂度** — 从简单的 Markdown 模板到完整的 Go 模块，用户可以根据需求选择合适的扩展层级。大多数定制只需要 Prompt 或 Skill 层，无需编写 Go 代码。
+5. **两层渐进式扩展** — Prompt 模板和 Skill 覆盖大多数定制需求，无需编写 Go 代码。Extension API 和 Package 分发机制等有第三方扩展生态需求时再设计。
 
 ---
 
@@ -1606,7 +1525,8 @@ type MessageData struct {
 ### 5.3 消息树
 
 ```go
-// Tree 支持分支和导航。
+// Tree 通过 ParentID 链构建消息树。
+// 当前阶段只实现线性路径恢复，分支导航能力后续按需添加。
 type Tree struct {
     Root     *TreeNode
     nodeByID map[string]*TreeNode
@@ -1622,14 +1542,11 @@ type TreeNode struct {
 // Branch 移动 leaf 指针到指定节点，不修改历史。
 func (t *Tree) Branch(nodeID string) error
 
-// BranchWithSummary 创建分支摘要条目，保留上下文。
-func (t *Tree) BranchWithSummary(nodeID string, summary string) error
-
 // Path 返回从根到指定节点的消息序列。
 func (t *Tree) Path(nodeID string) []*model.Message
 
-// Branches 返回指定节点的所有子分支。
-func (t *Tree) Branches(nodeID string) []*TreeNode
+// BranchWithSummary、Branches 等分支导航方法后续按需添加。
+// 数据格式（ParentID 链）已前向兼容，不影响未来扩展。
 ```
 
 ### 5.4 session.Snapshot
@@ -1694,9 +1611,8 @@ func NewFileStore(baseDir string) Store
 | 维度 | 当前 Blades | 新设计 |
 |------|------------|--------|
 | 权限控制 | 仅 `Confirm` 中间件 | 分层决策链 |
-| 权限模式 | 无 | 6 种模式（default/accept_all/deny_all/auto/plan/bubble） |
+| 权限模式 | 无 | 5 种模式（default/accept_all/deny_all/plan/escalate） |
 | 规则配置 | 无 | 多来源规则（CLI/session/project/user/policy） |
-| 自动审批 | 无 | PermissionClassifier 快速模型判断 |
 
 ### 6.1 权限决策类型
 
@@ -1715,7 +1631,6 @@ const (
     ModeDefault    PermissionMode = "default"     // 破坏性操作需确认
     ModeAcceptAll  PermissionMode = "accept_all"  // 自动接受所有
     ModeDenyAll    PermissionMode = "deny_all"    // 拒绝所有，仅规则放行
-    ModeAuto       PermissionMode = "auto"        // 分类器自动审批
     ModePlan       PermissionMode = "plan"        // 只读计划模式
     ModeEscalate   PermissionMode = "escalate"    // 决策上报到父 Agent
 )
@@ -1751,7 +1666,6 @@ type PermissionChain struct {
     rules      []PermissionRule
     mode       PermissionMode
     hooks      *HookRegistry
-    classifier PermissionClassifier
     promptUser UserPromptFunc
 }
 
@@ -1780,35 +1694,11 @@ func (c *PermissionChain) Check(
    → Hook 返回 allow/deny: 短路返回
    → 无 Hook 或 passthrough: 继续
 
-4. 自动分类器（仅 mode=auto）
-   → shouldBlock=true: deny
-   → shouldBlock=false: allow
-
-5. 提示用户（交互式兜底）
+4. 提示用户（交互式兜底）
    → 用户决定 allow/deny
 ```
 
-### 6.4 自动分类器
-
-```go
-// PermissionClassifier 在 auto 模式下快速判断工具调用是否应被阻止。
-// 使用轻量模型调用，无需用户交互。
-type PermissionClassifier interface {
-    Classify(ctx context.Context, toolName string, input string) (*ClassifierResult, error)
-}
-
-type ClassifierResult struct {
-    ShouldBlock bool    // 是否阻止
-    Reason      string  // 原因
-    Confidence  float64 // 置信度 0-1
-    Thinking    string  // 推理过程（调试用）
-}
-
-// UserPromptFunc 在交互模式下询问用户。
-type UserPromptFunc func(ctx context.Context, toolName string, input string) (PermissionDecision, error)
-```
-
-### 6.5 权限中间件集成
+### 6.4 权限中间件集成
 
 ```go
 // PermissionMiddleware 将权限链集成到 Agent 的工具执行流程中。
@@ -1837,13 +1727,11 @@ func PermissionMiddleware(chain *PermissionChain) ToolMiddleware {
 
 ### 关键设计决策
 
-1. **分层链而非单一回调** — 当前 `Confirm` 中间件是全有或全无的单一回调。新设计将权限判断分解为 5 层，每层可独立配置和短路，灵活度远高于单一回调。
+1. **分层链而非单一回调** — 当前 `Confirm` 中间件是全有或全无的单一回调。新设计将权限判断分解为 4 层（规则 → 模式 → Hook → 用户确认），每层可独立配置和短路，灵活度远高于单一回调。
 
 2. **规则优先于模式** — 规则在决策链最前面，可以精确覆盖特定工具的权限。例如 `allow bash "git *"` 允许所有 git 命令，即使在 default 模式下 bash 通常需要确认。
 
-3. **Auto 模式分类器** — 在非交互场景（CI/CD、后台 Agent）中，无法提示用户。Auto 模式使用轻量模型调用判断工具调用是否安全，实现无人值守的安全执行。
-
-4. **Escalate 模式** — 子 Agent 可以将权限决策上报到父 Agent，由父 Agent 的权限链处理。这避免了子 Agent 独立做出可能不安全的决策。
+3. **Escalate 模式** — 子 Agent 可以将权限决策上报到父 Agent，由父 Agent 的权限链处理。这避免了子 Agent 独立做出可能不安全的决策。
 
 ---
 
@@ -2428,7 +2316,7 @@ func GraphAgent(name string, executor *graph.Executor, opts ...GraphAgentOption)
 - [ ] 实现 ContextBuilder（含 `filterForProvider` 消息过滤）
 - [ ] 实现 `streamAndRecord` 私有方法
 - [ ] 实现 `token.Counter` 接口和多实现
-- [ ] 实现 `compact.Pipeline` 和 6 种内置策略（Summarizer 函数注入）
+- [ ] 实现 `compact.Pipeline` 和 5 种内置策略（Summarizer 函数注入）
 - [ ] 实现 `prompt.Builder`（静态/动态分段）
 - [ ] 集成 Anthropic Provider 的 cache_control
 
@@ -2441,17 +2329,14 @@ func GraphAgent(name string, executor *graph.Executor, opts ...GraphAgentOption)
 
 ### 阶段 5：扩展与 Hook
 
-- [ ] 定义 `HookEvent` 判别联合类型
+- [ ] 定义 `HookEvent` 判别联合类型（Agent/Model/Tool 核心事件）
 - [ ] 实现 `HookRegistry`（观察型 + 拦截型 Handler）
-- [ ] 实现 `ExtensionAPI`
-- [ ] 实现 `EventBus` 跨扩展通信
 - [ ] 增强 Skill frontmatter（hooks、mcpServers、model）
 
 ### 阶段 6：权限系统
 
 - [ ] 定义权限类型（Decision、Mode、Rule）
-- [ ] 实现 `PermissionChain` 分层决策
-- [ ] 实现 `PermissionClassifier` 接口
+- [ ] 实现 `PermissionChain` 分层决策（规则 → 模式 → Hook → 用户确认）
 - [ ] 实现 `PermissionMiddleware` 集成
 
 ### 阶段 7：子 Agent 系统
@@ -2490,7 +2375,7 @@ func GraphAgent(name string, executor *graph.Executor, opts ...GraphAgentOption)
 | 风险 | 影响 | 缓解措施 |
 |------|------|----------|
 | InputEvent/OutputEvent 接口变更影响所有消费者 | 高 | 根包精简为 Agent + Event 类型，变更面可控 |
-| 6 策略压缩管线复杂度 | 中 | 每个策略独立实现和测试，管线按需组合 |
+| 5 策略压缩管线复杂度 | 中 | 每个策略独立实现和测试，管线按需组合 |
 | StreamingToolExecutor 并发安全 | 高 | 充分的并发测试 + race detector |
 | JSONL 文件膨胀（append-only） | 中 | 定期 GC 清理废弃分支（后续工作） |
 | 自动 Memory 提取质量 | 中 | 节流 + 互斥 + 人工审核机制 |
