@@ -121,19 +121,24 @@ Blades 是一个基于 Go 构建的 Agent 框架，当前已具备：
 
 ### 命名规范
 
-遵循 Go 惯用的 `package.Role` 模式：包名是名词（领域），类型名是角色（动作者），不重复包名。
+遵循 Go 惯用的 `package.Role` 模式：包名是名词（领域），类型名是角色（动作者）。与 Go 标准库一致：`io.Reader`、`http.Handler`、`sql.Scanner`。
 
 ```
-session.Store      不是 session.SessionStore
-memory.Store       不是 memory.MemoryStore
-memory.Entry       不是 memory.MemoryEntry
-prompt.Builder     不是 prompt.SystemPromptBuilder
-settings.Loader    不是 settings.SettingsLoader
-tools.Resolver     不是 tools.ToolResolver
-graph.Checkpointer 不是 graph.GraphCheckpointer
+model.Message
+model.Provider
+model.Request
+model.Response
+model.TextPart
+session.Store
+session.Session
+prompt.Builder
+tools.Resolver
+compact.Pipeline
+graph.Checkpointer
+hook.Registry
+token.Counter
+permission.Chain
 ```
-
-与 Go 标准库一致：`io.Reader`、`http.Handler`、`sql.Scanner`。
 
 ---
 
