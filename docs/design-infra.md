@@ -102,18 +102,18 @@ func (a *agent) callProvider(ctx context.Context, req *model.Request) (iter.Seq2
 
 | 维度 | 当前 Blades | 新设计 |
 |------|------------|--------|
-| 计数 | `internal/counter`（1 token ≈ 4 chars） | `token.Counter` 接口 + 多实现 |
+| 计数 | `internal/counter`（1 token ≈ 4 chars） | `model.Counter` 接口 + 多实现 |
 | 精度 | 粗略估算 | Provider 原生 / tiktoken / 估算三级降级 |
 | 使用 | 仅 context/window 和 context/summary | 压缩管线、TurnState、prompt.Builder 全局使用 |
 
-### 10.1 token.Counter 接口
+### 10.1 model.Counter 接口
 
 ```go
-package token
+package model
 
 // Counter 计算消息的 token 数量。
 type Counter interface {
-    Count(messages ...*model.Message) int64
+    Count(messages ...*Message) int64
 }
 
 // CharCounter 字符估算实现（1 token ≈ 4 chars）。
@@ -123,7 +123,7 @@ type CharCounter struct{}
 // ProviderCounter 使用 Provider 原生 token 计数 API。
 // 如 Anthropic 的 /v1/messages/count_tokens。
 type ProviderCounter struct {
-    provider model.Provider
+    provider Provider
 }
 
 // CachedCounter 缓存已计算的 token 数，避免重复计算。

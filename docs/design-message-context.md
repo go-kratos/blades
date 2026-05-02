@@ -79,7 +79,7 @@ type CompactionRecord struct {
 // CompressionPipeline 按顺序应用策略，token 降到预算内即短路。
 type CompressionPipeline struct {
     strategies []CompressionStrategy
-    counter    TokenCounter
+    counter    model.Counter
 }
 
 func (p *CompressionPipeline) Compress(
