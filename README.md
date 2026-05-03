@@ -169,3 +169,41 @@ We look forward to any feedback, suggestions, and contributions from you to join
 ## 📄 License
 
 Blades is licensed under the MIT License. For details, please see the [LICENSE](LICENSE) file.
+
+## ❓ FAQ
+
+### What is Blades?
+Blades is a multimodal AI Agent framework for Go, supporting custom models, tools, memory, and middleware. It is designed for multi-turn conversations, chain-of-thought reasoning, and structured output.
+
+### How does Blades compare to other AI frameworks?
+Blades is built specifically for Go developers, following Go idiomatic patterns. Unlike Python-centric frameworks (LangChain, LlamaIndex), Blades provides a native Go experience with familiar code style and concurrency model.
+
+### Which LLM providers are supported?
+Blades uses a pluggable `ModelProvider` interface. Out of the box, it supports OpenAI-compatible APIs. You can integrate any LLM (DeepSeek, Gemini, Claude, local models) by implementing the `ModelProvider` interface.
+
+### How do I install Blades?
+\`\`\`bash
+go get github.com/go-kratos/blades
+\`\`\`
+
+### Can I use Blades with local LLMs?
+Yes. Blades supports any OpenAI-compatible API. You can configure the \`base URL\` to point to local LLM servers like Ollama, vLLM, or LM Studio.
+
+### What is the Agent interface?
+\`Agent\` is the core interface in Blades. It defines \`Name()\`, \`Description()\`, and \`Run()\` methods. Components like \`Chain\` and \`ModelProvider\` also implement this interface, enabling flexible composition.
+
+### How does Memory work?
+Blades provides a \`Memory\` interface for short-term and long-term context storage. The built-in \`InMemory\` implementation stores messages by session ID. You can extend it to persistent storage (Redis, PostgreSQL, etc.).
+
+### What is Middleware?
+Middleware provides cross-cutting concerns (logging, monitoring, authentication, rate limiting) without modifying core Agent logic. It operates as an "onion model" function chain.
+
+### Can I build multi-step workflows?
+Yes. Use the \`Chain\` and \`flow\` components to connect multiple Agents into complex workflows. The output of one Agent can serve as input for the next.
+
+### Where can I get help?
+- [Examples](./examples) directory for usage patterns
+- [GoDoc](https://pkg.go.dev/github.com/go-kratos/blades) for API reference
+- GitHub Issues for bugs and feature requests
+- Kratos community for general discussions
+
