@@ -160,6 +160,154 @@ func (s *Section) Build(ctx context.Context) (string, error) {
 }
 ```
 
+### 8.6 Session Memory
+
+Session Memory 是会话级摘要，在自然断点（无工具调用的轮次结束时）更新，用于 compact 捷径（跳过 LLM 摘要调用）。
+
+```go
+// SessionMemory 管理每会话的摘要状态。
+// 在自然断点更新（!hasToolCallsInLastTurn），
+// 用作 compact 捷径避免昂贵的 LLM 摘要调用。
+type SessionMemory struct {
+    sessionID string
+    memDir    string // ~/.blades/sessions/<project>/<sessionId>/memory/
+    counter   model.Counter
+    config    SessionMemoryConfig
+}
+
+type SessionMemoryConfig struct {
+    MinTokensToInit         int64 // 初始化最小 token 数，默认 10_000
+    MinTokensBetweenUpdate  int64 // 更新间隔最小 token 数，默认 5_000
+    ToolCallsBetweenUpdates int   // 更新间隔最小工具调用数，默认 3
+}
+
+func NewSessionMemory(sessionID, memDir string, counter model.Counter, opts ...SessionMemoryOption) *SessionMemory
+
+// ShouldUpdate 检查阈值决定是否需要刷新 session memory。
+// 仅在自然断点调用（hasToolCallsInLastTurn == false）。
+func (sm *SessionMemory) ShouldUpdate(tokensSinceLastUpdate int64, toolCallsSince int, hasToolCallsInLastTurn bool) bool
+
+// Update 运行 forked agent 更新 session memory 文件。
+// fork 仅允许 FileEdit 工具，作用域限定为 memory 文件路径。
+// 文件权限：目录 0o700，文件 0o600。
+func (sm *SessionMemory) Update(ctx context.Context, messages []*model.Message) error
+
+// Load 返回当前 session memory 内容，未初始化时返回空字符串。
+func (sm *SessionMemory) Load() (string, error)
+
+// IsActive 返回 session memory 是否已初始化。
+// 用于 SessionMemoryCompactStrategy 判断是否可以跳过 LLM 调用。
+func (sm *SessionMemory) IsActive() bool
+```
+
+Integration: Stop Hooks 触发 SessionMemory.Update()；compact.SessionMemoryCompactStrategy 调用 SessionMemory.Load() 作为摘要。
+
+### 8.7 Agent Memory
+
+每种 agent 类型可拥有独立的持久化 Memory，三级作用域：
+
+```go
+// AgentMemoryScope 定义 agent memory 的存储位置。
+type AgentMemoryScope string
+const (
+    AgentScopeUser    AgentMemoryScope = "user"    // ~/.blades/agent-memories/<agentType>/
+    AgentScopeProject AgentMemoryScope = "project"  // <cwd>/.blades/agent-memories/<agentType>/
+    AgentScopeLocal   AgentMemoryScope = "local"    // <cwd>/.blades/agent-memories/<agentType>/local/
+)
+
+// AgentMemory 提供每种 agent 类型的持久化 Memory。
+type AgentMemory struct {
+    AgentType string
+    Scope     AgentMemoryScope
+    BaseDir   string
+}
+
+func NewAgentMemory(agentType string, scope AgentMemoryScope, baseDir string) *AgentMemory
+
+// Load 返回该 agent 类型的所有 memory 条目。
+func (am *AgentMemory) Load(ctx context.Context) ([]Entry, error)
+
+// Connect 将 agent memory 附加到 prompt builder 作为动态 section。
+func (am *AgentMemory) Connect(builder *prompt.Builder) prompt.Section
+```
+
+路径清理：`:` 替换为 `-`（插件命名空间）。`isAgentMemoryPath()` 规范化路径防止 `..` 遍历。
+
+### 8.8 Agent Memory 快照
+
+Agent Memory 快照使 agent memory 成为可分发资产——项目可随 agent 定义一起发布初始 memory：
+
+```go
+// SnapshotState 追踪初始化状态。
+type SnapshotState string
+const (
+    SnapshotNone         SnapshotState = "none"           // 无快照
+    SnapshotInitialize   SnapshotState = "initialize"     // 需要从快照初始化
+    SnapshotPromptUpdate SnapshotState = "prompt-update"  // 需要更新 prompt
+)
+
+// InitializeFromSnapshot 将快照文件复制到 agent memory 目录。
+// 快照存储在 <cwd>/.blades/agent-memory-snapshots/<agentType>/
+// 目前仅适用于 AgentScopeUser 作用域的 agent。
+func InitializeFromSnapshot(agentType, snapshotDir, targetDir string) error
+
+// ReplaceFromSnapshot 先删除已有 .md 文件，再从快照初始化。
+func ReplaceFromSnapshot(agentType, snapshotDir, targetDir string) error
+```
+
+### 8.9 Relevant Memory Recall
+
+不是将所有 memory 注入 prompt，而是通过轻量模型查询选择最相关的 top-N：
+
+```go
+// Recaller 为当前上下文选择最相关的 memory 条目。
+// 避免将所有 memory 注入 system prompt 浪费 token。
+type Recaller struct {
+    loader    *Loader
+    model     model.Provider // 轻量/快速模型
+    maxRecall int            // 最大召回数，默认 5
+}
+
+func NewRecaller(loader *Loader, model model.Provider, opts ...RecallerOption) *Recaller
+
+// Recall 返回与当前上下文最相关的 top-N memory 条目。
+// 流程：
+//   1. 扫描所有 memory 文件头部，格式化清单
+//   2. 调用轻量模型侧查询，选择最相关的条目
+//   3. 过滤 alreadySurfaced 避免重复
+//   4. 排除 BLADES.md 本身（已在 system prompt 中）
+func (r *Recaller) Recall(
+    ctx context.Context,
+    messages []*model.Message,
+    alreadySurfaced map[string]bool,
+) ([]Entry, error)
+
+type RecallerOption func(*Recaller)
+func WithMaxRecall(n int) RecallerOption
+```
+
+### 8.10 更新：Memory 注入策略
+
+更新 Section.Build() 支持两种注入模式：
+
+```go
+type Section struct {
+    loader   *Loader
+    recaller *Recaller // 可选，nil 时回退到全量注入
+}
+
+func (s *Section) Build(ctx context.Context) (string, error) {
+    if s.recaller != nil {
+        // 选择性注入：轻量模型查询选择 top-N
+        entries, err := s.recaller.Recall(ctx, currentMessages, alreadySurfaced)
+        // ...
+    }
+    // 回退：全量注入所有匹配的 memory
+    entries, err := s.loader.Load(ctx)
+    // ...
+}
+```
+
 ### 关键设计决策
 
 1. **5 层层级而非单一存储** — 当前 `InMemoryStore` 是扁平的键值存储。新设计将 Memory 分为 5 层，从框架管理到自动提取，每层有明确的职责和优先级。项目级 Memory（BLADES.md）类似 Claude Code 的 CLAUDE.md，是团队共享的项目约定。
@@ -169,3 +317,11 @@ func (s *Section) Build(ctx context.Context) (string, error) {
 3. **globs 条件注入** — 不是所有 Memory 都需要在每次对话中注入。通过 `globs` 字段，Memory 条目只在用户操作匹配的文件时才注入 system prompt，减少不必要的 token 消耗。
 
 4. **自动提取互斥** — 如果主 Agent 在当前轮次已经写入了 Memory 文件（用户显式要求记住某事），自动提取器跳过本轮。避免主 Agent 和后台提取器同时写入同一文件产生冲突。
+
+5. **四层 Memory 架构** — 不是单一存储，而是四层架构：文件 Memory（BLADES.md 5 层层级）、Session Memory（会话级摘要）、Agent Memory（每种 agent 类型持久化）、Team Memory（团队共享，未来扩展）。每层有独立的生命周期和更新策略。
+
+6. **选择性召回而非全量注入** — 当 memory 文件数量增长后，全量注入会浪费大量 token。Recaller 通过轻量模型查询选择 top-5 最相关的 memory，显著降低 token 消耗。当 Recaller 未配置时，回退到全量注入保持向后兼容。
+
+7. **Session Memory 作为 compact 捷径** — Session Memory 的核心价值不仅是持久化会话摘要，更是作为 compact 捷径：当 session memory 已激活时，SessionMemoryCompactStrategy 直接使用它作为摘要，跳过昂贵的 LLM 调用。这是一个显著的成本优化。
+
+8. **Agent Memory 快照可分发** — 项目可以在 `.blades/agent-memory-snapshots/` 中发布初始 memory，新用户首次使用时自动初始化。这使 agent 的知识积累可以跨团队共享。

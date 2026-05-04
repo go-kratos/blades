@@ -51,7 +51,25 @@ type ForkConfig struct {
 
     // Hooks 子 Agent 专属 Hook（生命周期作用域）。
     Hooks []HookRegistration
+
+    // AgentMemory 子 Agent 专属 memory 实例。
+    // 当非 nil 时，子 Agent 拥有独立的 memory 存储，
+    // 可在多次调用间持久化角色专属知识。
+    AgentMemory *memory.AgentMemory // NEW: agent 专属 memory
+
+    // Effort 控制模型的推理努力程度。
+    // 低努力适合简单搜索，高努力适合复杂推理和规划。
+    // 空值 = 继承父 Agent 设置。
+    Effort EffortLevel // NEW: 推理努力级别
 }
+
+// EffortLevel 控制模型的推理努力程度。
+type EffortLevel string
+const (
+    EffortLow    EffortLevel = "low"
+    EffortMedium EffortLevel = "medium"
+    EffortHigh   EffortLevel = "high"
+)
 
 type QuerySource string
 const (
@@ -153,6 +171,46 @@ func CreateWorktreeAgent(
 | 任务摘要 | `task_summary` | 是 | 是 | 周期性生成任务进度摘要 |
 | Skill 执行 | `skill` | 否 | 否 | 在隔离环境中执行 Skill |
 | 用户子 Agent | `sub_agent` | 否 | 可选 | 用户通过 AgentTool 派生 |
+| 隐式 fork | `sub_agent` | 是 | 否 | subagent_type 为空时自动触发 |
+
+### 7.6.1 AgentTool 路由逻辑
+
+AgentTool 接收 `subagent_type` 参数后，按以下优先级路由：
+
+```
+1. subagent_type 非空 → Registry.Resolve(subagent_type) → Spawn
+2. subagent_type 为空 + 显式 role 参数 → 按 role 路由
+3. subagent_type 为空 + Background=true → BackgroundAgent
+4. subagent_type 为空 + Worktree 配置 → CreateWorktreeAgent
+5. subagent_type 为空 + ForkSubagent 特性启用 → ForkAgent（隐式 fork）
+6. 默认 → 同步 runAgent()
+```
+
+#### Implicit Fork（隐式 fork）
+
+当 `subagent_type` 为空且没有显式指定角色时，若 `ForkSubagent` 特性开关启用，自动触发隐式 fork。隐式 fork 继承父级完整对话上下文，适用于需要在子 agent 中延续当前对话但不改变角色的场景。
+
+```go
+// ForkAgent 是隐式 fork 的内置角色。
+// 当 AgentTool 的 subagent_type 为空时自动使用。
+// 子 agent 继承父级完整对话上下文和已渲染的 system prompt 字节（不重新生成），
+// 保证 prompt cache 命中稳定性。
+var ForkAgent = &Role{
+    Name:        "_fork",
+    Description: "隐式 fork：继承父级完整上下文",
+    Source:      SourceBuiltIn,
+    WhenToUse:   "internal: 当 subagent_type 为空时自动触发",
+    ConfigureFunc: func(ctx context.Context, parent ConfigContext) (*ForkConfig, error) {
+        return &ForkConfig{
+            ShareCachePrefix: true,
+            IsolateSession:   false, // 共享父级上下文
+            QuerySource:      QuerySourceSubAgent,
+            PermissionMode:   permission.ModeBubble,
+            // tools 默认继承父级所有工具
+        }, nil
+    },
+}
+```
 
 ### 关键设计决策
 
@@ -161,6 +219,8 @@ func CreateWorktreeAgent(
 2. **Fire-and-forget 后台 Agent** — Memory 提取和任务摘要不需要阻塞主循环。BackgroundAgent 在 goroutine 中运行，主循环继续处理用户请求。Drain 机制确保关闭前等待后台任务完成。
 
 3. **QuerySource 行为区分** — 不同来源的 fork 有不同的行为约束。例如 `compact` fork 只需要生成摘要，不需要执行工具；`extract_memory` fork 只能使用只读工具 + Memory 写入工具。QuerySource 标记使这些约束可以在权限链和 Hook 中精确匹配。
+
+3.1. **隐式 fork 使用 ModeBubble** — 隐式 fork 继承父级完整上下文，因此权限决策应与父级保持一致。Bubble 模式确保父级的权限链处理所有决策，避免子 agent 产生与父级不一致的权限行为。如果子 agent 独立决策权限，可能出现父级已拒绝但子 agent 允许的情况，破坏安全边界。
 
 ---
 
@@ -187,6 +247,10 @@ type Role struct {
 
     // Source distinguishes built-in roles from user-defined ones.
     Source Source
+
+    // MemoryScope controls the agent memory scope for this role.
+    // Determines which memory entries are visible and writable.
+    MemoryScope memory.AgentMemoryScope // NEW: agent memory 作用域
 
     // ConfigureFunc produces a ForkConfig from the parent agent context.
     // The parent's tools are passed in so the role can filter them.
@@ -309,12 +373,13 @@ func Spawn(ctx context.Context, registry *Registry, roleName string, parent Agen
 
 框架内置 4 种通用 Agent 角色，覆盖搜索→规划→执行→验证的完整工作流。
 
-| 类型 | 工具约束 | 模型 | 后台 | OmitMemory | MaxTurns | ShareCache |
-|------|---------|------|------|-----------|----------|-----------|
-| `explore` | `ReadOnlyTools()` | 可配置（默认更快模型） | 否 | 是 | 5 | 是 |
-| `plan` | `ReadOnlyTools()` | 继承父 agent | 否 | 是 | 15 | 是 |
-| `general` | 全部继承 | 继承父 agent | 否 | 否 | 继承 | 否 |
-| `verify` | `ReadOnlyTools()` + /tmp 写入 | 继承父 agent | 是 | 否 | 20 | 是 |
+| 类型 | 工具约束 | 模型 | 后台 | OmitMemory | MaxTurns | ShareCache | MemoryScope | Effort |
+|------|---------|------|------|-----------|----------|-----------|-------------|--------|
+| `explore` | `ReadOnlyTools()` | 可配置（默认更快模型） | 否 | 是 | 5 | 是 | `none` | `low` |
+| `plan` | `ReadOnlyTools()` | 继承父 agent | 否 | 是 | 15 | 是 | `read_only` | `high` |
+| `general` | 全部继承 | 继承父 agent | 否 | 否 | 继承 | 否 | `inherit` | 继承 |
+| `verify` | `ReadOnlyTools()` + /tmp 写入 | 继承父 agent | 是 | 否 | 20 | 是 | `read_only` | `medium` |
+| `_fork` | 全部继承 | 继承父 agent | 否 | 否 | 继承 | 是 | `inherit` | 继承 |
 
 #### explore — 快速只读搜索
 
@@ -324,7 +389,8 @@ var Explore = &Role{
     WhenToUse: "Fast read-only search agent for locating code. Use it to find files " +
         "by pattern, grep for symbols or keywords, or answer 'where is X defined'. " +
         "Specify search breadth: quick, medium, or very thorough.",
-    Source: SourceBuiltIn,
+    Source:      SourceBuiltIn,
+    MemoryScope: memory.ScopeNone, // 搜索不需要 memory
     ConfigureFunc: func(ctx context.Context, parent ConfigContext) (*ForkConfig, error) {
         return &ForkConfig{
             Tools:            FilterTools(parent.Tools(), ReadOnlyTools()),
@@ -332,6 +398,7 @@ var Explore = &Role{
             IsolateSession:   true,
             QuerySource:      QuerySourceSubAgent,
             MaxTurns:         5,
+            Effort:           EffortLow, // 快速搜索，低努力
         }, nil
     },
     SystemPrompt: exploreSystemPrompt,
@@ -355,7 +422,8 @@ var Plan = &Role{
     WhenToUse: "Software architect agent for designing implementation plans. " +
         "Returns step-by-step plans, identifies critical files, and considers " +
         "architectural trade-offs.",
-    Source: SourceBuiltIn,
+    Source:      SourceBuiltIn,
+    MemoryScope: memory.ScopeReadOnly, // 规划需要读取历史决策
     ConfigureFunc: func(ctx context.Context, parent ConfigContext) (*ForkConfig, error) {
         return &ForkConfig{
             Tools:            FilterTools(parent.Tools(), ReadOnlyTools()),
@@ -363,6 +431,7 @@ var Plan = &Role{
             IsolateSession:   true,
             QuerySource:      QuerySourceSubAgent,
             MaxTurns:         15,
+            Effort:           EffortHigh, // 复杂推理，高努力
         }, nil
     },
     SystemPrompt: planSystemPrompt,
@@ -385,10 +454,12 @@ var General = &Role{
     Name:      "general",
     WhenToUse: "General-purpose agent for researching complex questions, searching " +
         "for code, and executing multi-step tasks.",
-    Source: SourceBuiltIn,
+    Source:      SourceBuiltIn,
+    MemoryScope: memory.ScopeInherit, // 继承父 agent memory 作用域
     ConfigureFunc: func(ctx context.Context, parent ConfigContext) (*ForkConfig, error) {
         return &ForkConfig{
             QuerySource: QuerySourceSubAgent,
+            // Effort 为空，继承父 agent 设置
         }, nil
     },
     SystemPrompt: generalSystemPrompt,
@@ -408,7 +479,8 @@ var Verify = &Role{
     WhenToUse: "Verification specialist that tries to break the implementation. " +
         "Runs builds, tests, linters, and adversarial probes. " +
         "Outputs structured PASS/FAIL/PARTIAL verdict with evidence.",
-    Source: SourceBuiltIn,
+    Source:      SourceBuiltIn,
+    MemoryScope: memory.ScopeReadOnly, // 验证需要读取已知问题和约束
     ConfigureFunc: func(ctx context.Context, parent ConfigContext) (*ForkConfig, error) {
         return &ForkConfig{
             Tools:            FilterTools(parent.Tools(), ReadOnlyTools()),
@@ -416,6 +488,7 @@ var Verify = &Role{
             IsolateSession:   true,
             QuerySource:      QuerySourceSubAgent,
             MaxTurns:         20,
+            Effort:           EffortMedium, // 验证需要适度推理
         }, nil
     },
     SystemPrompt: verifySystemPrompt,
@@ -541,6 +614,10 @@ Report findings with file:line references.`, nil
 
 8. **4 种内置角色** — explore/plan/general/verify 覆盖搜索→规划→执行→验证的完整工作流。产品特定角色（如文档指南、状态栏配置）由用户自定义。
 
+8.1. **MemoryScope 分级** — 不同角色对 memory 的需求不同。explore 不需要 memory（纯搜索），plan/verify 需要只读访问（读取历史决策和已知约束），general 和 _fork 继承父级作用域。分级控制避免低权限角色意外写入 memory。
+
+8.2. **EffortLevel 推理努力** — 不同任务的推理复杂度差异显著。explore 只需快速匹配（low），plan 需要深度推理（high），verify 需要适度分析（medium）。Effort 映射到模型 API 的 reasoning effort 参数，在成本和质量之间取得平衡。空值表示继承父 agent 设置，避免强制覆盖。
+
 ---
 
 ## Coordinator 模式
@@ -619,6 +696,54 @@ type TaskNotificationEvent struct {
 - 独立任务并行 launch
 - 写操作按文件集串行，研究任务可并行
 - Worker 不能 spawn 其他 worker（防止无限嵌套）
+
+### 7.17.1 Scratchpad（跨 Worker 知识共享）
+
+Coordinator 模式下，多个 worker 可能需要交换中间产物（分析结果、计划、数据文件）。Scratchpad 提供一个共享目录作为 worker 间的知识交换平面。
+
+```go
+// agent/scratchpad.go
+
+// ScratchpadConfig 启用 Coordinator 模式下的跨 worker 知识共享。
+type ScratchpadConfig struct {
+    BaseDir string // 默认 .blades/scratchpad/
+}
+
+// Scratchpad 提供共享目录，Coordinator worker 可在其中
+// 交换中间产物（分析结果、计划、数据文件）。
+type Scratchpad struct {
+    dir string
+}
+
+func NewScratchpad(config ScratchpadConfig) *Scratchpad
+func (s *Scratchpad) Dir() string
+```
+
+**集成方式：**
+
+- Coordinator 激活时，自动创建 scratchpad 目录
+- 将 scratchpad 目录路径注入每个 worker 的 system prompt（作为环境变量或 prompt section）
+- 可选添加 `ScratchpadTool`（读写 scratchpad 目录）到 worker 工具池，提供结构化的文件读写接口
+- Worker 完成后，coordinator 可读取 scratchpad 中的产物用于 synthesis 阶段
+- Scratchpad 生命周期与 coordinator session 绑定，session 结束时可选清理
+
+```go
+// ScratchpadTool 提供对 scratchpad 目录的结构化读写。
+type ScratchpadTool struct {
+    scratchpad *Scratchpad
+}
+
+func NewScratchpadTool(sp *Scratchpad) *ScratchpadTool
+
+// Write 写入文件到 scratchpad。
+func (t *ScratchpadTool) Write(name string, content []byte) error
+
+// Read 从 scratchpad 读取文件。
+func (t *ScratchpadTool) Read(name string) ([]byte, error)
+
+// List 列出 scratchpad 中的所有文件。
+func (t *ScratchpadTool) List() ([]string, error)
+```
 
 ---
 

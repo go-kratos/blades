@@ -16,7 +16,7 @@ modules: [module-6, module-14]
 | 维度 | 当前 Blades | 新设计 |
 |------|------------|--------|
 | 权限控制 | 仅 `Confirm` 中间件 | 分层决策链（7 层） |
-| 权限模式 | 无 | 4 种核心模式（default/accept_edits/plan/auto） |
+| 权限模式 | 无 | 7 种模式（default/accept_edits/plan/auto/bubble/dont_ask/bypass_permissions） |
 | 规则配置 | 无 | 多来源规则（CLI/session/project/user/policy） |
 | 安全检查 | 无 | bypass-immune SafetyChecker |
 | 模式管理 | 无 | ModeManager 状态机（含 plan 暂存/恢复） |
@@ -58,10 +58,22 @@ const (
     ModeAuto Mode = "auto"
 
     // --- 预留模式（后续按需实现）---
-    // ModeBypassPermissions Mode = "bypass_permissions" // 跳过所有检查（安全检查除外）
-    // ModeDenyAll           Mode = "deny_all"           // 拒绝所有，仅规则放行
-    // ModeDontAsk           Mode = "dont_ask"           // ask → deny，headless/CI
-    // ModeEscalate          Mode = "escalate"           // 子 Agent 决策上报父 Agent
+    // ModeDenyAll Mode = "deny_all" // 拒绝所有，仅规则放行
+
+    // ModeBubble 将权限决策冒泡到父 agent。
+    // 用于 fork 子 agent，不应自主做权限决策。
+    // 父 agent 的 PermissionChain 处理实际决策。
+    ModeBubble Mode = "bubble"
+
+    // ModeDontAsk 将所有 ASK 决策转为 DENY。
+    // 用于 headless/CI/SDK 场景，无人交互。
+    // SafetyChecker（第 1 层）仍然生效——SeverityBlock 绝对拒绝。
+    ModeDontAsk Mode = "dont_ask"
+
+    // ModeBypassPermissions 将所有 ASK 决策转为 ALLOW。
+    // 仅用于受信任环境。
+    // SafetyChecker（第 1 层）仍然生效——SeverityBlock 绝对拒绝。
+    ModeBypassPermissions Mode = "bypass_permissions"
 )
 ```
 
@@ -109,6 +121,22 @@ func (c *PermissionChain) Check(
 ) (PermissionDecision, error)
 ```
 
+#### BubbleEscalator
+
+```go
+// BubbleEscalator 桥接子 agent 权限请求到父 agent。
+type BubbleEscalator struct {
+    parentChain *PermissionChain
+    childID     string
+}
+
+func NewBubbleEscalator(parentChain *PermissionChain, childID string) *BubbleEscalator
+
+// Escalate 将权限检查转发到父 agent 的权限链。
+// 父链运行完整的 7 层决策管线。
+func (b *BubbleEscalator) Escalate(ctx context.Context, toolName, input string) (PermissionDecision, error)
+```
+
 决策流程（7 层）：
 
 ```
@@ -124,6 +152,7 @@ func (c *PermissionChain) Check(
 3. 模式决策
    → plan: 非只读工具 → DENY
    → accept_edits: 工作目录内文件写入 → ALLOW，否则 passthrough
+   → bubble: 委托给 BubbleEscalator，转发到父 agent 的权限链
    → default/auto: passthrough
 
 4. Hook 拦截（HookPreToolUse）
@@ -139,6 +168,8 @@ func (c *PermissionChain) Check(
 
 7. 后处理（ASK 的最终处理）
    → auto: 运行 Classifier（见模块 14.3）
+   → dont_ask: ASK → DENY（无人交互，headless/CI/SDK 场景）
+   → bypass_permissions: ASK → ALLOW（受信任环境，SafetyChecker 仍生效）
    → default/accept_edits: 提示用户
 ```
 
@@ -174,7 +205,7 @@ func PermissionMiddleware(chain *PermissionChain) ToolMiddleware {
 
 2. **规则优先于模式** — 规则在决策链第 2 层（仅次于安全检查），可以精确覆盖特定工具的权限。例如 `allow bash "git *"` 允许所有 git 命令，即使在 default 模式下 bash 通常需要确认。
 
-3. **4 种核心模式 + 预留扩展** — 聚焦 default/accept_edits/plan/auto 四种最常用模式。bypass_permissions、deny_all、dont_ask、escalate 预留枚举值，后续按需实现。避免过早设计不确定的模式语义。
+3. **7 种模式分层实现** — 4 种核心交互模式（default/accept_edits/plan/auto）处理日常开发场景。3 种扩展模式（bubble/dont_ask/bypass_permissions）覆盖子 agent 委托、headless/CI/SDK 无人交互、受信任环境等特殊场景。SafetyChecker（第 1 层）在所有模式下保持 bypass-immune——SeverityBlock 绝对拒绝，任何模式都无法绕过。
 
 4. **安全检查双级别** — SafetyChecker 在决策链最前面执行，区分 `SeverityBlock`（绝对禁止）和 `SeverityConfirm`（需确认但可覆盖）。路径遍历是绝对禁止的，敏感文件写入需要确认但不绝对禁止（用户可能需要配置 git hooks）。
 
@@ -254,23 +285,35 @@ func (m *ModeManager) OnChange(fn func(from, to Mode))
 // 不在此表中的转换被拒绝。
 var validTransitions = map[Mode]map[TransitionSource][]Mode{
     ModeDefault: {
-        TransitionUser:   {ModeAcceptEdits, ModePlan, ModeAuto},
+        TransitionUser:   {ModeAcceptEdits, ModePlan, ModeAuto, ModeBubble, ModeDontAsk, ModeBypassPermissions},
         TransitionTool:   {ModePlan},       // EnterPlanModeTool
         TransitionSystem: {},               // 无系统触发的转换
     },
     ModeAcceptEdits: {
-        TransitionUser:   {ModeDefault, ModePlan, ModeAuto},
+        TransitionUser:   {ModeDefault, ModePlan, ModeAuto, ModeBubble, ModeDontAsk, ModeBypassPermissions},
         TransitionTool:   {ModePlan},
         TransitionSystem: {},
     },
     ModePlan: {
-        TransitionUser: {ModeDefault, ModeAcceptEdits, ModeAuto},
+        TransitionUser: {ModeDefault, ModeAcceptEdits, ModeAuto, ModeBubble, ModeDontAsk, ModeBypassPermissions},
         TransitionTool: {ModeDefault, ModeAcceptEdits, ModeAuto}, // ExitPlanModeTool 恢复暂存模式
     },
     ModeAuto: {
-        TransitionUser:   {ModeDefault, ModeAcceptEdits, ModePlan},
+        TransitionUser:   {ModeDefault, ModeAcceptEdits, ModePlan, ModeBubble, ModeDontAsk, ModeBypassPermissions},
         TransitionTool:   {ModePlan},
         TransitionSystem: {ModeDefault}, // 熔断器：连续拒绝 → 降级到 default
+    },
+    ModeBubble: {
+        TransitionUser:   {ModeDefault, ModeAcceptEdits, ModePlan, ModeAuto, ModeDontAsk, ModeBypassPermissions},
+        TransitionSystem: {ModeDefault}, // 父 agent 断开时回退到 default
+    },
+    ModeDontAsk: {
+        TransitionUser:   {ModeDefault, ModeAcceptEdits, ModePlan, ModeAuto, ModeBubble, ModeBypassPermissions},
+        TransitionSystem: {},
+    },
+    ModeBypassPermissions: {
+        TransitionUser:   {ModeDefault, ModeAcceptEdits, ModePlan, ModeAuto, ModeBubble, ModeDontAsk},
+        TransitionSystem: {},
     },
 }
 ```
@@ -826,13 +869,13 @@ modeManager.OnChange(func(from, to permission.Mode) {
   │     └─→ PlanModePromptSection（plan 模式注入指令）
   │
   └─→ 工具执行时 PermissionChain.Check()
-        ├─→ 第 3 层：模式决策
-        └─→ 第 7 层：后处理（auto → Classifier）
+        ├─→ 第 3 层：模式决策（bubble → BubbleEscalator 委托父 agent）
+        └─→ 第 7 层：后处理（auto → Classifier / dont_ask → DENY / bypass_permissions → ALLOW）
 ```
 
 ### 14.7 关键设计决策
 
-1. **4 种核心模式而非 8 种** — 聚焦 default/accept_edits/plan/auto 四种最常用模式。bypass_permissions、deny_all、dont_ask、escalate 预留枚举值，后续按需实现。避免过早设计不确定的模式语义，同时保持扩展性。
+1. **7 种模式覆盖完整场景** — 4 种核心交互模式（default/accept_edits/plan/auto）处理日常开发场景。新增 3 种扩展模式：bubble 模式实现子 agent 权限委托，避免重复配置父 agent 的权限规则；dont_ask 和 bypass_permissions 是 SDK/headless 场景的必要模式，前者将 ASK 转为 DENY（安全优先），后者将 ASK 转为 ALLOW（效率优先）。deny_all 预留枚举值，后续按需实现。
 
 2. **纯接口 Classifier** — 框架不内置 LLM 分类器实现，只提供 `Classifier` 接口和 `AutoModeController`（快速路径 + 熔断器）。原因：分类器质量高度依赖具体模型和 prompt 工程，框架不应承担这个责任。用户可以注入基于 Claude/GPT 的 LLM 分类器、基于规则的分类器、或本地小模型分类器。
 
@@ -845,3 +888,7 @@ modeManager.OnChange(func(from, to permission.Mode) {
 6. **模式切换时序** — 模式切换立即生效于 ModeState。权限链在每次工具执行时读取当前模式，因此当前轮次的后续工具调用立即受影响。工具列表过滤和 prompt 注入在下一轮 ContextBuilder.Build() 时体现。
 
 7. **AllowedPrompts 闭环** — ExitPlanModeTool 的 AllowedPrompts 在用户审批后直接转为 session 级 PermissionRule，由 PermissionChain 的规则匹配层处理。语义描述作为 pattern 字段，规则匹配器负责解释。
+
+8. **Bubble 模式实现子 agent 权限委托** — 子 agent 使用 ModeBubble 时，权限决策通过 BubbleEscalator 转发到父 agent 的 PermissionChain，父链运行完整的 7 层决策管线。这避免了在子 agent 中重复配置父 agent 的权限规则（规则、分类器、用户交互等），同时保证父 agent 对子 agent 的工具调用拥有完整的权限控制。Bubble 模式下子 agent 不做任何自主权限决策。
+
+9. **dontAsk 和 bypassPermissions 面向 SDK/headless 场景** — 在 SDK 集成、CI 流水线、后台任务等无人交互场景中，ASK 决策无法提示用户。ModeDontAsk 将 ASK 转为 DENY，适用于安全优先的场景（CI 流水线、不受信任的输入）；ModeBypassPermissions 将 ASK 转为 ALLOW，适用于受信任环境（内部工具链、预审批的自动化任务）。两种模式都在第 7 层后处理中生效，SafetyChecker（第 1 层）仍然 bypass-immune——SeverityBlock 绝对拒绝，确保即使在 bypass_permissions 模式下也无法执行路径遍历等危险操作。

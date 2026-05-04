@@ -15,7 +15,7 @@ modules: [module-4]
 |------|------------|--------|
 | 事件系统 | 无 | 类型化 HookEvent + HookRegistry |
 | 扩展机制 | 仅 Middleware | Hook 系统 + Skill 系统 |
-| 生命周期覆盖 | 无 | Agent/Model/Tool 核心事件（按需扩展） |
+| 生命周期覆盖 | 无 | Agent/Model/Tool/Session/Permission/Config/FS/Task/Stop 等 20+ 事件 |
 | 扩展层级 | 无 | Prompt → Skill 两层渐进 |
 
 ### 4.1 Hook 事件系统
@@ -40,11 +40,39 @@ type HookPostToolUse        struct{ ToolName string; Result string; Err error }
 type HookPostToolUseFailure struct{ ToolName string; Err error }
 
 // --- 权限/模式生命周期 ---
-type HookModeChange         struct{ From, To permission.Mode }
+type HookModeChange           struct{ From, To permission.Mode }
+type HookPermissionRequest    struct{ ToolName, Input string; Mode permission.Mode }
+type HookPermissionDenied     struct{ ToolName, Input, Reason string }
 
-// 其他生命周期事件（Session、压缩、Memory、配置等）
-// 在对应模块实现时按需添加。Hook 注册机制是开放的，
-// 新增事件类型不需要修改接口。
+// --- Session 生命周期 ---
+type HookSessionStart         struct{ SessionID string; IsResume bool }
+type HookSessionEnd           struct{ SessionID string }
+
+// --- 压缩生命周期 ---
+type HookPreCompact           struct{ Messages []*model.Message; TokenCount int64 }
+type HookPostCompact          struct{ Summary string; TokensBefore, TokensAfter int64 }
+
+// --- 配置生命周期 ---
+type HookConfigChange         struct{ Key string; OldValue, NewValue any }
+
+// --- 文件系统生命周期 ---
+type HookCwdChanged           struct{ OldCwd, NewCwd string }
+type HookFileChanged          struct{ Path string; Action string } // created/modified/deleted
+
+// --- Task 生命周期 ---
+type HookTaskCreated          struct{ TaskID, Subject string }
+type HookTaskCompleted        struct{ TaskID, Subject, Status string }
+
+// --- 通知 ---
+type HookNotification         struct{ Message string }
+
+// --- Stop 生命周期 ---
+type HookStop                 struct{
+    AgentName string
+    Messages  []*model.Message
+    Usage     *model.TokenUsage
+    Reason    TerminalReason
+}
 ```
 
 ### 4.2 Hook 注册与执行
@@ -78,10 +106,20 @@ type PostToolUseResult struct {
 // BeforeModelHandler 在模型调用前调用，可注入系统消息或中止。
 type BeforeModelHandler func(ctx context.Context, event *HookBeforeModelRequest) (*BeforeModelResult, error)
 
+// BeforeModelResult 模型调用前拦截结果。
 type BeforeModelResult struct {
     Continue      bool   // false = 中止模型调用
     SystemMessage string // 注入系统消息
     StopReason    string // 中止原因
+}
+
+// StopHookHandler 在 Agent 轮次结束时运行。
+// 返回 ContinueLoop=true 可注入 follow-up 消息继续循环。
+type StopHookHandler func(ctx context.Context, event *HookStop) (*StopHookResult, error)
+
+type StopHookResult struct {
+    ContinueLoop bool   // true = 注入 FollowUp 继续循环
+    FollowUp     string // 作为 user message 注入
 }
 
 // HookRegistry 管理 Hook 订阅和发射。
@@ -108,6 +146,10 @@ func (r *HookRegistry) OnPostToolUse(handler PostToolUseHandler, opts ...HookOpt
 // OnBeforeModel 注册模型调用前拦截 Hook。
 func (r *HookRegistry) OnBeforeModel(handler BeforeModelHandler, opts ...HookOption)
 
+// OnStop 注册 stop hook handler，在 Agent Loop 完成一个完整轮次后触发。
+// 用于 memory 提取、auto-dream、prompt suggestion 等后台工作。
+func (r *HookRegistry) OnStop(handler StopHookHandler, opts ...HookOption)
+
 // Emit 发射事件，按优先级调用所有匹配的 Handler。
 func (r *HookRegistry) Emit(ctx context.Context, event HookEvent) error
 
@@ -115,6 +157,17 @@ func (r *HookRegistry) Emit(ctx context.Context, event HookEvent) error
 type HookOption func(*hookEntry)
 func WithHookPriority(priority int) HookOption
 func WithHookScope(scope string) HookOption
+
+// WithHookSession 将 hook 绑定到特定会话/agent 生命周期。
+// 当会话/agent 结束时，绑定的 hooks 自动清理。
+func WithHookSession(sessionID string) HookOption
+
+// WithHookTimeout 设置单个 hook 的超时时间，覆盖默认 30s。
+func WithHookTimeout(d time.Duration) HookOption
+
+// ClearSessionHooks 移除绑定到指定会话的所有 hooks。
+// 在 agent 生命周期结束时由 runAgent cleanup 调用。
+func (r *HookRegistry) ClearSessionHooks(sessionID string)
 ```
 
 ### 4.3 两层渐进式扩展
@@ -154,6 +207,12 @@ max-turns: 20                      # 最大轮次
 
 3. **Hook 与 Middleware 共存** — Middleware 是洋葱模型（包装 Handler），适合横切关注点（重试、追踪）。Hook 是事件订阅模型，适合观察和拦截特定生命周期节点。两者互补而非替代。
 
-4. **先核心事件，按需扩展** — 初始只定义 Agent/Model/Tool 核心路径事件。压缩、权限、Memory、配置等事件在对应模块实现时按需添加。Hook 注册机制是开放的，新增事件类型不需要修改接口。
+4. **先核心事件，按需扩展** — 初始定义 Agent/Model/Tool 核心路径事件以及 Session/Permission/Compression/Config/FS/Task/Stop/Notification 等扩展事件，共 20+ 种类型化事件覆盖完整生命周期。Hook 注册机制是开放的，新增事件类型不需要修改接口。
 
 5. **两层渐进式扩展** — Prompt 模板和 Skill 覆盖大多数定制需求，无需编写 Go 代码。Extension API 和 Package 分发机制等有第三方扩展生态需求时再设计。
+
+6. **多 Hook 响应聚合：deny 优先** — 当多个 Hook 响应同一事件时，采用 deny-wins 策略：只要有一个 Hook 返回 Block=true / deny，最终结果即为拒绝。这与 Claude Code 的 `resolveHookPermissionDecision` 行为一致，确保安全策略不会被其他 Hook 覆盖。
+
+7. **Hook 超时控制** — 每个 Hook 默认超时 30 秒，防止单个 Hook 阻塞整个 Agent Loop。可通过 `WithHookTimeout(d time.Duration)` 按需调整。超时后 Hook 被取消，返回 error 记录日志，不影响其他 Hook 执行。
+
+8. **Session 作用域 Hook** — 通过 `WithHookSession(sessionID)` 将 Hook 绑定到特定会话生命周期。会话结束时自动清理绑定的 Hook，避免内存泄漏和过期 Hook 干扰。适用于 Skill 加载的临时 Hook、会话级别的监控 Hook 等场景。

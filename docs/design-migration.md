@@ -81,3 +81,55 @@ Coordinator 和 Swarm/Team 均为新增模块，无需迁移现有代码。
 **Coordinator 模式**：基于 `agent.NewCoordinator()` 创建，内部复用 AgentTool + ForkAgent 基础设施。现有使用 `RoutingAgent` 做任务分发的代码，可迁移到 Coordinator 模式——将路由逻辑从代码硬编码改为 system prompt 驱动。
 
 **Swarm/Team 模式**：基于 `TeamCreateTool` + `Mailbox` + `TaskList` 构建。现有无对应功能，属于全新能力。实现依赖 `session/` 包提供的持久化基础设施。
+
+### 13.5 新增子系统（无需迁移）
+
+以下子系统均为新增，无需迁移现有代码：
+
+| 子系统 | 包/类型 | 说明 |
+|--------|---------|------|
+| Session Memory | `memory.SessionMemory` | 会话级摘要，用于 compact 捷径。阈值触发更新，跳过 LLM 调用直接复用摘要 |
+| Agent Memory | `memory.AgentMemory` + `memory.InitializeFromSnapshot` | 每种 agent 类型的持久化 Memory（user/project/local 三作用域）+ 快照分发 |
+| Relevant Memory Recall | `memory.Recaller` | 轻量模型查询选择 top-5 相关 Memory，替代全量注入 |
+| Session Memory Compact | `compact.SessionMemoryCompactStrategy` | 压缩管线第 4 策略，跳过 LLM 调用直接使用 session memory 作为摘要 |
+| API 不变量保护 | `compact.AdjustKeepBoundary` | 压缩切割时保护 tool_use/tool_result 配对完整性 |
+| 压缩后状态恢复 | `compact.PostCompactRestorer` | 全量压缩后恢复最近文件、plan/skill 状态、延迟工具声明 |
+| Settings System | `settings.Loader` + `settings.Schema` + `settings.Watch` | 5 级优先级配置合并（policy > flag > project > local > user）+ 文件系统热重载 |
+| Stop Hooks | `hook.StopHookHandler` + `hook.StopHookResult` | Agent Loop 终止时的统一后处理，支持 ContinueLoop 注入 follow-up |
+| 会话作用域 Hooks | `hook.WithHookSession` + `hook.ClearSessionHooks` | 随 agent 生命周期自动清理的 hooks |
+| Bubble 权限模式 | `permission.ModeBubble` + `permission.BubbleEscalator` | 子 agent 权限决策委托给父 agent |
+| DontAsk/Bypass 模式 | `permission.ModeDontAsk` / `permission.ModeBypassPermissions` | Headless/CI 场景：ASK→DENY 或 ASK→ALLOW，SafetyChecker 仍生效 |
+| Implicit Fork | `agent.ForkAgent`（`_fork` 内置 Role） | 省略 subagent_type 时继承父级完整上下文，使用 ModeBubble |
+| Scratchpad | `agent.ScratchpadConfig` + `agent.ScratchpadTool` | Coordinator 跨 worker 知识共享 |
+| Effort Level | `agent.EffortLevel` | ForkConfig 中的 low/medium/high 级别，控制子 agent 成本/质量权衡 |
+| Lite Reader | `session.LiteReader` | 64KB head+tail 窗口快速读取会话元数据 |
+| Batch Writer | `session.BatchWriter` | 累积 entries 批量刷盘，减少 I/O 开销 |
+| Content Replacement | `session.ContentReplacementData` | 工具结果存根替换，大结果持久化后用存根替代原始内容 |
+
+### 13.6 agent/ 包新增文件
+
+| 文件 | 来源 | 说明 |
+|------|------|------|
+| `coordinator.go` | 新增 | Coordinator 模式（system prompt 驱动任务分发） |
+| `team.go` | 新增 | Swarm/Team 模式 |
+| `mailbox.go` | 新增 | Agent 间消息传递 |
+| `task.go` | 新增 | 共享任务列表 |
+| `permission_bridge.go` | 新增 | 权限桥接（Bubble 模式实现） |
+| `spawn.go` | 新增 | Spawn 便捷函数 |
+| `tool.go` | 新增 | AgentTool（统一子 Agent 入口，6 级路由） |
+
+### 13.7 迁移顺序建议
+
+新增子系统与现有代码迁移可并行推进。建议顺序：
+
+1. **先迁移核心接口**（13.1）— Agent.Run 签名、Event 系统、Middleware 拆分
+2. **再迁移各包**（13.2-13.3）— flow/ → agent/、contrib/ 适配、根包精简
+3. **最后集成新增子系统**（13.5）— Session Memory、Settings、Stop Hooks 等
+
+新增子系统之间的依赖关系：
+- `compact.SessionMemoryCompactStrategy` 依赖 `memory.SessionMemory`（通过 `SessionMemoryProvider` 接口解耦）
+- Stop Hooks 依赖 `hook.HookRegistry`（阶段 5）
+- Bubble 权限模式依赖 `permission.Chain`（阶段 6）
+- Agent Memory 快照依赖 `memory.Loader`（阶段 8）
+- Relevant Memory Recall 依赖 `memory.Loader` + `model.Provider`（阶段 8）
+- Settings 热重载依赖 `hook.HookRegistry`（通过 `HookConfigChange` 事件通知）

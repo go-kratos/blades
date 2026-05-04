@@ -21,6 +21,9 @@ modules: [module-5]
 | 压缩历史 | 丢弃 | 完整保留在 JSONL 中 |
 | 并发安全 | sync.Mutex | 追加写入，天然并发安全 |
 | 持久化接口 | 无 | Store（Open 模式，返回 Writer handle） |
+| 会话列表 | 全量解析 | LiteReader 仅读头尾，跳过大块内容 |
+| 写入模式 | 同步逐条 | BatchWriter 异步批量刷盘 |
+| 大结果处理 | 无 | content_replacement 替换超限工具结果为存根 |
 
 ### 5.1 整体架构
 
@@ -185,23 +188,29 @@ type Entry struct {
 
 type EntryType string
 const (
-    EntryMessage       EntryType = "message"        // 对话消息
-    EntryCompaction    EntryType = "compaction"      // 压缩摘要
-    EntryConfigChange  EntryType = "config_change"   // 配置变更（State 持久化）
-    EntryCustom        EntryType = "custom"          // 扩展自定义数据
+    EntryMessage            EntryType = "message"             // 对话消息
+    EntryCompaction         EntryType = "compaction"           // 压缩摘要
+    EntryConfigChange       EntryType = "config_change"        // 配置变更（State 持久化）
+    EntryCustom             EntryType = "custom"               // 扩展自定义数据
+    // EntryContentReplacement 替换之前写入的工具结果内容。
+    // 当工具结果超过 ToolResultBudget 被持久化到磁盘时，
+    // 原始 entry 中的完整结果被替换为截断预览 + 磁盘路径引用。
+    // 会话恢复时回放 ContentReplacement 以还原存根。
+    EntryContentReplacement EntryType = "content_replacement"
 )
 ```
 
-第一阶段实现 4 种核心 Entry 类型：
+第一阶段实现 5 种核心 Entry 类型：
 
 | EntryType | Data 结构 | 用途 |
 |-----------|----------|------|
 | `message` | `MessageData` | 对话消息（user/assistant/tool） |
 | `compaction` | `CompactionData` | 压缩边界标记 + 摘要消息 |
 | `config_change` | `ConfigChangeData` | State 变更持久化 |
+| `content_replacement` | `ContentReplacementData` | 替换超限工具结果为截断存根 |
 | `custom` | `json.RawMessage` | 扩展自定义数据 |
 
-后续可按需添加的类型：`model_change`（模型切换）、`title`（会话标题更新）、`branch_summary`（分支摘要）、`content_replace`（工具结果存根替换）。
+后续可按需添加的类型：`model_change`（模型切换）、`title`（会话标题更新）、`branch_summary`（分支摘要）。
 
 ```go
 // MessageData 是 EntryMessage 的 Data 结构。
@@ -223,6 +232,12 @@ type CompactionData struct {
 type ConfigChangeData struct {
     Key   string `json:"key"`
     Value any    `json:"value"`
+}
+
+// ContentReplacementData 是 EntryContentReplacement 的 Data 结构。
+type ContentReplacementData struct {
+    TargetEntryID string `json:"targetEntryId"` // 被替换的原始 entry ID
+    StubContent   string `json:"stubContent"`   // 截断预览 + 磁盘路径
 }
 ```
 
@@ -357,8 +372,10 @@ func (w *fileWriter) Close() error
 6. 从 Entry 序列中提取 message 类型 → []*model.Message
 7. 回放 Compaction：找到最近的 CompactionData，
    用 Summary 替换 FirstKeptEntryID 之前的所有消息
-8. 回放 ConfigChange：按序应用所有 config_change Entry → State（last-wins）
-9. 返回 Snapshot
+8. 回放 ContentReplacement：按序应用 content_replacement Entry，
+   将目标 entry 的内容替换为截断存根（幂等操作，重复应用结果不变）
+9. 回放 ConfigChange：按序应用所有 config_change Entry → State（last-wins）
+10. 返回 Snapshot
 ```
 
 ### 5.12 persistentSession 实现
@@ -434,13 +451,106 @@ session/
 │                    // + context 辅助函数（NewContext/FromContext/Ensure）
 ├── store.go         // Store 接口 + Writer 接口 + Header + Snapshot + StoreOption
 ├── entry.go         // Entry + EntryType + MessageData + CompactionData + ConfigChangeData
+│                    // + ContentReplacementData
 ├── option.go        // Option + WithID/WithCWD/WithTitle/WithState
 ├── tree.go          // Tree + TreeNode + Path/Branch/Leaf/Add/Rebuild
 ├── memory.go        // memorySession（纯内存，内部维护 Tree）
 ├── persistent.go    // persistentSession（Store + 内存缓存 + Writer）
 ├── file.go          // fileStore（JSONL 读写 + flock）
+├── lite_reader.go   // LiteReader（优化的会话列表读取，仅读头尾）
+├── batch_writer.go  // BatchWriter（异步批量刷盘）
 └── state.go         // GetState[T] 泛型辅助
 ```
+
+### 5.16 Lite Reader
+
+会话列表（`Store.List`）需要读取所有会话的元信息。对于大型 JSONL 文件，完整解析代价过高。LiteReader 提供优化的读取路径：仅读取文件头部（Header）和尾部窗口（最近的元数据行），跳过中间的大块内容。
+
+```go
+// --- Lite Reader ---
+
+const LiteReadBufSize = 65536 // 64KB head+tail 窗口
+
+// LiteReader 为大型 JSONL 文件提供优化的会话列表读取。
+// 仅读取文件头部（Header）和尾部（最近元数据），
+// 跳过 tool_result 内容和 compact 摘要。
+type LiteReader struct {
+    bufSize int // 默认 LiteReadBufSize
+}
+
+func NewLiteReader(opts ...LiteReaderOption) *LiteReader
+
+// ReadLite 返回会话元数据，无需完整解析。
+// 从文件头部读取 Header，从尾部读取最近的 title/tag/mode 等元数据。
+func (r *LiteReader) ReadLite(path string) (*Header, error)
+
+type LiteReaderOption func(*LiteReader)
+func WithLiteBufSize(size int) LiteReaderOption
+```
+
+读取策略：
+1. 读取文件前 N 字节，解析第一行为 Header
+2. Seek 到文件末尾前 N 字节，扫描尾部的完整行
+3. 从尾部行中提取 last-wins 元数据（title、leaf、tag 等）
+4. 合并头部 Header 和尾部元数据，返回结果
+
+### 5.17 Batch Writer
+
+高频写入场景（如流式 assistant 响应中的多次 Append）下，逐条 `write()` syscall 开销显著。BatchWriter 在 Writer 之上提供异步批量写入能力。
+
+```go
+// --- Batch Writer ---
+
+// BatchWriter 累积 entries 并批量刷盘。
+// 减少高频写入场景下的系统调用开销。
+type BatchWriter struct {
+    inner         Writer
+    queue         chan Entry
+    batchSize     int           // 默认 10
+    flushInterval time.Duration // 默认 100ms
+    done          chan struct{}
+}
+
+func NewBatchWriter(inner Writer, opts ...BatchWriterOption) *BatchWriter
+
+// Append 将 entry 放入队列，非阻塞。
+// 队列满时阻塞直到有空间或 context 取消。
+func (bw *BatchWriter) Append(ctx context.Context, entry Entry) error
+
+// Drain 刷新所有待写入的 entries 并关闭 writer。
+// 在会话结束前调用，确保所有数据持久化。
+func (bw *BatchWriter) Drain(ctx context.Context) error
+
+type BatchWriterOption func(*BatchWriter)
+func WithBatchSize(n int) BatchWriterOption
+func WithFlushInterval(d time.Duration) BatchWriterOption
+```
+
+刷盘触发条件（先到者触发）：
+- 队列中累积的 entries 达到 `batchSize`
+- 距离上次刷盘超过 `flushInterval`
+
+BatchWriter 内部启动一个后台 goroutine 消费队列。`Drain` 发送关闭信号并等待后台 goroutine 退出，确保所有 entries 已持久化。
+
+### 5.18 大文件优化
+
+```go
+// --- 大文件优化 ---
+
+// SkipPrecompactThreshold 定义触发大文件优化的阈值。
+// 超过此大小的 JSONL 文件使用 readTranscriptForLoad：
+// 扫描 compact 边界偏移，仅读取边界后内容，
+// 单独扫描边界前区域的元数据行。
+const SkipPrecompactThreshold = 1 << 20 // 1MB
+```
+
+大文件加载策略（文件大小 > `SkipPrecompactThreshold`）：
+1. 从文件尾部向前扫描，定位最近的 `compaction` Entry 偏移
+2. 仅完整解析该偏移之后的内容（compact 边界后的活跃消息）
+3. 单独扫描边界前区域，仅提取元数据行（config_change、content_replacement 等）
+4. 跳过边界前的 message 和 tool_result 内容
+
+这与 LiteReader 互补：LiteReader 用于列表场景（不需要消息内容），大文件优化用于加载场景（需要活跃消息但跳过已压缩的旧消息）。
 
 ### 关键设计决策
 
@@ -454,4 +564,10 @@ session/
 
 5. **JSONL 追加写入** — 天然并发安全（多个 goroutine 可同时追加），支持增量恢复。压缩时不删除旧消息，追加 CompactionData 标记边界。完整历史始终可从 JSONL 文件恢复。
 
-6. **第一阶段 4 种 Entry 类型** — message、compaction、config_change、custom。其他类型（model_change、title、branch_summary、content_replace）后续按需添加，不影响已有数据格式。
+6. **第一阶段 5 种 Entry 类型** — message、compaction、config_change、content_replacement、custom。其中 content_replacement 用于替换超限工具结果为截断存根。其他类型（model_change、title、branch_summary）后续按需添加，不影响已有数据格式。
+
+7. **BatchWriter 使用后台 goroutine + flush interval** — 而非每次写入启动 goroutine。后台 goroutine 按 batchSize 或 flushInterval（先到者触发）批量刷盘，保证写入顺序与 Append 调用顺序一致。这避免了并发 goroutine 导致的乱序问题。
+
+8. **LiteReader 以完整性换速度** — 仅读取文件头部和尾部窗口，跳过中间的大块内容（tool_result、compact 摘要等）。如果元数据（如 title）仅出现在文件中部且未在尾部重新追加，LiteReader 会丢失该信息。这是可接受的折衷——会话列表只需要基本元数据，完整信息在 Open 时加载。
+
+9. **ContentReplacement 是回放安全的** — 对同一个 entry 重复应用 content_replacement 是幂等的：第二次应用时目标内容已经是存根，替换结果不变。这保证了崩溃恢复和重复回放的正确性。
