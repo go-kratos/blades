@@ -13,63 +13,41 @@ modules: [module-7]
 
 | 维度 | 当前 Blades | 新设计 |
 |------|------------|--------|
-| 子 Agent | NewAgentTool 包装 | ForkAgent 共享缓存 + 多种派生模式 |
+| 子 Agent | NewAgentTool 包装 | Spawn 共享缓存 + 多种派生模式 |
 | 缓存共享 | 无 | 共享父 Agent 的 prompt cache 前缀 |
 | 后台执行 | 无 | BackgroundAgent fire-and-forget |
 | 隔离模式 | 仅 session 隔离 | Session / Worktree / Remote |
 | 来源标记 | 无 | QuerySource 区分行为 |
 
-### 7.1 Fork 配置
+### 7.1 Spawn 配置
+
+子 Agent 通过 `blades.Spawn(parent, child, opts...)` 创建。child 可以是任意实现了 `blades.Agent` 接口的 Agent（预设 Agent、自定义 Agent、组合 Agent）。配置通过 `SpawnOption` 注入，采用 Go 惯用的 Options 模式。
 
 ```go
-// ForkConfig 控制子 Agent 的派生方式。
-type ForkConfig struct {
-    // ShareCachePrefix 使子 Agent 共享父 Agent 的 prompt cache 前缀。
-    // 压缩、Memory 提取等操作因此可以命中缓存，成本低廉。
+// SpawnOption 控制子 Agent 的派生方式。
+type SpawnOption func(*spawnConfig)
+
+type spawnConfig struct {
     ShareCachePrefix bool
-
-    // IsolateSession 创建新 session（true）或共享父 session（false）。
-    IsolateSession bool
-
-    // QuerySource 标记此 fork 的来源，用于行为区分。
-    QuerySource QuerySource
-
-    // Tools 覆盖工具集。nil = 继承父 Agent 工具。
-    Tools []Tool
-
-    // MaxTurns 限制子 Agent 的最大轮次。
-    MaxTurns int
-
-    // PermissionMode 覆盖权限模式。空 = 继承父 Agent。
-    PermissionMode permission.Mode
-
-    // Model 覆盖模型。nil = 继承父 Agent。
-    Model model.Provider
-
-    // Background 是否后台运行（fire-and-forget）。
-    Background bool
-
-    // Hooks 子 Agent 专属 Hook（生命周期作用域）。
-    Hooks []HookRegistration
-
-    // AgentMemory 子 Agent 专属 memory 实例。
-    // 当非 nil 时，子 Agent 拥有独立的 memory 存储，
-    // 可在多次调用间持久化角色专属知识。
-    AgentMemory *memory.AgentMemory // NEW: agent 专属 memory
-
-    // Effort 控制模型的推理努力程度。
-    // 低努力适合简单搜索，高努力适合复杂推理和规划。
-    // 空值 = 继承父 Agent 设置。
-    Effort EffortLevel // NEW: 推理努力级别
+    IsolateSession   bool
+    QuerySource      QuerySource
+    Tools            []tools.Tool
+    MaxTurns         int
+    PermissionMode   permission.Mode
+    Model            model.Provider
+    Background       bool
+    Hooks            []hook.Registration
 }
 
-// EffortLevel 控制模型的推理努力程度。
-type EffortLevel string
-const (
-    EffortLow    EffortLevel = "low"
-    EffortMedium EffortLevel = "medium"
-    EffortHigh   EffortLevel = "high"
-)
+// 常用 SpawnOption
+func WithShareCache() SpawnOption        // 共享父 Agent prompt cache 前缀
+func WithIsolatedSession() SpawnOption   // 创建独立 session
+func WithMaxTurns(n int) SpawnOption     // 限制最大轮次
+func WithBackground() SpawnOption        // fire-and-forget 后台运行
+func WithQuerySource(src QuerySource) SpawnOption
+func WithPermissionMode(mode permission.Mode) SpawnOption
+func WithModel(m model.Provider) SpawnOption
+func WithTools(tools ...tools.Tool) SpawnOption
 
 type QuerySource string
 const (
@@ -82,20 +60,22 @@ const (
 )
 ```
 
-### 7.2 ForkAgent
+### 7.2 Spawn
 
 ```go
-// ForkAgent 创建轻量级 Agent fork。
+// Spawn 从任意 Agent 创建子 Agent。
+// child 可以是 agents.Explore()、agents.Plan()、blades.New("custom", ...) 等任意 Agent。
 // 当 ShareCachePrefix=true 时，子 Agent 的 system prompt 构建为
 // 与父 Agent 共享静态前缀，使 LLM Provider 可以命中 prompt cache。
-func ForkAgent(parent Agent, config ForkConfig) Agent
+func Spawn(parent Agent, child Agent, opts ...SpawnOption) Agent
 
 // 内部实现：
-// 1. 克隆父 Agent 的 prompt.Builder（共享静态 sections）
-// 2. 替换动态 sections（子 Agent 可能有不同的 Memory/环境）
-// 3. 根据 config 设置工具集、权限、模型
-// 4. 如果 IsolateSession=true，创建新 session
-// 5. 如果 Background=true，包装为 BackgroundAgent
+// 1. 解析 SpawnOption，构建 spawnConfig
+// 2. 如果需要共享缓存，克隆父 Agent 的 PromptBuilder（共享静态 sections）
+// 3. 替换动态 sections（子 Agent 可能有不同的 Memory/环境）
+// 4. 根据 config 覆盖工具集、权限、模型
+// 5. 如果 IsolateSession=true，创建新 session
+// 6. 如果 Background=true，包装为 BackgroundAgent
 ```
 
 ### 7.3 BackgroundAgent
@@ -137,7 +117,7 @@ type WorktreeConfig struct {
 // CreateWorktreeAgent 创建在隔离 git worktree 中运行的子 Agent。
 // 返回 Agent、清理函数和错误。
 func CreateWorktreeAgent(
-    parent Agent, config WorktreeConfig, forkConfig ForkConfig,
+    parent Agent, child Agent, config WorktreeConfig, opts ...SpawnOption,
 ) (agent Agent, cleanup func() error, err error)
 
 // 内部实现：
@@ -149,14 +129,14 @@ func CreateWorktreeAgent(
 ### 7.5 子 Agent 执行流程
 
 ```
-1. 解析 ForkConfig（模型、权限、工具集）
+1. 解析 SpawnOption，构建 spawnConfig
 2. 构建子 Agent system prompt（共享静态前缀）
 3. 创建子 Agent 上下文
    - 同步 Agent：共享 AbortController
    - 异步 Agent：隔离的 AbortController
 4. 发射 HookSubagentStart
 5. 注册子 Agent 专属 Hook（生命周期作用域）
-6. 预加载 Skill（如果 ForkConfig 指定）
+6. 预加载 Skill（如果指定）
 7. 初始化子 Agent 专属 MCP 服务器（叠加到父 Agent）
 8. 调用 agent.Run() 循环，yield LoopEvent
 9. finally：清理 MCP 服务器、作用域 Hook、prompt cache
@@ -175,40 +155,30 @@ func CreateWorktreeAgent(
 
 ### 7.6.1 AgentTool 路由逻辑
 
-AgentTool 接收 `subagent_type` 参数后，按以下优先级路由：
+`blades.Tool(agent)` 将 Agent 包装为 Tool。主 Agent 通过 `subagent_type` 参数（或直接传入 Agent 实例）决定路由目标：
 
 ```
-1. subagent_type 非空 → Registry.Resolve(subagent_type) → Spawn
-2. subagent_type 为空 + 显式 role 参数 → 按 role 路由
-3. subagent_type 为空 + Background=true → BackgroundAgent
-4. subagent_type 为空 + Worktree 配置 → CreateWorktreeAgent
-5. subagent_type 为空 + ForkSubagent 特性启用 → ForkAgent（隐式 fork）
-6. 默认 → 同步 runAgent()
+1. subagent_type 指定预设名 → 从 agents/ 查找对应构造函数 → Spawn
+2. subagent_type 为空 + Agent 实例直接传入 → 直接 Spawn
+3. Background=true → BackgroundAgent
+4. Worktree 配置 → CreateWorktreeAgent
+5. 默认 → 同步 Spawn
 ```
 
 #### Implicit Fork（隐式 fork）
 
-当 `subagent_type` 为空且没有显式指定角色时，若 `ForkSubagent` 特性开关启用，自动触发隐式 fork。隐式 fork 继承父级完整对话上下文，适用于需要在子 agent 中延续当前对话但不改变角色的场景。
+当无需特定 Agent 类型、只需在子 Agent 中延续当前对话时，使用默认定制：
 
 ```go
-// ForkAgent 是隐式 fork 的内置角色。
-// 当 AgentTool 的 subagent_type 为空时自动使用。
-// 子 agent 继承父级完整对话上下文和已渲染的 system prompt 字节（不重新生成），
+// 隐式 fork：继承父级完整上下文，不改变 Agent 配置
+// 子 agent 继承父级完整对话上下文和已渲染的 system prompt 字节
 // 保证 prompt cache 命中稳定性。
-var ForkAgent = &Role{
-    Name:        "_fork",
-    Description: "隐式 fork：继承父级完整上下文",
-    Source:      SourceBuiltIn,
-    WhenToUse:   "internal: 当 subagent_type 为空时自动触发",
-    ConfigureFunc: func(ctx context.Context, parent ConfigContext) (*ForkConfig, error) {
-        return &ForkConfig{
-            ShareCachePrefix: true,
-            IsolateSession:   false, // 共享父级上下文
-            QuerySource:      QuerySourceSubAgent,
-            PermissionMode:   permission.ModeBubble,
-            // tools 默认继承父级所有工具
-        }, nil
-    },
+func implicitFork(parent Agent, opts ...SpawnOption) Agent {
+    return Spawn(parent, parent, append([]SpawnOption{
+        WithShareCache(),
+        WithQuerySource(QuerySourceSubAgent),
+        WithPermissionMode(permission.ModeBubble),
+    }, opts...)...)
 }
 ```
 
@@ -224,440 +194,183 @@ var ForkAgent = &Role{
 
 ---
 
-## Agent 角色系统
+## 预设 Agent
 
-`agent.Role` 是 ForkConfig 的上层抽象——一个可复用的 Agent 角色模板，定义了工具约束、system prompt、模型选择等策略。框架内置 4 种通用角色（explore/plan/general/verify），用户可注册自定义角色。
+框架在 `agents/` 包中提供 4 种预设 Agent，覆盖搜索→规划→执行→验证的完整工作流。预设 Agent 是返回 `blades.Agent` 的构造函数，与 `blades.New("custom", ...)` 返回同一种东西。
 
-### 7.7 Role 定义
+没有 Role、没有工厂、没有 Registry——"一切皆 Agent"。
 
-`Role` 是**工厂**，不是 Agent 本身。它产出 ForkConfig + instruction，实际 Agent 创建由 `ForkAgent` 完成。这避免了平行的 Agent 层次结构，`ForkAgent` 始终是创建子 Agent 的唯一机制。
+### 7.7 预设 Agent 概览
+
+| 构造函数 | 工具约束 | MaxTurns | 用途 |
+|----------|---------|----------|------|
+| `agents.Explore()` | ReadOnlyTools | 5 | 快速只读代码搜索 |
+| `agents.Plan()` | ReadOnlyTools | 15 | 架构设计与实现规划 |
+| `agents.General()` | 全部继承 | 继承 | 全能力通用 Agent |
+| `agents.Verify()` | ReadOnlyTools + /tmp | 20 | 对抗性验证 |
+
+### 7.8 预设 Agent 实现
+
+每个预设 Agent 内部调用 `blades.New()` + 预设 `AgentOption`，与用户自定义 Agent 走相同的代码路径。
 
 ```go
-// agent/role.go
+// agents/explore.go
 
-// Role defines a reusable agent role that can be instantiated via ForkAgent.
-// It is a factory for ForkConfig + system prompt, not an Agent itself.
-type Role struct {
-    // Name is the unique identifier (e.g., "explore", "plan", "verify").
-    Name string
-
-    // WhenToUse describes when a coordinator should dispatch to this role.
-    // Used by the AgentTool to help the model choose the right sub-agent.
-    WhenToUse string
-
-    // Source distinguishes built-in roles from user-defined ones.
-    Source Source
-
-    // MemoryScope controls the agent memory scope for this role.
-    // Determines which memory entries are visible and writable.
-    MemoryScope memory.AgentMemoryScope // NEW: agent memory 作用域
-
-    // ConfigureFunc produces a ForkConfig from the parent agent context.
-    // The parent's tools are passed in so the role can filter them.
-    ConfigureFunc func(ctx context.Context, parent ConfigContext) (*ForkConfig, error)
-
-    // SystemPrompt returns the specialized system prompt for this agent role.
-    SystemPrompt func(ctx context.Context, parent ConfigContext) (string, error)
-
-    // Options holds optional behavioral flags.
-    Options RoleOptions
-}
-
-type Source string
-
-const (
-    SourceBuiltIn Source = "built-in"
-    SourceUser    Source = "user"
-    SourcePlugin  Source = "plugin"
-)
-
-// RoleOptions controls optional behaviors.
-type RoleOptions struct {
-    // Background runs the agent in a goroutine (fire-and-forget).
-    Background bool
-
-    // OmitMemory skips loading CLAUDE.md / memory files.
-    OmitMemory bool
-
-    // Color for UI display (optional).
-    Color string
-}
-
-// ConfigContext provides read access to the parent agent's configuration
-// so that Role.ConfigureFunc can make informed decisions.
-type ConfigContext interface {
-    Tools() []tools.Tool
-    Model() model.Provider
-    PermissionMode() permission.Mode
+// Explore returns a fast read-only code search agent.
+func Explore(opts ...blades.AgentOption) blades.Agent {
+    defaults := []blades.AgentOption{
+        blades.WithDescription(
+            "Fast read-only search agent for locating code. " +
+            "Use it to find files by pattern, grep for symbols, " +
+            "or answer 'where is X defined'."),
+        blades.WithToolFilter(tools.ReadOnlyTools()),
+        blades.WithMaxTurns(5),
+    }
+    return blades.New("explore", append(defaults, opts...)...)
 }
 ```
 
-### 7.8 ToolFilter 工具过滤
-
-`ToolFilter` 是函数类型，比字符串列表更可组合。`ReadOnlyTools()` 利用 tools 包已有的 `ReadOnlyTool` 可选接口，静态列表无法表达"父 agent 拥有的所有只读工具"。
-
 ```go
-// agent/filter.go
+// agents/plan.go
 
-// ToolFilter selects which tools are available to the agent type.
-type ToolFilter func(tool tools.Tool) bool
-
-// ReadOnlyTools keeps only tools that implement ReadOnlyTool and return true.
-func ReadOnlyTools() ToolFilter
-
-// AllowOnly keeps only tools whose names are in the whitelist.
-func AllowOnly(names ...string) ToolFilter
-
-// Disallow removes tools whose names are in the blacklist.
-func Disallow(names ...string) ToolFilter
-
-// And combines filters: tool must pass all filters.
-func And(filters ...ToolFilter) ToolFilter
-
-// Or combines filters: tool must pass at least one filter.
-func Or(filters ...ToolFilter) ToolFilter
-
-// FilterTools applies a filter to a tool slice, returning the matching subset.
-func FilterTools(all []tools.Tool, f ToolFilter) []tools.Tool
-```
-
-使用示例：
-
-```go
-// Keep read-only tools, but also exclude bash
-filter := And(ReadOnlyTools(), Disallow("bash"))
-filtered := FilterTools(parent.Tools(), filter)
-```
-
-### 7.9 Role Registry
-
-线程安全的注册表，遵循 `recipe.MiddlewareRegistry` 的模式。
-
-```go
-// agent/registry.go
-
-// Registry stores and retrieves Role definitions.
-type Registry struct {
-    mu    sync.RWMutex
-    types map[string]*Role
-}
-
-func NewRegistry() *Registry
-
-// Register adds a Role. Panics on duplicate name (fail-fast at init).
-func (r *Registry) Register(role *Role)
-
-// Resolve returns the Role for the given name, or an error if not found.
-func (r *Registry) Resolve(name string) (*Role, error)
-
-// List returns all registered roles (for discovery / help text).
-func (r *Registry) List() []*Role
-
-// DefaultRegistry returns a registry pre-loaded with the 4 built-in roles.
-func DefaultRegistry() *Registry
-```
-
-### 7.10 Spawn 便捷函数
-
-将 Registry 查找、ForkConfig 构建、ForkAgent 创建串联为一步调用。AgentTool 内部通过 `Spawn` 处理 `subagent_type` 参数。
-
-```go
-// agent/spawn.go
-
-// Spawn creates a sub-agent from a registered Role.
-// Flow: Resolve role → ConfigureFunc(parent) → SystemPrompt(parent) → ForkAgent(parent, config)
-func Spawn(ctx context.Context, registry *Registry, roleName string, parent Agent) (Agent, error)
-```
-
-### 7.11 内置 Agent 角色
-
-框架内置 4 种通用 Agent 角色，覆盖搜索→规划→执行→验证的完整工作流。
-
-| 类型 | 工具约束 | 模型 | 后台 | OmitMemory | MaxTurns | ShareCache | MemoryScope | Effort |
-|------|---------|------|------|-----------|----------|-----------|-------------|--------|
-| `explore` | `ReadOnlyTools()` | 可配置（默认更快模型） | 否 | 是 | 5 | 是 | `none` | `low` |
-| `plan` | `ReadOnlyTools()` | 继承父 agent | 否 | 是 | 15 | 是 | `read_only` | `high` |
-| `general` | 全部继承 | 继承父 agent | 否 | 否 | 继承 | 否 | `inherit` | 继承 |
-| `verify` | `ReadOnlyTools()` + /tmp 写入 | 继承父 agent | 是 | 否 | 20 | 是 | `read_only` | `medium` |
-| `_fork` | 全部继承 | 继承父 agent | 否 | 否 | 继承 | 是 | `inherit` | 继承 |
-
-#### explore — 快速只读搜索
-
-```go
-var Explore = &Role{
-    Name:      "explore",
-    WhenToUse: "Fast read-only search agent for locating code. Use it to find files " +
-        "by pattern, grep for symbols or keywords, or answer 'where is X defined'. " +
-        "Specify search breadth: quick, medium, or very thorough.",
-    Source:      SourceBuiltIn,
-    MemoryScope: memory.ScopeNone, // 搜索不需要 memory
-    ConfigureFunc: func(ctx context.Context, parent ConfigContext) (*ForkConfig, error) {
-        return &ForkConfig{
-            Tools:            FilterTools(parent.Tools(), ReadOnlyTools()),
-            ShareCachePrefix: true,
-            IsolateSession:   true,
-            QuerySource:      QuerySourceSubAgent,
-            MaxTurns:         5,
-            Effort:           EffortLow, // 快速搜索，低努力
-        }, nil
-    },
-    SystemPrompt: exploreSystemPrompt,
-    Options: RoleOptions{
-        OmitMemory: true,
-    },
+// Plan returns a software architect agent for designing implementation plans.
+func Plan(opts ...blades.AgentOption) blades.Agent {
+    defaults := []blades.AgentOption{
+        blades.WithDescription(
+            "Software architect agent for designing implementation plans. " +
+            "Returns step-by-step plans, identifies critical files, and " +
+            "considers architectural trade-offs."),
+        blades.WithToolFilter(tools.ReadOnlyTools()),
+        blades.WithMaxTurns(15),
+    }
+    return blades.New("plan", append(defaults, opts...)...)
 }
 ```
 
-System prompt 要点：
-- 文件搜索专家，强调速度和并行工具调用
-- 严格只读模式，禁止任何文件修改
-- 高效使用搜索工具，多个搜索并行发起
-- 结果直接作为消息返回，不创建文件
-
-#### plan — 架构设计
-
 ```go
-var Plan = &Role{
-    Name:      "plan",
-    WhenToUse: "Software architect agent for designing implementation plans. " +
-        "Returns step-by-step plans, identifies critical files, and considers " +
-        "architectural trade-offs.",
-    Source:      SourceBuiltIn,
-    MemoryScope: memory.ScopeReadOnly, // 规划需要读取历史决策
-    ConfigureFunc: func(ctx context.Context, parent ConfigContext) (*ForkConfig, error) {
-        return &ForkConfig{
-            Tools:            FilterTools(parent.Tools(), ReadOnlyTools()),
-            ShareCachePrefix: true,
-            IsolateSession:   true,
-            QuerySource:      QuerySourceSubAgent,
-            MaxTurns:         15,
-            Effort:           EffortHigh, // 复杂推理，高努力
-        }, nil
-    },
-    SystemPrompt: planSystemPrompt,
-    Options: RoleOptions{
-        OmitMemory: true,
-    },
+// agents/general.go
+
+// General returns a full-capability general-purpose agent.
+func General(opts ...blades.AgentOption) blades.Agent {
+    return blades.New("general", opts...)
 }
 ```
 
-System prompt 要点：
-- 架构师角色，读代码→理解现有模式→设计方案
-- 严格只读模式
-- 输出结构化实现计划 + 关键文件列表
-- 考虑权衡和架构决策
-
-#### general — 全能力默认
-
 ```go
-var General = &Role{
-    Name:      "general",
-    WhenToUse: "General-purpose agent for researching complex questions, searching " +
-        "for code, and executing multi-step tasks.",
-    Source:      SourceBuiltIn,
-    MemoryScope: memory.ScopeInherit, // 继承父 agent memory 作用域
-    ConfigureFunc: func(ctx context.Context, parent ConfigContext) (*ForkConfig, error) {
-        return &ForkConfig{
-            QuerySource: QuerySourceSubAgent,
-            // Effort 为空，继承父 agent 设置
-        }, nil
-    },
-    SystemPrompt: generalSystemPrompt,
+// agents/verify.go
+
+// Verify returns a verification specialist that tries to break
+// the implementation.
+func Verify(opts ...blades.AgentOption) blades.Agent {
+    defaults := []blades.AgentOption{
+        blades.WithDescription(
+            "Verification specialist that tries to break the implementation. " +
+            "Runs builds, tests, linters, and adversarial probes."),
+        blades.WithToolFilter(tools.And(
+            tools.ReadOnlyTools(),
+            tools.AllowOnly("bash"),
+        )),
+        blades.WithMaxTurns(20),
+    }
+    return blades.New("verify", append(defaults, opts...)...)
 }
 ```
 
-System prompt 要点：
-- 最小化包装，全能力
-- 完成任务后简洁报告
-- 不创建不必要的文件
+### 7.9 用户自定义 Agent
 
-#### verify — 对抗性验证
+用户用 `blades.New()` + `AgentOption` 创建自定义 Agent。与预设 Agent 完全相同的机制：
 
 ```go
-var Verify = &Role{
-    Name:      "verify",
-    WhenToUse: "Verification specialist that tries to break the implementation. " +
-        "Runs builds, tests, linters, and adversarial probes. " +
-        "Outputs structured PASS/FAIL/PARTIAL verdict with evidence.",
-    Source:      SourceBuiltIn,
-    MemoryScope: memory.ScopeReadOnly, // 验证需要读取已知问题和约束
-    ConfigureFunc: func(ctx context.Context, parent ConfigContext) (*ForkConfig, error) {
-        return &ForkConfig{
-            Tools:            FilterTools(parent.Tools(), ReadOnlyTools()),
-            ShareCachePrefix: true,
-            IsolateSession:   true,
-            QuerySource:      QuerySourceSubAgent,
-            MaxTurns:         20,
-            Effort:           EffortMedium, // 验证需要适度推理
-        }, nil
-    },
-    SystemPrompt: verifySystemPrompt,
-    Options: RoleOptions{
-        Background: true,
-    },
-}
-```
-
-System prompt 要点：
-- 对抗性验证思维——目标是尝试破坏实现，而非确认它能工作
-- 严格只读（项目文件），允许 /tmp 写入临时测试脚本
-- 运行构建、测试套件、lint/类型检查
-- 对抗性探测：并发、边界值、幂等性、孤儿操作
-- 输出结构化判定：每个检查项有 Command run / Output observed / Result
-- 最终输出 `VERDICT: PASS`、`VERDICT: FAIL` 或 `VERDICT: PARTIAL`
-
-### 7.12 组合模式
-
-将 `flow/` 包中的 3 种通用组合模式迁移到 `agent/` 包。组合模式和 Role 是同一层概念——都是"特定角色/行为的 Agent"，放在同一个包中。
-
-```go
-// agent/sequential.go
-
-// SequentialConfig is the configuration for a Sequential agent.
-type SequentialConfig struct {
-    Name        string
-    Description string
-    SubAgents   []blades.Agent
-}
-
-// NewSequential creates an agent that runs sub-agents sequentially.
-// Each sub-agent receives a clone of the original invocation.
-func NewSequential(config SequentialConfig) blades.Agent
-```
-
-```go
-// agent/parallel.go
-
-// ParallelConfig is the configuration for a Parallel agent.
-type ParallelConfig struct {
-    Name        string
-    Description string
-    SubAgents   []blades.Agent
-}
-
-// NewParallel creates an agent that runs sub-agents in parallel.
-// Results are streamed as they arrive from any sub-agent.
-func NewParallel(config ParallelConfig) blades.Agent
-```
-
-```go
-// agent/loop.go
-
-// LoopState captures the observable state available to a LoopCondition.
-type LoopState struct {
-    Iteration int
-    Input     *blades.Message
-    Output    *blades.Message
-}
-
-// LoopCondition is called after every complete iteration.
-type LoopCondition func(ctx context.Context, state LoopState) (bool, error)
-
-// LoopConfig is the configuration for a Loop agent.
-type LoopConfig struct {
-    Name          string
-    Description   string
-    MaxIterations int
-    Condition     LoopCondition
-    SubAgents     []blades.Agent
-}
-
-// NewLoop creates an agent that runs sub-agents in a loop.
-func NewLoop(config LoopConfig) blades.Agent
-```
-
-**去掉的组合模式：**
-
-- **RoutingAgent** — 被 Role + AgentTool 路由替代。主 agent 通过 AgentTool 的 `subagent_type` 参数自行决定路由目标，LLM 天然具备路由决策能力，不需要专门的路由 agent。
-- **DeepAgent** — 其 todo/task 管理能力应内化为框架内置工具（TaskCreate/TaskUpdate/TaskList），不作为独立 agent 类型。
-
-### 7.13 用户自定义角色
-
-用户通过构造 `Role` struct 并调用 `registry.Register()` 定义自定义角色。与内置角色走完全相同的路径。
-
-```go
-registry := agent.DefaultRegistry()
-
-registry.Register(&agent.Role{
-    Name:      "code-review",
-    WhenToUse: "When the user asks for a code review or PR review",
-    Source:    agent.SourceUser,
-    ConfigureFunc: func(ctx context.Context, parent agent.ConfigContext) (*ForkConfig, error) {
-        return &ForkConfig{
-            Tools:            agent.FilterTools(parent.Tools(), agent.ReadOnlyTools()),
-            ShareCachePrefix: true,
-            IsolateSession:   true,
-            MaxTurns:         15,
-        }, nil
-    },
-    SystemPrompt: func(ctx context.Context, parent agent.ConfigContext) (string, error) {
-        return `You are a code review specialist. Focus on:
+codeReviewer := blades.New("code-review",
+    blades.WithDescription("Specialized code review agent"),
+    blades.WithToolFilter(tools.ReadOnlyTools()),
+    blades.WithMaxTurns(15),
+    blades.WithSystemPrompt(`You are a code review specialist. Focus on:
 - Correctness: logic errors, off-by-one, nil dereferences
 - Security: injection, auth bypass, data exposure
 - Performance: unnecessary allocations, N+1 queries
 - Maintainability: naming, structure, test coverage
 
-Report findings with file:line references.`, nil
-    },
-})
+Report findings with file:line references.`),
+)
+
+// 直接使用
+codeReviewer.Run(ctx, input)
+
+// 或作为子 Agent
+sub := blades.Spawn(parent, codeReviewer, blades.WithShareCache())
+```
+
+### 7.10 组合原语
+
+`blades.Sequential`、`blades.Parallel`、`blades.Loop` 在根包中，与 `Agent` 接口同包。它们是 Agent 的基础组合能力，类似 `io.MultiReader` 之于 `io.Reader`。
+
+```go
+// 顺序组合
+pipeline := blades.Sequential(
+    agents.Explore(blades.WithModel(fastModel)),
+    agents.Plan(),
+    codeReviewer,
+)
+
+// 并行组合
+parallel := blades.Parallel(
+    agents.Explore(),
+    agents.Verify(),
+)
+```
+
+### 7.11 ToolFilter（tools/ 包）
+
+`ToolFilter` 是 `tools` 包的函数类型，纯工具操作，不依赖 `blades`。支持组合器：
+
+```go
+// tools/filter.go
+type ToolFilter func(Tool) bool
+
+func ReadOnlyTools() ToolFilter                // 保留实现了 ReadOnlyTool 接口的工具
+func AllowOnly(names ...string) ToolFilter      // 白名单
+func Disallow(names ...string) ToolFilter       // 黑名单
+func And(filters ...ToolFilter) ToolFilter      // 全部满足
+func Or(filters ...ToolFilter) ToolFilter       // 至少一个满足
+func FilterTools(all []Tool, f ToolFilter) []Tool
 ```
 
 ### 关键设计决策
 
-4. **Role 是工厂，不是 Agent** — 产出 ForkConfig + instruction，实际创建由 ForkAgent 完成。`ForkAgent` 始终是创建子 Agent 的唯一机制，不引入平行层次。
+1. **一切皆 Agent** — 预设 Agent 是返回 `blades.Agent` 的普通函数，与 `blades.New()` 返回值完全相同。无 Role 工厂、无 ForkConfig、无 Registry。
 
-5. **ConfigureFunc 而非静态字段** — 用函数而非静态 AllowedTools/DisallowedTools 列表，因为需要运行时访问父 agent 的实际工具集。`ReadOnlyTools()` 检查 `ReadOnlyTool` 接口，静态列表做不到。
+2. **构造函数 + AgentOption 模式** — 预设 Agent 内部调用 `blades.New()`，通过 `AgentOption` 注入默认配置。用户可通过传入额外 `AgentOption` 覆盖默认值。
 
-6. **ToolFilter 函数类型** — 比字符串列表更可组合。过滤器可组合：`And(ReadOnlyTools(), Disallow("bash"))`。
+3. **ToolFilter 在 tools/ 包** — 纯工具操作，`tools.ToolFilter` 不依赖 `blades`。`tools.ReadOnlyTools()` 利用 `tools.ReadOnlyTool` 可选接口动态检测。
 
-7. **组合模式迁入 agent/ 包** — Sequential/Parallel/Loop 和 Role 是同一层概念，都是"特定角色/行为的 Agent"。RoutingAgent 被 Role 路由替代，DeepAgent 的 todo/task 能力内化为框架内置工具。
-
-8. **4 种内置角色** — explore/plan/general/verify 覆盖搜索→规划→执行→验证的完整工作流。产品特定角色（如文档指南、状态栏配置）由用户自定义。
-
-8.1. **MemoryScope 分级** — 不同角色对 memory 的需求不同。explore 不需要 memory（纯搜索），plan/verify 需要只读访问（读取历史决策和已知约束），general 和 _fork 继承父级作用域。分级控制避免低权限角色意外写入 memory。
-
-8.2. **EffortLevel 推理努力** — 不同任务的推理复杂度差异显著。explore 只需快速匹配（low），plan 需要深度推理（high），verify 需要适度分析（medium）。Effort 映射到模型 API 的 reasoning effort 参数，在成本和质量之间取得平衡。空值表示继承父 agent 设置，避免强制覆盖。
+4. **组合原语在根包** — `blades.Sequential/Parallel/Loop` 与 `Agent` 接口同包，是 Agent 的基础能力。类似 Go 标准库 `io.MultiReader`。
 
 ---
 
 ## Coordinator 模式
 
-参考 Claude Code `coordinatorMode.ts`，Coordinator 不是新的 Agent 角色，而是一种**运行模式**——把主 Agent 的角色从"执行者"切换为"调度器"。主线程不再自己写代码，而是负责分解任务、派出 worker、汇总结果。
+Coordinator 不是新的 Agent 类型，而是一种**运行模式**——把主 Agent 从"执行者"切换为"调度器"。主线程负责分解任务、派出 worker、汇总结果。实现在 `team/` 包中。
 
-### 7.14 Coordinator 配置
+> 详细设计 → [design-team.md](design-team.md)
+
+### 7.12 Coordinator 配置（team/ 包）
 
 ```go
-// agent/coordinator.go
+// team/coordinator.go
 
 // CoordinatorConfig 配置 coordinator 模式。
 type CoordinatorConfig struct {
-    // Roles 可用的 worker 角色列表。Coordinator 的 system prompt 会列出这些角色供 LLM 选择。
-    Roles []*Role
+    // Workers 可用的 worker Agent 列表。
+    Workers []blades.Agent
 
     // MaxWorkers 最大并发 worker 数。0 = 不限制。
     MaxWorkers int
-
-    // NotificationFormat worker 结果回流格式。
-    NotificationFormat NotificationFormat
 }
 
-type NotificationFormat string
-
-const (
-    NotificationXML  NotificationFormat = "xml"
-    NotificationJSON NotificationFormat = "json"
-)
-
 // NewCoordinator 创建 coordinator agent。
-// 内部实现：
-// 1. 生成 coordinator system prompt（角色定义 + worker 列表 + 工作流分相 + 约束规则）
-// 2. 配置 AgentTool 作为主要工具（coordinator 通过 AgentTool 派出 worker）
-// 3. 配置 SendMessageTool（继续已有 worker）
-// 4. 配置 TaskStopTool（停止 worker）
+// 内部：生成 coordinator system prompt + 配置 AgentTool/SendMessageTool/TaskStopTool
 func NewCoordinator(name string, config CoordinatorConfig, opts ...blades.AgentOption) (blades.Agent, error)
-
-// CoordinatorSystemPrompt 生成 coordinator 专用 system prompt。
-func CoordinatorSystemPrompt(config CoordinatorConfig) string
 ```
 
 ### 7.15 工作流分相
@@ -702,7 +415,7 @@ type TaskNotificationEvent struct {
 Coordinator 模式下，多个 worker 可能需要交换中间产物（分析结果、计划、数据文件）。Scratchpad 提供一个共享目录作为 worker 间的知识交换平面。
 
 ```go
-// agent/scratchpad.go
+// team/scratchpad.go
 
 // ScratchpadConfig 启用 Coordinator 模式下的跨 worker 知识共享。
 type ScratchpadConfig struct {
@@ -749,185 +462,53 @@ func (t *ScratchpadTool) List() ([]string, error)
 
 ## Swarm / Team 模式
 
-参考 Claude Code `TeamCreateTool` + `teammateMailbox` + `leaderPermissionBridge`，Swarm 是比 Coordinator 更进一步的团队协作模式。区别在于：Coordinator 是临时的 worker 调度，Swarm 是持久化的团队实体，有共享任务列表和 agent 间通信。
+Swarm 是比 Coordinator 更进一步的团队协作模式：持久化的团队实体，有共享任务列表和 agent 间通信。实现在 `team/` 包中。
 
-### 7.18 Team 实体
+> 详细设计 → [design-team.md](design-team.md)
+
+### 7.13 核心抽象（team/ 包）
 
 ```go
-// agent/team.go
-
-// Team 是一个显式的团队实体，有持久化状态。
+// team/team.go
 type Team struct {
-    Name        string    `json:"name"`
-    Description string    `json:"description"`
-    CreatedAt   time.Time `json:"created_at"`
-    LeadID      string    `json:"lead_id"`
-    Members     []Member  `json:"members"`
+    Name, Description string
+    LeadID  string
+    Members []Member
 }
+type TeamStore interface { Create, Get, AddMember, RemoveMember, Delete }
 
-type Member struct {
-    AgentID string `json:"agent_id"`
-    Name    string `json:"name"`
-    Role    string `json:"role"`     // 对应 agent.Role 名称
-    Model   string `json:"model"`
-    Color   string `json:"color"`    // UI 显示颜色
-}
-
-// TeamConfig 配置团队创建。
-type TeamConfig struct {
-    Name        string
-    Description string
-    LeadRole    *Role
-    BaseDir     string // 团队文件目录，默认 .blades/teams/
-}
-
-// TeamStore 团队状态持久化接口。
-type TeamStore interface {
-    Create(team *Team) error
-    Get(name string) (*Team, error)
-    AddMember(teamName string, member Member) error
-    RemoveMember(teamName string, agentID string) error
-    Delete(name string) error
-}
-
-// NewFileTeamStore 基于文件的团队存储（JSON）。
-func NewFileTeamStore(baseDir string) TeamStore
-```
-
-### 7.19 Mailbox 通信
-
-Agent 间通信采用基于文件的 mailbox 系统。每个 teammate 有独立 inbox，支持锁文件保证并发安全。
-
-```go
-// agent/mailbox.go
-
-// Mailbox 是基于文件的 agent 间消息系统。
-// 每个 teammate 有独立 inbox：{baseDir}/{team}/inboxes/{agent}.json
-type Mailbox struct {
-    teamName string
-    baseDir  string
-}
-
-type MailMessage struct {
-    From      string    `json:"from"`
-    Text      string    `json:"text"`
-    Summary   string    `json:"summary"`
-    Timestamp time.Time `json:"timestamp"`
-    Type      MailType  `json:"type"`
-    Read      bool      `json:"read"`
-}
-
-type MailType string
-
-const (
-    MailRegular            MailType = "regular"
-    MailPermissionRequest  MailType = "permission_request"
-    MailPermissionResponse MailType = "permission_response"
-    MailShutdown           MailType = "shutdown"
-)
-
-func NewMailbox(teamName, baseDir string) *Mailbox
-
-// Send 发送消息到指定 agent 的 inbox（带文件锁）。
+// team/mailbox.go
+type Mailbox struct { ... }
 func (m *Mailbox) Send(to string, msg MailMessage) error
-
-// ReadUnread 读取指定 agent 的未读消息。
 func (m *Mailbox) ReadUnread(agentName string) ([]MailMessage, error)
 
-// Broadcast 向团队所有成员广播消息。
-func (m *Mailbox) Broadcast(msg MailMessage) error
-```
+// team/task.go
+type TaskList struct { ... }
+type Task struct { ID, Subject, Description string; Status TaskStatus; Owner string }
 
-### 7.20 共享任务平面
-
-团队创建时自动绑定共享任务列表。Teammate 可以 claim 未分配任务，更新任务状态。这是一个真正的 work queue 设计。
-
-```go
-// agent/task.go
-
-// TaskList 是团队共享的任务列表。
-type TaskList struct {
-    teamName string
-    baseDir  string
-}
-
-type Task struct {
-    ID          string     `json:"id"`
-    Subject     string     `json:"subject"`
-    Description string     `json:"description"`
-    Status      TaskStatus `json:"status"`
-    Owner       string     `json:"owner"` // agent name，空 = 未分配
-    CreatedAt   time.Time  `json:"created_at"`
-    UpdatedAt   time.Time  `json:"updated_at"`
-}
-
-type TaskStatus string
-
-const (
-    TaskPending    TaskStatus = "pending"
-    TaskInProgress TaskStatus = "in_progress"
-    TaskCompleted  TaskStatus = "completed"
-)
-
-func NewTaskList(teamName, baseDir string) *TaskList
-func (t *TaskList) Create(task *Task) error
-func (t *TaskList) Claim(taskID, agentName string) error
-func (t *TaskList) Update(taskID string, updates TaskUpdate) error
-func (t *TaskList) List() ([]*Task, error)
-```
-
-### 7.21 权限桥接
-
-Teammate 不拥有独立权限 UI。权限请求回流到 leader，保持用户对整个 swarm 的统一控制。
-
-```go
-// agent/permission_bridge.go
-
-// PermissionBridge 将 teammate 的权限请求桥接到 leader。
+// team/bridge.go
 type PermissionBridge interface {
-    RequestPermission(ctx context.Context, req PermissionRequest) (permission.Decision, error)
+    RequestPermission(ctx, req) (permission.Decision, error)
 }
-
-// NewInProcessBridge 同进程权限桥接。
-// Teammate 的权限请求直接进入 leader 的权限决策队列，UI 上带 workerBadge 标识来源。
-func NewInProcessBridge(leaderQueue chan<- PermissionRequest) PermissionBridge
-
-// NewMailboxBridge 跨进程权限桥接。
-// 通过 mailbox 发送 permission_request，等待 leader 的 permission_response。
-func NewMailboxBridge(mailbox *Mailbox, leaderName string) PermissionBridge
 ```
 
-### 7.22 Teammate 拓扑约束
-
-参考 Claude Code 的工程化约束，防止 agent graph 失控：
+### 7.14 Teammate 拓扑约束
 
 - **Teammate 不能 spawn 其他 teammate** — 防止无限嵌套
 - **In-process teammate 不能启动 background agent** — 避免资源失控
-- **Teammate 工具池强制注入协作工具** — SendMessage、TaskCreate/Update/List 是 swarm runtime contract
-
-### 7.23 Swarm 协作工具
-
-Teammate 的工具池会被强制注入以下协作工具：
-
-| 工具 | 说明 |
-|------|------|
-| `SendMessageTool` | 发送消息给其他 teammate 或 leader |
-| `TaskCreateTool` | 创建新任务 |
-| `TaskUpdateTool` | 更新任务状态（claim / complete） |
-| `TaskListTool` | 列出所有任务 |
-| `TaskStopTool` | 停止正在运行的任务 |
+- **Teammate 工具池强制注入协作工具** — SendMessage、TaskCreate/Update/List
 
 ---
 
 ## 三层 Multi-Agent 体系
 
-参考 Claude Code 源码分析，Blades 的 multi-agent 设计分为三个层级，每层基于前一层构建：
+Blades 的 multi-agent 设计分为三个层级，每层基于前一层构建：
 
-| 层级 | 名称 | 入口 | 特点 | 适用场景 |
-|------|------|------|------|---------|
-| L1 | SubAgent | `AgentTool` + `subagent_type` | 单个子 agent，同步或后台，隔离上下文 | 独立的搜索、分析、验证任务 |
-| L2 | Coordinator | `agent.NewCoordinator()` | 主线程变调度器，worker 结果以 notification 回流，显式分相工作流 | 复杂任务分解与并行执行 |
-| L3 | Swarm/Team | `TeamCreateTool` + `Mailbox` + `TaskList` | 显式团队实体，持久化状态，共享任务列表，mailbox 通信，权限桥接 | 大规模多 agent 协作 |
+| 层级 | 名称 | 入口 | 特点 | 包 |
+|------|------|------|------|-----|
+| L1 | SubAgent | `blades.Spawn()` + `blades.Tool()` | 单个子 agent，同步或后台，隔离上下文 | `blades/` |
+| L2 | Coordinator | `team.NewCoordinator()` | 主线程变调度器，worker 结果以 notification 回流 | `team/` |
+| L3 | Swarm/Team | `TeamCreateTool` + `Mailbox` + `TaskList` | 显式团队实体，持久化状态，mailbox 通信 | `team/` |
 
 **层级关系：**
 
@@ -937,15 +518,15 @@ L3 Swarm/Team
 L2 Coordinator
   └── 基于 L1 + coordinator system prompt + task notification + 工作流分相
 L1 SubAgent
-  └── 基于 ForkAgent + AgentTool + Role Registry
+  └── 基于 blades.Spawn + blades.Tool(agent) + agents/ 预设 Agent
 ```
 
 **关键设计决策：**
 
-9. **三层渐进式 Multi-Agent** — L1 是基础原语，L2 是模式化使用（coordinator prompt + notification），L3 增加持久化协作状态。用户按需选择复杂度层级。
+1. **三层渐进式 Multi-Agent** — L1 是基础原语（根包），L2/L3 在 `team/` 包中。用户按需选择复杂度层级。
 
-10. **Coordinator 是运行模式，不是 Agent 角色** — 通过 system prompt 重写主线程角色，不引入新的 Agent 接口。
+2. **Coordinator 是运行模式，不是 Agent 类型** — 通过 system prompt 重写主线程角色，不引入新的 Agent 接口。
 
-11. **Swarm 通信基于文件** — Mailbox 使用文件 + 锁实现，简单可靠，支持跨进程通信。不引入消息队列等重依赖。
+3. **Swarm 通信基于文件** — Mailbox 使用文件 + 锁实现，简单可靠，支持跨进程通信。
 
-12. **权限统一回流到 leader** — Teammate 不拥有独立权限 UI，所有权限请求通过 bridge 回到 leader，保持用户对整个 swarm 的统一控制。
+4. **权限统一回流到 leader** — Teammate 不拥有独立权限 UI，所有权限请求通过 bridge 回到 leader。
