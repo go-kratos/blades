@@ -15,7 +15,7 @@ AgentOS v1 不把 “SubAgent / BackgroundAgent / WorktreeAgent / Team” 作为
 
 - `flow.Sequential` / `flow.Parallel` / `flow.Loop`：组合多个 `blades.Agent`。
 - `flow.AsTool(agent)`：把 Agent 适配为 `tools.Tool`，让一个 Agent 可被另一个 Agent 调用。
-- 应用层 run manager：管理 Agent 运行生命周期、取消、drain、异步 job 和 channel 接入，**不作为核心包**（核心仅由 `loop.Run(ctx, agent, input) Generator[event.Output, error]` 暴露单次运行入口）。
+- 应用层 run manager：管理 Agent 运行生命周期、取消、drain、异步 job 和 channel 接入，**不作为核心包**（核心由根包 `agent.Run(ctx, input) Generator[event.Output, error]` 暴露单次运行入口）。
 - 后台任务结果回流：应用层使用 `event.Prompt` 注入目标 Agent 的 input channel；信号性事件由应用自己的 channel / event bus 处理，不进入核心协议。
 
 不进入核心的能力：
@@ -101,7 +101,7 @@ func AsTool(agent blades.Agent, opts ...ToolOption) tools.Tool
 
 1. Tool 接收 JSON input。
 2. Bridge 将 JSON input 转成 `event.Prompt`。
-3. 调用 `loop.Run(ctx, agent, input)`（Run 不在根包，由 `loop/` 提供，返回 `Generator[event.Output, error]`）。
+3. 调用 `agent.Run(ctx, input)`（Run 位于根包 `Agent` 接口，返回 `Generator[event.Output, error]`）。
 4. drain `event.Output`。
 5. Bridge 将最终输出转成 `tools.Result`。
 
@@ -184,7 +184,7 @@ func Plan(opts ...blades.Option) blades.Agent
 func Verify(opts ...blades.Option) blades.Agent
 ```
 
-这些包可以复用 `blades.New`、工具过滤 helper 和 `policy.Checker`，并在应用层自定义 workspace policy 与交互模式，但不进入 AgentOS core。
+这些包可以复用 `blades.NewAgent`、工具过滤 helper 和 `policy.Checker`，并在应用层自定义 workspace policy 与交互模式，但不进入 AgentOS core。
 
 ## 7.6 多 Agent 编排
 
@@ -213,7 +213,7 @@ func NewCoordinator(opts ...Option) blades.Agent
 
 ## 关键设计决策
 
-1. **Agent 接口保持稳定**：所有组合、后台、编排能力都不改变 `Run(context.Context, <-chan event.Input) (<-chan event.Output, error)`。
+1. **Agent 接口保持稳定**：所有组合、后台、编排能力都不改变 `Run(context.Context, <-chan event.Input) Generator[event.Output, error]`。
 2. **组合和编排分层**：`flow/` 做轻量组合，`orchestrator/` 做复杂调度，应用层做生命周期。
 3. **不把场景塞进核心**：coding worktree、Explore/Plan/Verify、Team/Swarm 都是应用层能力。
 4. **后台回流统一走 `event.Prompt`**：worker 和后台 job 的结果作为 `Prompt` 注入 input，避免在 Event 层增加开放扩展点。

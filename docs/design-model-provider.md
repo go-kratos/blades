@@ -12,7 +12,7 @@ tags: [agentos, model, provider, protocol]
 
 ## 1. 概述
 
-`model/` 是 AgentOS 面向 LLM provider 的协议叶子包。它定义请求、响应、消息、工具调用和 token 计数接口，不依赖 `event/`、`loop/` 或应用层运行时。
+`model/` 是 AgentOS 面向 LLM provider 的协议叶子包。它定义请求、响应、消息、工具调用和 token 计数接口，不依赖 `event/`、根包 Agent runtime 或应用层运行时。
 
 Event 面向用户协议，Message 面向 provider 协议。二者通过 `content.Part` 共享通用模态叶子，但顶层结构保持独立，由 Loop 在 `internal/convert/` 边界转换。
 
@@ -25,7 +25,7 @@ package model
 
 type Provider interface {
     Name() string
-    Stream(ctx context.Context, req *Request) blades.Generator[*Response, error]
+    Stream(ctx context.Context, req *Request) iter.Seq2[*Response, error]
     Count(ctx context.Context, req *Request) (int, error)
 }
 ```
@@ -34,7 +34,7 @@ type Provider interface {
 
 - `Stream` 是唯一生成入口；同步收集由 `model.Collect` helper 基于流式响应累加得到。
 - `Count` 合并在 Provider 内，因为 token 计算与模型、编码器、工具 schema 和 system block 强耦合。
-- `Stream` 返回 `blades.Generator[*Response, error]`，也就是 `iter.Seq2[*Response, error]` 风格序列。
+- `Stream` 返回 `iter.Seq2[*Response, error]` 风格序列，避免 `model/` 依赖根包。
 - 资源释放依赖 `ctx` 取消、deadline 和 provider 内部 defer，不提供额外关闭方法。
 
 Embedding 与聊天生成平级独立：

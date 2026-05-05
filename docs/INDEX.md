@@ -20,7 +20,7 @@
 - [Compact 系统](./design-compact.md) - 单一 Compactor 接口与内置实现（Window/ToolResultBudget/Summarize/Chain） `[draft]`
 - [Model 与 Provider](./design-model-provider.md) - `model/` Message、Part、Provider（Name/Stream/Count）、Request/Response `[draft]`
 - [流式协议最终态](./design-streaming-optimization.md) - v1 流式协议参考：`iter.Seq2` + `context.Context` 取消、Delta 路径与背压策略 `[draft]`
-- [Observability](./design-observability.md) - OTel 集成方案：通过 `contrib/otel` 注册 hook Observer，核心包不引入 observability 抽象 `[draft]`
+- [Observability](./design-observability.md) - OTel 集成方案：通过 `contrib/otel` 提供 `hook.Hook`，核心包不引入 observability 抽象 `[draft]`
 - [Graph 定位](./design-graph.md) - 独立 DAG 子系统定位（graph→flow 单向硬边界） `[draft]`
 
 ## 参考文档

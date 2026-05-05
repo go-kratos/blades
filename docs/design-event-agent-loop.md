@@ -1,20 +1,22 @@
 ---
 type: design
-title: Event 协议与 Agent Loop 设计
+title: Event 协议与内置 Agent Loop 设计
 date: 2026-05-05
 status: draft
 parent: design-agent-framework.md
 related: [design-agent-framework.md]
-tags: [agentos, event, loop, content, protocol]
+tags: [agentos, event, agent-loop, llm-agent, content, protocol]
 ---
 
-# Event 协议与 Agent Loop 设计
+# Event 协议与内置 Agent Loop 设计
 
 ## 1. 概述
 
-`event/` 是 AgentOS 面向用户、应用接入、hook 与运行时的协议层。它只表达输入、输出、控制、通知、工具生命周期和流式输出，不承载 provider 消息约束。
+`event/` 是 AgentOS 面向用户、应用接入、hook 与运行时的协议层。它只表达输入、输出、控制、工具生命周期和流式输出，不承载 provider 消息约束。
 
-Agent Loop 的默认实现位于公开 `loop/` 包。Loop 使用顺序代码表达一次运行过程，不导出显式状态枚举；可观测点通过行为事件 hook 暴露。Event 与 `model.Message` 不合并，转换边界集中在 `internal/convert/`。
+默认 Agent Loop 不作为公开 `loop/` 包存在。Loop 是根包默认 `llmAgent` 的内部运行机制；用户只需要理解 `blades.Agent`、`blades.NewAgent`、`event.Input` 和 `event.Output`。高级定制通过根包 options 替换局部策略，例如 request 构建、tool wave 执行和 hook；完全不同的运行时直接实现 `blades.Agent`。
+
+Event 与 `model.Message` 不合并，转换边界集中在 `internal/convert/`。这样用户协议和 provider 协议保持独立，但通过 `content.Part` 共享同一多模态叶子。
 
 ## 2. `content.Part` 共享叶子
 
@@ -25,7 +27,6 @@ package content
 
 type Part interface{ part() }
 
-// 用户多模态变体
 type Text struct {
     Text string
 }
@@ -40,7 +41,6 @@ type Thinking struct {
     Signature []byte
 }
 
-// Provider/工具协议变体
 type ToolUse struct {
     ID    string
     Name  string
@@ -55,7 +55,7 @@ type ToolResult struct {
 }
 ```
 
-`Blob.Source` 同样是 sealed union，由三种命名类型表达二进制来源：
+`Blob.Source` 同样是 sealed union：
 
 ```go
 type BlobSource interface{ blobSource() }
@@ -65,11 +65,11 @@ type URI string
 type FileID string
 ```
 
-`content/` 不提供统一元数据字段，也不提供解析或读取字节的便捷方法。业务扩展在应用层结构中表达，二进制拉取、权限校验、缓存与传输由上层处理。`ToolUse` 与 `ToolResult` 直接进入 `content.Part` 单一 union；`event` / `model` / `tools` 三个包都使用 `content.Part`，不再各自定义 Part 类型。
+`content/` 不提供统一元数据字段，也不读取二进制内容。业务扩展、二进制拉取、权限校验、缓存与传输由应用层处理。`event` / `model` / `tools` 都直接使用 `content.Part`，不再各自定义同构 Part。
 
 ## 3. Event Input 协议
 
-`event.Input` 是 sealed marker，使用私有 `input()` 方法收口扩展点。Loop 的 type switch 穷尽内置变体，无需 `default` 分支。
+`event.Input` 是 sealed marker：
 
 ```go
 package event
@@ -96,8 +96,6 @@ type Pause struct{}
 type Resume struct{}
 ```
 
-`Prompt` 用于发起一个新 turn；`Steer` 用于运行中追加修正、上下文或继续指令。二者是独立类型，但多模态字段都直接使用 `[]content.Part`。
-
 文本构造只提供函数糖：
 
 ```go
@@ -110,13 +108,14 @@ func NewSteerText(s string) Steer {
 }
 ```
 
-Control 使用独立类型而非枚举：
+输入语义固定如下：
 
-- `Abort{Reason string}`：请求中止并携带人类可读原因。
-- `Pause{}`：请求暂停可暂停的运行段。
-- `Resume{}`：请求恢复已暂停的运行段。
+- `Prompt`：发起一个新 turn。若当前 turn 正在运行，v1 中排队等待，不并发执行。
+- `Steer`：注入当前 turn 的 pending user message，在下一次 model step 构建 request 时生效；不打断正在 streaming 的 provider 调用。
+- `Abort`：结束当前 turn，并携带人类可读原因；不关闭整个 Run。
+- `Pause` / `Resume`：只在 tool wave 边界生效；provider streaming 中不暂停底层连接。
 
-`Abort` 与 `context.CancelFunc` 互补：前者进入协议流，后者负责取消调用栈与资源等待。
+`Abort` 与 `context.CancelFunc` 互补：`Abort` 是协议级 turn 控制，`context.CancelFunc` 负责结束整个 Run 调用栈和底层资源。
 
 ## 4. Event Output 协议
 
@@ -128,7 +127,7 @@ type Output interface{ output() }
 
 ### 4.1 流式内容输出
 
-常用文本和思考增量走 hot path 紧凑值类型，避免在高频路径上使用额外接口包装：
+常用文本和思考增量走 hot path 紧凑值类型：
 
 ```go
 type TextDelta struct {
@@ -160,11 +159,21 @@ type PartEnd struct {
 }
 ```
 
-两条路径不重叠：Loop 按 part 模态分发。文本与思考增量使用 `TextDelta` / `ThinkingDelta`；Blob 等多模态内容使用 `PartStart` / `PartDelta` / `PartEnd`。
+两条路径不重叠：文本与思考增量使用 `TextDelta` / `ThinkingDelta`；Blob 等多模态内容使用 `PartStart` / `PartDelta` / `PartEnd`。
 
-### 4.2 工具生命周期输出
+### 4.2 Step、工具与 Turn 生命周期
 
-工具执行由 Loop 编排并以事件形式公开：
+一次 turn 可以包含多个 model step。`StepEnd` 只表示一次 provider 调用结束，不代表用户 turn 完成：
+
+```go
+type StepEnd struct {
+    Index      int
+    StopReason model.StopReason
+    Usage      model.Usage
+}
+```
+
+工具执行由默认 `llmAgent` 编排并以事件形式公开：
 
 ```go
 type ToolStart struct {
@@ -185,28 +194,22 @@ type ToolEnd struct {
 }
 ```
 
-`ToolEnd.Result.Parts` 直接复用 `tools.Result{Parts []content.Part}`。当工具返回 error 时，Loop 负责把错误落入工具结束事件，并在转换到 provider 消息时标记工具结果为错误语义。
-
-### 4.3 Turn 结束、生命周期结束与错误
+`ToolEnd.Result.Parts` 直接复用 `tools.Result{Parts []content.Part}`。工具 recoverable error 会同时出现在 `ToolEnd.Err`，并被转换成 `content.ToolResult{IsError:true}` 反馈给模型；context cancel/deadline 属于 fatal。
 
 单 turn 结束和整个 Run 结束是两个事件：
 
 ```go
-type Usage struct {
-    InputTokens  int
-    OutputTokens int
-    TotalTokens  int
-}
-
 type TurnEnd struct {
-    Parts []content.Part
-    Usage Usage
+    Parts      []content.Part
+    StopReason model.StopReason
+    Usage      model.Usage
+    Err        error
 }
 
 type Done struct{}
 ```
 
-`TurnEnd` 表示一次模型 turn 完成，携带最终内容与 token 用量。`Done` 是 channel sentinel，表示 Agent 生命周期结束，通常在关闭输出流前发送。
+`TurnEnd` 只在整个 turn 完成时输出一次。工具中间轮次不输出 `TurnEnd`，只输出 `StepEnd` 和 `Tool*`。`Done` 是整个 Run 的结束 sentinel，通常在 input channel 关闭或 context 取消后输出一次。
 
 运行期错误作为输出事件进入同一条流：
 
@@ -216,27 +219,77 @@ type Error struct {
 }
 ```
 
-`Error` 不携带协议级错误码。错误分类使用 Go 标准 `errors.Is` / `errors.As` 与 `event` 包内 sentinel。无法作为普通输出恢复的 fatal 错误通过 `loop.Run` 返回的 generator yield error 表达。
+错误分类使用 Go 标准 `errors.Is` / `errors.As` 与 `event` 包内 sentinel。无法作为普通输出恢复的 fatal 错误通过 `Agent.Run` 返回的 generator yield error 表达。
 
-## 5. Agent Loop 顺序流程
+## 5. 根包 Agent 运行接口
 
-默认 Loop 以顺序代码组织一次运行，不暴露状态枚举。推荐流程：
+根包定义唯一 Agent 接口：
 
-1. 从输入 channel 读取 `Prompt` 或 `Steer`，开始一个 turn。
-2. 触发 `TurnStart` hook。
-3. 通过 `loop.Builder` 构建 `*model.Request`。
-4. 触发 `PreModelCall` hook。
-5. 调用 `model.Provider.Stream(ctx, req)`。
-6. 消费 provider 响应，将文本、思考、多模态 part 和工具请求转换为 `event.Output`。
-7. 触发 `PostModelCall` hook。
-8. 如存在工具请求，触发 `PreToolCall`，交给 `loop.Orchestrator` 执行，再触发 `PostToolCall`。
-9. 工具结果转换为 `event.ToolEnd` 与下一轮 `model.ToolResultPart`。
-10. 输出 `TurnEnd`，触发 `TurnEnd` hook。
-11. 输入结束或上下文取消后输出 `Done`。
+```go
+package blades
 
-Hook 名称固定为行为事件：`PreModelCall`、`PostModelCall`、`PreToolCall`、`PostToolCall`、`TurnStart`、`TurnEnd`。这些事件描述发生了什么，而不是暴露 Loop 内部状态。
+type Agent interface {
+    Name() string
+    Description() string
+    Run(context.Context, <-chan event.Input) Generator[event.Output, error]
+}
+```
 
-## 7. Event ↔ Message 转换边界
+`blades.NewAgent(name, opts...)` 返回默认 `llmAgent`。`llmAgent` 内部持有 provider、tools、session、prompt、compact、policy、hooks、request builder、tool executor 等依赖。
+
+默认运行时的代码在根包内按职责拆分，而不是暴露为用户可导入包：
+
+- `agent_run.go`：Run 生命周期、input 消费、`Done` 输出。
+- `agent_turn.go`：单 turn 执行、`Prompt` / `Steer` / `Abort` / `Pause` / `Resume` 处理。
+- `agent_step.go`：一次 model step，构建 request、stream provider、收集 delta。
+- `agent_tools.go`：tool wave 执行、tool result 回填。
+
+## 6. Run / Turn / Step / Tool Wave
+
+默认 `llmAgent` 使用四层运行模型：
+
+1. **Run**：长生命周期事件流，消费 input channel，顺序处理多个 turn，管理 context 取消和 `Done`。
+2. **Turn**：一次用户任务，从 `Prompt` 开始，到最终 assistant 响应、abort、错误或 max steps 结束。
+3. **Step**：一次 model provider 调用，包含 request 构建、stream 消费、assistant delta 收集和 `StepEnd`。
+4. **Tool Wave**：同一 step 中所有 `content.ToolUse` 的执行批次，产出 `ToolStart` / `ToolEnd`，并回填下一 step 的 `content.ToolResult`。
+
+单 turn 推荐流程：
+
+1. 收到 `Prompt`，触发 `TurnStart` hook，并 append user prompt。
+2. 构建第 0 个 model step 的 `*model.Request`。
+3. 触发 `PreModelCall`，调用 `model.Provider.Stream(ctx, req)`。
+4. 消费 provider stream，将文本、思考、多模态 part 和 tool use 转为 `event.Output`。
+5. 触发 `PostModelCall`，append assistant message，输出 `StepEnd`。
+6. 如存在 tool use，触发 `PreToolCall` / `PostToolCall`，执行 tool wave，append tool result message。
+7. 将 tool result 和 pending steer 注入下一 step，继续循环。
+8. 若没有 tool use，或收到 abort/error/max steps，输出 `TurnEnd`，触发 `TurnEnd` hook。
+
+Hook 名称固定为行为事件：`PreModelCall`、`PostModelCall`、`PreToolCall`、`PostToolCall`、`TurnStart`、`TurnEnd`。这些事件描述发生了什么，而不是暴露内部状态枚举。
+
+## 7. 扩展点
+
+不公开独立 `loop/` 包，也不导出 `loop.Builder` 或 `loop.Orchestrator` 这类运行时包接口。高级定制通过根包 options 替换局部策略：
+
+```go
+type RequestBuilder interface {
+    Build(ctx context.Context, in RequestBuildInput) (*model.Request, error)
+}
+
+type ToolExecutor interface {
+    Execute(ctx context.Context, in ToolExecuteInput) ToolExecuteOutput
+}
+```
+
+推荐 options：
+
+- `WithRequestBuilder(RequestBuilder)`：替换 prompt/session/compact/tools 到 `model.Request` 的构建策略。
+- `WithToolExecutor(ToolExecutor)`：替换 tool wave 的执行策略，例如串行、并行、限流或审批。
+- `WithMaxSteps(int)`：限制单 turn 内 model step 数。
+- `WithHooks(...hook.Hook)`、`WithPolicy(policy.Policy)`：观察、拦截和策略决策。若应用需要 registry / fan-out / 条件分发，可在应用层实现一个聚合型 `hook.Hook` 后注入。
+
+完全特殊的运行时不通过公开 loop API 扩展，而是直接实现 `blades.Agent`。
+
+## 8. Event ↔ Message 转换边界
 
 Event 面向用户协议，Message 面向 provider 协议。二者通过 `content.Part` 共享模态叶子，但不共享顶层结构。
 
@@ -246,35 +299,22 @@ Event 面向用户协议，Message 面向 provider 协议。二者通过 `conten
 - provider 文本响应转为 `event.TextDelta`。
 - provider 思考响应转为 `event.ThinkingDelta`。
 - provider 多模态响应转为 `event.PartStart` / `event.PartDelta` / `event.PartEnd`。
-- provider 工具请求转为工具生命周期输出。
-- `tools.Result.Parts` 包装为 `model.ToolResultPart` 并复用同一 `[]content.Part`。
+- `content.ToolUse` 转为工具生命周期输出。
+- `tools.Result.Parts` 包装为 `content.ToolResult` 并复用同一 `[]content.Part`。
 
-用户代码不应直接依赖 `internal/convert/`。需要改变构建或工具编排时，应替换 `loop.Builder` 或 `loop.Orchestrator`。
+用户代码不应直接依赖 `internal/convert/`。需要改变构建或工具编排时，应替换 `RequestBuilder` 或 `ToolExecutor`；需要完全不同的 runtime 时，实现 `blades.Agent`。
 
-## 8. Loop 公开 API
+## 9. Session 写入规则
 
-`loop/` 暴露三件套：`Run`、`Builder`、`Orchestrator`。
+Session 写入顺序固定：
 
-```go
-package loop
+1. turn 开始时 append user prompt。
+2. 每个 model step 完成后 append assistant message。
+3. 每个 tool wave 完成后 append tool result message。
+4. final assistant message 完成后输出 `TurnEnd`。
 
-func Run(
-    ctx context.Context,
-    agent blades.Agent,
-    input <-chan event.Input,
-) blades.Generator[event.Output, error]
-
-type Builder interface {
-    Build(ctx context.Context, in BuildInput) (*model.Request, error)
-}
-
-type Orchestrator interface {
-    Run(ctx context.Context, uses []model.ToolUsePart) ([]event.ToolEnd, error)
-}
-```
-
-`Run` 不在函数返回值上返回 error；fatal 错误通过 generator 的第二个 yield 值表达。`Builder` 负责把 session、prompt、tool spec、compact 等运行时材料组装为 `model.Request`。`Orchestrator` 只返回工具结束事件，不返回 provider message；消息转换仍归 Loop 边界处理。
+Stateless mode 不读取 session history，但仍维护 turn-local transcript 以支持多 step 工具循环。Compact 只在构建 request 前运行，输入是 session history + turn-local transcript，输出必须满足 provider message invariant。
 
 ## 与红线对照
 
-本文覆盖 r1、r3、r5、r6、r7、r8、r9、r10、r11、r12、r25、r30、r31、r32。
+本文覆盖 r1、r3、r5、r6、r7、r8、r9、r10、r11、r12、r25、r30、r31、r32，并明确取消公开 `loop/` 包。

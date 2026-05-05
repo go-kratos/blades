@@ -17,7 +17,7 @@ tags: [agentos, hook, extension, guardrail]
 - `Observer`：旁路监听，不改变运行流程，用于 metrics、log、trace event、审计旁路写入。
 - `Interceptor`：参与控制流，可通过 Mutator 改写请求/响应，或返回 abort sentinel 终止当前动作。
 
-`hook.Event` 是 sealed union：核心事件都实现私有 marker `hookEvent()`，外部包不能扩展 hook event 集合。公开注册侧提供类型安全 helper，例如 `OnPreModelCall`、`OnPostToolCall`；内部 Registry 用 type switch 分发到具体事件处理器。
+`hook.Event` 是 sealed union：核心事件都实现私有 marker `hookEvent()`，外部包不能扩展 hook event 集合。公开侧提供小接口 `Hook` 与类型安全 helper，例如 `OnPreModelCall`、`OnPostToolCall`；每个 helper 返回一个可直接传给 `blades.WithHooks(...hook.Hook)` 的 Hook。
 
 Hook 只承载 Agent Loop 的稳定生命周期契约，不承载应用业务事件。配置加载、文件监听、任务队列、UI notification、workspace 事件等由应用自己的 event bus 处理。
 
@@ -97,7 +97,7 @@ type TurnEnd struct {
 字段约定：
 
 - `AgentName`、`Turn`、`SessionID` 用于关联一轮执行；session 仍通过 `session.NewContext` / `session.FromContext` 传递。
-- `Request` / `Response` 使用 v1 `model.Provider` 协议：Provider 只有 `Name`、`Stream`、`Count` 三方法，`Stream` 返回 `blades.Generator[*model.Response, error]`。
+- `Request` / `Response` 使用 v1 `model.Provider` 协议：Provider 只有 `Name`、`Stream`、`Count` 三方法，`Stream` 返回 `iter.Seq2[*model.Response, error]`。
 - `Tool` 使用 v1 `tools.Tool` 两方法接口：`Spec(ctx)` 与 `Handle(ctx, input)`。
 - `Input` 使用 v1 `event.Input`，文本由 `event.NewPromptText` / `event.NewSteerText` 构造，具体类型为 `event.Prompt` / `event.Steer`。
 - `Parts` 直接使用 `content.Part`。
@@ -110,64 +110,96 @@ type TurnEnd struct {
 | 目标 | 旁路观察 | 控制与改写 |
 | 是否改变流程 | 否 | 是 |
 | 典型用途 | metrics、log、trace event、审计镜像 | guardrail、脱敏、预算检查、策略拦截 |
-| 错误语义 | 记录错误，不应影响主流程；Registry 可按配置降级 | 返回错误会影响调用点；abort sentinel 终止当前动作 |
+| 错误语义 | 记录错误，不应影响主流程；应用层聚合 Hook 可按配置降级 | 返回错误会影响调用点；abort sentinel 终止当前动作 |
 | Mutator | 不使用 | 可使用事件上的 Mutator 指针 |
 | 顺序要求 | 可并行或顺序执行，结果不参与决策 | 必须按注册顺序执行，前一个改写对后一个可见 |
 
 Observer 的设计目标是低耦合：即使 OTel exporter、日志 sink 或指标后端失败，也不应破坏 Agent Loop。Interceptor 的设计目标是强语义：它位于模型、工具和 turn 边界，可以阻止不安全行为。
 
-## 4. Registry 与类型安全 helper
+## 4. Hook 接口与类型安全 helper
 
-Registry 是唯一注册入口。公开侧不要求调用方手写 type assertion，统一使用六个 helper：
+核心不提供必需的 Registry 类型。根包 `WithHooks(...hook.Hook)` 直接接收 Hook 列表；需要 registry、fan-out、动态启停或按应用配置分发时，由应用层实现一个聚合型 `hook.Hook` 并注入。
 
 ```go
-type Registry struct{ /* internal slots */ }
+type Hook interface {
+    Handle(ctx context.Context, ev Event) error
+}
 
+type HookFunc func(context.Context, Event) error
+
+func (f HookFunc) Handle(ctx context.Context, ev Event) error {
+    return f(ctx, ev)
+}
+```
+
+公开侧不要求调用方手写 type assertion，统一使用返回 `Hook` 的 helper：
+
+```go
 type Observer[E Event] func(context.Context, *E) error
 type Interceptor[E Event] func(context.Context, *E) error
 
-func OnPreModelCall(r *Registry, fn func(context.Context, *PreModelCall) error)
-func OnPostModelCall(r *Registry, fn func(context.Context, *PostModelCall) error)
-func OnPreToolCall(r *Registry, fn func(context.Context, *PreToolCall) error)
-func OnPostToolCall(r *Registry, fn func(context.Context, *PostToolCall) error)
-func OnTurnStart(r *Registry, fn func(context.Context, *TurnStart) error)
-func OnTurnEnd(r *Registry, fn func(context.Context, *TurnEnd) error)
+func OnPreModelCall(fn Observer[PreModelCall]) Hook
+func OnPostModelCall(fn Observer[PostModelCall]) Hook
+func OnPreToolCall(fn Observer[PreToolCall]) Hook
+func OnPostToolCall(fn Observer[PostToolCall]) Hook
+func OnTurnStart(fn Observer[TurnStart]) Hook
+func OnTurnEnd(fn Observer[TurnEnd]) Hook
 ```
 
-实现侧可以用泛型函数类型保证 helper 入参一致：
+实现侧可以用泛型函数类型保证 helper 入参一致，并在 `Handle` 内部做 type switch：
 
 ```go
-type Handler[E Event] func(context.Context, *E) error
-
-func OnPreModelCall(r *Registry, fn Handler[PreModelCall]) {
-    r.preModel = append(r.preModel, fn)
+func OnPreModelCall(fn Observer[PreModelCall]) Hook {
+    return HookFunc(func(ctx context.Context, ev Event) error {
+        e, ok := ev.(*PreModelCall)
+        if !ok {
+            return nil
+        }
+        return fn(ctx, e)
+    })
 }
 ```
 
-内部 dispatch 使用 type switch：
+核心可提供简单的顺序组合 helper，但它只是一个 `Hook` 实现，不是唯一注册中心：
 
 ```go
-func (r *Registry) dispatch(ctx context.Context, ev Event) error {
-    switch e := ev.(type) {
-    case *PreModelCall:
-        return r.dispatchPreModelCall(ctx, e)
-    case *PostModelCall:
-        return r.dispatchPostModelCall(ctx, e)
-    case *PreToolCall:
-        return r.dispatchPreToolCall(ctx, e)
-    case *PostToolCall:
-        return r.dispatchPostToolCall(ctx, e)
-    case *TurnStart:
-        return r.dispatchTurnStart(ctx, e)
-    case *TurnEnd:
-        return r.dispatchTurnEnd(ctx, e)
-    default:
+func Chain(hooks ...Hook) Hook {
+    return HookFunc(func(ctx context.Context, ev Event) error {
+        for _, h := range hooks {
+            if h == nil {
+                continue
+            }
+            if err := h.Handle(ctx, ev); err != nil {
+                return err
+            }
+        }
         return nil
-    }
+    })
 }
 ```
 
-外部无法实现 `hookEvent()`，因此 Registry 不需要处理应用自定义 hook event。
+应用层 Registry 示例：
+
+```go
+type Registry struct {
+    hooks []hook.Hook
+}
+
+func (r *Registry) Use(hooks ...hook.Hook) {
+    r.hooks = append(r.hooks, hooks...)
+}
+
+func (r *Registry) Handle(ctx context.Context, ev hook.Event) error {
+    for _, h := range r.hooks {
+        if err := h.Handle(ctx, ev); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+```
+
+外部无法实现 `hookEvent()`，因此 Hook 不需要处理应用自定义 hook event。应用业务事件应进入应用自己的 bus。
 
 ## 5. Interceptor 改写与 abort 语义
 
@@ -225,7 +257,7 @@ Hook 不是通用事件总线。下列事件不进入 `hook/`：
 
 ### 为什么 sealed
 
-Hook 是核心运行时契约。sealed event 集合让 Loop、Registry、contrib/otel 和测试都能穷尽处理生命周期边界，避免第三方事件混入后破坏顺序、错误传播或安全语义。应用扩展点应在应用 bus，而不是扩展核心 hook union。
+Hook 是核心运行时契约。sealed event 集合让默认 `llmAgent`、Hook 实现、contrib/otel 和测试都能穷尽处理生命周期边界，避免第三方事件混入后破坏顺序、错误传播或安全语义。应用扩展点应在应用 bus，而不是扩展核心 hook union。
 
 ### 为什么二元划分
 
@@ -233,10 +265,10 @@ Hook 是核心运行时契约。sealed event 集合让 Loop、Registry、contrib
 
 ### 为什么统一 Pre*/Post* 命名
 
-`Pre*` / `Post*` 直接表达调用边界：进入模型、离开模型、进入工具、离开工具、轮次开始、轮次结束。命名与 `loop.Run(ctx, agent, input <-chan event.Input) blades.Generator[event.Output, error]` 的单 Agent 执行模型一致，避免把产品级 run lifecycle 混入核心 hook。
+`Pre*` / `Post*` 直接表达调用边界：进入模型、离开模型、进入工具、离开工具、轮次开始、轮次结束。命名与根包 `Agent.Run(ctx, input <-chan event.Input) blades.Generator[event.Output, error]` 的单 Agent 执行模型一致，避免把产品级 run lifecycle 混入核心 hook。
 
 ## 与红线对照
 
-- r22：Observer / Interceptor 二元划分、sealed `hook.Event`、六类核心 event、泛型注册 helper、内部 type switch、Mutator 与 abort 语义均已覆盖。
-- 根包边界：Run 位于 `loop.Run`，根包只保留 `Agent`、`New`、`Option`、`Generator` 与 `WithModel` / `WithTools` / `WithSession` / `WithPolicy` / `WithHook` / `WithCompact` / `WithPrompt`。
+- r22：Observer / Interceptor 二元划分、sealed `hook.Event`、六类核心 event、返回 `Hook` 的泛型 helper、Hook 内部 type switch、Mutator 与 abort 语义均已覆盖。
+- 根包边界：Run 位于根包 `Agent.Run`，根包保留 `Agent`、`NewAgent`、`Option`、`Generator`、默认 `llmAgent` 与 `WithModel` / `WithTools` / `WithSession` / `WithPolicy` / `WithHooks` / `WithCompact` / `WithPrompt` / `WithRequestBuilder` / `WithToolExecutor`。
 - 相关协议：`event.Prompt` / `event.Steer`、`model.Provider` 三方法、`tools.Tool` 两方法、`session.Session` 五方法、`compact.Compactor`、`memory.Memory`、`policy.Policy`、`prompt.Section` 函数类型、`NewContext` / `FromContext` 命名均按 v1 描述。

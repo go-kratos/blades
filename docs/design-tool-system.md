@@ -14,7 +14,7 @@ tags: [agentos, tools, protocol, runtime]
 
 `tools/` 是 AgentOS 的工具协议叶子包。它定义工具如何声明规格、接收 JSON 输入、返回多模态结果，以及如何被运行时解析。它不承载模型调度、工具并发执行、权限裁决、重试或业务标识传播。
 
-工具执行编排属于 `loop.Orchestrator`。工具安全、预算和授权属于 `policy/` 或 middleware。工具实现只需要关注自身协议和处理逻辑。
+工具执行编排属于根包默认 `llmAgent` 的 `ToolExecutor`。工具安全、预算和授权属于 `policy/` 或 middleware。工具实现只需要关注自身协议和处理逻辑。
 
 ## 2. Tool 接口
 
@@ -99,7 +99,7 @@ type DestructiveTool interface {
 }
 
 type StreamingTool interface {
-    Stream(ctx context.Context, input json.RawMessage) blades.Generator[*Result, error]
+    Stream(ctx context.Context, input json.RawMessage) iter.Seq2[*Result, error]
 }
 ```
 
@@ -107,7 +107,7 @@ type StreamingTool interface {
 
 - `ReadOnlyTool`：工具声明自身是否只读，供 policy 和 UI 使用。
 - `DestructiveTool`：工具声明自身是否可能产生破坏性副作用，供 policy 要求确认或拒绝。
-- `StreamingTool`：工具可逐步产出 `Result`，由 Orchestrator 转为工具增量输出。
+- `StreamingTool`：工具可逐步产出 `Result`，由 `ToolExecutor` 转为工具增量输出。
 
 以下能力不进入 `tools.Tool` 协议：
 
@@ -168,23 +168,23 @@ func FromContext(ctx context.Context) (Runtime, bool)
 
 ## 7. 工具执行编排边界
 
-`tools/` 不决定工具何时执行、是否并发、如何取消、如何把结果写回 provider 消息。默认边界是 `loop.Orchestrator`：
+`tools/` 不决定工具何时执行、是否并发、如何取消、如何把结果写回 provider 消息。默认边界是根包 `ToolExecutor`：
 
 ```go
-type Orchestrator interface {
-    Run(ctx context.Context, uses []model.ToolUsePart) ([]event.ToolEnd, error)
+type ToolExecutor interface {
+    Execute(ctx context.Context, in ToolExecuteInput) ToolExecuteOutput
 }
 ```
 
-Orchestrator 负责：
+ToolExecutor 负责：
 
 - 根据 `tools.Runtime.Resolver` 查找工具。
 - 执行 policy 检查。
 - 调用 `Tool.Handle` 或 `StreamingTool.Stream`。
 - 将结果转换为 `event.ToolEnd`。
-- 把运行错误交回 Loop。
+- 把运行错误交回默认 `llmAgent`。
 
-Loop 再把 `event.ToolEnd.Result.Parts` 包装为 `model.ToolResultPart`，继续后续模型调用。
+默认 `llmAgent` 再把 `event.ToolEnd.Result.Parts` 包装为 `content.ToolResult`，继续后续模型调用。
 
 ## 与红线对照
 

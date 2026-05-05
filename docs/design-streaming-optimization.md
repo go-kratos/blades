@@ -17,12 +17,12 @@ AgentOS v1 的流式协议以 Go generator 与 context 取消为核心：
 ```go
 type Provider interface {
     Name() string
-    Stream(ctx context.Context, req *model.Request) blades.Generator[*model.Response, error]
+    Stream(ctx context.Context, req *model.Request) iter.Seq2[*model.Response, error]
     Count(ctx context.Context, req *model.Request) (int, error)
 }
 ```
 
-`blades.Generator[*model.Response, error]` 等价于 `iter.Seq2[*model.Response, error]` 风格序列。Provider 逐帧 yield `*model.Response`，错误通过序列第二返回值 yield。
+Provider 逐帧 yield `*model.Response`，错误通过序列第二返回值 yield。`model/` 直接使用 `iter.Seq2`，不依赖根包 `blades.Generator`，避免协议叶子反向依赖 runtime。
 
 最终态约束：
 
@@ -64,7 +64,7 @@ for resp, err := range provider.Stream(ctx, req) {
 }
 ```
 
-fatal 错误通过 `loop.Run` 返回的 generator yield error；运行期错误通过 `event.Error{Err error}` 进入输出流。
+fatal 错误通过根包 `Agent.Run` 返回的 generator yield error；运行期错误通过 `event.Error{Err error}` 进入输出流。
 
 ## 2. 背压与资源释放
 
@@ -134,7 +134,7 @@ Provider adapter 应：
 - 记录审计日志或指标。
 - 对慢消费者做应用层丢弃或降采样。
 
-这些包装不得改变 `Provider.Stream`、`loop.Run` 和 `event.Output` 的协议形状。
+这些包装不得改变 `Provider.Stream`、`Agent.Run` 和 `event.Output` 的协议形状。
 
 ## 与红线对照
 
