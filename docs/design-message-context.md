@@ -15,8 +15,8 @@ modules: [module-2]
 |------|------------|--------|
 | 消息类型 | `Part` 密封接口（4 种类型） | 内置 7 种 Part 类型，暂不开放注册 |
 | 消息过滤 | 无（直接发给 Provider） | ContextBuilder 内部 `filterForProvider` 私有方法 |
-| 上下文压缩 | 单一 `ContextCompressor` | 7 策略 `CompressionPipeline` |
-| System Prompt | 简单字符串 | 缓存感知 `prompt.Builder` |
+| 上下文压缩 | 单一 `ContextCompressor` | 6 策略 `CompressionPipeline` |
+| System Prompt | 简单字符串 | 缓存感知 `blades.PromptBuilder` |
 
 ### 2.1 内置消息类型
 
@@ -102,7 +102,7 @@ func (p *CompressionPipeline) Compress(
 }
 ```
 
-#### 7 种内置策略
+#### 6 种内置策略
 
 | 策略 | 触发条件 | 作用范围 | 说明 |
 |------|---------|---------|------|
@@ -255,11 +255,11 @@ func (r *PostCompactRestorer) Restore(
 ### 2.3 缓存感知 System Prompt
 
 ```go
-package prompt
+package blades
 
-// Builder 将 system prompt 分为静态可缓存前缀和动态后缀。
+// PromptBuilder 将 system prompt 分为静态可缓存前缀和动态后缀。
 // 静态部分跨会话缓存（如工具描述、行为指南），动态部分每会话变化（如 Memory、环境信息）。
-type Builder struct {
+type PromptBuilder struct {
     staticSections  []Section
     dynamicSections []Section
 }
@@ -289,7 +289,7 @@ const (
 )
 
 // Build 构建完整的 system prompt，工具按名称排序以保证缓存稳定性。
-func (b *Builder) Build(ctx context.Context) (*SystemPrompt, error)
+func (b *PromptBuilder) Build(ctx context.Context) (*SystemPrompt, error)
 
 // 静态 section 示例：
 // - intro: "You are an agent that..."

@@ -134,7 +134,14 @@ func NewBubbleEscalator(parentChain *PermissionChain, childID string) *BubbleEsc
 
 // Escalate 将权限检查转发到父 agent 的权限链。
 // 父链运行完整的 7 层决策管线。
-func (b *BubbleEscalator) Escalate(ctx context.Context, toolName, input string) (PermissionDecision, error)
+// 如果 parentChain 为 nil（根 Agent），返回 DENY 作为安全默认值。
+// 根 Agent 不应进入 Bubble 模式——状态转换规则已禁止此路径。
+func (b *BubbleEscalator) Escalate(ctx context.Context, toolName, input string) (PermissionDecision, error) {
+    if b.parentChain == nil {
+        return Decision{Action: ActionDeny, Reason: "root agent has no parent chain to bubble to"}, nil
+    }
+    // ... 转发到 parentChain
+}
 ```
 
 决策流程（7 层）：
@@ -283,6 +290,10 @@ func (m *ModeManager) OnChange(fn func(from, to Mode))
 // validTransitions 定义合法的模式转换。
 // Key: (from, source) → 允许的目标模式列表。
 // 不在此表中的转换被拒绝。
+//
+// 额外约束（不在表中，由 ModeManager.Transition() 运行时检查）：
+//   - 根 Agent（parentChain == nil）不能转换到 ModeBubble（没有父链可委托）
+//   - ModeAuto 只能通过 TransitionSystem: ModeDefault 降级（熔断器触发），不能被用户直接绕过
 var validTransitions = map[Mode]map[TransitionSource][]Mode{
     ModeDefault: {
         TransitionUser:   {ModeAcceptEdits, ModePlan, ModeAuto, ModeBubble, ModeDontAsk, ModeBypassPermissions},
@@ -306,6 +317,8 @@ var validTransitions = map[Mode]map[TransitionSource][]Mode{
     ModeBubble: {
         TransitionUser:   {ModeDefault, ModeAcceptEdits, ModePlan, ModeAuto, ModeDontAsk, ModeBypassPermissions},
         TransitionSystem: {ModeDefault}, // 父 agent 断开时回退到 default
+        // 约束：根 Agent（无父链）不能进入 ModeBubble。
+        // ModeManager 在 Transition 时检查：如果 parentChain == nil 且目标为 ModeBubble，拒绝转换。
     },
     ModeDontAsk: {
         TransitionUser:   {ModeDefault, ModeAcceptEdits, ModePlan, ModeAuto, ModeBubble, ModeBypassPermissions},
@@ -460,7 +473,7 @@ func (t *ExitPlanModeTool) IsReadOnly() bool { return false }
 #### PlanModePromptSection
 
 ```go
-// PlanModePromptSection 是 prompt.Builder 的动态 section。
+// PlanModePromptSection 是 blades.PromptBuilder 的动态 section。
 // Plan 模式激活时注入只读指令和计划文件路径。
 type PlanModePromptSection struct {
     modeManager *permission.ModeManager
@@ -474,14 +487,15 @@ func (s *PlanModePromptSection) Build(ctx context.Context) (string, error) {
     if s.modeManager.Current() != permission.ModePlan {
         return "", nil
     }
-    planPath := filepath.Join(s.planDir, session.IDFromContext(ctx)+".md")
+    sessionID := session.IDFromContext(ctx)
+    planPath := filepath.Join(s.planDir, sessionID+"-*.md") // 支持多计划：<sessionID>-<planName>.md
     return fmt.Sprintf(`=== PLAN MODE ===
 当前处于只读计划模式。禁止执行任何写入操作。
 
 工作流程：
 1. 使用只读工具探索代码，理解现有模式
 2. 设计实现方案，考虑多种方案的权衡
-3. 将计划写入: %s
+3. 使用 WritePlanTool 将计划写入 %s （多次调用可写多个计划，每次传入不同 plan_name）
 4. 调用 ExitPlanMode 提交审批
 `, planPath), nil
 }
@@ -532,12 +546,26 @@ func NewWritePlanTool(planDir string) tools.Tool
 
 func (t *WritePlanTool) Handle(ctx context.Context, input string) (string, error) {
     var params struct {
-        Content string `json:"content"`
+        PlanName string `json:"plan_name"` // 计划名称，支持多计划共存
+        Content  string `json:"content"`
     }
     if err := json.Unmarshal([]byte(input), &params); err != nil {
         return "", err
     }
-    planPath := filepath.Join(t.planDir, session.IDFromContext(ctx)+".md")
+    if params.PlanName == "" {
+        params.PlanName = "plan"
+    }
+    sessionID := session.IDFromContext(ctx)
+    // 防御路径遍历：sessionID 和 planName 只能包含字母数字和连字符
+    if !isSafeFilename(sessionID) || !isSafeFilename(params.PlanName) {
+        return "", fmt.Errorf("invalid session ID or plan name")
+    }
+    planPath := filepath.Join(t.planDir, sessionID+"-"+params.PlanName+".md")
+    // 二次校验：确保最终路径在 planDir 内
+    rel, err := filepath.Rel(t.planDir, planPath)
+    if err != nil || strings.HasPrefix(rel, "..") {
+        return "", fmt.Errorf("invalid plan path")
+    }
     if err := os.WriteFile(planPath, []byte(params.Content), 0644); err != nil {
         return "", err
     }
@@ -824,7 +852,7 @@ func (b *ContextBuilder) Build(ctx context.Context, sess session.Session, allToo
 }
 ```
 
-**prompt.Builder 集成：**
+**PromptBuilder 集成：**
 
 ```go
 // Agent 构造时注册 PlanModePromptSection 为动态 section。

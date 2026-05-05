@@ -13,7 +13,7 @@ modules: [module-8]
 
 | 维度 | 当前 Blades | 新设计 |
 |------|------------|--------|
-| 存储 | InMemoryStore（子串搜索） | 5 层层级 Memory |
+| 存储 | InMemoryStore（子串搜索） | 文件 Memory 5 来源（Managed/User/Project/Local/Auto） |
 | 来源 | 单一内存 | Managed/User/Project/Local/Auto |
 | 自动提取 | 无 | 后台 Fork Agent 自动提取 |
 | 文件处理 | 无 | @include 解析 + 截断管线 |
@@ -125,7 +125,8 @@ func (e *Extractor) Drain(timeout time.Duration) error
 ```
 1. 检查节流（避免过于频繁提取）
 2. 检查主 Agent 是否已写入 Memory（互斥）
-3. Fork 新 Agent（QuerySource: extract_memory）
+3. 获取文件级锁（flock），防止多个后台提取器并发写同一文件
+4. Fork 新 Agent（QuerySource: extract_memory）
    - 工具限制：只读工具 + Memory 目录写入
    - 共享 prompt cache 前缀
 4. 从对话中提取持久性事实
@@ -139,7 +140,7 @@ func (e *Extractor) Drain(timeout time.Duration) error
 ### 8.5 Memory 注入 System Prompt
 
 ```go
-// Section 是 prompt.Builder 的动态 section。
+// Section 是 blades.PromptBuilder 的动态 section。
 // 根据当前工作目录和文件上下文，选择性注入 Memory 内容。
 type Section struct {
     loader *Loader
@@ -228,7 +229,7 @@ func NewAgentMemory(agentType string, scope AgentMemoryScope, baseDir string) *A
 func (am *AgentMemory) Load(ctx context.Context) ([]Entry, error)
 
 // Connect 将 agent memory 附加到 prompt builder 作为动态 section。
-func (am *AgentMemory) Connect(builder *prompt.Builder) prompt.Section
+func (am *AgentMemory) Connect(builder *blades.PromptBuilder) blades.Section
 ```
 
 路径清理：`:` 替换为 `-`（插件命名空间）。`isAgentMemoryPath()` 规范化路径防止 `..` 遍历。
@@ -310,15 +311,15 @@ func (s *Section) Build(ctx context.Context) (string, error) {
 
 ### 关键设计决策
 
-1. **5 层层级而非单一存储** — 当前 `InMemoryStore` 是扁平的键值存储。新设计将 Memory 分为 5 层，从框架管理到自动提取，每层有明确的职责和优先级。项目级 Memory（BLADES.md）类似 Claude Code 的 CLAUDE.md，是团队共享的项目约定。
+1. **文件 Memory 5 来源层级** — 当前 `InMemoryStore` 是扁平的键值存储。新设计中，文件 Memory 按发现来源分为 5 层（Managed → User → Project → Local → Auto），从框架管理到自动提取，每层有明确的职责和优先级。项目级 Memory（BLADES.md）类似 Claude Code 的 CLAUDE.md，是团队共享的项目约定。
 
 2. **@include 指令** — Memory 文件可以通过 `@include` 引用其他文件，支持模块化组织。例如项目根目录的 BLADES.md 可以 `@include` 子目录的特定约定文件，避免单文件过大。
 
 3. **globs 条件注入** — 不是所有 Memory 都需要在每次对话中注入。通过 `globs` 字段，Memory 条目只在用户操作匹配的文件时才注入 system prompt，减少不必要的 token 消耗。
 
-4. **自动提取互斥** — 如果主 Agent 在当前轮次已经写入了 Memory 文件（用户显式要求记住某事），自动提取器跳过本轮。避免主 Agent 和后台提取器同时写入同一文件产生冲突。
+4. **自动提取互斥与并发安全** — 如果主 Agent 在当前轮次已经写入了 Memory 文件（用户显式要求记住某事），自动提取器跳过本轮，避免冲突。多个后台提取器通过文件级锁（flock）序列化写入同一文件，防止并发损坏。
 
-5. **四层 Memory 架构** — 不是单一存储，而是四层架构：文件 Memory（BLADES.md 5 层层级）、Session Memory（会话级摘要）、Agent Memory（每种 agent 类型持久化）、Team Memory（团队共享，未来扩展）。每层有独立的生命周期和更新策略。
+5. **四种 Memory 存储形式** — 不是单一存储，而是四种形式：文件 Memory（5 来源层级）、Session Memory（会话级摘要）、Agent Memory（每种 agent 类型持久化）、Team Memory（团队共享，未来扩展）。每层有独立的生命周期和更新策略。两者是正交的：文件 Memory 的 5 层描述的是"从哪发现"，四种存储形式描述的是"如何持久化"。
 
 6. **选择性召回而非全量注入** — 当 memory 文件数量增长后，全量注入会浪费大量 token。Recaller 通过轻量模型查询选择 top-5 最相关的 memory，显著降低 token 消耗。当 Recaller 未配置时，回退到全量注入保持向后兼容。
 

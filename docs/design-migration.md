@@ -24,26 +24,33 @@ modules: [module-13]
 
 ### 13.2 各包迁移
 
-**flow/ 包**：3 种组合模式迁入 `agent/` 包，2 种废弃。
-- `Sequential`（原 `SequentialAgent`）：迁入 `agent/sequential.go`，内部 channel 串联
-- `Parallel`（原 `ParallelAgent`）：迁入 `agent/parallel.go`，fan-out/fan-in OutputEvent channel
-- `Loop`（原 `LoopAgent`）：迁入 `agent/loop.go`，内循环消费 OutputEvent，检查 TurnEndEvent 而非 `ActionLoopExit`
-- `RoutingAgent`：**废弃**，功能由 Coordinator 模式替代（system prompt 驱动的任务分发）
+**flow/ 包**：3 种组合模式迁入 `blades/` 根包，2 种废弃。
+- `Sequential`（原 `SequentialAgent`）：迁入 `blades/sequential.go`，内部 channel 串联
+- `Parallel`（原 `ParallelAgent`）：迁入 `blades/parallel.go`，fan-out/fan-in OutputEvent channel
+- `Loop`（原 `LoopAgent`）：迁入 `blades/loop.go`，内循环消费 OutputEvent，检查 TurnEndEvent 而非 `ActionLoopExit`
+- `RoutingAgent`：**废弃**，功能由 `team.Coordinator` 模式替代（system prompt 驱动的任务分发）
 - `DeepAgent`：**废弃**，功能由 Coordinator + TaskList 替代
 
 迁移后 `flow/` 包整体废弃，不再保留。
 
-**agent/ 包**（新增）：
-- `role.go`：Role + RoleOptions + Source（原 `AgentType` 重命名）
-- `registry.go`：Registry（Register/Resolve/List/Default）
-- `filter.go`：ToolFilter + 组合函数
-- `builtin.go`：4 种内置角色（Explore/Plan/General/Verify）
-- `spawn.go`：Spawn 便捷函数
-- `tool.go`：AgentTool（统一子 Agent 入口）
-- `sequential.go`/`parallel.go`/`loop.go`：从 flow/ 迁入的组合模式
+**blades/ 根包**（新增文件）：
+- `spawn.go`：`Spawn()` 子 Agent 创建（共享 cache 前缀）
+- `agent_tool.go`：`Tool(agent)` Agent → Tool 适配器
+- `sequential.go` / `parallel.go` / `loop.go`：从 flow/ 迁入的组合原语
+
+**agents/ 包**（新增，预设 Agent）：
+- `explore.go`：`Explore()` 快速只读代码搜索 Agent
+- `plan.go`：`Plan()` 架构设计与实现规划 Agent
+- `general.go`：`General()` 全能力通用 Agent
+- `verify.go`：`Verify()` 对抗性验证 Agent
+
+**team/ 包**（新增，多 Agent 协调）：
 - `coordinator.go`：Coordinator 模式（新增，无需迁移）
-- `team.go`/`mailbox.go`/`task.go`：Swarm/Team 模式（新增，无需迁移）
-- `permission_bridge.go`：权限桥接（新增，无需迁移）
+- `team.go` / `mailbox.go` / `task.go`：Swarm/Team 模式（新增，无需迁移）
+- `bridge.go`：PermissionBridge 权限桥接（新增，无需迁移）
+
+**tools/ 包**：
+- `filter.go`：`ToolFilter` + 组合函数（`ReadOnlyTools`/`AllowOnly`/`Disallow`/`And`/`Or`），从原有 agent/ 规划迁入
 
 **contrib/ 包**：实现 `model.Provider` 接口，各自内部处理格式转换。
 - `contrib/anthropic`：将现有 `applyEphemeralCache` 和 tool message 拆分逻辑保留在包内部
@@ -54,7 +61,7 @@ modules: [module-13]
 
 **skills/ 包**：接口基本不变，`Toolset.ComposeTools` 需要适配新的 `tools.Tool` 接口（精简版）。
 
-**graph/ 包**：保持独立，作为可选子系统。不再通过 `flow/graph.go` 桥接，用户可直接使用 graph 包构建 DAG 工作流，或通过 `agent.Sequential`/`agent.Parallel` 组合实现等效逻辑。
+**graph/ 包**：保持独立，作为可选子系统。不再通过 flow/ 包桥接，用户可直接使用 graph 包构建 DAG 工作流，或通过 `blades.Sequential`/`blades.Parallel` 组合实现等效逻辑。
 
 ### 13.3 根包精简迁移
 
@@ -63,7 +70,7 @@ modules: [module-13]
 | `message.go` | `model/message.go` + `model/part.go` | Message/Part 属于模型交互层 |
 | `model.go` | `model/provider.go` + `model/request.go` | Provider 接口和请求类型 |
 | `session.go` | `session/session.go` | Session 管理独立包 |
-| `state.go` | `session/state.go` | State 只通过 Session.State() 使用 |
+| `state.go` | `session/state.go` | `session.State`（`map[string]any`）只通过 `Session.State()` 使用 |
 | `compressor.go` | 删除 | 被 `compact/` + `model/counter.go` 替代 |
 | `mime.go` | `model/mime.go` | MIME 类型属于消息内容层 |
 | `core.go` (Invocation) | 删除 Invocation | 被 Event 系统替代，Generator 保留 |
@@ -78,7 +85,7 @@ modules: [module-13]
 
 Coordinator 和 Swarm/Team 均为新增模块，无需迁移现有代码。
 
-**Coordinator 模式**：基于 `agent.NewCoordinator()` 创建，内部复用 AgentTool + ForkAgent 基础设施。现有使用 `RoutingAgent` 做任务分发的代码，可迁移到 Coordinator 模式——将路由逻辑从代码硬编码改为 system prompt 驱动。
+**Coordinator 模式**：基于 `team.NewCoordinator()` 创建，内部复用 `blades.Tool(agent)` + `blades.Spawn()` 基础设施。现有使用 `RoutingAgent` 做任务分发的代码，可迁移到 Coordinator 模式——将路由逻辑从代码硬编码改为 system prompt 驱动。
 
 **Swarm/Team 模式**：基于 `TeamCreateTool` + `Mailbox` + `TaskList` 构建。现有无对应功能，属于全新能力。实现依赖 `session/` 包提供的持久化基础设施。
 

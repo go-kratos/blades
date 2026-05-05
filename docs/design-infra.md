@@ -191,7 +191,7 @@ func (a *agent) isBackgroundSource(source string) bool {
 |------|------------|--------|
 | 计数 | `internal/counter`（1 token ≈ 4 chars） | `model.Counter` 接口 + 多实现 |
 | 精度 | 粗略估算 | Provider 原生 / tiktoken / 估算三级降级 |
-| 使用 | 仅 context/window 和 context/summary | 压缩管线、TurnState、prompt.Builder 全局使用 |
+| 使用 | 仅 context/window 和 context/summary | 压缩管线、TurnState、blades.PromptBuilder 全局使用 |
 
 ### 10.1 model.Counter 接口
 

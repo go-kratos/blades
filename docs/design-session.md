@@ -61,13 +61,17 @@ modules: [module-5]
 ```go
 package session
 
+// State 是会话级键值状态，支持任意类型的值。
+// 框架内部 key 使用 __ 前缀（如 __compact_offset__），用户 key 不应使用此前缀。
+type State map[string]any
+
 // Session 是运行时会话接口，Agent Loop 的唯一依赖。
 type Session interface {
     // ID 返回会话唯一标识。
     ID() string
 
     // State 返回会话状态的快照副本。
-    State() blades.State
+    State() State
     // SetState 设置会话状态中的一个键值对。
     SetState(key string, value any)
 
@@ -301,7 +305,7 @@ type Snapshot struct {
     Header   Header
     Entries  []Entry           // 所有 Entry（用于重建 Tree）
     Messages []*model.Message  // 当前分支的消息序列（已回放 Compaction）
-    State    blades.State      // 会话状态（从 config_change 条目回放）
+    State    State              // 会话状态（从 config_change 条目回放）
 }
 ```
 
@@ -327,7 +331,7 @@ type Option func(*options)
 func WithID(id string) Option          // 自定义 Session ID
 func WithCWD(cwd string) Option        // 工作目录
 func WithTitle(title string) Option    // 会话标题
-func WithState(state blades.State) Option // 初始状态
+func WithState(state State) Option // 初始状态
 ```
 
 ### 5.10 文件实现
@@ -391,7 +395,7 @@ type persistentSession struct {
     mu       sync.RWMutex
     tree     *Tree
     messages []*model.Message // 当前分支的消息缓存（已回放 Compaction）
-    state    blades.State
+    state    State
 }
 ```
 
@@ -409,7 +413,7 @@ type persistentSession struct {
 // 不依赖 Store，适用于测试、无状态场景、简单 Agent。
 type memorySession struct {
     id    string
-    state blades.State
+    state State
 
     mu       sync.RWMutex
     tree     *Tree
