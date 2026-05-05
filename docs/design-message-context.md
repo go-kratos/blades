@@ -302,9 +302,9 @@ func (b *PromptBuilder) Build(ctx context.Context) (*SystemPrompt, error)
 // - safety: 安全指导
 // - style: 输出风格
 
-// 动态 section 示例：
-// - memory: BLADES.md 文件内容
-// - env_info: CWD、git 状态、OS、模型名
+// 动态 section 示例（由应用、contrib 或调用方注入）：
+// - memory: 项目/用户 memory 内容
+// - env_info: 工作目录、git 状态、OS、模型名
 // - mcp_instructions: MCP 服务器指令
 // - skills: 可用技能列表
 ```

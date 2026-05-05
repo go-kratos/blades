@@ -15,7 +15,7 @@ modules: [module-9, module-10, module-11, module-12]
 
 | 维度 | 当前 Blades | 新设计 |
 |------|------------|--------|
-| 重试 | `middleware/retry.go`（Agent 级） | `model.RetryPolicy` + `blades.WithRetryPolicy`（Provider 调用级，感知错误类型与 QuerySource） |
+| 重试 | `middleware/retry.go`（Agent 级） | `model.RetryPolicy` + `blades.WithRetryPolicy`（Provider 调用级，可按应用定义的请求来源分类） |
 | 错误分类 | 无 | 按 HTTP 状态码 + 连接错误分类处理 |
 | 降级 | 无 | 529 模型过载自动降级；后台查询快速失败 |
 | 认证刷新 | 无 | 401 自动刷新 token |
@@ -36,15 +36,15 @@ type RetryPolicy struct {
     MaxDelay        time.Duration // 最大退避时间，默认 60s
     FallbackModel   string        // 529 降级模型（如 claude-sonnet-4-6）
     OnRefresh       func(ctx context.Context) error // 401 认证刷新回调
-    SourceAwareness SourceAwareness // QuerySource 感知重试配置
+    SourceAwareness SourceAwareness // 请求来源感知重试配置
     PersistentRetry *PersistentRetryConfig // 无人值守会话的持久重试配置（可选）
 }
 
-// SourceAwareness 根据请求来源（QuerySource）区分前台/后台查询，
+// SourceAwareness 根据应用写入 Request.Source 的来源分类区分前台/后台查询，
 // 对后台查询在 529 过载时执行快速失败策略，防止容量级联时产生 3-10x 的网关放大效应。
 type SourceAwareness struct {
-    ForegroundSources []string // ["user", "sub_agent", "compact", "sdk"]
-    BackgroundSources []string // ["extract_memory", "task_summary", "skill"]
+    ForegroundSources []string // 由应用定义，例如 ["user", "sdk", "interactive"]
+    BackgroundSources []string // 由应用定义，例如 ["memory_extract", "summary", "cron"]
     Max529Retries     int      // 后台查询 529 最大重试次数，默认 3
 }
 
@@ -128,11 +128,11 @@ func (a *agent) callProvider(ctx context.Context, req *model.Request) (iter.Seq2
 
             case ClassOverloaded:
                 overloadRetries++
-                // QuerySource 感知：后台查询在 529 时快速失败
-                if a.isBackgroundSource(req.QuerySource) &&
+                // 请求来源感知：后台查询在 529 时快速失败
+                if a.isBackgroundSource(req.Source) &&
                     overloadRetries > a.modelRetry.SourceAwareness.Max529Retries {
                     return nil, fmt.Errorf("background query %s: 529 fast-fail after %d retries",
-                        req.QuerySource, overloadRetries)
+                        req.Source, overloadRetries)
                 }
                 if a.modelRetry.FallbackModel != "" {
                     req.Model = a.modelRetry.FallbackModel
@@ -157,7 +157,7 @@ func (a *agent) callProvider(ctx context.Context, req *model.Request) (iter.Seq2
     return nil, ErrMaxRetriesExceeded
 }
 
-// isBackgroundSource 判断 QuerySource 是否属于后台查询。
+// isBackgroundSource 判断来源是否属于后台查询。
 func (a *agent) isBackgroundSource(source string) bool {
     for _, s := range a.modelRetry.SourceAwareness.BackgroundSources {
         if s == source {
@@ -168,13 +168,13 @@ func (a *agent) isBackgroundSource(source string) bool {
 }
 ```
 
-### 9.4 设计决策：QuerySource 感知重试
+### 9.4 设计决策：请求来源感知重试
 
-后台查询（`extract_memory`、`task_summary`、`skill` 等）在遇到 529 过载时采用快速失败策略，最多重试 3 次后立即放弃。原因：
+后台查询在遇到 529 过载时采用快速失败策略，最多重试 3 次后立即放弃。具体哪些来源属于后台查询由应用写入 `model.Request.Source` 并配置 `SourceAwareness`，core 不固定 `extract_memory`、`task_summary`、`skill` 等来源名称。原因：
 
 1. **防止网关放大效应**：容量级联（capacity cascade）期间，每个后台查询的重试会产生 3-10x 的额外请求量。如果后台查询与前台查询使用相同的重试策略（10 次），大量后台重试会进一步加剧上游过载，形成正反馈回路
-2. **后台查询可延迟**：`extract_memory` 和 `task_summary` 等后台任务不影响用户交互的即时体验，失败后可以在下一个空闲窗口重新调度
-3. **保护前台查询的可用性**：通过限制后台查询的重试预算，将有限的容量优先分配给用户直接发起的前台请求（`user`、`sub_agent`、`compact`、`sdk`）
+2. **后台查询可延迟**：memory 提取、摘要、cron 等后台任务不影响用户交互的即时体验，失败后可以由应用在下一个空闲窗口重新调度
+3. **保护前台查询的可用性**：通过限制后台查询的重试预算，将有限的容量优先分配给用户直接发起的前台请求
 
 ### 9.5 错误处理分类表
 
@@ -285,7 +285,7 @@ func RegisterOTelHooks(registry *hook.Registry, tracer trace.Tracer) {
 
 1. DAG 执行器的语义（编译时验证、检查点恢复、条件边）与 Agent Loop 的语义（LLM 对话、工具调用、压缩）本质不同
 2. 强制统一会增加不必要的复杂度，且破坏 graph 包的独立可用性
-3. 当前 `flow/deep.go` 已经通过 `DeepAgent` 桥接了 graph 和 Agent
+3. 当前仓库中的 deep/routing 等能力属于旧 API 组合方式，AgentOS v1 不把它们作为 graph 的 core 桥接依据
 
 ### 桥接方式
 

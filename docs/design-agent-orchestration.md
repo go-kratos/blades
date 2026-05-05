@@ -187,7 +187,7 @@ func Plan(opts ...blades.Option) blades.Agent
 func Verify(opts ...blades.Option) blades.Agent
 ```
 
-这些包可以复用 `blades.New`、`tools.ToolFilter` 和 `policy.Mode`，并在应用层自定义 workspace policy，但不进入 AgentOS core。
+这些包可以复用 `blades.New`、工具过滤 helper 和 `policy.Checker`，并在应用层自定义 workspace policy 与交互模式，但不进入 AgentOS core。
 
 ## 7.6 多 Agent 编排
 

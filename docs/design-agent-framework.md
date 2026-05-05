@@ -17,7 +17,6 @@ sub-docs:
   - design-memory.md
   - design-infra.md
   - design-migration.md
-  - design-streaming-optimization.md
 ---
 
 # Blades AgentOS Framework 设计蓝图
@@ -26,16 +25,18 @@ sub-docs:
 
 Blades 的目标是成为通用 AgentOS Core Runtime。核心层负责 Agent 事件协议、运行循环、模型上下文构建、工具编排、会话持久化、策略决策、Hook 和 Memory 等基础能力，并保持 API 面向通用 Agent 场景。
 
-应用层负责把核心能力装配成具体产品形态，包括 CLI、HTTP、微信、飞书、调度器等 channel 接入，workspace 管理，配置加载，daemon，cron，session 映射，主动通知和第三方 SDK 集成。`cmd/blades/internal/*` 是这类应用层实现的样板；Coding、客服、数据分析、自动化运维、研究助手等场景通过应用、recipe、examples 或 contrib preset 承接。
+应用层负责把核心能力装配成具体产品形态，包括 CLI、HTTP、微信、飞书、调度器等 channel 接入，workspace 管理，配置加载，daemon，cron，session 映射，主动通知和第三方 SDK 集成。推荐在具体应用内使用 `cmd/<app>/internal/*` 组织这些装配代码；Coding、客服、数据分析、自动化运维、研究助手等场景通过应用、recipe、examples 或 contrib preset 承接。
 
 当前 Blades 已有 `Agent`、基于 `iter.Seq2` 的流式接口、`Invocation`、`Session`、`Middleware`、`flow/`、`graph/`、`tools/`、`skills/`、`memory/`、`recipe/` 和多 Provider 集成。本轮设计以新 API 为目标，把这些能力重组为清晰分层的 AgentOS。
+
+本文描述的是 AgentOS 目标架构，允许不兼容重构。文中的 `event/`、`model/`、`policy/`、`hook/`、`compact/` 和 `internal/loop` 等包名是目标拆分，不表示当前仓库已经全部存在。
 
 核心目标：
 
 - **事件驱动**：外部应用通过 `event.Input` / `event.Output` 与 Agent 通信，channel 中直接传具体事件。
 - **Event / Message 分层**：Event 是用户协议层，Message 是模型上下文协议层；Agent Loop 是唯一转换边界。
 - **通用 AgentOS 核心**：核心提供 runtime、policy、session、tool、memory 等基础能力；channel、host、workspace 和 coding-specific workflow 由应用层承接。
-- **应用层自持接入**：channel、workspace、配置、daemon、cron、外部平台 SDK 和产品交互由具体应用实现，`cmd/blades/internal/*` 提供应用层样板。
+- **应用层自持接入**：channel、workspace、配置、daemon、cron、外部平台 SDK 和产品交互由具体应用实现，推荐使用 `cmd/<app>/internal/*` 作为应用层样板。
 - **包依赖可证明**：协议叶子包互相独立；上层通过接口、函数注入和 typed capability context 连接，避免循环依赖。
 - **Go 惯用 API**：小接口、短包名、`package.Role` 命名、`context.Context` 取消与 trace 传播、Option 函数配置。
 - **流式优先**：Provider streaming、工具重叠执行、输出背压、运行中 steering/control 都是一等能力。
@@ -129,9 +130,9 @@ Event 和 Message 不合并。原因：
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Application Layer（outside core / user-owned）                   │
-│    cmd/blades/internal/app       应用定义、依赖装配、运行配置        │
-│    cmd/blades/internal/channel   CLI、微信、飞书等通道               │
-│    cmd/blades/internal/workspace 工作目录、应用配置、资源治理        │
+│    cmd/<app>/internal/app       应用定义、依赖装配、运行配置         │
+│    cmd/<app>/internal/channel   CLI、微信、飞书等通道                │
+│    cmd/<app>/internal/workspace 工作目录、应用配置、资源治理         │
 ├─────────────────────────────────────────────────────────────────┤
 │  blades/（根包：最小用户 API）                                     │
 │    Agent, New, Option, PromptBuilder                              │
@@ -142,7 +143,7 @@ Event 和 Message 不合并。原因：
 ├─────────────────────────────────────────────────────────────────┤
 │  Capability Layer                                                 │
 │    tools/      工具接口、Resolver、Result DTO                       │
-│    policy/     权限、安全、模式、预算、速率限制                       │
+│    policy/     权限、安全、预算、速率限制、组织规则                   │
 │    hook/       生命周期事件与拦截点                                  │
 │    compact/    上下文压缩管线                                       │
 │    memory/     Memory 加载、召回、提取                              │
@@ -175,7 +176,7 @@ Event 和 Message 不合并。原因：
 | Context 承载运行能力 | context 传递取消、deadline、trace、`session.Session`、Agent 内省和 `tools.Context` |
 | Composition 不污染根包 | `Sequential/Parallel/Loop` 放 `flow/`，读作 `flow.Sequential(...)` |
 | 应用接入框架外实现 | CLI/HTTP/WebSocket/Slack/Scheduler 等属于具体应用，不作为 AgentOS 核心公开包 |
-| Policy 大于 Permission | `policy/` 统一承载权限、安全检查、交互模式、预算、速率限制和组织规则 |
+| Policy 大于 Permission | `policy/` 统一承载权限、安全检查、预算、速率限制和组织规则；完整交互模式由应用或 contrib 承接 |
 | Coding 不是核心 | `Explore/Plan/General/Verify` 不进 v1 核心；可放 examples、contrib preset 或业务 app |
 
 ## 包结构
@@ -243,7 +244,6 @@ blades/
 │   ├── decision.go             Decision
 │   ├── chain.go                Chain
 │   ├── rule.go                 Rule
-│   ├── mode.go                 ModeManager
 │   ├── safety.go               SafetyChecker
 │   ├── budget.go               BudgetPolicy
 │   └── rate.go                 RateLimiter
@@ -321,7 +321,7 @@ internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/
 | `tools` | `Tool`, `Result`, `ResultPart`, `Resolver`, `ToolFilter` | `tools.Tool` |
 | `flow` | `Sequential`, `Parallel`, `Loop`, `AsTool` | `flow.Parallel(a, b)` |
 | `session` | `Session`, `Store`, `Writer`, `Entry`, `Tree` | `session.Session` |
-| `policy` | `Chain`, `Decision`, `Rule`, `ModeManager`, `SafetyChecker` | `policy.Chain` |
+| `policy` | `Chain`, `Decision`, `Rule`, `SafetyChecker`, `BudgetPolicy`, `RateLimiter` | `policy.Chain` |
 | `hook` | `Event`, `Registry`, handlers | `hook.Registry` |
 | `compact` | `Pipeline`, `Strategy`, `PostCompactRestorer` | `compact.Pipeline` |
 | `memory` | `Store`, `Loader`, `Extractor`, `Recaller` | `memory.Store` |
@@ -358,7 +358,7 @@ iterative := flow.Loop(worker, flow.WithMaxTurns(8))
 
 ### 应用接入层（框架外）
 
-AgentOS 核心不提供公开 `channel/`、`host/` 或 `app/` 包。应用层负责把外部协议、配置、运行生命周期和资源治理装配到核心 Agent API 上。`cmd/blades/internal/channel` 是推荐模式：在应用内部定义小接口，把 CLI、微信、飞书等外部消息转成一次 turn，再把 `event.Output` 或当前流式消息写回目标界面。
+AgentOS 核心不提供公开 `channel/`、`host/` 或 `app/` 包。应用层负责把外部协议、配置、运行生命周期和资源治理装配到核心 Agent API 上。推荐模式是在 `cmd/<app>/internal/channel` 这类应用内部包中定义小接口，把 CLI、微信、飞书等外部消息转成一次 turn，再把 `event.Output` 或当前流式消息写回目标界面。
 
 应用层通常负责：
 
@@ -367,15 +367,15 @@ AgentOS 核心不提供公开 `channel/`、`host/` 或 `app/` 包。应用层负
 - session ID 映射、slash command、消息去重、主动通知、daemon 生命周期。
 - 工作目录、文件系统边界、artifact、第三方 SDK 和资源治理。
 
-配置不单独设计 `settings/` 包。配置结构和加载逻辑属于具体应用，例如 `cmd/blades/internal/config`、`cmd/blades/internal/app` 和 `cmd/blades/internal/workspace`。核心只消费已经构造好的 Agent、Provider、Tool、Session、Policy、Hook 等依赖。
+配置不单独设计 `settings/` 包。配置结构和加载逻辑属于具体应用，例如 `cmd/<app>/internal/config`、`cmd/<app>/internal/app` 和 `cmd/<app>/internal/workspace`。核心只消费已经构造好的 Agent、Provider、Tool、Session、Policy、Hook 等依赖。
 
 Agent 不知道自己来自 CLI、HTTP 还是消息平台；它只读 input channel 和 typed capability context。当前会话通过 `session.Session` 访问，应用级 channel、workspace、chat、user 等标识由应用层维护。
 
 ### Policy 系统
 
-原 `permission/` 命名过窄。AgentOS 需要统一处理权限、安全、模式、预算、速率限制和组织策略，因此核心包命名为 `policy/`。
+原 `permission/` 命名过窄。AgentOS 需要统一处理权限、安全、预算、速率限制和组织策略，因此核心包命名为 `policy/`。
 
-`policy.Chain` 接收 tool call、model request 或应用层定义的资源操作决策请求，返回 allow/deny/ask/modify。Plan Mode、Accept Edits、Auto Mode 可以作为 policy mode 的实现，但不作为 AgentOS 核心目标；它们是交互策略，不是 Agent 接口的一部分。
+`policy.Chain` 接收 tool call、model request 或应用层定义的资源操作决策请求，返回 allow/deny/ask/modify。Plan Mode、Accept Edits、Auto Mode 不作为 AgentOS 核心目标；它们是产品交互策略，应放在具体应用、examples 或 contrib 包中，基于 core policy primitives 组合实现。
 
 ### 子 Agent 与 Multi-Agent
 
@@ -423,13 +423,13 @@ v1 核心只保留两个通用原语：
 
 - [ ] 精简 `tools.Tool`，定义 `tools.ResultPart`
 - [ ] 实现 ToolFilter、Resolver、StreamingToolExecutor
-- [ ] 实现 `policy.Chain`、SafetyChecker、ModeManager、BudgetPolicy
+- [ ] 实现 `policy.Chain`、SafetyChecker、BudgetPolicy、RateLimiter
 - [ ] 实现 `hook.Registry` 和 Agent/Model/Tool 生命周期事件
 - [ ] 在 Agent Loop 中串联 tool validation、policy、hook、execution、result conversion
 
 ### 阶段 4：应用接入样板与边界验证
 
-- [ ] 明确 `cmd/blades/internal/channel`、`cmd/blades/internal/app`、`cmd/blades/internal/workspace` 是应用层样板
+- [ ] 用 `cmd/<app>/internal/channel`、`cmd/<app>/internal/app`、`cmd/<app>/internal/workspace` 展示应用层样板
 - [ ] 把 CLI/HTTP/WebSocket 等外部协议保留在具体应用、examples 或 contrib，不进入 Agent core
 - [ ] 用示例说明应用层如何管理 run lifecycle、session 映射、主动通知和配置加载
 
@@ -460,6 +460,11 @@ v1 核心只保留两个通用原语：
 - [工具系统](design-tool-system.md)
 - [Hook 系统](design-hook-extension.md)
 - [Session 系统](design-session.md)
+- [Policy 与交互模式边界](design-policy-mode.md)
+- [Agent 组合与编排](design-agent-orchestration.md)
+- [Memory 系统](design-memory.md)
+- [基础设施与 Graph 定位](design-infra.md)
 - [迁移路径](design-migration.md)
 - [Claude Code Agent 参考设计](reference-claude-code-agent.md)
 - [pi-agent Framework 参考设计](reference-pi-agent-framework.md)
+- [流式响应优化设计](design-streaming-optimization.md)（历史已实现参考，不属于 AgentOS v1 子设计）
