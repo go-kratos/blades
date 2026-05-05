@@ -105,19 +105,18 @@ globs: ["*.go", "**/*_test.go"]
 // 从对话中提取持久性事实写入 ~/.blades/memories/。
 type Extractor struct {
     loader     *Loader
-    forkConfig blades.ForkConfig
+    summarize  SummarizeFunc
     memDir     string // ~/.blades/memories/
     throttle   *Throttle
 }
 
 func NewExtractor(loader *Loader, opts ...ExtractorOption) *Extractor
 
-// Extract 启动后台提取。
+// Extract 提取并写入 Memory。
 // 如果主 Agent 已在当前轮次写入 Memory 文件，则跳过（互斥）。
-func (e *Extractor) Extract(ctx context.Context, messages []*model.Message) *blades.BackgroundAgent
+func (e *Extractor) Extract(ctx context.Context, messages []*model.Message) error
 
-// Drain 等待进行中的提取完成（关闭前调用）。
-func (e *Extractor) Drain(timeout time.Duration) error
+// Host 可以把 Extract 放入异步 job；memory/ 本身不依赖 BackgroundAgent。
 ```
 
 提取流程：
@@ -126,13 +125,12 @@ func (e *Extractor) Drain(timeout time.Duration) error
 1. 检查节流（避免过于频繁提取）
 2. 检查主 Agent 是否已写入 Memory（互斥）
 3. 获取文件级锁（flock），防止多个后台提取器并发写同一文件
-4. Fork 新 Agent（QuerySource: extract_memory）
-   - 工具限制：只读工具 + Memory 目录写入
-   - 共享 prompt cache 前缀
-4. 从对话中提取持久性事实
+4. 调用注入的 SummarizeFunc / ExtractFunc 生成候选 Memory
+   - Host 可选择同步执行，也可作为异步 job 执行
+5. 从对话中提取持久性事实
    - 用户偏好、项目约定、架构决策
    - 排除：临时状态、调试信息、代码片段
-5. 写入 ~/.blades/memories/<topic>.md
+6. 写入 ~/.blades/memories/<topic>.md
    - 更新已有文件或创建新文件
    - 使用 YAML frontmatter 标记类型和描述
 ```

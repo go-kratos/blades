@@ -15,22 +15,22 @@ modules: [module-9, module-10, module-11, module-12]
 
 | 维度 | 当前 Blades | 新设计 |
 |------|------------|--------|
-| 重试 | `middleware/retry.go`（Agent 级） | `retry.Policy`（Provider 级，感知错误类型与 QuerySource） |
+| 重试 | `middleware/retry.go`（Agent 级） | `model.RetryPolicy` + `blades.WithRetryPolicy`（Provider 调用级，感知错误类型与 QuerySource） |
 | 错误分类 | 无 | 按 HTTP 状态码 + 连接错误分类处理 |
 | 降级 | 无 | 529 模型过载自动降级；后台查询快速失败 |
 | 认证刷新 | 无 | 401 自动刷新 token |
 | 连接失效 | 无 | ECONNRESET/EPIPE 自动重试 |
 | 持久重试 | 无 | 无人值守会话长退避 + 心跳 |
 
-### 9.1 RetryPolicy
+### 9.1 Provider 调用重试策略
 
 ```go
-package retry
+package model
 
-// Policy 定义 Provider 级别的重试策略。
-// 与 Agent 级 Middleware 不同，RetryPolicy 感知 Provider 的具体错误类型和 streaming 状态，
-// 在 Agent Loop 内部的 Provider 调用处直接处理，不需要重建整个轮次。
-type Policy struct {
+// RetryPolicy 定义模型调用级别的重试策略。
+// 不单独设计 retry/ 包：重试只服务 model.Provider.Stream 调用，
+// 由 Agent Loop 在 Provider 调用边界执行，不作为通用基础设施暴露。
+type RetryPolicy struct {
     MaxRetries      int           // 最大重试次数，默认 10
     BaseDelay       time.Duration // 基础退避时间，默认 500ms
     MaxDelay        time.Duration // 最大退避时间，默认 60s
@@ -80,6 +80,14 @@ type Backoff struct {
 func (b *Backoff) Duration(attempt int) time.Duration
 ```
 
+```go
+package blades
+
+func WithRetryPolicy(policy model.RetryPolicy) Option
+```
+
+`model.RetryPolicy` 只是模型调用配置 DTO，不让 `model.Provider` 依赖 Agent，也不让 `policy/` 参与网络错误重试。具体错误分类可以由 contrib provider 返回实现了 `model.ErrorClassifier` 可识别接口的错误，或由 Agent Loop 使用默认 HTTP / net error classifier。
+
 ### 9.2 默认常量
 
 | 常量 | 值 | 说明 |
@@ -96,11 +104,11 @@ func (b *Backoff) Duration(attempt int) time.Duration
 ```go
 // Agent Loop 内部的 Provider 调用处：
 func (a *agent) callProvider(ctx context.Context, req *model.Request) (iter.Seq2[*model.Response, error], error) {
-    maxRetries := a.retryPolicy.MaxRetries
+    maxRetries := a.modelRetry.MaxRetries
     overloadRetries := 0
 
     for attempt := 0; attempt <= maxRetries; attempt++ {
-        stream := a.model.NewStreaming(ctx, req)
+        stream := a.provider.Stream(ctx, req)
         // ... 消费 stream ...
         if err != nil {
             class := a.classifier.Classify(err)
@@ -109,7 +117,7 @@ func (a *agent) callProvider(ctx context.Context, req *model.Request) (iter.Seq2
                 return nil, err
 
             case ClassAuthExpired:
-                if refreshErr := a.retryPolicy.OnRefresh(ctx); refreshErr != nil {
+                if refreshErr := a.modelRetry.OnRefresh(ctx); refreshErr != nil {
                     return nil, refreshErr
                 }
                 continue
@@ -122,19 +130,19 @@ func (a *agent) callProvider(ctx context.Context, req *model.Request) (iter.Seq2
                 overloadRetries++
                 // QuerySource 感知：后台查询在 529 时快速失败
                 if a.isBackgroundSource(req.QuerySource) &&
-                    overloadRetries > a.retryPolicy.SourceAwareness.Max529Retries {
+                    overloadRetries > a.modelRetry.SourceAwareness.Max529Retries {
                     return nil, fmt.Errorf("background query %s: 529 fast-fail after %d retries",
                         req.QuerySource, overloadRetries)
                 }
-                if a.retryPolicy.FallbackModel != "" {
-                    req.Model = a.retryPolicy.FallbackModel
+                if a.modelRetry.FallbackModel != "" {
+                    req.Model = a.modelRetry.FallbackModel
                 }
                 fallthrough
 
             case ClassRetryable, ClassRateLimit:
                 delay := a.backoff.Duration(attempt)
                 // 持久重试模式：无人值守会话使用更长退避上限 + 心跳
-                if pc := a.retryPolicy.PersistentRetry; pc != nil {
+                if pc := a.modelRetry.PersistentRetry; pc != nil {
                     if delay > pc.MaxBackoff {
                         delay = pc.MaxBackoff
                     }
@@ -151,7 +159,7 @@ func (a *agent) callProvider(ctx context.Context, req *model.Request) (iter.Seq2
 
 // isBackgroundSource 判断 QuerySource 是否属于后台查询。
 func (a *agent) isBackgroundSource(source string) bool {
-    for _, s := range a.retryPolicy.SourceAwareness.BackgroundSources {
+    for _, s := range a.modelRetry.SourceAwareness.BackgroundSources {
         if s == source {
             return true
         }
@@ -227,26 +235,26 @@ type CachedCounter struct {
 
 ### 设计
 
-Event 系统天然适合 tracing——每个 OutputEvent 可以关联到当前 span。
+Event 系统天然适合 tracing——每个 `event.Output` 可以关联到当前 span。
 可观测性通过 Hook 系统集成，不侵入核心代码。
 
 ```go
-// OTelHook 通过 Hook 系统集成 OpenTelemetry。
+// RegisterOTelHooks 通过 Hook 系统集成 OpenTelemetry。
 // 注册为全局 Hook，自动为关键生命周期事件创建 span。
 func RegisterOTelHooks(registry *hook.Registry, tracer trace.Tracer) {
     // Agent 生命周期
-    hook.Observe(registry, func(ctx context.Context, e *hook.HookAgentStart) error {
+    hook.Observe(registry, func(ctx context.Context, e *hook.AgentStart) error {
         _, span := tracer.Start(ctx, "agent.turn",
             trace.WithAttributes(
                 attribute.String("agent.name", e.AgentName),
                 attribute.Int("agent.turn", e.Turn),
             ))
-        // span 通过 context 传播，在 HookAgentEnd 中结束
+        // span 通过 context 传播，在 hook.AgentEnd 中结束
         return nil
     })
 
     // Model 调用
-    hook.Observe(registry, func(ctx context.Context, e *hook.HookAfterModelResponse) error {
+    hook.Observe(registry, func(ctx context.Context, e *hook.AfterModelResponse) error {
         span := trace.SpanFromContext(ctx)
         span.SetAttributes(
             attribute.Int64("gen_ai.usage.input_tokens", e.Usage.InputTokens),
@@ -256,7 +264,7 @@ func RegisterOTelHooks(registry *hook.Registry, tracer trace.Tracer) {
     })
 
     // Tool 执行
-    hook.Observe(registry, func(ctx context.Context, e *hook.HookPreToolUse) error {
+    hook.Observe(registry, func(ctx context.Context, e *hook.PreToolUse) error {
         _, _ = tracer.Start(ctx, "tool."+e.ToolName)
         return nil
     })
@@ -288,8 +296,8 @@ func RegisterOTelHooks(registry *hook.Registry, tracer trace.Tracer) {
 func GraphAgent(name string, executor *graph.Executor, opts ...GraphAgentOption) Agent
 
 // GraphAgent 内部：
-// 1. 从 InputEvent 中提取初始 State
+// 1. 从 event.Input 中提取初始 State
 // 2. 调用 executor.Execute(ctx, state)
-// 3. 将结果转换为 OutputEvent 序列
+// 3. 将结果转换为 event.Output 序列
 // 4. graph.Handler 中如果需要调用 LLM，通过注入的 model.Provider 实现
 ```

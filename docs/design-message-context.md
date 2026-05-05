@@ -15,12 +15,14 @@ modules: [module-2]
 |------|------------|--------|
 | 消息类型 | `Part` 密封接口（4 种类型） | 内置 7 种 Part 类型，暂不开放注册 |
 | 消息过滤 | 无（直接发给 Provider） | ContextBuilder 内部 `filterForProvider` 私有方法 |
-| 上下文压缩 | 单一 `ContextCompressor` | 6 策略 `CompressionPipeline` |
+| 上下文压缩 | 单一 `ContextCompressor` | 6 策略 `compact.Pipeline` |
 | System Prompt | 简单字符串 | 缓存感知 `blades.PromptBuilder` |
 
 ### 2.1 内置消息类型
 
-Part 保持判别联合风格，所有类型内置在 `model/` 包中。后续如有第三方扩展需求，再考虑开放注册机制。
+Part 保持判别联合风格，所有类型内置在 `model/` 包中。`model.Part` 是 Provider、Session、Compression 使用的模型上下文协议，不是用户 Event API。用户输入输出使用 `event.InputPart` / `event.OutputPart`，由 Agent Loop 内部转换为 `model.Part`。两层不共享 Go 类型。
+
+后续如有第三方扩展需求，再考虑开放注册机制。
 
 ```go
 type Part interface{ part() }
@@ -32,7 +34,7 @@ type DataPart struct { Data any `json:"data"` }
 
 // 工具调用
 type ToolUsePart struct { CallID string `json:"callId"`; Name string `json:"name"`; Args string `json:"args"` }
-type ToolResultPart struct { CallID string `json:"callId"`; Content string `json:"content"`; Err error `json:"-"` }
+type ToolResultPart struct { CallID string `json:"callId"`; Parts []Part `json:"parts"`; Err error `json:"-"` }
 
 // 扩展内置类型
 type ThinkingPart struct { Text string `json:"text"` }
@@ -48,6 +50,8 @@ type CompactionSummaryPart struct {
 - ThinkingPart → 根据 provider 能力决定保留或转为文本
 - CompactionSummaryPart → 转为 system message
 
+ContextBuilder 在进入 session/context 前先把当前轮 `event.InputPart` 转为 user `model.Message`。session 只保存 `model.Message`，不保存 Event；Event 是运行时 I/O 协议，不承担上下文压缩、Provider 重放或持久化 schema 的职责。
+
 ### 2.2 多策略压缩管线
 
 ```go
@@ -60,7 +64,7 @@ type CompressionStrategy interface {
 
 // CompressionState 携带压缩管线所需的全部信息。
 type CompressionState struct {
-    Messages       []*Message
+    Messages       []*model.Message
     SystemPrompt   string
     TokenCount     int64
     TokenBudget    int64
@@ -77,13 +81,13 @@ type CompactionRecord struct {
     Timestamp    int64
 }
 
-// CompressionPipeline 按顺序应用策略，token 降到预算内即短路。
-type CompressionPipeline struct {
+// Pipeline 按顺序应用策略，token 降到预算内即短路。
+type Pipeline struct {
     strategies []CompressionStrategy
     counter    model.Counter
 }
 
-func (p *CompressionPipeline) Compress(
+func (p *Pipeline) Compress(
     ctx context.Context, state *CompressionState,
 ) (*CompressionState, error) {
     for _, s := range p.strategies {
@@ -168,7 +172,7 @@ type SessionMemoryProvider interface {
 type AutoCompactStrategy struct {
     ThresholdRatio float64                                                   // 触发阈值比例，默认 0.85
     BufferTokens   int64                                                     // 预留 buffer，默认 13000
-    Summarize      func(ctx context.Context, messages []*Message) (string, error) // 由 Agent Loop 注入
+    Summarize      func(ctx context.Context, messages []*model.Message) (string, error) // 由 Agent Loop 注入
     Stats          *AutoCompactStats                                         // 熔断器状态
 }
 
@@ -185,7 +189,7 @@ type AutoCompactStats struct {
 // 在 API 返回 prompt_too_long 错误时触发。
 // 每次重试截断 20% 最旧消息组（truncateHeadForPTLRetry）。
 type ReactiveCompactStrategy struct {
-    Summarize        func(ctx context.Context, messages []*Message) (string, error) // 由 Agent Loop 注入
+    Summarize        func(ctx context.Context, messages []*model.Message) (string, error) // 由 Agent Loop 注入
     TruncateRatio    float64 // 每次重试截断比例，默认 0.20
 }
 ```
@@ -249,7 +253,7 @@ func (r *PostCompactRestorer) Restore(
 ) (*CompressionState, error)
 ```
 
-`PostCompactRestorer` 不是 `CompressionStrategy`（它不减少 token），而是 `CompressionPipeline` 的后处理步骤。Pipeline 在任何全量压缩策略成功后自动调用 Restore。
+`PostCompactRestorer` 不是 `CompressionStrategy`（它不减少 token），而是 `compact.Pipeline` 的后处理步骤。Pipeline 在任何全量压缩策略成功后自动调用 Restore。
 ```
 
 ### 2.3 缓存感知 System Prompt
@@ -311,7 +315,7 @@ func (b *PromptBuilder) Build(ctx context.Context) (*SystemPrompt, error)
 
 2. **消息过滤内聚于 ContextBuilder** — 消息过滤/转换（ThinkingPart 处理、CompactionSummaryPart 转换等）作为 `ContextBuilder.Build()` 的私有方法实现，不暴露独立的 `MessageConverter` 接口。Provider 特定的格式差异（Anthropic tool_use/tool_result 拆分、OpenAI function_call 格式等）由各 `contrib/*` 包在实现 `model.Provider` 时内部处理。
 
-3. **管线式压缩而非单一压缩器** — 当前 `ContextCompressor` 是全有或全无的单一接口。新设计将压缩分解为 7 个独立策略（含 SessionMemoryCompact），按成本从低到高排列，token 降到预算内即短路。轻量策略（Snip、MicroCompact）每轮都运行，SessionMemoryCompact 在 session memory 存在时跳过 LLM 调用，重量策略（AutoCompact）仅在阈值触发时运行。压缩策略通过 `Summarizer` 函数注入 LLM 能力，避免与根包循环依赖。AutoCompact 内置熔断器（连续 3 次失败后禁用），防止无限重试循环。
+3. **管线式压缩而非单一压缩器** — 当前 `ContextCompressor` 是全有或全无的单一接口。新设计将压缩分解为 6 个独立策略（含 SessionMemoryCompact）和一个压缩后恢复步骤，按成本从低到高排列，token 降到预算内即短路。轻量策略（Snip、MicroCompact）每轮都运行，SessionMemoryCompact 在 session memory 存在时跳过 LLM 调用，重量策略（AutoCompact）仅在阈值触发时运行。压缩策略通过 `Summarizer` 函数注入 LLM 能力，避免与根包循环依赖。AutoCompact 内置熔断器（连续 3 次失败后禁用），防止无限重试循环。
 
 4. **缓存感知 System Prompt** — 当前 system prompt 是简单字符串，每次调用都完整发送。新设计将 prompt 分为静态前缀（跨会话不变）和动态后缀（每会话变化），配合 Provider 的 prompt cache 机制（如 Anthropic 的 cache_control），显著降低重复 token 消耗。动态 section 默认可缓存，需要显式标记不可缓存的 section（如 MCP 指令）。
 

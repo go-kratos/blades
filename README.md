@@ -37,7 +37,7 @@ The Blades framework realizes its powerful functionality and flexibility through
 type Agent interface {
     Name() string
     Description() string
-    Run(context.Context, *Invocation) Generator[*Message, error]
+    Run(context.Context, *Invocation) iter.Seq2[*Message, error]
 }
 ```
 
@@ -48,8 +48,8 @@ type Agent interface {
 type ModelProvider interface {
     // Generate executes a complete generation request and returns the result all at once. Suitable for scenarios that do not require real-time feedback.
     Generate(context.Context, *ModelRequest, ...ModelOption) (*ModelResponse, error)
-    // NewStreaming initiates a streaming request. This method immediately returns a Generator object, allowing the caller to receive the model's generated content step by step. Suitable for building real-time, typewriter-effect conversation applications.
-    NewStreaming(context.Context, *ModelRequest, ...ModelOption) (Generator[*ModelResponse])
+    // NewStreaming initiates a streaming request. This method immediately returns an iter.Seq2 stream, allowing the caller to receive the model's generated content step by step. Suitable for building real-time, typewriter-effect conversation applications.
+    NewStreaming(context.Context, *ModelRequest, ...ModelOption) iter.Seq2[*ModelResponse, error]
 }
 ```
 ![ModelProvider](./docs/images/model.png)

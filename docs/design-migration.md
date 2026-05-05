@@ -9,134 +9,121 @@ modules: [module-13]
 
 # 迁移路径
 
-### 从现有代码迁移
+本次迁移不追求兼容旧 API，目标是把 Blades 重组为通用 AgentOS Runtime。迁移顺序应先稳定协议叶子包和 Agent Loop，再迁移 Provider、Tool、Session，最后建设 Host/Channel/App 层。
 
-虽然设计目标是"不考虑向后兼容"，但现有代码量不小（flow/、graph/、contrib/、skills/），需要明确迁移路径。
-
-### 13.1 核心接口迁移
+## 13.1 核心接口迁移
 
 | 现有 | 新 | 迁移方式 |
-|------|---|---------|
-| `Agent.Run(ctx, *Invocation) Generator[*Message, error]` | `Agent.Run(ctx, <-chan InputEvent) (<-chan OutputEvent, error)` | 重写签名，内部逻辑迁移到 Agent Loop 状态机 |
-| `*Invocation` | 去掉 | Session 通过 context 传递，配置在 NewAgent 时确定 |
-| `Generator[*Message, error]` | `<-chan OutputEvent` | 消费端从 `for m, err := range gen` 改为 `for event := range output` |
-| `Middleware func(Handler) Handler` | `InputMiddleware` / `OutputMiddleware` | 按方向拆分，重写签名 |
+|------|----|----------|
+| `Agent.Run(ctx, *Invocation) iter.Seq2[*Message, error]` | `Agent.Run(ctx, <-chan event.Input) (<-chan event.Output, error)` | 去掉 Invocation，改为 Event channel 驱动 |
+| `*Invocation` | 删除 | 稳定运行信息进入 `scope.Scope`，通过 context 传递 |
+| `iter.Seq2[*Message, error]` | `<-chan event.Output` | 消费端从 message stream 改为 event stream |
+| `Message` 暴露在根包 | `model.Message` | Message 只属于模型上下文层 |
+| `Middleware func(Handler) Handler` | `InputMiddleware` / `OutputMiddleware` / Hook | Event 流处理与生命周期 Hook 分离 |
 
-### 13.2 各包迁移
+`event.Input` 和 `event.Output` 是直接接口联合，channel 中直接传 `event.Prompt`、`event.Steer`、`event.PartDelta`、`event.ToolEnd` 等具体事件，不增加 `Input{Event: ...}` / `Output{Event: ...}` 包装层。
 
-**flow/ 包**：3 种组合模式迁入 `blades/` 根包，2 种废弃。
-- `Sequential`（原 `SequentialAgent`）：迁入 `blades/sequential.go`，内部 channel 串联
-- `Parallel`（原 `ParallelAgent`）：迁入 `blades/parallel.go`，fan-out/fan-in OutputEvent channel
-- `Loop`（原 `LoopAgent`）：迁入 `blades/loop.go`，内循环消费 OutputEvent，检查 TurnEndEvent 而非 `ActionLoopExit`
-- `RoutingAgent`：**废弃**，功能由 `team.Coordinator` 模式替代（system prompt 驱动的任务分发）
-- `DeepAgent`：**废弃**，功能由 Coordinator + TaskList 替代
+## 13.2 根包迁移
 
-迁移后 `flow/` 包整体废弃，不再保留。
-
-**blades/ 根包**（新增文件）：
-- `spawn.go`：`Spawn()` 子 Agent 创建（共享 cache 前缀）
-- `agent_tool.go`：`Tool(agent)` Agent → Tool 适配器
-- `sequential.go` / `parallel.go` / `loop.go`：从 flow/ 迁入的组合原语
-
-**agents/ 包**（新增，预设 Agent）：
-- `explore.go`：`Explore()` 快速只读代码搜索 Agent
-- `plan.go`：`Plan()` 架构设计与实现规划 Agent
-- `general.go`：`General()` 全能力通用 Agent
-- `verify.go`：`Verify()` 对抗性验证 Agent
-
-**team/ 包**（新增，多 Agent 协调）：
-- `coordinator.go`：Coordinator 模式（新增，无需迁移）
-- `team.go` / `mailbox.go` / `task.go`：Swarm/Team 模式（新增，无需迁移）
-- `bridge.go`：PermissionBridge 权限桥接（新增，无需迁移）
-
-**tools/ 包**：
-- `filter.go`：`ToolFilter` + 组合函数（`ReadOnlyTools`/`AllowOnly`/`Disallow`/`And`/`Or`），从原有 agent/ 规划迁入
-
-**contrib/ 包**：实现 `model.Provider` 接口，各自内部处理格式转换。
-- `contrib/anthropic`：将现有 `applyEphemeralCache` 和 tool message 拆分逻辑保留在包内部
-- `contrib/openai`：将 function_call 格式转换保留在包内部
-- `contrib/gemini`：实现 `model.Provider`，将 Gemini 特有的 FunctionCall/FunctionResponse 格式转换保留在包内部
-- `contrib/mcp`：MCP 工具桥接迁移，将 MCP tool schema 映射到新的 `tools.Tool` 接口，保留 SSE/stdio transport 逻辑
-- `contrib/otel`：从 Middleware 迁移到 Hook 系统集成
-
-**skills/ 包**：接口基本不变，`Toolset.ComposeTools` 需要适配新的 `tools.Tool` 接口（精简版）。
-
-**graph/ 包**：保持独立，作为可选子系统。不再通过 flow/ 包桥接，用户可直接使用 graph 包构建 DAG 工作流，或通过 `blades.Sequential`/`blades.Parallel` 组合实现等效逻辑。
-
-### 13.3 根包精简迁移
+根包保留最小用户 API：
 
 | 现有文件 | 去向 | 说明 |
-|---------|------|------|
-| `message.go` | `model/message.go` + `model/part.go` | Message/Part 属于模型交互层 |
-| `model.go` | `model/provider.go` + `model/request.go` | Provider 接口和请求类型 |
-| `session.go` | `session/session.go` | Session 管理独立包 |
-| `state.go` | `session/state.go` | `session.State`（`map[string]any`）只通过 `Session.State()` 使用 |
-| `compressor.go` | 删除 | 被 `compact/` + `model/counter.go` 替代 |
-| `mime.go` | `model/mime.go` | MIME 类型属于消息内容层 |
-| `core.go` (Invocation) | 删除 Invocation | 被 Event 系统替代，Generator 保留 |
-| `agent.go` | **保留** | Agent 接口 + NewAgent() 是用户 API |
-| `runner.go` | **保留** | Runner 是便捷包装 |
-| `middleware.go` | **保留**（重构） | 拆分为 InputMiddleware/OutputMiddleware |
-| `context.go` | **保留** | context 辅助函数 |
-| `errors.go` | **保留** | 公共错误 |
-| `event.go` | **新增** | InputEvent/OutputEvent 接口 + 所有 Event 类型 |
+|----------|------|------|
+| `agent.go` | 保留并重构 | 定义 `Agent`、`New`、基础 agent 实现 |
+| `message.go` | `model/message.go` + `model/part.go` | Message/Part 下沉到模型协议层 |
+| `model.go` | `model/provider.go` + `model/request.go` | Provider、Request、Response、ToolSpec 进入 `model/` |
+| `session.go` | `session/session.go` | Session 独立为 Agent Loop 面向接口 |
+| `state.go` | `session/state.go` 或移除 | 状态随 Session 管理 |
+| `compressor.go` | `compact/` | 压缩管线独立，并通过 Summarizer 函数注入模型能力 |
+| `core.go` / `Invocation` | 删除 | Event + context scope 替代 Invocation |
+| `middleware.go` | 保留并拆分 | Input/Output middleware 只处理 Event |
+| `context.go` | `scope/scope.go` | `SessionID/UserID/ChannelID/WorkspaceID` 等稳定信息进入 `scope.Scope` |
+| `event.go` | 删除 | 根包不保留 Event 类型别名或构造函数，用户统一导入 `event/` |
 
-### 13.4 Coordinator / Swarm 模式
+根包不放 `Sequential/Parallel/Loop`，这些组合原语保留在 `flow/`，读作 `flow.Sequential(...)`。根包也不内置 `Spawn`、`BackgroundAgent`、`WorktreeAgent`、`Team` 等应用级/场景级能力。
 
-Coordinator 和 Swarm/Team 均为新增模块，无需迁移现有代码。
+## 13.3 新包与职责
 
-**Coordinator 模式**：基于 `team.NewCoordinator()` 创建，内部复用 `blades.Tool(agent)` + `blades.Spawn()` 基础设施。现有使用 `RoutingAgent` 做任务分发的代码，可迁移到 Coordinator 模式——将路由逻辑从代码硬编码改为 system prompt 驱动。
+| 包 | 动作 | 说明 |
+|----|------|------|
+| `event/` | 新增 | 用户协议层：`Input`、`Output`、多模态 `InputPart` / `OutputPart` |
+| `model/` | 新增 | 模型协议层：Message、Part、Provider、Request、Response、Counter |
+| `tools/` | 重构 | 工具接口、Resolver、Result DTO；不依赖 `event/` 或 `model/` |
+| `scope/` | 新增 | context scope helper |
+| `policy/` | 新增，替代核心 `permission/` | 权限、安全、模式、预算、速率限制统一决策 |
+| `workspace/` | 新增 | 工作区、路径边界、artifact store、环境信息 |
+| `host/` | 新增 | Run 生命周期、context scope、channel 接入、drain/cancel |
+| `channel/` | 新增 | CLI/HTTP/WebSocket/Slack/Scheduler 等外部协议适配 |
+| `app/` | 新增 | AgentOS app 装配层；承载 Config 结构、默认值、文件加载与环境覆盖 |
+| `compact/` | 新增 | Context 压缩管线 |
+| `hook/` | 新增 | 生命周期事件与拦截点 |
+| `flow/` | 保留并精简 | 保留 `Sequential/Parallel/Loop`，并提供 `AsTool` 适配 helper |
+| `graph/` | 保留为可选系统 | DAG/checkpoint/condition 工作流，不强行并入 Agent Loop |
 
-**Swarm/Team 模式**：基于 `TeamCreateTool` + `Mailbox` + `TaskList` 构建。现有无对应功能，属于全新能力。实现依赖 `session/` 包提供的持久化基础设施。
+不新增 `retry/` 包。Provider 调用重试是 Agent Loop 的模型调用策略，类型放在 `model/` 或根包 Option 中，由 `blades.WithRetryPolicy(...)` 注入。
 
-### 13.5 新增子系统（无需迁移）
+不新增 `settings/` 包。配置文件、环境变量、默认值合并属于应用装配职责，放在 `app.Config` / `app.LoadConfig` 或具体 CLI 中；`host/` 只消费已经解析好的 Option 和依赖。
 
-以下子系统均为新增，无需迁移现有代码：
+## 13.4 flow/ 迁移
 
-| 子系统 | 包/类型 | 说明 |
-|--------|---------|------|
-| Session Memory | `memory.SessionMemory` | 会话级摘要，用于 compact 捷径。阈值触发更新，跳过 LLM 调用直接复用摘要 |
-| Agent Memory | `memory.AgentMemory` + `memory.InitializeFromSnapshot` | 每种 agent 类型的持久化 Memory（user/project/local 三作用域）+ 快照分发 |
-| Relevant Memory Recall | `memory.Recaller` | 轻量模型查询选择 top-5 相关 Memory，替代全量注入 |
-| Session Memory Compact | `compact.SessionMemoryCompactStrategy` | 压缩管线第 4 策略，跳过 LLM 调用直接使用 session memory 作为摘要 |
-| API 不变量保护 | `compact.AdjustKeepBoundary` | 压缩切割时保护 tool_use/tool_result 配对完整性 |
-| 压缩后状态恢复 | `compact.PostCompactRestorer` | 全量压缩后恢复最近文件、plan/skill 状态、延迟工具声明 |
-| Settings System | `settings.Loader` + `settings.Schema` + `settings.Watch` | 5 级优先级配置合并（policy > flag > project > local > user）+ 文件系统热重载 |
-| Stop Hooks | `hook.StopHookHandler` + `hook.StopHookResult` | Agent Loop 终止时的统一后处理，支持 ContinueLoop 注入 follow-up |
-| 会话作用域 Hooks | `hook.WithHookSession` + `hook.ClearSessionHooks` | 随 agent 生命周期自动清理的 hooks |
-| Bubble 权限模式 | `permission.ModeBubble` + `permission.BubbleEscalator` | 子 agent 权限决策委托给父 agent |
-| DontAsk/Bypass 模式 | `permission.ModeDontAsk` / `permission.ModeBypassPermissions` | Headless/CI 场景：ASK→DENY 或 ASK→ALLOW，SafetyChecker 仍生效 |
-| Implicit Fork | `agent.ForkAgent`（`_fork` 内置 Role） | 省略 subagent_type 时继承父级完整上下文，使用 ModeBubble |
-| Scratchpad | `agent.ScratchpadConfig` + `agent.ScratchpadTool` | Coordinator 跨 worker 知识共享 |
-| Effort Level | `agent.EffortLevel` | ForkConfig 中的 low/medium/high 级别，控制子 agent 成本/质量权衡 |
-| Lite Reader | `session.LiteReader` | 64KB head+tail 窗口快速读取会话元数据 |
-| Batch Writer | `session.BatchWriter` | 累积 entries 批量刷盘，减少 I/O 开销 |
-| Content Replacement | `session.ContentReplacementData` | 工具结果存根替换，大结果持久化后用存根替代原始内容 |
+`flow/` 不删除，但只保留通用组合原语：
 
-### 13.6 agent/ 包新增文件
+- `flow.Sequential`：串联多个 Agent 的 Event channel。
+- `flow.Parallel`：fan-out 输入，fan-in 输出。
+- `flow.Loop`：按 `event.TurnEnd` / 策略条件进行重复执行。
 
-| 文件 | 来源 | 说明 |
-|------|------|------|
-| `coordinator.go` | 新增 | Coordinator 模式（system prompt 驱动任务分发） |
-| `team.go` | 新增 | Swarm/Team 模式 |
-| `mailbox.go` | 新增 | Agent 间消息传递 |
-| `task.go` | 新增 | 共享任务列表 |
-| `permission_bridge.go` | 新增 | 权限桥接（Bubble 模式实现） |
-| `spawn.go` | 新增 | Spawn 便捷函数 |
-| `tool.go` | 新增 | AgentTool（统一子 Agent 入口，6 级路由） |
+以下类型不进入 AgentOS 核心：
 
-### 13.7 迁移顺序建议
+- `RoutingAgent`：路由是应用策略，可由 app/recipe、policy、`flow.AsTool` 或 orchestrator 实现。
+- `DeepAgent`：coding-specific 复杂任务编排，移到 `examples/coding` 或后续 `contrib/orchestrator`。
 
-新增子系统与现有代码迁移可并行推进。建议顺序：
+## 13.5 agents/team 迁移决策
 
-1. **先迁移核心接口**（13.1）— Agent.Run 签名、Event 系统、Middleware 拆分
-2. **再迁移各包**（13.2-13.3）— flow/ → agent/、contrib/ 适配、根包精简
-3. **最后集成新增子系统**（13.5）— Session Memory、Settings、Stop Hooks 等
+不新增核心 `agents/` 包。`Explore/Plan/General/Verify` 是 Coding Agent 预设，不适合作为通用 AgentOS 核心。
 
-新增子系统之间的依赖关系：
-- `compact.SessionMemoryCompactStrategy` 依赖 `memory.SessionMemory`（通过 `SessionMemoryProvider` 接口解耦）
-- Stop Hooks 依赖 `hook.HookRegistry`（阶段 5）
-- Bubble 权限模式依赖 `permission.Chain`（阶段 6）
-- Agent Memory 快照依赖 `memory.Loader`（阶段 8）
-- Relevant Memory Recall 依赖 `memory.Loader` + `model.Provider`（阶段 8）
-- Settings 热重载依赖 `hook.HookRegistry`（通过 `HookConfigChange` 事件通知）
+推荐去向：
+
+- `examples/coding/`：完整展示 coding app 如何装配 Explore/Plan/Verify。
+- `contrib/preset/`：可选通用预设，如 `preset.Assistant`、`preset.Researcher`。
+- 用户业务包：例如 `support.Agent()`、`ops.Agent()`、`coding.Explore()`。
+
+不新增核心 `team/` 包。Coordinator/Swarm/Team 属于应用级多 Agent 协议，后续如需要可放入 `orchestrator/` 或 `contrib/orchestrator`，构建在 `flow/`、`host/`、`channel/`、`session/` 之上。Agent-as-Tool 适配由 `flow.AsTool` 提供，不单独新增 `agenttool/` 包。
+
+## 13.6 contrib 迁移
+
+Provider 集成统一实现 `model.Provider`：
+
+- `contrib/anthropic`：内部保留 Anthropic message/tool/cache_control 转换。
+- `contrib/openai`：内部处理 OpenAI content part、tool call 和 response 格式。
+- `contrib/gemini`：内部处理 FunctionCall/FunctionResponse。
+- `contrib/mcp`：MCP schema 映射到 `tools.Tool`，transport 逻辑保留在 contrib。
+- `contrib/otel`：优先基于 `hook.Registry` 集成，也可提供 host/channel tracing helper。
+
+Provider 包只依赖 `model/`，不依赖 `event/`。Event 到 Message 的转换只发生在 Agent Loop。
+
+## 13.7 skills/recipe/graph 迁移
+
+- `skills/`：适配新的 `tools.Tool` 和 `tools.ResultPart`，不直接构造 `model.Message`。
+- `recipe/`：从“构造 Agent”升级为“构造 App”，可声明 agent、model、tools、policy、channel、workspace。
+- `graph/`：继续作为独立 DAG 系统；如果要桥接 Agent，桥接代码放 `flow/graph` 或 `contrib/graphagent`，不让 `graph/` 依赖 `blades/`。
+
+## 13.8 推荐迁移顺序
+
+1. 定义 `event/`、`model/`、`tools.ResultPart`、`scope/`。
+2. 改造 `Agent.Run` 与 Agent Loop，完成 Event/Message 转换。
+3. 迁移 Provider 到 `model.Provider`。
+4. 迁移 Session 和 Compact。
+5. 迁移 Tools、Policy、Hook。
+6. 精简 `flow/`，移除 Routing/Deep 核心路径。
+7. 新增 `workspace/`、`channel/`、`host/`、`app/`。
+8. 迁移 recipe、skills、examples、contrib。
+
+## 13.9 验收标准
+
+- `event/`、`model/`、`tools/` 三个叶子包互不依赖。
+- 根包不暴露 `model.Message`。
+- `Agent.Run` 只使用 `event.Input` / `event.Output`。
+- Event channel 没有二次 wrapper。
+- `SessionID/UserID/ChannelID/WorkspaceID` 等稳定信息只通过 `scope.Scope` 传递。
+- Coding presets 不在核心依赖路径上。
+- `go list` 依赖图无循环，且 contrib provider 不依赖 root `blades`。

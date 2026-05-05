@@ -15,7 +15,7 @@ modules: [module-3]
 |------|------------|--------|
 | 并发控制 | 全部并发（errgroup） | 自声明 ConcurrencyMode + 自动分区 |
 | 流式执行 | 等模型完成才执行 | StreamingToolExecutor 重叠执行 |
-| 生命周期 | 无 Hook | BeforeToolHook / AfterToolHook |
+| 生命周期 | 无 Hook | `hook.PreToolUse` / `hook.PostToolUse` |
 | 结果管理 | 无限制 | ToolResultBudget 截断 + 持久化 |
 | 安全声明 | 无 | IsReadOnly / IsDestructive |
 
@@ -24,14 +24,31 @@ modules: [module-3]
 核心 `Tool` 接口保持精简（4 个方法），扩展能力通过可选接口（interface assertion）实现。
 这是 Go 惯用的可选接口模式（类似 `io.WriterTo`、`io.ReaderFrom`）。
 
+`tools/` 是能力叶子包，不导入 `model/` 或 `event/`。工具 schema 和工具结果在 Agent Loop 中转换：
+
+- `tools.Tool` / JSON Schema -> `model.ToolSpec`
+- `tools.Result` -> `event.ToolEnd{Result: []event.OutputPart}`
+- `tools.Result` -> `model.ToolResultPart{Parts: []model.Part}`
+
 ```go
 // Tool 核心接口，所有工具必须实现。
 type Tool interface {
     Name() string
     Description() string
     InputSchema() *jsonschema.Schema
-    Handle(ctx context.Context, input string) (string, error)
+    Handle(ctx context.Context, input json.RawMessage) (*Result, error)
 }
+
+type Result struct {
+    Parts []ResultPart `json:"parts,omitempty"`
+}
+
+type ResultPart interface{ resultPart() }
+
+type TextResult struct { Text string `json:"text"` }
+type FileResult struct { URI string `json:"uri"`; MimeType string `json:"mimeType,omitempty"`; Name string `json:"name,omitempty"` }
+type DataResult struct { Data []byte `json:"data"`; MimeType string `json:"mimeType"`; Name string `json:"name,omitempty"` }
+type JSONResult struct { Value any `json:"value"` }
 
 // --- 可选能力接口（通过 type assertion 检查）---
 
@@ -50,7 +67,7 @@ type ReadOnlyTool interface {
 // DestructiveTool 声明此工具对给定输入是否有破坏性。
 // 用于权限系统决定是否需要确认。
 type DestructiveTool interface {
-    IsDestructive(input string) bool
+    IsDestructive(input json.RawMessage) bool
 }
 
 // PromptContributor 贡献此工具的描述到 system prompt。
@@ -118,7 +135,7 @@ type ToolBuilder struct {
     handler         ToolHandler
     concurrency     ConcurrencyMode
     readOnly        bool
-    destructive     func(string) bool
+    destructive     func(json.RawMessage) bool
     prompt          func(context.Context) string
     maxResultChars  int
     middleware      []ToolMiddleware
@@ -156,7 +173,7 @@ const (
 type streamingToolEntry struct {
     Call   ToolCall
     State  ToolCallState
-    Result *ToolResult
+    Result *Result
     Err    error
     Cancel context.CancelFunc // 每个调用独立的取消函数
 }
@@ -176,7 +193,7 @@ type streamingToolEntry struct {
 // 串行工具排队等待。执行与模型生成重叠，降低端到端延迟。
 type StreamingToolExecutor struct {
     tools   map[string]Tool
-    hooks   *HookRegistry
+    hooks   *hook.Registry
     budget  *ToolResultBudget
     maxConc int // 最大并发数，默认 10
 }
@@ -186,7 +203,7 @@ type StreamingToolExecutor struct {
 func (e *StreamingToolExecutor) ExecuteStreaming(
     ctx context.Context,
     toolCalls <-chan ToolCall,
-) Generator[*ToolResult, error]
+) iter.Seq2[*Result, error]
 ```
 
 #### Sibling Abort 机制
@@ -238,25 +255,17 @@ type toolPartition struct {
 func runPartitions(
     ctx context.Context,
     partitions []toolPartition,
-    executor func(context.Context, ToolCall) (*ToolResult, error),
-) ([]*ToolResult, error)
+    executor func(context.Context, ToolCall) (*Result, error),
+) ([]*Result, error)
 ```
 
 ### 3.4 工具生命周期 Hook
 
-```go
-// BeforeToolHook 在工具执行前调用。可阻止执行或修改输入。
-type BeforeToolHook func(ctx context.Context, call *ToolCall) (*BeforeToolResult, error)
+工具生命周期 Hook 由 Agent Loop 通过 `hook.Registry` 触发，不定义在 `tools/` 包内，避免 `tools/` 反向依赖 `hook/`、`event/` 或 `model/`。
 
-type BeforeToolResult struct {
-    Block        bool   // true = 阻止执行
-    Reason       string // 阻止原因
-    ModifiedArgs string // 修改后的参数（空 = 不修改）
-}
-
-// AfterToolHook 在工具执行后调用。可修改结果。
-type AfterToolHook func(ctx context.Context, call *ToolCall, result *ToolResult) (*ToolResult, error)
-```
+- 执行前：`hook.PreToolUse` / `hook.PreToolUseHandler`，可阻止执行或修改 `json.RawMessage` 输入。
+- 执行后：`hook.PostToolUse` / `hook.PostToolUseHandler`，可修改 `*tools.Result`。
+- 执行失败：`hook.PostToolUseFailure`，用于审计、统计和恢复策略。
 
 ### 3.5 工具执行完整生命周期
 
@@ -264,12 +273,12 @@ type AfterToolHook func(ctx context.Context, call *ToolCall, result *ToolResult)
 1. IsEnabled 检查      ← 若工具实现 EnabledTool 且返回 false，跳过执行并返回不可用提示
 2. 参数校验            ← JSON Schema 校验结构正确性
 3. ValidateInput       ← 若工具实现 ValidatedTool，执行业务语义校验
-4. BeforeToolHook      ← 可阻止执行或修改参数
-5. 权限检查            ← PermissionChain.Check()
+4. hook.PreToolUse     ← 可阻止执行或修改参数
+5. 权限检查            ← PolicyChain.Check()
 6. tool.Handle()       ← 实际执行，支持流式进度
-7. AfterToolHook       ← 可修改结果
+7. hook.PostToolUse    ← 可修改结果
 8. ToolResultBudget    ← 超大结果截断 + 持久化
-9. 发射事件            ← EventToolExecEnd
+9. 发射事件            ← ToolDelta / ToolEnd
 ```
 
 ### 关键设计决策
@@ -278,10 +287,12 @@ type AfterToolHook func(ctx context.Context, call *ToolCall, result *ToolResult)
 
 2. **流式工具执行** — 当前必须等模型完整输出后才开始执行工具。新设计在模型流式输出过程中，一旦某个 tool call 的参数完整就立即启动执行（如果是并发安全的），模型生成和工具执行时间重叠，显著降低端到端延迟。
 
-3. **ToolResultBudget** — 当前工具结果无大小限制，大文件读取可能撑爆上下文。新设计为每个工具设置结果大小上限，超出时完整结果持久化到磁盘，向模型发送截断预览 + 磁盘路径引用。
+3. **多模态工具结果** — 工具返回 `[]tools.ResultPart`，可以是文本、文件引用、二进制数据或结构化 JSON。Agent Loop 负责把它转换为面向用户的 `event.OutputPart` 和面向 Provider 的 `model.Part`，从而保持 `tools/` 与 `event/`、`model/` 解耦。
 
-4. **Sibling Abort 使用独立子 context 而非共享 abort controller** — 每个工具调用持有独立的 `context.CancelFunc`（通过 `context.WithCancel` 从父 context 派生）。相比共享的 abort controller 模式，独立子 context 有三个优势：（1）天然与 Go 的 context 传播机制集成，工具内部调用的所有下游操作（网络请求、子进程等）自动响应取消；（2）取消粒度精确到单个调用，不会误伤已完成的工具；（3）无需额外的同步原语——`CancelFunc` 本身是并发安全的，多次调用幂等。共享 abort controller 需要手动管理订阅/取消订阅，且在 Go 中没有标准实现，引入不必要的复杂度。
+4. **ToolResultBudget** — 当前工具结果无大小限制，大文件读取可能撑爆上下文。新设计为每个工具设置结果大小上限，超出时完整结果持久化到磁盘，向模型发送截断预览 + 磁盘路径引用。
 
-5. **EnabledTool / ValidatedTool 作为可选接口** — `IsEnabled` 和 `ValidateInput` 没有放入核心 `Tool` 接口，因为大多数工具始终可用且不需要超出 JSON Schema 的额外校验。将它们作为可选接口保持核心接口精简，同时允许需要动态启用/禁用（如根据项目类型隐藏不相关工具）或复杂输入校验（如检查文件路径是否存在）的工具按需实现。`ValidateInput` 在 JSON Schema 校验之后执行，确保输入结构已正确，语义校验只需关注业务逻辑。
+5. **Sibling Abort 使用独立子 context 而非共享 abort controller** — 每个工具调用持有独立的 `context.CancelFunc`（通过 `context.WithCancel` 从父 context 派生）。相比共享的 abort controller 模式，独立子 context 有三个优势：（1）天然与 Go 的 context 传播机制集成，工具内部调用的所有下游操作（网络请求、子进程等）自动响应取消；（2）取消粒度精确到单个调用，不会误伤已完成的工具；（3）无需额外的同步原语——`CancelFunc` 本身是并发安全的，多次调用幂等。共享 abort controller 需要手动管理订阅/取消订阅，且在 Go 中没有标准实现，引入不必要的复杂度。
+
+6. **EnabledTool / ValidatedTool 作为可选接口** — `IsEnabled` 和 `ValidateInput` 没有放入核心 `Tool` 接口，因为大多数工具始终可用且不需要超出 JSON Schema 的额外校验。将它们作为可选接口保持核心接口精简，同时允许需要动态启用/禁用（如根据项目类型隐藏不相关工具）或复杂输入校验（如检查文件路径是否存在）的工具按需实现。`ValidateInput` 在 JSON Schema 校验之后执行，确保输入结构已正确，语义校验只需关注业务逻辑。
 
 ---

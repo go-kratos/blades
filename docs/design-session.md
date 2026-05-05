@@ -19,7 +19,7 @@ modules: [module-5]
 | 分支 | 不支持 | 完整支持：分支创建、导航、摘要 |
 | 压缩 | 挂在 Session 上（ContextCompressor） | 从 Session 移出到 Agent Loop（compact.Pipeline） |
 | 压缩历史 | 丢弃 | 完整保留在 JSONL 中 |
-| 并发安全 | sync.Mutex | 追加写入，天然并发安全 |
+| 并发安全 | sync.Mutex | Writer 单所有者 + 文件锁，保证单会话写入顺序 |
 | 持久化接口 | 无 | Store（Open 模式，返回 Writer handle） |
 | 会话列表 | 全量解析 | LiteReader 仅读头尾，跳过大块内容 |
 | 写入模式 | 同步逐条 | BatchWriter 异步批量刷盘 |
@@ -77,12 +77,12 @@ type Session interface {
 
     // Append 追加一条消息到当前 Leaf 位置。
     // 新消息成为 Leaf 的子节点，并更新 Leaf 指针。
-    Append(ctx context.Context, msg *Message) error
+    Append(ctx context.Context, msg *model.Message) error
 
     // History 返回从 root 到当前 Leaf 的消息序列。
     // 如果存在 Compaction Entry，压缩边界前的消息被摘要替换。
     // History 不执行压缩——压缩由 Agent Loop 的 compact.Pipeline 负责。
-    History(ctx context.Context) ([]*Message, error)
+    History(ctx context.Context) ([]*model.Message, error)
 
     // Leaf 返回当前位置的节点 ID。
     Leaf() string
@@ -112,7 +112,7 @@ session.History() → 原始消息（含 Compaction 回放） → compact.Pipeli
 
 **为什么不暴露 AppendEntry？**
 
-Session 接口只暴露 `Append(*Message)`，不暴露 `AppendEntry(Entry)`。Entry 是持久化层的概念，Agent Loop 不需要感知。Compaction Entry 等非消息类型的写入通过 persistentSession 的具体方法或内部机制处理，不污染 Session 接口。
+Session 接口只暴露 `Append(*model.Message)`，不暴露 `AppendEntry(Entry)`。Entry 是持久化层的概念，Agent Loop 不需要感知。Compaction Entry 等非消息类型的写入通过 persistentSession 的具体方法或内部机制处理，不污染 Session 接口。
 
 ### 5.3 session.Store 接口
 
@@ -344,7 +344,8 @@ func WithState(state State) Option // 初始状态
 //   第 1 行：Header（JSON）
 //   第 2+ 行：Entry（每行一个 JSON）
 //
-// 追加写入，天然并发安全。元数据（title、leaf）采用 last-wins 读取策略。
+// 追加写入由 fileWriter 单所有者负责，进程间通过 flock 协调。
+// 元数据（title、leaf）采用 last-wins 读取策略。
 type fileStore struct {
     baseDir string
 }
@@ -566,7 +567,7 @@ const SkipPrecompactThreshold = 1 << 20 // 1MB
 
 4. **压缩从 Session 移出** — Session.History() 返回原始消息（含 Compaction 回放），压缩由 Agent Loop 的 compact.Pipeline 负责。同一个 Session 可被不同 Agent 共享，各自使用不同压缩策略。
 
-5. **JSONL 追加写入** — 天然并发安全（多个 goroutine 可同时追加），支持增量恢复。压缩时不删除旧消息，追加 CompactionData 标记边界。完整历史始终可从 JSONL 文件恢复。
+5. **JSONL 追加写入** — 每个打开的会话由一个 `Writer` 持有文件句柄和 flock，进程内通过 single writer ownership 保证顺序，进程间通过文件锁避免交错写入。压缩时不删除旧消息，追加 CompactionData 标记边界。完整历史始终可从 JSONL 文件恢复。
 
 6. **第一阶段 5 种 Entry 类型** — message、compaction、config_change、content_replacement、custom。其中 content_replacement 用于替换超限工具结果为截断存根。其他类型（model_change、title、branch_summary）后续按需添加，不影响已有数据格式。
 

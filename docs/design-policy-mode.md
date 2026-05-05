@@ -1,15 +1,17 @@
 ---
 type: design
-title: 权限与交互模式系统
+title: Policy 与交互模式系统
 parent: design-agent-framework.md
 date: 2026-05-01
 status: draft
 modules: [module-6, module-14]
 ---
 
-# 权限与交互模式系统
+# Policy 与交互模式系统
 
-## 权限系统
+本文描述 `policy/` 包。权限只是 policy 的一种决策输入；AgentOS 中 policy 还包括安全检查、交互模式、预算、速率限制和 workspace 边界。
+
+## Policy 系统
 
 ### 现状对比
 
@@ -24,12 +26,12 @@ modules: [module-6, module-14]
 ### 6.1 权限决策类型
 
 ```go
-type PermissionDecision string
+type PolicyDecision string
 const (
-    PermissionAllow       PermissionDecision = "allow"
-    PermissionDeny        PermissionDecision = "deny"
-    PermissionAsk         PermissionDecision = "ask"
-    PermissionPassthrough PermissionDecision = "passthrough"
+    DecisionAllow       PolicyDecision = "allow"
+    DecisionDeny        PolicyDecision = "deny"
+    DecisionAsk         PolicyDecision = "ask"
+    DecisionPassthrough PolicyDecision = "passthrough"
 )
 
 // Mode 控制整体权限行为。
@@ -62,7 +64,7 @@ const (
 
     // ModeBubble 将权限决策冒泡到父 agent。
     // 用于 fork 子 agent，不应自主做权限决策。
-    // 父 agent 的 PermissionChain 处理实际决策。
+    // 父 agent 的 PolicyChain 处理实际决策。
     ModeBubble Mode = "bubble"
 
     // ModeDontAsk 将所有 ASK 决策转为 DENY。
@@ -80,45 +82,45 @@ const (
 ### 6.2 权限规则
 
 ```go
-// PermissionRule 是配置的 allow/deny 规则。
-type PermissionRule struct {
-    Source   PermissionRuleSource
-    Behavior PermissionDecision // allow 或 deny
+// Rule 是配置的 allow/deny 规则。
+type Rule struct {
+    Source   RuleSource
+    Behavior PolicyDecision // allow 或 deny
     ToolName string             // 工具名，支持 glob（如 "bash*"）
     Pattern  string             // 输入匹配模式（glob/正则）
 }
 
-type PermissionRuleSource string
+type RuleSource string
 const (
-    SourceCLI     PermissionRuleSource = "cli"      // CLI 参数
-    SourceSession PermissionRuleSource = "session"   // 会话内授权
-    SourceProject PermissionRuleSource = "project"   // .blades/settings.json
-    SourceUser    PermissionRuleSource = "user"      // ~/.blades/settings.json
-    SourcePolicy  PermissionRuleSource = "policy"    // 组织策略
+    SourceCLI     RuleSource = "cli"      // CLI 参数
+    SourceSession RuleSource = "session"   // 会话内授权
+    SourceProject RuleSource = "project"   // .blades/config.json
+    SourceUser    RuleSource = "user"      // ~/.blades/config.json
+    SourcePolicy  RuleSource = "policy"    // 组织策略
 )
 ```
 
 ### 6.3 权限决策链
 
 ```go
-// PermissionChain 通过分层链式判断评估权限。
+// PolicyChain 通过分层链式判断评估权限。
 // 7 层决策管线，每层可短路返回 allow/deny，或 passthrough 到下一层。
-type PermissionChain struct {
-    rules       []PermissionRule
+type PolicyChain struct {
+    rules       []Rule
     modeManager *ModeManager
     safety      SafetyChecker
     acceptEdits *AcceptEditsChecker
     autoCtrl    *AutoModeController
-    hooks       *HookRegistry
+    hooks       *hook.Registry
     promptUser  UserPromptFunc
 }
 
-func NewPermissionChain(opts ...PermissionOption) *PermissionChain
+func NewPolicyChain(opts ...Option) *PolicyChain
 
 // Check 评估工具调用的权限。
-func (c *PermissionChain) Check(
-    ctx context.Context, toolName string, input string,
-) (PermissionDecision, error)
+func (c *PolicyChain) Check(
+    ctx context.Context, toolName string, input json.RawMessage,
+) (PolicyDecision, error)
 ```
 
 #### BubbleEscalator
@@ -126,19 +128,19 @@ func (c *PermissionChain) Check(
 ```go
 // BubbleEscalator 桥接子 agent 权限请求到父 agent。
 type BubbleEscalator struct {
-    parentChain *PermissionChain
+    parentChain *PolicyChain
     childID     string
 }
 
-func NewBubbleEscalator(parentChain *PermissionChain, childID string) *BubbleEscalator
+func NewBubbleEscalator(parentChain *PolicyChain, childID string) *BubbleEscalator
 
 // Escalate 将权限检查转发到父 agent 的权限链。
 // 父链运行完整的 7 层决策管线。
 // 如果 parentChain 为 nil（根 Agent），返回 DENY 作为安全默认值。
 // 根 Agent 不应进入 Bubble 模式——状态转换规则已禁止此路径。
-func (b *BubbleEscalator) Escalate(ctx context.Context, toolName, input string) (PermissionDecision, error) {
+func (b *BubbleEscalator) Escalate(ctx context.Context, toolName string, input json.RawMessage) (PolicyDecision, error) {
     if b.parentChain == nil {
-        return Decision{Action: ActionDeny, Reason: "root agent has no parent chain to bubble to"}, nil
+        return DecisionDeny, nil
     }
     // ... 转发到 parentChain
 }
@@ -162,7 +164,7 @@ func (b *BubbleEscalator) Escalate(ctx context.Context, toolName, input string) 
    → bubble: 委托给 BubbleEscalator，转发到父 agent 的权限链
    → default/auto: passthrough
 
-4. Hook 拦截（HookPreToolUse）
+4. Hook 拦截（hook.PreToolUse）
    → Hook 返回 allow/deny: 短路返回
    → 无 Hook 或 passthrough: 继续
 
@@ -183,21 +185,21 @@ func (b *BubbleEscalator) Escalate(ctx context.Context, toolName, input string) 
 ### 6.4 权限中间件集成
 
 ```go
-// PermissionMiddleware 将权限链集成到 Agent 的工具执行流程中。
+// PolicyMiddleware 将权限链集成到 Agent 的工具执行流程中。
 // 替代当前的 Confirm 中间件，提供更细粒度的控制。
-func PermissionMiddleware(chain *PermissionChain) ToolMiddleware {
+func PolicyMiddleware(chain *PolicyChain) ToolMiddleware {
     return func(next ToolHandler) ToolHandler {
-        return ToolHandlerFunc(func(ctx context.Context, input string) (string, error) {
+        return ToolHandlerFunc(func(ctx context.Context, input json.RawMessage) (*tools.Result, error) {
             toolCtx := tools.FromContext(ctx)
             decision, err := chain.Check(ctx, toolCtx.Name(), input)
             if err != nil {
-                return "", err
+                return nil, err
             }
             switch decision {
-            case PermissionDeny:
-                return "", ErrPermissionDenied
-            case PermissionAsk:
-                return "", ErrPermissionAsk
+            case DecisionDeny:
+                return nil, ErrPolicyDenied
+            case DecisionAsk:
+                return nil, ErrPolicyAsk
             default:
                 return next.Handle(ctx, input)
             }
@@ -379,17 +381,17 @@ package planmode
 // EnterPlanModeTool 切换 Agent 到 plan 模式。
 // 模型在判断任务需要先探索和规划时调用此工具。
 type EnterPlanModeTool struct {
-    modeManager *permission.ModeManager
+    modeManager *policy.ModeManager
     planDir     string // 计划文件目录，如 ~/.blades/plans/
 }
 
-func NewEnterPlanModeTool(mm *permission.ModeManager, planDir string) tools.Tool
+func NewEnterPlanModeTool(mm *policy.ModeManager, planDir string) tools.Tool
 
 func (t *EnterPlanModeTool) Handle(ctx context.Context, input string) (string, error) {
-    if err := t.modeManager.Transition(permission.ModeTransition{
+    if err := t.modeManager.Transition(policy.ModeTransition{
         From:   t.modeManager.Current(),
-        To:     permission.ModePlan,
-        Source: permission.TransitionTool,
+        To:     policy.ModePlan,
+        Source: policy.TransitionTool,
     }); err != nil {
         return "", err
     }
@@ -418,15 +420,15 @@ type AllowedPrompt struct {
 
 // ExitPlanModeTool 读取计划文件，提交用户审批，退出 plan 模式。
 type ExitPlanModeTool struct {
-    modeManager *permission.ModeManager
+    modeManager *policy.ModeManager
     planDir     string
-    promptUser  permission.UserPromptFunc
+    promptUser  policy.UserPromptFunc
 }
 
-func NewExitPlanModeTool(mm *permission.ModeManager, planDir string, promptUser permission.UserPromptFunc) tools.Tool
+func NewExitPlanModeTool(mm *policy.ModeManager, planDir string, promptUser policy.UserPromptFunc) tools.Tool
 
 func (t *ExitPlanModeTool) Handle(ctx context.Context, input string) (string, error) {
-    if t.modeManager.Current() != permission.ModePlan {
+    if t.modeManager.Current() != policy.ModePlan {
         return "", fmt.Errorf("not in plan mode")
     }
 
@@ -456,9 +458,9 @@ func (t *ExitPlanModeTool) Handle(ctx context.Context, input string) (string, er
 
     // AllowedPrompts 转为 session 级 allow 规则
     for _, ap := range params.AllowedPrompts {
-        t.addSessionRule(ctx, PermissionRule{
+        t.addSessionRule(ctx, Rule{
             Source:   SourceSession,
-            Behavior: PermissionAllow,
+            Behavior: DecisionAllow,
             ToolName: ap.Tool,
             Pattern:  ap.Prompt, // 语义描述作为 pattern，由规则匹配器解释
         })
@@ -476,7 +478,7 @@ func (t *ExitPlanModeTool) IsReadOnly() bool { return false }
 // PlanModePromptSection 是 blades.PromptBuilder 的动态 section。
 // Plan 模式激活时注入只读指令和计划文件路径。
 type PlanModePromptSection struct {
-    modeManager *permission.ModeManager
+    modeManager *policy.ModeManager
     planDir     string
 }
 
@@ -484,7 +486,7 @@ func (s *PlanModePromptSection) Name() string     { return "plan_mode" }
 func (s *PlanModePromptSection) Priority() int     { return 50 }
 
 func (s *PlanModePromptSection) Build(ctx context.Context) (string, error) {
-    if s.modeManager.Current() != permission.ModePlan {
+    if s.modeManager.Current() != policy.ModePlan {
         return "", nil
     }
     sessionID := session.IDFromContext(ctx)
@@ -507,8 +509,8 @@ func (s *PlanModePromptSection) Build(ctx context.Context) (string, error) {
 // FilterToolsForMode 根据当前模式过滤工具列表。
 // Plan 模式下只保留只读工具 + plan 工具 + PlanModeTool 声明的工具。
 // 其他模式返回完整工具列表。
-func FilterToolsForMode(allTools []tools.Tool, mode permission.Mode) []tools.Tool {
-    if mode != permission.ModePlan {
+func FilterToolsForMode(allTools []tools.Tool, mode policy.Mode) []tools.Tool {
+    if mode != policy.ModePlan {
         return allTools
     }
     filtered := make([]tools.Tool, 0, len(allTools))
@@ -632,14 +634,14 @@ type AutoModeController struct {
 func NewAutoModeController(classifier Classifier, mm *ModeManager, opts ...AutoModeOption) *AutoModeController
 
 // Evaluate 运行 auto 模式决策管线。
-// 返回 PermissionAllow/PermissionDeny/PermissionAsk（fallback 到用户提示）。
+// 返回 DecisionAllow/DecisionDeny/DecisionAsk（fallback 到用户提示）。
 func (c *AutoModeController) Evaluate(
     ctx context.Context, toolName, input string, messages []*model.Message, systemPrompt string,
-) (PermissionDecision, error) {
+) (PolicyDecision, error) {
     // 1. 快速路径：acceptEdits 安全的工具直接批准，跳过分类器
     if c.acceptEdits != nil {
         if allowed, _ := c.acceptEdits.Check(ctx, toolName, input); allowed {
-            return PermissionAllow, nil
+            return DecisionAllow, nil
         }
     }
 
@@ -649,7 +651,7 @@ func (c *AutoModeController) Evaluate(
         _ = c.modeManager.Transition(ModeTransition{
             From: ModeAuto, To: ModeDefault, Source: TransitionSystem,
         })
-        return PermissionAsk, nil
+        return DecisionAsk, nil
     }
 
     // 3. 运行分类器
@@ -661,16 +663,16 @@ func (c *AutoModeController) Evaluate(
         Rules:        c.rules,
     })
     if err != nil || result.Unavailable {
-        return PermissionAsk, nil // 分类器不可用 → 提示用户，不是拒绝
+        return DecisionAsk, nil // 分类器不可用 → 提示用户，不是拒绝
     }
 
     // 4. 更新熔断器状态
     if result.ShouldBlock {
         c.denialTracker.RecordDenial()
-        return PermissionDeny, nil
+        return DecisionDeny, nil
     }
     c.denialTracker.RecordSuccess()
-    return PermissionAllow, nil
+    return DecisionAllow, nil
 }
 ```
 
@@ -803,7 +805,7 @@ const (
     SeverityBlock SafetySeverity = iota
 
     // SeverityConfirm 需要用户确认，但不绝对禁止。
-    // 用于敏感文件写入（.git/hooks、.blades/settings.json 等），
+    // 用于敏感文件写入（.git/hooks、.blades/config.json 等），
     // 用户可能有合理理由需要写入这些文件。
     // 在 auto 模式下，分类器可以覆盖此级别。
     SeverityConfirm
@@ -827,7 +829,7 @@ func (c *DefaultSafetyChecker) Check(ctx context.Context, toolName, input string
     // 检查 2：敏感文件保护（SeverityConfirm）
     // 标记对 .git/、.blades/、shell 配置等敏感路径的写入。
     // 使用 SeverityConfirm 而非 SeverityBlock，因为用户可能有合理理由
-    // 写入这些文件（如配置 git hooks、更新 .blades/settings.json）。
+    // 写入这些文件（如配置 git hooks、更新 .blades/config.json）。
     if c.isSensitiveFilePath(toolName, input) {
         return &SafetyViolation{Reason: "write to sensitive file path", Severity: SeverityConfirm}
     }
@@ -867,18 +869,18 @@ func NewAgent(opts ...AgentOption) Agent {
 **AgentOption 注入：**
 
 ```go
-func WithModeManager(mm *permission.ModeManager) AgentOption
-func WithClassifier(c permission.Classifier) AgentOption
-func WithAcceptEditsChecker(c *permission.AcceptEditsChecker) AgentOption
-func WithSafetyChecker(c permission.SafetyChecker) AgentOption
+func WithModeManager(mm *policy.ModeManager) AgentOption
+func WithClassifier(c policy.Classifier) AgentOption
+func WithAcceptEditsChecker(c *policy.AcceptEditsChecker) AgentOption
+func WithSafetyChecker(c policy.SafetyChecker) AgentOption
 ```
 
 **ModeManager.OnChange 事件：**
 
 ```go
 // 模式变更时发射 Hook 事件，供可观测性和 UI 使用。
-modeManager.OnChange(func(from, to permission.Mode) {
-    hookRegistry.Emit(ctx, &hook.HookModeChange{From: from, To: to})
+modeManager.OnChange(func(from, to policy.Mode) {
+    hookRegistry.Emit(ctx, &hook.ModeChange{From: from, To: to})
 })
 ```
 
@@ -890,13 +892,13 @@ modeManager.OnChange(func(from, to permission.Mode) {
   ├─→ ModeManager.Transition()
   │     ├─→ 验证转换规则
   │     ├─→ 更新 ModeState
-  │     └─→ 触发 OnChange → HookModeChange
+  │     └─→ 触发 OnChange → hook.ModeChange
   │
   ├─→ 下一轮 ContextBuilder.Build()
   │     ├─→ FilterToolsForMode（plan 模式过滤写入工具）
   │     └─→ PlanModePromptSection（plan 模式注入指令）
   │
-  └─→ 工具执行时 PermissionChain.Check()
+  └─→ 工具执行时 PolicyChain.Check()
         ├─→ 第 3 层：模式决策（bubble → BubbleEscalator 委托父 agent）
         └─→ 第 7 层：后处理（auto → Classifier / dont_ask → DENY / bypass_permissions → ALLOW）
 ```
@@ -909,14 +911,14 @@ modeManager.OnChange(func(from, to permission.Mode) {
 
 3. **Plan 模式过滤工具列表 + WritePlanTool** — Plan 模式下从发送给模型的工具列表中移除写入工具，但保留专用的 `WritePlanTool`（只能写入 planDir）。这解决了「过滤写入工具」和「模型需要写计划文件」之间的矛盾。权限链仍作为双重保障。
 
-4. **安全检查双级别** — SafetyViolation 区分 `SeverityBlock`（绝对禁止，如路径遍历）和 `SeverityConfirm`（需确认，如敏感文件写入）。敏感文件不是绝对禁止——用户可能需要配置 git hooks 或更新 .blades/settings.json。SeverityConfirm 跳过模式决策直接进入后处理层（auto 模式下分类器可覆盖）。
+4. **安全检查双级别** — SafetyViolation 区分 `SeverityBlock`（绝对禁止，如路径遍历）和 `SeverityConfirm`（需确认，如敏感文件写入）。敏感文件不是绝对禁止——用户可能需要配置 git hooks 或更新 .blades/config.json。SeverityConfirm 跳过模式决策直接进入后处理层（auto 模式下分类器可覆盖）。
 
 5. **模式转换状态机** — 显式转换规则表防止非法转换。例如 auto 模式只能通过 system 来源降级到 default（熔断器触发），不能通过 tool 来源直接跳到其他模式。Plan 模式的暂存/恢复机制确保退出 plan 后恢复用户之前的模式选择。
 
 6. **模式切换时序** — 模式切换立即生效于 ModeState。权限链在每次工具执行时读取当前模式，因此当前轮次的后续工具调用立即受影响。工具列表过滤和 prompt 注入在下一轮 ContextBuilder.Build() 时体现。
 
-7. **AllowedPrompts 闭环** — ExitPlanModeTool 的 AllowedPrompts 在用户审批后直接转为 session 级 PermissionRule，由 PermissionChain 的规则匹配层处理。语义描述作为 pattern 字段，规则匹配器负责解释。
+7. **AllowedPrompts 闭环** — ExitPlanModeTool 的 AllowedPrompts 在用户审批后直接转为 session 级 Rule，由 PolicyChain 的规则匹配层处理。语义描述作为 pattern 字段，规则匹配器负责解释。
 
-8. **Bubble 模式实现子 agent 权限委托** — 子 agent 使用 ModeBubble 时，权限决策通过 BubbleEscalator 转发到父 agent 的 PermissionChain，父链运行完整的 7 层决策管线。这避免了在子 agent 中重复配置父 agent 的权限规则（规则、分类器、用户交互等），同时保证父 agent 对子 agent 的工具调用拥有完整的权限控制。Bubble 模式下子 agent 不做任何自主权限决策。
+8. **Bubble 模式实现子 agent 权限委托** — 子 agent 使用 ModeBubble 时，权限决策通过 BubbleEscalator 转发到父 agent 的 PolicyChain，父链运行完整的 7 层决策管线。这避免了在子 agent 中重复配置父 agent 的权限规则（规则、分类器、用户交互等），同时保证父 agent 对子 agent 的工具调用拥有完整的权限控制。Bubble 模式下子 agent 不做任何自主权限决策。
 
 9. **dontAsk 和 bypassPermissions 面向 SDK/headless 场景** — 在 SDK 集成、CI 流水线、后台任务等无人交互场景中，ASK 决策无法提示用户。ModeDontAsk 将 ASK 转为 DENY，适用于安全优先的场景（CI 流水线、不受信任的输入）；ModeBypassPermissions 将 ASK 转为 ALLOW，适用于受信任环境（内部工具链、预审批的自动化任务）。两种模式都在第 7 层后处理中生效，SafetyChecker（第 1 层）仍然 bypass-immune——SeverityBlock 绝对拒绝，确保即使在 bypass_permissions 模式下也无法执行路径遍历等危险操作。

@@ -45,7 +45,7 @@ tags: [streaming, performance, core]
 ```mermaid
 graph LR
     A[ModelProvider] -->|生成| B[Buffer]
-    B -->|背压控制| C[Generator]
+    B -->|背压控制| C[iter.Seq2]
     C -->|消费| D[Application]
     E[ErrorHandler] -.监控.-> B
     E -.监控.-> C
@@ -114,35 +114,36 @@ type BackpressureController struct {
 ### 配置选项
 
 ```go
-type StreamingOptions struct {
+type StreamOptions struct {
     BufferSize      int           // 缓冲区大小，默认 100
     BackpressureEnabled bool      // 是否启用背压，默认 true
     MaxWaitTime     time.Duration // 最大等待时间，默认 30s
 }
 
-func WithStreamingOptions(opts StreamingOptions) ModelOption {
-    return func(o *modelOptions) {
-        o.streamingOpts = opts
-    }
+type Request struct {
+    Messages      []*model.Message
+    Tools         []model.ToolSpec
+    StreamOptions StreamOptions
 }
 ```
 
 ### 使用示例
 
 ```go
-model := openai.NewModel("gpt-4", openai.Config{
+provider := openai.NewProvider("gpt-4", openai.Config{
     APIKey: os.Getenv("OPENAI_API_KEY"),
 })
 
-stream := model.NewStreaming(ctx, req, 
-    blades.WithStreamingOptions(blades.StreamingOptions{
-        BufferSize: 200,
-        BackpressureEnabled: true,
-    }),
-)
+req.StreamOptions = model.StreamOptions{
+    BufferSize:          200,
+    BackpressureEnabled: true,
+}
 
-for msg := range stream.Next() {
-    // 处理消息
+for resp, err := range provider.Stream(ctx, req) {
+    if err != nil {
+        return err
+    }
+    // 处理 resp
 }
 ```
 
@@ -151,7 +152,7 @@ for msg := range stream.Next() {
 ### 阶段 1: 核心实现（已完成）
 - [x] 实现环形缓冲区
 - [x] 实现背压控制器
-- [x] 集成到 Generator
+- [x] 集成到 `iter.Seq2` 流式返回路径
 
 ### 阶段 2: 测试与优化（已完成）
 - [x] 单元测试
@@ -177,16 +178,12 @@ for msg := range stream.Next() {
 
 ## 兼容性
 
-### 向后兼容
-- 默认配置保持原有行为
-- 新增的配置选项都是可选的
-- 不影响现有代码
+最终设计不保留旧 `NewStreaming` API。流式能力统一收敛到 `model.Provider.Stream(ctx, *model.Request)`，背压和缓冲策略通过 `model.Request.StreamOptions` 或 Agent 配置在构造 request 时写入。
 
 ### 迁移指南
-无需迁移，完全向后兼容。如需启用新特性：
+如需启用新特性：
 ```go
-// 添加配置选项即可
-blades.WithStreamingOptions(...)
+req.StreamOptions = model.StreamOptions{BufferSize: 200}
 ```
 
 ## 风险与缓解

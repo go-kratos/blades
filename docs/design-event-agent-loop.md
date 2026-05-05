@@ -9,97 +9,129 @@ modules: [module-1]
 
 # Event 系统与 Agent Loop 状态机
 
-## Event 系统设计
+## 设计结论
 
-Event 系统是整个框架的顶层架构。核心思想：**类型安全的双向 Event 通信，Agent 是纯函数**。
+Event 和 Message 保持分层，不合并。
 
-### 三层架构
+- `event/` 是用户协议层，只描述用户输入和 Agent 输出，不导入 `model/`。
+- `model/` 是模型上下文层，只描述 Provider、Session、Compression 需要的 Message/Part，不导入 `event/`。
+- Agent Loop 是唯一转换边界：`Event -> Agent Loop conversion -> Provider(Message/Part)`。
+- 输入和输出都必须支持多模态。输入使用 `InputPart`，输出使用 `OutputPart`，不能把输出简化为文本。
+- 用户直接导入 `event/` 使用 Event 类型。根包 `blades` 不 re-export Event 类型，也不提供 Event 构造函数。
+
+这个分层的核心收益是依赖图稳定：Event 层不会因为 Provider message schema 演进而变化，Provider 层也不会被用户交互事件污染。
+
+## 架构位置
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  User Layer（blades/ 根包）                               │
-│    <-chan InputEvent  ──→  Agent  ──→  <-chan OutputEvent  │
-│    输入 channel                       输出 channel        │
+│  User Layer                                               │
+│    blades.Agent                                           │
+│    <-chan event.Input -> Agent -> <-chan event.Output      │
+│    用户代码直接依赖 event/，根包不提供 Event 别名             │
 ├──────────────────────────────────────────────────────────┤
-│  Agent Loop（状态机，根包内部实现）                        │
-│    States: Idle → Preparing → Streaming → Acting → StopHooks│
-│    从 input channel 读取，向 output channel 写入          │
-│    编排 Service Layer 完成具体工作                        │
+│  event/（叶子包，用户协议 DTO）                            │
+│    Input, Output                                          │
+│    InputPart, OutputPart                                  │
+│    Prompt, Steer, PartDelta, ToolEnd                       │
 ├──────────────────────────────────────────────────────────┤
-│  Internal Service Layer（Agent Loop 私有实现）             │
-│    ContextBuilder:    Session → 压缩 → 过滤 → model.Request│
-│    streamAndRecord:   Provider Stream → Event + Session    │
+│  Agent Loop（internal/loop，转换与状态机）                  │
+│    event.InputPart  -> model.Part                         │
+│    model.Response   -> event.Output                       │
+│    tools.Result     -> event.OutputPart + model.ToolResultPart
 ├──────────────────────────────────────────────────────────┤
-│  Capability Service Layer（用户可配置能力层）              │
-│    Compression:       6 策略分层压缩管线                  │
-│    ToolOrchestrator:  流式执行 + 并发分区                 │
-│    PermissionChain:   分层权限决策                         │
-│    HookRegistry:      生命周期事件订阅                     │
-│    RetryPolicy:       API 错误处理与重试                   │
+│  Internal Service Layer                                   │
+│    ContextBuilder: Session -> compact -> model.Request     │
+│    streamAndRecord: Provider stream -> Event + Session     │
 ├──────────────────────────────────────────────────────────┤
-│  model/（纯类型包：Message + Provider 接口 + Request/Response）
-│    model.Provider.NewStreaming(ctx, *model.Request)        │
+│  model/（模型协议 DTO + Provider 接口）                    │
+│    model.Message, model.Part, model.Request, model.Response│
+│    model.Provider.Stream(ctx, *model.Request)              │
 ├──────────────────────────────────────────────────────────┤
-│  contrib/（Provider 实现，各自处理格式转换）               │
-│    Anthropic / OpenAI / Gemini 实现 model.Provider        │
+│  contrib/*                                                 │
+│    Anthropic / OpenAI / Gemini 实现 model.Provider         │
 └──────────────────────────────────────────────────────────┘
 ```
 
-**为什么需要这个分层？**
+`event/` 和 `model/` 都是叶子协议包。它们可以有同名概念，例如 Text/File/Data/JSON，但不共享 Go 类型。这样可以避免未来在其中一层添加 provider-only 字段或 UI-only 字段时污染另一层。
 
-当前 Blades 中 `*Message` 贯穿全栈——用户发送 `*Message`、Agent 返回 `Generator[*Message, error]`、Session 存储 `[]*Message`、Provider 接收 `*Message`。一个类型承担了三个不同职责（用户 I/O、对话历史、Provider 通信），导致用户需要理解 `Role`、`Status`、`Parts` 等内部概念才能使用框架。
-
-新设计将职责分离到不同层：Event 是用户协议（blades/ 根包），`model.Message` 是 Service Layer 和 Provider 层的内部表示。用户只需要知道"InputEvent 进，OutputEvent 出"。`model/` 包是纯类型定义，适配和转换逻辑在使用侧（Internal Service Layer 或 contrib/）。
-
-Service Layer 进一步拆分为两层：
-- **Internal Service Layer**（ContextBuilder、streamAndRecord）— Agent Loop 的私有实现，不暴露给用户。ContextBuilder 负责 session → model.Request（含压缩和消息过滤），streamAndRecord 负责 provider stream → OutputEvent + session 记录。
-- **Capability Service Layer**（Compression、ToolOrchestrator、PermissionChain、HookRegistry、RetryPolicy）— 用户可配置的能力层
-
-### Agent 接口
+## Agent 接口
 
 ```go
 type Agent interface {
     Name() string
     Description() string
-    Run(context.Context, <-chan InputEvent) (<-chan OutputEvent, error)
+    Run(context.Context, <-chan event.Input) (<-chan event.Output, error)
 }
 ```
 
-三个方法。`Run` 接收 InputEvent 输入 channel，返回 OutputEvent 输出 channel。启动失败返回 error，运行时错误通过 `ErrorEvent` / `DoneEvent` 传递。输入和输出使用不同的 Event 接口，编译期防止方向错误。
+`Run` 启动失败返回 error，运行时状态和错误通过 `event.Output` 传递。输入 channel 关闭表示用户不再发送新输入，Agent 在当前可完成工作结束后关闭输出 channel。
 
-### Event 类型
-
-Event 分为 `InputEvent` 和 `OutputEvent` 两个接口，通过不同的 marker method 区分方向。编译器可以阻止将 `TextEvent` 塞进 input channel 或将 `PromptEvent` 从 output channel 读出来。
+稳定运行信息通过 `context.Context` 传递，而不是塞进每个 event：
 
 ```go
-type InputEvent interface{ inputEvent() }
-type OutputEvent interface{ outputEvent() }
+package scope
+
+type Scope struct {
+    RunID       string
+    AppID       string
+    AgentID     string
+    SessionID   string
+    UserID      string
+    ChannelID   string
+    WorkspaceID string
+}
+
+func NewContext(ctx context.Context, scope Scope) context.Context
+func FromContext(ctx context.Context) (Scope, bool)
 ```
 
-**输入方向（用户 → Agent）：**
+`Scope` 在一次 `Run` 内保持稳定。Agent Loop 从 context 读取 `SessionID`、`WorkspaceID` 等运行信息；`event/` 不承载 `SessionID`、`UserID`、`ChannelID` 或 `TraceID`。Trace 使用 OpenTelemetry 的 context 传播。禁止把大对象、可变 map、消息历史或工具结果塞进 context。
+
+## Event 类型
+
+### 基础接口
 
 ```go
-// PromptEvent 发送一条消息。
-type PromptEvent struct {
-    Content     string       `json:"content"`
-    Attachments []Attachment `json:"attachments,omitempty"`
+package event
+
+type Input interface{ input() }
+type Output interface{ output() }
+
+type InputPart interface{ inputPart() }
+type OutputPart interface{ outputPart() }
+```
+
+`Input` 和 `Output` 本身就是事件接口联合，channel 中直接传具体事件，不再使用 `Input{Event: ...}` 或 `Output{Event: ...}` 这类二次封装。marker method 使用非导出方法，确保 Event/Part 判别联合由框架控制。后续如需要开放扩展，应显式设计 `CustomPart` 或注册机制，而不是默认开放。
+
+### 多模态输入
+
+```go
+type Prompt struct {
+    Parts []InputPart `json:"parts"`
 }
 
-// SteerEvent 在 Agent 工作中途注入指令。
-// 精确语义：Steer 在当前轮次的所有工具执行完成后、下一轮
-// ContextBuilder.Build 之前，按 FIFO 顺序注入为 user message。
-// 如果模型正在 streaming，Steer 不会中断当前 streaming，
-// 而是排队等待当前轮次结束。多个 Steer 按到达顺序排列。
-type SteerEvent struct {
-    Content string `json:"content"`
+type Steer struct {
+    Parts []InputPart `json:"parts"`
 }
 
-// ControlEvent 控制 Agent 行为。
-type ControlEvent struct {
+type Control struct {
     Action ControlAction `json:"action"`
 }
 
+type Notification struct {
+    Source   string         `json:"source"`
+    Kind     string         `json:"kind"`
+    ID       string         `json:"id,omitempty"`
+    Status   string         `json:"status,omitempty"`
+    Parts    []InputPart    `json:"parts,omitempty"`
+    Metadata map[string]any `json:"metadata,omitempty"`
+    Usage    *Usage         `json:"usage,omitempty"`
+    Err      error          `json:"-"`
+}
+
 type ControlAction string
+
 const (
     ActionAbort  ControlAction = "abort"
     ActionPause  ControlAction = "pause"
@@ -107,179 +139,304 @@ const (
 )
 ```
 
-**输出方向（Agent → 用户）：**
+`Prompt` 开始一轮用户输入。`Steer` 在 Agent 运行中途注入指令；它不会中断正在进行的模型 streaming，而是在当前轮次工具执行完成后、下一轮 `ContextBuilder.Build` 前按 FIFO 顺序转成 user message。
+
+`Notification` 是框架内部的输入通知，供 host、channel、orchestrator、后台 job 或长任务把状态回流到某个 Agent 的 input channel。它仍然属于 `event/` 包，原因是 `Input` 使用非导出 marker method，外部包不能自行定义新的输入事件类型。通知内容只使用 `InputPart`、`Usage` 和普通 metadata，不导入 `model/`。
+
+输入 Part：
 
 ```go
-// TextEvent 模型输出的文本片段。
-type TextEvent struct {
-    Delta string `json:"delta"`
+type TextInput struct {
+    Text string `json:"text"`
 }
 
-// ThinkingEvent 模型的思考过程（如 Claude extended thinking）。
-type ThinkingEvent struct {
-    Delta string `json:"delta"`
+type FileInput struct {
+    URI      string `json:"uri"`
+    MimeType string `json:"mimeType,omitempty"`
+    Name     string `json:"name,omitempty"`
 }
 
-// ToolStartEvent 开始执行工具调用。
-type ToolStartEvent struct {
-    CallID string `json:"callId"`
-    Name   string `json:"name"`
-    Args   string `json:"args"`
+type DataInput struct {
+    Data     []byte `json:"data"`
+    MimeType string `json:"mimeType"`
+    Name     string `json:"name,omitempty"`
 }
 
-// ToolEndEvent 工具执行完成。
-type ToolEndEvent struct {
-    CallID string `json:"callId"`
-    Name   string `json:"name"`
-    Result string `json:"result"`
-    Err    error  `json:"-"`
+type JSONInput struct {
+    Value any `json:"value"`
+}
+```
+
+选择 `TextInput` / `TextOutput` 这种方向性命名，而不是共用 `TextPart`，是为了让 Event API 的方向语义更清晰，并避免与 `model.TextPart` 产生包外歧义。
+
+### 多模态输出
+
+输出 Part：
+
+```go
+type PartKind string
+
+const (
+    PartText     PartKind = "text"
+    PartFile     PartKind = "file"
+    PartData     PartKind = "data"
+    PartJSON     PartKind = "json"
+    PartThinking PartKind = "thinking"
+)
+
+type TextOutput struct {
+    Text string `json:"text"`
 }
 
-// TurnEndEvent 一个完整轮次结束（含工具调用的轮次，或模型正常回复结束）。
-// 多轮对话中，用户在收到 TurnEndEvent 后决定是否继续发送 PromptEvent。
-type TurnEndEvent struct {
-    Turn    int         `json:"turn"`
-    Usage   *TokenUsage `json:"usage,omitempty"`
-    HasText bool        `json:"hasText"` // true = 模型正常回复结束（无工具调用）
+type FileOutput struct {
+    URI      string `json:"uri"`
+    MimeType string `json:"mimeType,omitempty"`
+    Name     string `json:"name,omitempty"`
 }
 
-// ErrorEvent 可恢复的运行时错误（如 API 限流重试）。
-type ErrorEvent struct {
+type DataOutput struct {
+    Data     []byte `json:"data"`
+    MimeType string `json:"mimeType"`
+    Name     string `json:"name,omitempty"`
+}
+
+type JSONOutput struct {
+    Value any `json:"value"`
+}
+
+type ThinkingOutput struct {
+    Text string `json:"text"`
+}
+```
+
+输出 Event：
+
+```go
+type PartStart struct {
+    Turn  int      `json:"turn"`
+    ID    string   `json:"id"`
+    Index int      `json:"index"`
+    Kind  PartKind `json:"kind"`
+}
+
+type PartDelta struct {
+    Turn  int        `json:"turn"`
+    ID    string     `json:"id"`
+    Index int        `json:"index"`
+    Delta OutputPart `json:"delta"`
+}
+
+type PartEnd struct {
+    Turn  int        `json:"turn"`
+    ID    string     `json:"id"`
+    Index int        `json:"index"`
+    Part  OutputPart `json:"part"`
+}
+```
+
+`PartDelta` 是流式主路径。文本、thinking、结构化 JSON、文件引用、二进制数据都通过 `OutputPart` 表达。Provider 不支持某些 delta 类型时，Agent Loop 可以只发 `PartEnd`。
+
+### 工具事件
+
+```go
+type ToolStart struct {
+    Turn   int             `json:"turn"`
+    CallID string          `json:"callId"`
+    Name   string          `json:"name"`
+    Args   json.RawMessage `json:"args"`
+}
+
+type ToolDelta struct {
+    Turn   int        `json:"turn"`
+    CallID string     `json:"callId"`
+    Delta  OutputPart `json:"delta"`
+}
+
+type ToolEnd struct {
+    Turn   int          `json:"turn"`
+    CallID string       `json:"callId"`
+    Name   string       `json:"name"`
+    Result []OutputPart `json:"result,omitempty"`
+    Err    error        `json:"-"`
+}
+```
+
+工具结果也是多模态的。`tools/` 包不导入 `model/`，工具执行完成后由 Agent Loop 同时转换为：
+
+- 给用户看的 `ToolDelta` / `ToolEnd{Result: []event.OutputPart}`
+- 给下一轮 Provider 的 `model.ToolResultPart`
+
+### 轮次和生命周期
+
+```go
+type Usage struct {
+    InputTokens       int64 `json:"inputTokens,omitempty"`
+    OutputTokens      int64 `json:"outputTokens,omitempty"`
+    TotalTokens       int64 `json:"totalTokens,omitempty"`
+    CachedInputTokens int64 `json:"cachedInputTokens,omitempty"`
+}
+
+type StopReason string
+
+const (
+    StopReasonStop          StopReason = "stop"
+    StopReasonToolUse       StopReason = "tool_use"
+    StopReasonMaxOutput     StopReason = "max_output"
+    StopReasonContentFilter StopReason = "content_filter"
+)
+
+type TurnEnd struct {
+    Turn       int          `json:"turn"`
+    StopReason StopReason   `json:"stopReason"`
+    Parts      []OutputPart `json:"parts,omitempty"`
+    Usage      *Usage       `json:"usage,omitempty"`
+}
+
+type Error struct {
     Err     error         `json:"-"`
     Retry   bool          `json:"retry"`
     RetryIn time.Duration `json:"retryIn,omitempty"`
 }
 
-// DoneEvent Agent 生命周期结束。
-// 这是 output channel 关闭前的最后一个事件。
-// 注意：DoneEvent 严格表示 Agent 终止，不用于表示"一轮完成"。
-// 模型正常回复结束发 TurnEndEvent{HasText: true}，不发 DoneEvent。
-type DoneEvent struct {
+type Done struct {
     Reason TerminalReason `json:"reason"`
-    Text   string         `json:"text"`
-    Usage  *TokenUsage    `json:"usage,omitempty"`
+    Err    error          `json:"-"`
 }
 
 type TerminalReason string
+
 const (
-    ReasonMaxTurns  TerminalReason = "max_turns"
-    ReasonAborted   TerminalReason = "aborted"
-    ReasonError     TerminalReason = "error"
+    ReasonInputClosed TerminalReason = "input_closed"
+    ReasonMaxTurns    TerminalReason = "max_turns"
+    ReasonAborted     TerminalReason = "aborted"
+    ReasonError       TerminalReason = "error"
 )
 ```
 
-**为什么拆分 InputEvent / OutputEvent？**
+`Done` 严格表示 Agent 生命周期结束，不承载最终文本。最终内容属于 `PartEnd` / `TurnEnd.Parts`。这避免 `Done.Text` 与流式 part 重复或不一致。
 
-- 编译期类型安全——`chan<- InputEvent` 和 `<-chan OutputEvent` 防止方向错误
-- Middleware 语义清晰——`InputMiddleware` 过滤用户指令，`OutputMiddleware` 过滤模型输出
-- 概念仍然简洁——用户只需理解"InputEvent 进，OutputEvent 出"
-- 方向由类型和 channel 双重表达，不会误用
+## Event 构造方式
 
-### 便捷函数
+Event 类型使用普通 struct literal 构造，不在根包增加别名或便捷函数：
 
 ```go
-// Prompt 创建 PromptEvent。
-func Prompt(content string, attachments ...Attachment) *PromptEvent
+event.Prompt{
+    Parts: []event.InputPart{
+        event.TextInput{Text: "hello"},
+        event.FileInput{URI: "file:///tmp/a.png", MimeType: "image/png"},
+    },
+}
 
-// Steer 创建 SteerEvent。
-func Steer(content string) *SteerEvent
-
-// Abort 创建中止 ControlEvent。
-func Abort() *ControlEvent
+event.Control{Action: event.ActionAbort}
 ```
 
-### 使用方式
+这样做让 Event 协议只有一个入口：类型定义、构造方式和 switch 处理都来自 `event/`。如果后续确实需要减少样板，应优先在调用侧封装业务 helper，而不是在根包提供第二套 Event API。
 
-**简单场景——单次调用：**
+## 使用方式
+
+### 单次调用
 
 ```go
-input := make(chan InputEvent, 1)
-input <- Prompt("hello")
+input := make(chan event.Input, 1)
+input <- event.Prompt{
+    Parts: []event.InputPart{
+        event.TextInput{Text: "hello"},
+    },
+}
 close(input)
 
 output, err := agent.Run(ctx, input)
 if err != nil {
     log.Fatal(err)
 }
-for event := range output {
-    switch e := event.(type) {
-    case *TextEvent:    fmt.Print(e.Delta)
-    case *ErrorEvent:   log.Printf("error: %v", e.Err)
-    case *TurnEndEvent: fmt.Println() // 模型回复结束
+
+for ev := range output {
+    switch e := ev.(type) {
+    case event.PartDelta:
+        if text, ok := e.Delta.(event.TextOutput); ok {
+            fmt.Print(text.Text)
+        }
+    case event.Error:
+        log.Printf("error: %v", e.Err)
+    case event.TurnEnd:
+        fmt.Println()
     }
 }
-// output channel 关闭，for range 自然退出
 ```
 
-**Live 场景——中途注入 Steer：**
+### Live steering
 
 ```go
-input := make(chan InputEvent, 1)
-input <- Prompt("分析这段代码")
+input := make(chan event.Input, 4)
+input <- event.Prompt{
+    Parts: []event.InputPart{
+        event.TextInput{Text: "分析这段代码"},
+    },
+}
 
 output, err := agent.Run(ctx, input)
 if err != nil {
     log.Fatal(err)
 }
-for event := range output {
-    switch e := event.(type) {
-    case *TextEvent:
-        fmt.Print(e.Delta)
-    case *ToolStartEvent:
-        input <- Steer("同时检查测试覆盖率") // 排队，当前轮工具执行完后下一轮生效
-    case *TurnEndEvent:
-        if !e.HasText {
-            continue // 工具轮结束，等待下一轮
+
+for ev := range output {
+    switch e := ev.(type) {
+    case event.PartDelta:
+        if text, ok := e.Delta.(event.TextOutput); ok {
+            fmt.Print(text.Text)
         }
-        close(input) // 模型回复结束，关闭 input
+    case event.ToolStart:
+        input <- event.Steer{
+            Parts: []event.InputPart{
+                event.TextInput{Text: "同时检查测试覆盖率"},
+            },
+        }
+    case event.TurnEnd:
+        if e.StopReason == event.StopReasonToolUse {
+            continue
+        }
+        close(input)
     }
 }
 ```
 
-**多轮对话——同一个 channel：**
+### 多模态输出消费
 
 ```go
-input := make(chan InputEvent, 1)
-input <- Prompt("hello")
-
-output, err := agent.Run(ctx, input)
-if err != nil {
-    log.Fatal(err)
-}
-for event := range output {
-    switch e := event.(type) {
-    case *TextEvent:
-        fmt.Print(e.Delta)
-    case *TurnEndEvent:
-        if e.HasText {
-            if wantMore {
-                input <- Prompt("继续上面的话题") // 新一轮，同一个循环
-            } else {
-                close(input) // 关闭 input，Agent 结束，output 关闭，循环退出
-            }
+for ev := range output {
+    switch e := ev.(type) {
+    case event.PartDelta:
+        switch p := e.Delta.(type) {
+        case event.TextOutput:
+            fmt.Print(p.Text)
+        case event.ThinkingOutput:
+            debugLog(p.Text)
+        case event.JSONOutput:
+            renderJSON(p.Value)
         }
-    case *DoneEvent:
-        log.Printf("agent terminated: %s", e.Reason)
+    case event.PartEnd:
+        switch p := e.Part.(type) {
+        case event.FileOutput:
+            fmt.Printf("file: %s\n", p.URI)
+        case event.DataOutput:
+            saveBlob(p.Data, p.MimeType)
+        }
     }
 }
 ```
 
-### Middleware
-
-Middleware 分为输入和输出两种，类型签名不同，语义清晰：
+## Middleware
 
 ```go
-// InputMiddleware 过滤/转换用户指令。
-type InputMiddleware func(<-chan InputEvent) <-chan InputEvent
-
-// OutputMiddleware 过滤/转换模型输出。
-type OutputMiddleware func(<-chan OutputEvent) <-chan OutputEvent
+type InputMiddleware func(<-chan event.Input) <-chan event.Input
+type OutputMiddleware func(<-chan event.Output) <-chan event.Output
 ```
 
+Middleware 只操作 Event 协议，不操作 `model.Message`。需要基于模型上下文做决策的逻辑应放在 Agent Loop 能力层中，例如 Hook、Policy、ContextBuilder 或 ToolOrchestrator。
+
 ```go
-// 日志中间件（输出方向）
-func LogOutputEvents(in <-chan OutputEvent) <-chan OutputEvent {
-    out := make(chan OutputEvent)
+func LogOutput(in <-chan event.Output) <-chan event.Output {
+    out := make(chan event.Output)
     go func() {
         defer close(out)
         for e := range in {
@@ -291,285 +448,238 @@ func LogOutputEvents(in <-chan OutputEvent) <-chan OutputEvent {
 }
 ```
 
-### Service Layer 设计
+## Internal Service Layer
 
-Service Layer 分为两层：Internal Service Layer 是 Agent Loop 的私有实现细节，Capability Service Layer 是用户可配置的能力层。
-
-#### Internal Service Layer（Agent Loop 私有实现）
-
-##### ContextBuilder（Session → model.Request）
+### ContextBuilder
 
 ```go
-// ContextBuilder 从 Session 构建 Provider 请求。
-// 内部通过 filterForProvider 私有方法处理消息过滤/转换：
-//   - ThinkingPart → 根据 provider 能力决定保留或转为文本
-//   - CompactionSummaryPart → 转为 system message
-//   - BranchMarkerPart → 过滤掉
-// 不暴露独立的 MessageConverter 接口，转换规则与构建逻辑紧密耦合。
 type ContextBuilder struct {
     compression *compact.Pipeline
-    prompt      *PromptBuilder // blades.PromptBuilder
+    prompt      *blades.PromptBuilder
 }
 
-func (b *ContextBuilder) Build(ctx context.Context, session session.Session, tools []tools.Tool) (*model.Request, error)
+func (b *ContextBuilder) Build(
+    ctx context.Context,
+    session session.Session,
+    input []event.InputPart,
+    steer [][]event.InputPart,
+    tools []tools.Tool,
+) (*model.Request, error)
 ```
 
-##### streamAndRecord（Provider Stream → Event + Session）
+职责：
+
+- 将 `event.InputPart` 转为 user `model.Message`。
+- 将 session 历史、system prompt、压缩结果和工具声明组装成 `model.Request`。
+- 将 `tools.Tool` 的 schema 转成 `model.ToolSpec`，避免 `model/` 依赖 `tools/`。
+- 执行 provider 能力过滤，例如 thinking 支持、文件支持、cache breakpoint 支持。
+
+不单独暴露 `MessageConverter` 接口。转换规则和 ContextBuilder 的上下文预算、provider 能力过滤强相关，作为私有实现更容易保持一致。
+
+### streamAndRecord
 
 ```go
-// streamAndRecord 是 agent loop 的私有方法，同时完成三件事：
-// 1. 从 provider stream 读取 → 转为 OutputEvent 写入 output channel
-// 2. 累积完整的 model.Message（含 tool calls）
-// 3. 将完整消息写入 session
-//
-// 这是 Claude Code processApiTurn 和 pi-agent runInference 的等价实现。
-// 不作为独立接口暴露，因为它与 agent loop 状态紧密耦合。
 func (a *agent) streamAndRecord(
     ctx context.Context,
     stream iter.Seq2[*model.Response, error],
     session session.Session,
-    output chan<- OutputEvent,
+    output chan<- event.Output,
 ) (msg *model.Message, toolCalls []ToolCall, err error)
 ```
 
-注意：格式转换逻辑（如 Anthropic 的 tool_use/tool_result 拆分、OpenAI 的 function_call 格式）
-不在 Internal Service Layer 中，而是由各 `contrib/*` 包在实现 `model.Provider` 接口时内部处理。
-Internal Service Layer 只操作 `model.Message` 和 `model.Request`，不感知 Provider 特定格式。
+职责：
 
-### 数据流
+- 将 `model.Response` 增量转为 `PartStart` / `PartDelta` / `PartEnd` / `ToolStart`。
+- 累积完整 assistant `model.Message` 并写入 session。
+- 提取完整 tool calls，交给 ToolOrchestrator 执行。
+- 将 usage 从 `model.TokenUsage` 转为 `event.Usage`。
+
+Provider 特定格式转换仍在 `contrib/*` 内部完成。Internal Service Layer 只处理 provider-neutral 的 `model.Response`。
+
+## 数据流
 
 ```
-User                                Agent Loop
-  │                                     │
-  │  input <- Prompt("hello")           │
-  │ ──────────────────────────────→     │
-  │                                     ├─→ ContextBuilder.Build(session)
-  │                                     │     → *model.Request
-  │                                     ├─→ provider.NewStreaming(request)
-  │                                     ├─→ streamAndRecord(stream, session, output)
-  │     ←──────────────────────────     │     → TextEvent
-  │  output: TextEvent                  │
-  │     ←──────────────────────────     │     → TextEvent
-  │  output: TextEvent                  │
-  │                                     │     → ToolStartEvent
-  │     ←──────────────────────────     │
-  │  output: ToolStartEvent             │
-  │                                     ├─→ tool.Handle(ctx, args)
-  │  input <- Steer("检查测试")         │
-  │ ──────────────────────────────→     │  ← Steer 排队，当前轮工具完成后下一轮生效
-  │                                     │
-  │     ←──────────────────────────     │     → ToolEndEvent
-  │  output: ToolEndEvent               │
-  │     ←──────────────────────────     │     → TurnEndEvent{HasText: false}
-  │  output: TurnEndEvent               │
-  │                                     │  ... 下一轮（含 Steer 内容）...
-  │     ←──────────────────────────     │     → TextEvent ...
-  │     ←──────────────────────────     │     → TurnEndEvent{HasText: true}
-  │  output: TurnEndEvent               │
-  │                                     │  ← 等待用户决定是否继续
-  │  close(input)                       │  → output 关闭
+User                                  Agent Loop
+  │                                       │
+  │ input <- event.Prompt{Parts: ...}     │
+  │ ───────────────────────────────────→  │
+  │                                       ├─→ event.InputPart -> model.Part
+  │                                       ├─→ ContextBuilder.Build(session)
+  │                                       │     -> *model.Request
+  │                                       ├─→ provider.Stream(ctx, request)
+  │                                       ├─→ streamAndRecord(...)
+  │  output: PartStart                   │
+  │ ←───────────────────────────────────  │
+  │  output: PartDelta{TextOutput}        │
+  │ ←───────────────────────────────────  │
+  │  output: ToolStart                    │
+  │ ←───────────────────────────────────  │
+  │                                       ├─→ tool.Handle(ctx, args)
+  │ input <- Steer("检查测试")            │
+  │ ───────────────────────────────────→  │  Steer 排队
+  │  output: ToolEnd{[]OutputPart}        │
+  │ ←───────────────────────────────────  │
+  │  output: TurnEnd{tool_use}            │
+  │ ←───────────────────────────────────  │
+  │                                       │  下一轮注入 Steer
+  │  output: PartDelta{TextOutput}        │
+  │ ←───────────────────────────────────  │
+  │  output: TurnEnd{stop}                │
+  │ ←───────────────────────────────────  │
+  │ close(input)                          │
+  │ ───────────────────────────────────→  │
+  │  output: Done{input_closed}           │
+  │ ←───────────────────────────────────  │
 ```
 
-### 与现有代码的关系
+## 与现有代码的关系
 
 | 现有类型 | 新角色 | 说明 |
 |---------|--------|------|
-| `*Message` | `model.Message` | 移到 model/ 包，仍用于 Session 存储和 Provider 通信，不再是用户 API |
-| `Generator[*Message, error]` | 被替代 | Agent.Run 改为返回 `(<-chan OutputEvent, error)` |
-| `*Invocation` | 去掉 | Session 通过 context 传递，配置在构造时确定 |
-| `ModelProvider` | `model.Provider` | 移到 model/ 包，接口不变 |
-| `Session` | `session.Session` | 移到 session/ 包，接口扩展为 7 方法（+Leaf/Branch），压缩移出到 compact.Pipeline |
-| `Middleware` | 拆分 | 从 `func(Handler) Handler` 变为 `InputMiddleware` + `OutputMiddleware` |
-
----
+| `*Message` | `model.Message` | 只用于 Session、Compression、Provider，不作为用户 I/O |
+| `iter.Seq2[*Message, error]` | 被替代 | Agent 返回 `(<-chan event.Output, error)` |
+| `*Invocation` | 去掉 | Session 和配置由 Agent 构造时确定或通过 context 注入 |
+| `ModelProvider` | `model.Provider` | `Stream(ctx, *Request)` 替代旧 streaming 命名 |
+| `Session` | `session.Session` | 存储 `model.Message`，不存储 Event |
+| `Middleware` | 拆分 | `InputMiddleware` / `OutputMiddleware` |
+| 旧任务通知类型 | `event.Notification` | 作为输入通知回流，不作为 `event.Output` |
 
 ## Agent Loop 状态机
 
-Agent Loop 是 Agent.Run 内部启动的 goroutine。它从 input channel 读取 Event，驱动状态转换，向 output channel 写入 Event。
-
-### 状态定义
-
 ```go
 type AgentState int
+
 const (
-    StateIdle      AgentState = iota // 等待输入
-    StatePreparing                    // 构建上下文（压缩、组装 model.Request）
-    StateStreaming                    // 模型正在生成
-    StateActing                       // 执行工具调用
-    StateStopHooks                    // 运行 stop hooks（memory 提取、auto-dream 等）
-    StateDone                         // 终止
+    StateIdle AgentState = iota
+    StatePreparing
+    StateStreaming
+    StateActing
+    StateStopHooks
+    StateDone
 )
 ```
 
-### 状态转换规则
+状态转换：
 
 ```
-Idle      ──[PromptEvent]──────→ Preparing     (开始新一轮)
-Idle      ──[ControlEvent:Abort]→ Done          (直接终止)
+Idle      --[Prompt]-----------> Preparing
+Idle      --[Control:Abort]----> Done
 
-Preparing ──[context ready]────→ Streaming      (调用 Provider)
-Preparing ──[over budget]──────→ Preparing      (内部压缩，不产出 Event)
+Preparing --[request ready]----> Streaming
+Preparing --[compact needed]---> Preparing
 
-Streaming ──[text delta]───────→ Streaming      (yield TextEvent)
-Streaming ──[thinking delta]───→ Streaming      (yield ThinkingEvent)
-Streaming ──[tool calls]───────→ Acting         (yield ToolStartEvent)
-Streaming ──[model stop]───────→ StopHooks      (运行 stop hooks)
-Streaming ──[model error]──────→ Done           (yield DoneEvent{Reason: Error})
+Streaming --[part delta]-------> Streaming  (yield PartDelta)
+Streaming --[tool call]--------> Acting     (yield ToolStart)
+Streaming --[stop]-------------> StopHooks
+Streaming --[error]------------> Done       (yield Done{error})
 
-Acting    ──[tool done, more]──→ Acting         (yield ToolEndEvent, 继续下一个工具)
-Acting    ──[all tools done]───→ Preparing      (yield TurnEndEvent{HasText: false}, 下一轮)
-Acting    ──[exit signal]──────→ Idle           (yield TurnEndEvent{HasText: true})
-Acting    ──[all tools done, model stop]──→ StopHooks (运行 stop hooks)
-Acting    ──[max turns]────────→ Done           (yield DoneEvent{Reason: MaxTurns})
+Acting    --[tool delta]-------> Acting     (yield ToolDelta)
+Acting    --[tool done]--------> Acting     (yield ToolEnd)
+Acting    --[all tools done]---> Preparing  (yield TurnEnd{tool_use})
+Acting    --[max turns]--------> Done       (yield Done{max_turns})
 
-StopHooks ──[all hooks done, no continue]─→ Idle       (yield TurnEndEvent{HasText: true})
-StopHooks ──[hook requests continue]──────→ Preparing  (注入 follow-up，继续循环)
-StopHooks ──[max turns reached]───────────→ Done       (yield DoneEvent{Reason: MaxTurns})
+StopHooks --[continue]---------> Preparing
+StopHooks --[no continue]------> Idle       (yield TurnEnd{stop})
+StopHooks --[max turns]--------> Done       (yield Done{max_turns})
 
-Any       ──[ControlEvent:Abort]→ Done          (yield DoneEvent{Reason: Aborted})
-Any       ──[SteerEvent]────────→ (queue)       (排队，当前轮工具完成后下一轮生效)
+Any       --[Steer]------------> queue
+Any       --[Control:Abort]----> Done
 ```
 
-注意：`model stop`（模型正常结束，无工具调用）转换到 `StopHooks` 运行 stop hooks，再根据 hook 结果决定转到 `Idle`（发送 `TurnEndEvent`）或 `Preparing`（继续循环）。
-`DoneEvent` 严格表示 Agent 生命周期终止，只在 `max turns`、`abort`、`error` 时发送。
+`TurnEnd.StopReason` 取代 `HasText`。有工具调用时使用 `tool_use`，正常停止时使用 `stop`，输出被截断时使用 `max_output`。
 
-### TurnState（不可变每轮状态）
+### TurnState
 
 ```go
-// TurnState 是每轮的不可变状态快照。
-// 每次迭代重建，不原地修改，便于调试和回溯。
 type TurnState struct {
-    Messages               []*Message
+    Messages               []*model.Message
     Turn                   int
     TokenCount             int64
     TokenBudget            int64
-    TokenBudgetRemaining   int64            // 跨压缩边界追踪的剩余 token 预算
-    AutoCompactStats       AutoCompactStats
+    TokenBudgetRemaining   int64
+    AutoCompactStats       compact.AutoCompactStats
     MaxOutputRecovery      int
-    MaxOutputRecoveryLimit int              // 默认 3
+    MaxOutputRecoveryLimit int
 }
-
-// AutoCompactStats 定义见 design-message-context.md，包含熔断器字段（ConsecutiveFailures/Disabled）。
 ```
 
-#### max_output_tokens 恢复路径
+每轮创建新的 `TurnState`，压缩策略接收旧状态并返回新状态，不原地修改共享消息切片。
 
-当模型因 max_output_tokens 截断时，Agent Loop 自动恢复：
-
-1. 首次截断：将 max_output_tokens 从默认值（8K）升级到 64K
-2. 重试当前轮次（不消耗 Turn 计数）
-3. 最多重试 MaxOutputRecoveryLimit 次（默认 3）
-4. 超过限制后正常终止当前轮次
-
-恢复路径在 Streaming 状态内部处理，不产生额外的状态转换。
-
-### 双循环结构
-
-Agent Loop 内部采用双循环：外层等待输入 Event，内层处理 steering + tool 执行。
+### 双循环伪代码
 
 ```go
-func (a *agent) Run(ctx context.Context, input <-chan InputEvent) (<-chan OutputEvent, error) {
-    if a.model == nil {
+func (a *agent) Run(ctx context.Context, input <-chan event.Input) (<-chan event.Output, error) {
+    if a.provider == nil {
         return nil, ErrProviderRequired
     }
-    output := make(chan OutputEvent, 16)
+    output := make(chan event.Output, a.outputBuffer)
     go a.loop(ctx, input, output)
     return output, nil
 }
 
-func (a *agent) loop(ctx context.Context, input <-chan InputEvent, output chan<- OutputEvent) {
-    defer close(output)
-    state := a.buildInitialState()
+func (a *agent) handlePrompt(
+    ctx context.Context,
+    prompt event.Prompt,
+    input <-chan event.Input,
+    output chan<- event.Output,
+    state *TurnState,
+) {
+    currentInput := prompt.Parts
+    var steerQueue [][]event.InputPart
 
-    for {
-        // 外循环：等待输入 Event
-        select {
-        case <-ctx.Done():
-            output <- &DoneEvent{Reason: ReasonAborted}
-            return
-        case event, ok := <-input:
-            if !ok { return } // input 关闭，Agent 结束
-            switch e := event.(type) {
-            case *PromptEvent:
-                a.handlePrompt(ctx, e, input, output, state)
-            case *ControlEvent:
-                if e.Action == ActionAbort {
-                    output <- &DoneEvent{Reason: ReasonAborted}
-                    return
-                }
-            }
-        }
-    }
-}
-
-func (a *agent) handlePrompt(ctx context.Context, prompt *PromptEvent,
-    input <-chan InputEvent, output chan<- OutputEvent, state *TurnState) {
-
-    var steerQueue []*SteerEvent
-
-    // 内循环：steering + tool
     for state.Turn < a.maxTurns {
         state = a.rebuildTurnState(state)
-        state = a.applyCompression(ctx, state)
 
-        // 注入排队的 steer 消息（FIFO 顺序）
-        for _, steer := range steerQueue {
-            state.Messages = append(state.Messages, UserMessage(steer.Content))
+        req, err := a.contextBuilder.Build(ctx, a.session, currentInput, steerQueue, a.tools)
+        if err != nil {
+            output <- event.Done{Reason: event.ReasonError, Err: err}
+            return
         }
+        currentInput = nil
         steerQueue = steerQueue[:0]
 
-        // 调用 Provider，流式输出 + 记录到 session
-        req, _ := a.contextBuilder.Build(ctx, a.session, a.tools)
-        stream := a.model.NewStreaming(ctx, req)
-        msg, toolCalls, _ := a.streamAndRecord(ctx, stream, a.session, output)
+        stream := a.provider.Stream(ctx, req)
+        msg, toolCalls, err := a.streamAndRecord(ctx, stream, a.session, output)
+        if err != nil {
+            output <- event.Done{Reason: event.ReasonError, Err: err}
+            return
+        }
+        _ = msg
 
         if len(toolCalls) > 0 {
-            a.executeTools(ctx, output) // 写入 ToolStartEvent/ToolEndEvent
-            output <- &TurnEndEvent{Turn: state.Turn, HasText: false}
-
-            // 非阻塞读取：检查是否有新的 SteerEvent
-            for {
-                select {
-                case event := <-input:
-                    if s, ok := event.(*SteerEvent); ok {
-                        steerQueue = append(steerQueue, s)
-                    }
-                default:
-                    goto drained
-                }
-            }
-        drained:
+            results := a.tools.Execute(ctx, toolCalls, output)
+            a.recordToolResults(ctx, results)
+            output <- event.TurnEnd{Turn: state.Turn, StopReason: event.StopReasonToolUse}
+            steerQueue = drainSteer(input)
             state.Turn++
             continue
         }
 
-        // 模型正常结束（无工具调用）——进入 StopHooks 状态
-        hookResults := a.runStopHooks(ctx, state)
-        if hookResults.ContinueLoop {
-            // stop hook 请求继续循环（如 memory 提取后需要 follow-up）
-            state.Messages = append(state.Messages, hookResults.FollowUpMessages...)
+        hooks := a.runStopHooks(ctx, state)
+        if hooks.ContinueLoop {
+            currentInput = hooks.FollowUpInputParts
             state.Turn++
             continue
         }
-        output <- &TurnEndEvent{Turn: state.Turn, HasText: true}
+
+        output <- event.TurnEnd{Turn: state.Turn, StopReason: event.StopReasonStop}
         return
     }
 
-    // 超过最大轮次——这是 Agent 终止，发 DoneEvent
-    output <- &DoneEvent{Reason: ReasonMaxTurns}
+    output <- event.Done{Reason: event.ReasonMaxTurns}
 }
 ```
 
-### 关键设计决策
+## 关键设计决策
 
-1. **状态机而非隐式循环** — 当前 `handle()` 的状态转换埋在 if/continue/break 中。新设计通过显式 `AgentState` 和转换规则表，让状态流可声明、可测试、可可视化。
+1. **Event 和 Message 分层而非合并**：Event 面向用户交互，Message 面向 Provider 上下文。合并会让 UI 控制事件、Provider tool protocol、session 压缩状态混在一个类型系统里，导致包依赖和语义都变重。
 
-2. **不可变 TurnState** — 当前原地修改 `localMessages` 切片。新设计每轮重建 `TurnState`，压缩策略接收旧状态返回新状态，状态流清晰可追踪。
+2. **Event 不依赖 model**：Event 层不能出现 `model.TokenUsage`、`model.Part` 或 `model.Message`。需要相似数据时定义独立 DTO，例如 `event.Usage` 和 `event.OutputPart`。
 
-3. **Channel 驱动** — Agent.Run 启动 goroutine，从 input channel 读取，向 output channel 写入。channel 的 close 语义天然控制生命周期：用户 close(input) → Agent 结束 → close(output) → for range 退出。
+3. **输出也多模态**：模型可能输出文件、结构化 JSON、图像、音频引用或 thinking。用 `PartDelta` / `PartEnd` 承载 `OutputPart`，比 `Text` + 少量特殊事件更稳定。
 
-4. **Steer 非阻塞读取** — 工具执行完成后，通过 select + default 非阻塞读取 input channel 中排队的 SteerEvent。不阻塞等待，有就注入，没有就继续下一轮。
+4. **工具结果多模态**：工具返回 `[]OutputPart`，Agent Loop 再转换成 `model.ToolResultPart`。这样工具系统不依赖模型层，同时保留向用户展示丰富结果的能力。
 
-5. **StopHooks 作为独立状态** — StopHooks 没有合并到 Idle→Preparing 转换中，而是作为独立状态存在。原因：stop hooks 可能触发后台工作（memory 提取、auto-dream 等），也可能注入 follow-up 消息要求再进行一轮循环迭代。将其建模为显式状态，使这些行为在状态机图中可见、可追踪、可测试，而不是隐藏在转换边的副作用中。
+5. **状态机显式化**：状态转换表是实现和测试依据。`StopHooks` 独立建模，因为它可能触发 follow-up，从而继续进入下一轮。
 
-6. **max_output_tokens 恢复路径** — 模型因 max_output_tokens 截断时自动升级输出限制并重试，而非直接终止。恢复在 Streaming 状态内部完成，不引入额外状态转换，保持状态机简洁。重试次数通过 `MaxOutputRecoveryLimit` 限制，防止无限循环。
+6. **Steer FIFO 且不打断 streaming**：中途输入通过队列进入下一轮，避免在 provider streaming 和工具执行中引入复杂抢占语义。
