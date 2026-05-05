@@ -1,182 +1,173 @@
 ---
 type: design
-title: Model 与 Provider 协议
-parent: design-agent-framework.md
-date: 2026-05-01
+title: Model Provider 协议设计
+date: 2026-05-05
 status: draft
-modules: [module-2, module-9, module-10]
+parent: design-agent-framework.md
+related: [design-agent-framework.md]
+tags: [agentos, model, provider, protocol]
 ---
 
-# Model 与 Provider 协议
+# Model Provider 协议设计
 
-`model/` 是模型上下文协议叶子包。它只描述 Provider、Session、Compact 需要共享的 DTO 和小接口，不导入 `event/`、`tools/`、`blades/`、`hook/` 或 `policy/`。
+## 1. 概述
 
-## Message 与 Part
+`model/` 是 AgentOS 面向 LLM provider 的协议叶子包。它定义请求、响应、消息、工具调用和 token 计数接口，不依赖 `event/`、`loop/` 或应用层运行时。
+
+Event 面向用户协议，Message 面向 provider 协议。二者通过 `content.Part` 共享通用模态叶子，但顶层结构保持独立，由 Loop 在 `internal/convert/` 边界转换。
+
+## 2. Provider 接口
+
+v1 Provider 使用流式优先接口：
 
 ```go
 package model
 
+type Provider interface {
+    Name() string
+    Stream(ctx context.Context, req *Request) blades.Generator[*Response, error]
+    Count(ctx context.Context, req *Request) (int, error)
+}
+```
+
+设计约束：
+
+- `Stream` 是唯一生成入口；同步收集由 `model.Collect` helper 基于流式响应累加得到。
+- `Count` 合并在 Provider 内，因为 token 计算与模型、编码器、工具 schema 和 system block 强耦合。
+- `Stream` 返回 `blades.Generator[*Response, error]`，也就是 `iter.Seq2[*Response, error]` 风格序列。
+- 资源释放依赖 `ctx` 取消、deadline 和 provider 内部 defer，不提供额外关闭方法。
+
+Embedding 与聊天生成平级独立：
+
+```go
+type EmbeddingProvider interface {
+    Name() string
+    Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error)
+}
+```
+
+## 3. Request
+
+`Request` 是一次 provider 调用的完整输入：
+
+```go
+type Request struct {
+    Model    string
+    System   []*SystemBlock
+    Messages []*Message
+    Tools    []ToolSpec
+}
+
+type SystemBlock struct {
+    Text         string
+    CacheControl CacheControl
+}
+```
+
+`System` 是顶层独立字段，不通过消息角色表达。这样 provider adapter 可以直接映射到 Anthropic system blocks、OpenAI instructions 或其他等价字段，并独立处理缓存控制。
+
+`Request` 不包含流式开关。是否流式由调用的方法决定：生成使用 `Provider.Stream`，计数使用 `Provider.Count`。
+
+## 4. Response
+
+`Response` 表达 provider 流式返回的一帧或最终帧：
+
+```go
+type Response struct {
+    Delta      []content.Part
+    StopReason StopReason
+    Usage      Usage
+}
+
+type StopReason string
+
+type Usage struct {
+    InputTokens  int
+    OutputTokens int
+    TotalTokens  int
+}
+```
+
+`Delta` 承载本帧新增的 provider 协议 part。`StopReason` 承载模型停止原因，例如自然结束、工具调用、长度限制或安全停止。`Usage` 可在最后一帧给出，也可按 provider 能力逐步补充。
+
+不完整或停止状态不放在 `Message` 上，而由 `Response.StopReason` 表达。
+
+## 5. Message
+
+`Message` 是 provider 历史消息单元：
+
+```go
+type Message struct {
+    Role  Role
+    Parts []content.Part
+}
+
 type Role string
 
 const (
-    RoleSystem    Role = "system"
     RoleUser      Role = "user"
     RoleAssistant Role = "assistant"
     RoleTool      Role = "tool"
 )
+```
 
-type Message struct {
-    ID     string
-    Role   Role
-    Parts  []Part
-    Status Status
-}
+仅保留三种角色：用户、助手、工具。系统内容使用 `Request.System` 顶层字段表达。
 
-type Part interface{ part() }
+Message 不携带运行状态；消息历史只保存 provider 可重放的协议内容。Loop、session 和 compact 必须维护 provider message invariant，避免生成无法被 adapter 发送的历史。
 
-type TextPart struct{ Text string }
-type FilePart struct {
-    URI      string
-    MimeType string
-    Name     string
-}
-type DataPart struct {
-    Data     []byte
-    MimeType string
-    Name     string
-}
-type JSONPart struct{ Value any }
-type ThinkingPart struct{ Text string }
-type ToolUsePart struct {
-    CallID string
-    Name   string
-    Args   json.RawMessage
-}
-type ToolResultPart struct {
-    CallID string
-    Parts  []Part
-    Err    error
-}
-type CompactionSummaryPart struct {
-    Summary      string
-    TokensBefore int64
-    TokensAfter  int64
+## 6. Part
+
+`Message.Parts` 直接使用 `content.Part`：通用模态变体（`Text` / `Blob` / `Thinking`）与 provider 协议变体（`ToolUse` / `ToolResult`）都在 `content/` 同一 sealed union 内，`model/` 不再定义独立 Part 类型。
+
+```go
+msg := &model.Message{
+    Role: model.RoleUser,
+    Parts: []content.Part{
+        content.Text{Text: "hello"},
+    },
 }
 ```
 
-`model.Part` 与 `event.InputPart` / `event.OutputPart` 不共享 Go 类型。Event-to-Message、ToolResult-to-Message 和 Message-to-Event 的转换只在 `internal/loop`。
+工具调用与工具结果作为 `content.ToolUse` / `content.ToolResult` 出现在 `Message.Parts` 中，由 provider adapter 在协议映射时解释。
 
-## Provider
+## 7. Provider 资源管理
 
-```go
-type Provider interface {
-    Stream(ctx context.Context, req *Request) (Stream, error)
-}
+Provider 不提供关闭方法。资源管理遵循 Go context：
 
-type Stream interface {
-    Recv(ctx context.Context) (*Response, error)
-    Close() error
-}
+- 调用方通过 `ctx` 传递取消和 deadline。
+- provider adapter 在 `Stream` 内监听 `ctx.Done()`。
+- HTTP body、SSE 连接、goroutine 和内部缓冲由 adapter 使用 defer 释放。
+- 调用方停止消费 generator 时应取消 ctx，确保底层连接退出。
 
-type Request struct {
-    Model        string
-    Messages     []*Message
-    Tools        []ToolSpec
-    System       string
-    Cache        []CacheBreakpoint
-    MaxTokens    int64
-    Temperature  float64
-    Source       string
-}
-
-type Response struct {
-    MessageID string
-    Delta     []Part
-    ToolCalls []ToolUsePart
-    Usage     *TokenUsage
-    Stop      StopReason
-}
-
-type RequestSnapshot struct {
-    Model        string
-    MessageCount int
-    ToolNames    []string
-    MaxTokens    int64
-    Source       string
-}
-
-type ResponseSnapshot struct {
-    MessageID string
-    PartCount int
-    Usage     *TokenUsage
-    Stop      StopReason
-}
-```
-
-Hook 使用 `RequestSnapshot` / `ResponseSnapshot`，不能接触 raw `*Request` 或修改消息。
-
-## ToolSpec
+示例：
 
 ```go
-type ToolSpec struct {
-    Name        string
-    Description string
-    InputSchema json.RawMessage
-}
-```
+ctx, cancel := context.WithCancel(parent)
+defer cancel()
 
-`ToolSpec` 是 provider-neutral 声明。`tools.Tool` 到 `model.ToolSpec` 的映射由 Agent Loop 完成，避免 `model/` 导入 `tools/`。
-
-## Token 计数
-
-```go
-type Counter interface {
-    Count(ctx context.Context, messages ...*Message) (int64, error)
-}
-
-type CharCounter struct{}
-type ProviderCounter struct{ Provider Provider }
-type CachedCounter struct{ Inner Counter }
-```
-
-`CharCounter` 是 stdlib-only 估算降级；Provider 原生计数和 tokenizer 依赖放在 contrib 或可选实现中。
-
-## RetryPolicy
-
-```go
-type RetryPolicy struct {
-    MaxRetries      int
-    BaseDelay       time.Duration
-    MaxDelay        time.Duration
-    FallbackModel   string
-    OnRefresh       func(ctx context.Context) error
-    SourceAwareness SourceAwareness
-    PersistentRetry *PersistentRetryConfig
-}
-```
-
-重试发生在 Agent Loop 调用 `Provider.Stream` 的边界，不放进 `policy/`，也不要求 Provider 自己实现。退避必须使用 timer + `ctx.Done()`，不能用裸 `time.Sleep`：
-
-```go
-timer := time.NewTimer(delay)
-select {
-case <-timer.C:
-case <-ctx.Done():
-    if !timer.Stop() {
-        select {
-        case <-timer.C:
-        default:
-        }
+for resp, err := range provider.Stream(ctx, req) {
+    if err != nil {
+        return err
     }
-    return nil, ctx.Err()
+    if shouldStop(resp) {
+        cancel()
+        break
+    }
 }
 ```
 
-无人值守持久重试可以发 heartbeat，但 heartbeat 必须绑定当前 retry wait 的 context 或 timer 生命周期，不能每次 retry 新建一个可能泄漏的 goroutine。
+## 8. 实现职责边界
 
-## 设计决策
+`model/` 只定义协议和最小 helper。以下能力由 provider adapter 或上层组合实现，不进入协议字段：
 
-1. **`model/` 是叶子协议包**：只保留 Provider、Session、Compact 共享的模型上下文语言。
-2. **Provider 只消费 `model.Request`**：OpenAI、Anthropic、Gemini 等格式差异留在 contrib provider 内部。
-3. **重试在调用边界**：网络错误、429、529、401 refresh 和 fallback 是模型调用策略，不进入 `policy/`。
-4. **hook 看快照**：避免 hook 绕过 `internal/loop` 修改 Message 或 Provider request。
+- 网络重试、限速、熔断和 provider fallback。
+- token 编码器加载与缓存。
+- 请求签名、鉴权和区域选择。
+- provider 私有字段映射。
+- 响应收集：由 `model.Collect` 基于 `Stream` 实现。
+
+这样 `model/` 保持稳定，具体 provider 可在 `contrib/<provider>` 中演进实现细节。
+
+## 与红线对照
+
+本文覆盖 r2、r13、r14、r15。

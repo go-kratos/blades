@@ -9,20 +9,19 @@
 ## 设计文档
 
 - [Blades AgentOS Framework 设计蓝图](./design-agent-framework.md) - AgentOS 总体目标、包边界、依赖图和迁移阶段 `[draft]`
-- [Event 系统与 Agent Loop 状态机](./design-event-agent-loop.md) - Event/Message 分层、Agent Run 接口和 loop 状态机 `[draft]`
-- [消息与上下文系统](./design-message-context.md) - `model/`、上下文构建、压缩管线和 PromptBuilder `[draft]`
-- [工具系统](./design-tool-system.md) - `tools/` 接口、结果 DTO、流式工具执行和生命周期 `[draft]`
-- [扩展与 Hook 系统](./design-hook-extension.md) - core hook 事件、观察/拦截 handler 和扩展边界 `[draft]`
-- [会话与持久化](./design-session.md) - `session/`、Store、JSONL、树形分支和恢复流程 `[draft]`
-- [Policy 与交互模式边界](./design-policy-mode.md) - core policy primitives 与应用层模式边界 `[draft]`
-- [Agent 组合与编排](./design-agent-orchestration.md) - `flow/`、Agent-as-Tool、run manager 和 orchestrator 边界 `[draft]`
-- [Memory 系统](./design-memory.md) - memory core 抽象、recall/extract 注入点和文件 memory 边界 `[draft]`
-- [基础设施](./design-infra.md) - 重试、Token 计数、可观测性和 graph 定位 `[draft]`
-- [迁移路径](./design-migration.md) - breaking API 迁移顺序、包职责和验收标准 `[draft]`
-
-## 历史已实现设计
-
-- [流式响应优化设计](./design-streaming-optimization.md) - 旧 `iter.Seq2` 流式路径的性能优化参考 `[implemented]`
+- [Event 系统与 Agent Loop](./design-event-agent-loop.md) - Event/Message 分层、Agent Loop 顺序流程与行为事件 hook、Event/Message 转换边界 `[draft]`
+- [工具系统](./design-tool-system.md) - `tools/` 接口（Spec+Handle 两方法）、Result、Resolver、Filter 和执行上下文 `[draft]`
+- [扩展与 Hook 系统](./design-hook-extension.md) - core sealed hook 事件、Observer/Interceptor 二元划分和应用事件隔离 `[draft]`
+- [会话与持久化](./design-session.md) - Session 接口（5 方法）、CheckpointSession、Store 与持久化 `[draft]`
+- [Policy 与交互模式边界](./design-policy-mode.md) - 单一 Policy.Check 接口与应用层模式边界 `[draft]`
+- [Agent 组合与编排](./design-agent-orchestration.md) - `flow/` 组合（Sequential/Parallel/Loop/AsTool）、Agent-as-Tool 和多 Agent 边界 `[draft]`
+- [Memory 系统](./design-memory.md) - Memory 接口（Recall+Remember）、应用层经 prompt.Memory 注入策略 `[draft]`
+- [Prompt 系统](./design-prompt.md) - Builder 接口 + Section 函数类型；Static/Dynamic/System/Memory 工厂 `[draft]`
+- [Compact 系统](./design-compact.md) - 单一 Compactor 接口与内置实现（Window/ToolResultBudget/Summarize/Chain） `[draft]`
+- [Model 与 Provider](./design-model-provider.md) - `model/` Message、Part、Provider（Name/Stream/Count）、Request/Response `[draft]`
+- [流式协议最终态](./design-streaming-optimization.md) - v1 流式协议参考：`iter.Seq2` + `context.Context` 取消、Delta 路径与背压策略 `[draft]`
+- [Observability](./design-observability.md) - OTel 集成方案：通过 `contrib/otel` 注册 hook Observer，核心包不引入 observability 抽象 `[draft]`
+- [Graph 定位](./design-graph.md) - 独立 DAG 子系统定位（graph→flow 单向硬边界） `[draft]`
 
 ## 参考文档
 
@@ -34,35 +33,37 @@
 ### AgentOS Core
 
 - [Blades AgentOS Framework 设计蓝图](./design-agent-framework.md)
-- [Event 系统与 Agent Loop 状态机](./design-event-agent-loop.md)
-- [消息与上下文系统](./design-message-context.md)
+- [Event 系统与 Agent Loop](./design-event-agent-loop.md)
+- [Model 与 Provider](./design-model-provider.md)
 - [工具系统](./design-tool-system.md)
 - [会话与持久化](./design-session.md)
+- [流式协议最终态](./design-streaming-optimization.md)
 
 ### Capability
 
 - [Policy 与交互模式边界](./design-policy-mode.md)
 - [扩展与 Hook 系统](./design-hook-extension.md)
 - [Memory 系统](./design-memory.md)
-- [基础设施](./design-infra.md)
+- [Prompt 系统](./design-prompt.md)
+- [Compact 系统](./design-compact.md)
+- [Observability](./design-observability.md)
 
 ### Composition
 
 - [Agent 组合与编排](./design-agent-orchestration.md)
-- [迁移路径](./design-migration.md)
+- [Graph 定位](./design-graph.md)
 
 ### Reference
 
 - [pi-agent Framework 参考设计](./reference-pi-agent-framework.md)
 - [Claude Code Agent 参考设计](./reference-claude-code-agent.md)
-- [流式响应优化设计](./design-streaming-optimization.md)
 
 ## 文档状态统计
 
-- Draft: 13
+- Draft: 14
 - Review: 0
 - Approved: 0
-- Implemented: 1
+- Implemented: 0
 - Deprecated: 0
 
 ---

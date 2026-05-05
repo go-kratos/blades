@@ -1,593 +1,142 @@
 ---
 type: design
-title: 会话与持久化
-parent: design-agent-framework.md
-date: 2026-05-01
+title: Session 与持久化
+date: 2026-05-05
 status: draft
-modules: [module-5]
+parent: design-agent-framework.md
+related: [design-agent-framework.md]
+tags: [agentos, session, persistence, checkpoint]
 ---
 
-# 会话与持久化
+# Session 与持久化
 
-### 现状对比
+## 概述
 
-| 维度 | 当前 Blades | 新设计 |
-|------|------------|--------|
-| 接口 | 5 方法（ID/State/SetState/Append/History） | 7 方法（+Leaf/Branch） |
-| 存储 | 仅内存（sessionInMemory） | JSONL 文件 + 内存双实现 |
-| 结构 | 线性数组 | parentId 链形成消息树 |
-| 分支 | 不支持 | 完整支持：分支创建、导航、摘要 |
-| 压缩 | 挂在 Session 上（ContextCompressor） | 从 Session 移出到 Agent Loop（compact.Pipeline） |
-| 压缩历史 | 丢弃 | 完整保留在 JSONL 中 |
-| 并发安全 | sync.Mutex | Writer 单所有者 + 文件锁，保证单会话写入顺序 |
-| 持久化接口 | 无 | Store（Open 模式，返回 Writer handle） |
-| 会话列表 | 全量解析 | v1 读取 Header；动态摘要索引是后续优化 |
-| 写入模式 | 同步逐条 | v1 可同步写入；BatchWriter 是后续优化 |
-| 大结果处理 | 无 | v1 由 compact/tool budget 控制；content_replacement 是后续优化 |
+`session/` 定义 AgentOS core 的会话能力。v1 Session 是线性的 `model.Message` 列表，只负责消息读写、截断和替换；复杂分叉、对比实验、回放与版本管理由应用层用多个 Session 或 `Replace` 组合实现。
 
-### 5.1 整体架构
+线性设计对齐 Anthropic、OpenAI 等主流 SDK 的上下文形态，也让 compact、prompt、policy 与 provider 转换边界更容易验证。
 
-```
-┌─────────────────────────────────────────────────────┐
-│  Agent Loop                                         │
-│    session.Append(msg)                              │
-│    messages := session.History()                    │
-│    compressed := pipeline.Compress(messages)        │
-│    session.Branch(nodeID)                           │
-├─────────────────────────────────────────────────────┤
-│  Session 接口（7 方法）                              │
-│    ID / State / SetState                            │
-│    Append / History                                 │
-│    Leaf / Branch                                    │
-├─────────────────────────────────────────────────────┤
-│  实现层                                              │
-│    ├── memorySession（纯内存，内部维护 Tree）         │
-│    └── persistentSession（Store + 内存缓存）         │
-│              │                                      │
-│              ▼                                      │
-│         Store 接口（Open 模式）                      │
-│           ├── fileStore（JSONL）                     │
-│           └── 其他实现（SQLite、S3 等）              │
-└─────────────────────────────────────────────────────┘
-```
+协议约束：
 
-核心设计原则：**Session 和 Store 职责分离**。
+- `model.Message{Role, Parts []content.Part}` 不携带额外生命周期字段。
+- `Role` 仅使用 User、Assistant、Tool。
+- `content.Part` 是 sealed marker，公共叶子为 Text、Blob、Thinking。
 
-- **Session** 面向 Agent Loop，提供消息读写和树导航。Agent Loop 只依赖 Session 接口，不感知 Entry/Tree/JSONL 等持久化细节。
-- **Store** 面向存储后端实现者，提供 Entry 级别的 CRUD。persistentSession 内部委托 Store 完成持久化。
-
-### 5.2 session.Session 接口
+## Session 接口
 
 ```go
 package session
 
-// State 是会话级键值状态，支持任意类型的值。
-// 框架内部 key 使用 __ 前缀（如 __compact_offset__），用户 key 不应使用此前缀。
-type State map[string]any
-
-// Session 是运行时会话接口，Agent Loop 的唯一依赖。
 type Session interface {
-    // ID 返回会话唯一标识。
     ID() string
-
-    // State 返回会话状态的快照副本。
-    State() State
-    // SetState 设置会话状态中的一个键值对。
-    SetState(key string, value any)
-
-    // Append 追加一条消息到当前 Leaf 位置。
-    // 新消息成为 Leaf 的子节点，并更新 Leaf 指针。
-    Append(ctx context.Context, msg *model.Message) error
-
-    // History 返回从 root 到当前 Leaf 的消息序列。
-    // 如果存在 Compaction Entry，压缩边界前的消息被摘要替换。
-    // History 不执行压缩——压缩由 Agent Loop 的 compact.Pipeline 负责。
-    History(ctx context.Context) ([]*model.Message, error)
-
-    // Leaf 返回当前位置的节点 ID。
-    Leaf() string
-
-    // Branch 将当前位置移动到指定节点。
-    // 后续 Append 的消息将成为该节点的子节点。
-    // 如果 nodeID 不存在，返回错误。
-    Branch(nodeID string) error
+    Append(ctx context.Context, msgs ...*model.Message) error
+    Messages(ctx context.Context) ([]*model.Message, error)
+    Truncate(ctx context.Context, n int) error
+    Replace(ctx context.Context, msgs []*model.Message) error
 }
 ```
 
-**为什么 Leaf/Branch 在 Session 接口上？**
+方法语义：
 
-树是一等公民。即使简单 Agent 不调用 Branch，接口的存在保证了所有实现都支持树结构。memorySession 和 persistentSession 都完整实现树——内存中也维护 Tree 结构。
+- `ID` 返回会话稳定标识。
+- `Append` 以可变参追加消息；同一次调用必须作为一个原子写入单元，避免 assistant/tool 成组消息被部分持久化。
+- `Messages` 返回当前消息快照；调用方不得依赖返回 slice 可被原地修改。
+- `Truncate` 保留前 `n` 条消息；`n` 小于 0 应返回错误，`n` 大于当前长度等价于无修改。
+- `Replace` 用完整消息列表替换当前会话；用于 compact 后落盘、回放恢复、应用层版本切换等场景。
 
-**为什么 History 不做压缩？**
+Session 不负责 token 预算、模型请求组装、工具执行或长期记忆召回。这些能力分别属于 `compact/`、Agent Loop、`tools/` 与 `memory/`。
 
-压缩从 Session 移出到 Agent Loop（compact.Pipeline）。理由：
-- 同一个 Session 可能被不同 Agent 共享（如 sub-agent），每个 Agent 可能有不同的压缩策略
-- Session 是存储层，不应该知道 token 预算和模型上下文窗口
-- 压缩结果（CompactionEntry）仍然写回 Session 作为持久化记录
+## CheckpointSession 可选接口
 
-调用链变为：
-```
-session.History() → 原始消息（含 Compaction 回放） → compact.Pipeline → model request
-```
-
-**为什么不暴露 AppendEntry？**
-
-Session 接口只暴露 `Append(*model.Message)`，不暴露 `AppendEntry(Entry)`。Entry 是持久化层的概念，Agent Loop 不需要感知。Compaction Entry 等非消息类型的写入通过 persistentSession 的具体方法或内部机制处理，不污染 Session 接口。
-
-### 5.3 session context
-
-Session 是 Agent Loop 的运行能力，通过 typed context helper 传递。context 中只保存 `Session` 对象；会话 ID、状态、历史和分支位置都从 `Session` 读取。
+检查点是可选能力，供持久化实现保存可恢复快照。
 
 ```go
-func NewContext(ctx context.Context, sess Session) context.Context
-func FromContext(ctx context.Context) (Session, bool)
+type Checkpoint struct {
+    ID        string
+    CreatedAt time.Time
+    Messages  []*model.Message
+    Metadata  map[string]any
+}
 
-func Require(ctx context.Context) (Session, error)
+type CheckpointSession interface {
+    Session
+    SaveCheckpoint(ctx context.Context, name string) (*Checkpoint, error)
+    LoadCheckpoint(ctx context.Context, id string) ([]*model.Message, error)
+    ListCheckpoints(ctx context.Context) ([]*Checkpoint, error)
+}
 ```
 
-应用层可以把外部 chat ID、user ID 或 channel ID 映射到具体 Session，再把 Session 注入 Agent Run context。AgentOS Core 只消费 `Session` 接口。
+`LoadCheckpoint` 只读取快照；是否调用 `Replace` 恢复由应用层决定。这样检查点能力不会改变基础 Session 的线性语义。
 
-### 5.4 session.Store 接口
+## Store 可选后端抽象
+
+`Store` 是实现层扩展点，不是 Agent Loop 的直接依赖。它用于把 Session 状态映射到 JSONL、SQLite、Redis 或远程存储。
 
 ```go
-package session
-
-// Store 是会话持久化的抽象接口。
 type Store interface {
-    // Open 打开一个会话用于写入。
-    // 如果 id 对应的会话不存在则创建新会话（写入 Header）。
-    // 如果已存在则打开现有文件追加写入。
-    // 返回的 Writer 持有资源（文件句柄/连接），必须 Close。
-    Open(ctx context.Context, id string, opts ...StoreOption) (Writer, error)
-
-    // Load 加载会话的完整快照。
-    Load(ctx context.Context, id string) (*Snapshot, error)
-
-    // List 列出所有可用会话的元信息。
-    List(ctx context.Context) ([]Header, error)
-}
-
-// Writer 是会话的写入句柄，持有底层资源。
-type Writer interface {
-    // Append 追加一条或多条 Entry 到会话。
-    Append(ctx context.Context, entries ...Entry) error
-    // Close 释放底层资源（文件句柄、锁等）。
-    Close() error
+    Open(ctx context.Context, id string) (Session, error)
+    Delete(ctx context.Context, id string) error
+    List(ctx context.Context) ([]string, error)
 }
 ```
 
-**为什么用 Open 模式而不是 Create + Append？**
-
-原设计中 `Create(header)` + `Append(sessionID, entries...)` 存在问题：
-- 调用方需要管理两步操作，Create 和 Append 之间存在不一致窗口
-- 每次 Append 都传 sessionID 是冗余的
-- 没有明确的资源生命周期管理
-
-Open 模式的优点：
-- Writer 持有文件句柄/flock，生命周期明确
-- Append 不需要每次传 sessionID——Writer 已经绑定了会话
-- 新建和打开已有会话统一为一个操作，调用方不需要区分
-- Close 释放资源，语义清晰，避免资源泄漏
-
-### 5.5 StoreOption
+示例实现：
 
 ```go
-type StoreOption func(*storeOptions)
-
-type storeOptions struct {
-    Metadata map[string]string
+jsonStore := jsonl.NewStore(".blades/sessions")
+s, err := jsonStore.Open(ctx, "sess_123")
+if err != nil {
+    return err
 }
 
-func WithMetadata(metadata map[string]string) StoreOption {
-    return func(o *storeOptions) { o.Metadata = metadata }
-}
-
-func WithMetadataValue(key, value string) StoreOption {
-    return func(o *storeOptions) {
-        if o.Metadata == nil {
-            o.Metadata = make(map[string]string)
-        }
-        o.Metadata[key] = value
-    }
-}
-```
-
-StoreOption 仅在 Open 创建新会话时生效，用于设置 Header 中的应用自定义 metadata。Core 不解释 `workspace`、`title`、`channel` 等具体 key。
-
-### 5.6 session.Entry 联合类型
-
-```go
-// Entry 是 JSONL 文件中每行的结构。
-// 通过 ID + ParentID 构成树形结构。
-type Entry struct {
-    Type      EntryType       `json:"type"`
-    ID        string          `json:"id"`
-    ParentID  string          `json:"parentId,omitempty"`
-    Timestamp int64           `json:"timestamp"`
-    Data      json.RawMessage `json:"data"`
-}
-
-type EntryType string
-const (
-    EntryMessage     EntryType = "message"      // 对话消息
-    EntryCompaction  EntryType = "compaction"   // 压缩摘要
-    EntryStateChange EntryType = "state_change" // Session State 持久化
-    EntryCursor      EntryType = "cursor"       // 当前分支指针变更
-    EntryCustom      EntryType = "custom"       // 扩展自定义数据
+err = s.Append(ctx,
+    &model.Message{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hi"}}},
+    &model.Message{Role: model.RoleAssistant, Parts: []content.Part{content.Text{Text: "hello"}}},
 )
 ```
 
-第一阶段实现 5 种核心 Entry 类型：
+- JSONL 适合本地调试和顺序追加。
+- SQLite 适合索引、检索和多会话列表。
+- Redis 适合短生命周期在线会话。
 
-| EntryType | Data 结构 | 用途 |
-|-----------|----------|------|
-| `message` | `MessageData` | 对话消息（user/assistant/tool） |
-| `compaction` | `CompactionData` | 压缩边界标记 + 摘要消息 |
-| `state_change` | `StateChangeData` | Session State 变更持久化 |
-| `cursor` | `CursorData` | Branch 后的当前位置持久化 |
-| `custom` | `json.RawMessage` | 扩展自定义数据 |
+无论后端如何，`Append` 的批量原子性和 `Messages` 的快照语义必须一致。
 
-后续可按需添加的类型：`content_replacement`（替换超限工具结果为截断存根）、`model_change`（模型切换）、`metadata_change`（应用元数据更新）、`branch_summary`（分支摘要）。
+## Context helper
+
+Session 作为 capability 注入运行上下文，命名遵循 stdlib 风格。
 
 ```go
-// MessageData 是 EntryMessage 的 Data 结构。
-type MessageData struct {
-    Message   *model.Message `json:"message"`
-    AgentID   string         `json:"agentId,omitempty"`
-    AgentName string         `json:"agentName,omitempty"`
-}
+ctx = session.NewContext(ctx, s)
 
-// CompactionData 是 EntryCompaction 的 Data 结构。
-type CompactionData struct {
-    Summary          []*model.Message `json:"summary"`
-    FirstKeptEntryID string           `json:"firstKeptEntryId"`
-    TokensBefore     int64            `json:"tokensBefore"`
-    TokensAfter      int64            `json:"tokensAfter"`
-}
-
-// StateChangeData 是 EntryStateChange 的 Data 结构。
-type StateChangeData struct {
-    Key   string `json:"key"`
-    Value any    `json:"value"`
-}
-
-// CursorData 是 EntryCursor 的 Data 结构。
-type CursorData struct {
-    Leaf string `json:"leaf"`
+if s, ok := session.FromContext(ctx); ok {
+    msgs, err := s.Messages(ctx)
+    _ = msgs
+    _ = err
 }
 ```
 
-### 5.7 session.Header
+该 helper 只承载当前 Session 引用，不负责创建、查找或恢复会话。
 
-```go
-type Header struct {
-    Version   int               `json:"version"`
-    ID        string            `json:"id"`
-    CreatedAt int64             `json:"createdAt"`
-    Metadata  map[string]string `json:"metadata,omitempty"`
-}
-```
+## 应用层 fork、A/B 与回放
 
-JSONL 文件的第一行。Header 只保存创建时的不可变元数据；应用可放入 `title`、`workspace`、`channel` 等自定义 key，但 core 不解释这些字段。
+v1 core 不提供非线性会话结构。常见需求由应用层组合完成：
 
-当前分支位置不写在 Header 中，而是通过 entry stream 顺序恢复：读到 `message` 时把 leaf 更新为该消息 ID，读到 `cursor` 时把 leaf 更新为 `CursorData.Leaf`。这样 `Branch(nodeID)` 可以在 append-only 文件中持久化，不需要重写 Header。
+- fork：读取源会话 `Messages`，创建新 Session，并 `Replace` 为同一快照。
+- A/B：为每个实验分配独立 Session ID，比较最终输出或中间事件。
+- 回放：从日志或检查点读取消息，再通过 `Replace` 恢复到目标 Session。
+- 撤销：应用保存检查点 ID，必要时 `LoadCheckpoint` 后显式 `Replace`。
 
-### 5.8 消息树
+这种方式让 core 保持小接口，同时不限制产品层构建更复杂的历史视图。
 
-```go
-// Tree 通过 ParentID 链构建消息树。
-type Tree struct {
-    root     *TreeNode
-    nodeByID map[string]*TreeNode
-    leaf     string // 当前位置
-}
+## 设计决策
 
-type TreeNode struct {
-    Entry    Entry
-    Children []*TreeNode
-    Parent   *TreeNode
-}
+1. **线性消息列表**：模型 API 接收的就是有序消息，core 不引入额外导航模型。
+2. **批量追加原子性**：一次模型轮次可能包含多条紧密相关消息，`Append(ctx, msgs...)` 保证不会只写入其中一部分。
+3. **完整替换而非隐式变更**：compact、恢复和回放都通过 `Replace` 显式落地，便于审计和测试。
+4. **后端可选**：内存、文件、数据库和远程服务都能实现同一 Session 语义。
 
-// Leaf 返回当前 leaf 节点 ID。
-func (t *Tree) Leaf() string
+## 与红线对照
 
-// Branch 移动 leaf 指针到指定节点。
-// 后续通过 Add 添加的节点将以该节点为 parent。
-func (t *Tree) Branch(nodeID string) error
-
-// Path 返回从根到指定节点的 Entry 序列。
-func (t *Tree) Path(nodeID string) []Entry
-
-// Add 添加一个节点到树中。
-// 如果 entry.ParentID 非空，节点成为对应 parent 的子节点。
-// 如果 entry.ParentID 为空且树为空，节点成为根节点。
-func (t *Tree) Add(entry Entry) error
-
-// Rebuild 从 Entry 列表重建完整的树，并按 message/cursor entry 顺序恢复 leaf。
-func Rebuild(entries []Entry) (*Tree, error)
-```
-
-Tree 是内部数据结构，不在 Session 接口中暴露。memorySession 和 persistentSession 内部都维护 Tree 实例。
-
-### 5.9 session.Snapshot
-
-```go
-// Snapshot 是加载会话后的完整快照。
-type Snapshot struct {
-    Header   Header
-    Entries  []Entry           // 所有 Entry（用于重建 Tree）
-    Messages []*model.Message  // 当前分支的消息序列（已回放 Compaction）
-    State    State              // 会话状态（从 state_change 条目回放）
-}
-```
-
-### 5.10 构造函数
-
-```go
-// NewMemory 创建纯内存 Session（测试、无状态场景、简单 Agent）。
-func NewMemory(opts ...Option) Session
-
-// New 创建持久化 Session（新建，通过 Store 写入）。
-func New(store Store, opts ...Option) (Session, error)
-
-// Open 恢复已有 Session（从 Store 加载快照 + 打开 Writer）。
-func Open(store Store, sessionID string) (Session, error)
-
-// NewFileStore 创建 JSONL 文件 Store。
-func NewFileStore(baseDir string) Store
-```
-
-```go
-type Option func(*options)
-
-func WithID(id string) Option                         // 自定义 Session ID
-func WithMetadata(metadata map[string]string) Option  // 创建时写入 Header.Metadata
-func WithState(state State) Option                    // 初始状态
-```
-
-### 5.11 文件实现
-
-```go
-// fileStore 使用 JSONL 文件实现 session.Store。
-// 文件位置：<baseDir>/<sessionId>.jsonl
-// baseDir 由应用传入，core 不规定 ~/.blades、项目 slug 或 workspace 布局。
-//
-// JSONL 格式：
-//   第 1 行：Header（JSON）
-//   第 2+ 行：Entry（每行一个 JSON）
-//
-// 追加写入由 fileWriter 单所有者负责，进程间通过 flock 协调。
-type fileStore struct {
-    baseDir string
-}
-
-func NewFileStore(baseDir string) Store
-
-// fileWriter 持有打开的文件句柄和 flock。
-type fileWriter struct {
-    file *os.File
-}
-
-func (w *fileWriter) Append(ctx context.Context, entries ...Entry) error
-func (w *fileWriter) Close() error
-```
-
-并发安全策略：
-- **写入**：`flock(2)` 文件锁，单次 `write()` syscall < PIPE_BUF 保证原子性
-- **读取**：不需要锁（append-only 保证已写入的行不变）
-- **崩溃恢复**：Load 时检测并跳过不完整的最后一行
-
-### 5.12 会话恢复流程
-
-```
-1. 读取 JSONL 文件
-2. 解析第一行为 Header
-3. 解析后续每行为 Entry（跳过不完整的最后一行）
-4. 通过 Rebuild(entries) 重建 Tree
-5. 回放 cursor：取最新 CursorData.Leaf；若没有 cursor，则取最后一条 message entry 的 ID
-6. 调用 Tree.Path(leaf) 获取当前分支的 Entry 序列
-7. 从 Entry 序列中提取 message 类型 → []*model.Message
-8. 回放 Compaction：找到最近的 CompactionData，
-   用 Summary 替换 FirstKeptEntryID 之前的所有消息
-9. 回放 StateChange：按序应用所有 state_change Entry → State（last-wins）
-10. 返回 Snapshot
-```
-
-### 5.13 persistentSession 实现
-
-```go
-// persistentSession 包装 Store，提供 Session 接口。
-// 内部维护内存缓存（Tree + messages + state），避免每次 History 都读文件。
-type persistentSession struct {
-    id     string
-    store  Store
-    writer Writer
-
-    mu       sync.RWMutex
-    tree     *Tree
-    messages []*model.Message // 当前分支的消息缓存（已回放 Compaction）
-    state    State
-}
-```
-
-操作语义：
-- **Append(msg)**：创建 MessageEntry → Writer.Append + Tree.Add + 更新 messages 缓存
-- **History()**：从内存缓存读取（读锁），不访问 Store
-- **SetState(k, v)**：更新内存 state + Writer.Append(StateChangeEntry)
-- **Branch(nodeID)**：Tree.Branch(nodeID) + Writer.Append(CursorEntry) + 重建 messages 缓存（从 Tree.Path 重新提取）
-- **Leaf()**：Tree.Leaf()
-
-### 5.14 memorySession 实现
-
-```go
-// memorySession 是纯内存实现，内部维护完整的 Tree 结构。
-// 不依赖 Store，适用于测试、无状态场景、简单 Agent。
-type memorySession struct {
-    id    string
-    state State
-
-    mu       sync.RWMutex
-    tree     *Tree
-    messages []*model.Message // 当前分支的消息缓存
-}
-```
-
-memorySession 和 persistentSession 的 Tree 操作逻辑完全一致，区别仅在于 persistentSession 额外写穿到 Store。
-
-### 5.15 State 管理
-
-保持 `map[string]any`，加约定和泛型辅助：
-
-```go
-// 框架内部 key 用 __ 前缀（如 __compact_offset__）
-// 用户 key 不应使用此前缀
-
-// GetState 是类型安全的 State 读取辅助函数。
-func GetState[T any](s Session, key string) (T, bool) {
-    v, ok := s.State()[key]
-    if !ok {
-        var zero T
-        return zero, false
-    }
-    typed, ok := v.(T)
-    return typed, ok
-}
-```
-
-持久化：每次 SetState 生成 `state_change` Entry 写入 Store。恢复时按序回放，last-wins。
-
-注意：持久化的 State 值必须是 JSON 可序列化的。反序列化后 struct 类型会变成 `map[string]interface{}`，使用 `GetState[T]` 时需要注意类型匹配。
-
-### 5.16 包结构
-
-```
-session/
-├── session.go       // Session 接口 + NewMemory() + New() + Open()
-│                    // + context 辅助函数（NewContext/FromContext/Ensure）
-├── store.go         // Store 接口 + Writer 接口 + Header + Snapshot + StoreOption
-├── entry.go         // Entry + EntryType + MessageData + CompactionData + StateChangeData + CursorData
-├── option.go        // Option + WithID/WithMetadata/WithState
-├── tree.go          // Tree + TreeNode + Path/Branch/Leaf/Add/Rebuild
-├── memory.go        // memorySession（纯内存，内部维护 Tree）
-├── persistent.go    // persistentSession（Store + 内存缓存 + Writer）
-├── file.go          // fileStore（JSONL 读写 + flock）
-└── state.go         // GetState[T] 泛型辅助
-```
-
-### 5.17 后续优化：Lite Reader
-
-v1 的 `Store.List` 只需要读取每个 JSONL 文件第一行 Header，不需要解析完整会话。后续如果引入 `metadata_change`、动态 title、tag 或 list summary，可以增加 LiteReader：读取文件头部 Header 和尾部窗口中的轻量 entry，跳过中间的大块消息内容。
-
-```go
-// --- Lite Reader ---
-
-const LiteReadBufSize = 65536 // 64KB head+tail 窗口
-
-// LiteReader 为包含动态元数据的大型 JSONL 文件提供优化的会话列表读取。
-// 仅读取文件头部 Header 和尾部轻量 entry，跳过 tool_result 内容和 compact 摘要。
-type LiteReader struct {
-    bufSize int // 默认 LiteReadBufSize
-}
-
-func NewLiteReader(opts ...LiteReaderOption) *LiteReader
-
-// ReadLite 返回会话列表所需摘要，无需完整解析。
-func (r *LiteReader) ReadLite(path string) (*Summary, error)
-
-type Summary struct {
-    Header   Header
-    Leaf     string
-    Metadata map[string]string
-}
-
-type LiteReaderOption func(*LiteReader)
-func WithLiteBufSize(size int) LiteReaderOption
-```
-
-读取策略：
-1. 读取文件前 N 字节，解析第一行为 Header
-2. Seek 到文件末尾前 N 字节，扫描尾部的完整行
-3. 从尾部行中提取 last-wins cursor 或 metadata_change
-4. 合并 Header 和尾部摘要，返回 Summary
-
-LiteReader 是后续性能优化，不作为 AgentOS v1 Session/Store 的必需接口。第一阶段 `Store.List` 读取 Header 即可；需要更多列表字段时再引入 Summary 或索引文件。
-
-### 5.18 后续优化：Batch Writer
-
-高频写入场景（如流式 assistant 响应中的多次 Append）下，逐条 `write()` syscall 开销显著。BatchWriter 在 Writer 之上提供异步批量写入能力。
-
-```go
-// --- Batch Writer ---
-
-// BatchWriter 累积 entries 并批量刷盘。
-// 减少高频写入场景下的系统调用开销。
-type BatchWriter struct {
-    inner         Writer
-    queue         chan Entry
-    batchSize     int           // 默认 10
-    flushInterval time.Duration // 默认 100ms
-    done          chan struct{}
-}
-
-func NewBatchWriter(inner Writer, opts ...BatchWriterOption) *BatchWriter
-
-// Append 将 entry 放入队列，非阻塞。
-// 队列满时阻塞直到有空间或 context 取消。
-func (bw *BatchWriter) Append(ctx context.Context, entry Entry) error
-
-// Drain 刷新所有待写入的 entries 并关闭 writer。
-// 在会话结束前调用，确保所有数据持久化。
-func (bw *BatchWriter) Drain(ctx context.Context) error
-
-type BatchWriterOption func(*BatchWriter)
-func WithBatchSize(n int) BatchWriterOption
-func WithFlushInterval(d time.Duration) BatchWriterOption
-```
-
-刷盘触发条件（先到者触发）：
-- 队列中累积的 entries 达到 `batchSize`
-- 距离上次刷盘超过 `flushInterval`
-
-BatchWriter 内部启动一个后台 goroutine 消费队列。`Drain` 发送关闭信号并等待后台 goroutine 退出，确保所有 entries 已持久化。
-
-BatchWriter 是 Writer 实现优化，不改变 `session.Store` / `session.Writer` 公共接口。第一阶段可以使用同步 append，确认格式和恢复语义稳定后再引入批量刷盘。
-
-### 5.19 后续优化：大文件与内容替换
-
-```go
-// --- 大文件优化 ---
-
-// SkipPrecompactThreshold 定义触发大文件优化的阈值。
-// 超过此大小的 JSONL 文件使用 readTranscriptForLoad：
-// 扫描 compact 边界偏移，仅读取边界后内容，
-// 单独扫描边界前区域的轻量状态行。
-const SkipPrecompactThreshold = 1 << 20 // 1MB
-```
-
-大文件加载策略（文件大小 > `SkipPrecompactThreshold`）：
-1. 从文件尾部向前扫描，定位最近的 `compaction` Entry 偏移
-2. 仅完整解析该偏移之后的内容（compact 边界后的活跃消息）
-3. 单独扫描边界前区域，仅提取轻量状态行（state_change、cursor 等）
-4. 跳过边界前的 message 和 tool_result 内容
-
-这与 LiteReader 互补：LiteReader 用于列表场景（不需要消息内容），大文件优化用于加载场景（需要活跃消息但跳过已压缩的旧消息）。
-
-`content_replacement` 可以在后续引入，用于把超限工具结果替换为截断预览和外部 artifact 引用。第一阶段由 `compact.ToolResultBudget` 控制发送给模型的内容，不要求 Session Store 原地替换已写入 entry。
-
-### 关键设计决策
-
-1. **Session + Store 分离** — Session 面向 Agent Loop（7 方法），Store 面向存储后端（Open/Load/List）。Agent Loop 不感知 Entry/Tree/JSONL 等持久化细节。这符合 Go 小接口原则，也使得 memorySession 不需要依赖 Store。
-
-2. **Store 用 Open 模式** — 替代原设计的 Create + Append。Writer 持有文件句柄/flock，生命周期明确。新建和打开已有会话统一为一个操作。Close 释放资源，避免泄漏。
-
-3. **树是一等公民** — Leaf/Branch 在 Session 接口上，所有实现都完整支持树结构。memorySession 和 persistentSession 内部都维护 Tree 实例。
-
-4. **压缩从 Session 移出** — Session.History() 返回原始消息（含 Compaction 回放），压缩由 Agent Loop 的 compact.Pipeline 负责。同一个 Session 可被不同 Agent 共享，各自使用不同压缩策略。
-
-5. **JSONL 追加写入** — 每个打开的会话由一个 `Writer` 持有文件句柄和 flock，进程内通过 single writer ownership 保证顺序，进程间通过文件锁避免交错写入。压缩时不删除旧消息，追加 CompactionData 标记边界。完整历史始终可从 JSONL 文件恢复。
-
-6. **第一阶段 5 种 Entry 类型** — message、compaction、state_change、cursor、custom。content_replacement、model_change、metadata_change、branch_summary 等类型后续按需添加，不影响已有数据格式。
-
-7. **性能优化延后** — LiteReader、BatchWriter、大文件跳读和 content_replacement 都不进入 v1 必需接口。它们可以作为 fileStore 实现细节逐步加入，不能改变 Session/Store 的公共 contract。
-
-8. **LiteReader 以完整性换速度** — 如果后续实现 LiteReader，它仅读取文件头部和尾部窗口，跳过中间的大块内容。会话列表只展示基本元数据，完整信息在 Open 时加载。
+- r18：Session 固定为 `ID`、`Append`、`Messages`、`Truncate`、`Replace` 五方法。
+- r19：Context helper 使用 `session.NewContext` / `session.FromContext`。
+- r29：会话是线性 `model.Message` 列表；fork、A/B、回放在应用层用多 Session 或 `Replace` 实现。

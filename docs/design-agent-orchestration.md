@@ -15,8 +15,8 @@ AgentOS v1 不把 “SubAgent / BackgroundAgent / WorktreeAgent / Team” 作为
 
 - `flow.Sequential` / `flow.Parallel` / `flow.Loop`：组合多个 `blades.Agent`。
 - `flow.AsTool(agent)`：把 Agent 适配为 `tools.Tool`，让一个 Agent 可被另一个 Agent 调用。
-- 应用层 run manager：管理 Agent 运行生命周期、取消、drain、异步 job 和 channel 接入，不作为核心包。
-- `event.Notification`：作为内部输入事件，把 worker、后台 job 或应用层接入状态回流到 Agent input channel。
+- 应用层 run manager：管理 Agent 运行生命周期、取消、drain、异步 job 和 channel 接入，**不作为核心包**（核心仅由 `loop.Run(ctx, agent, input) Generator[event.Output, error]` 暴露单次运行入口）。
+- 后台任务结果回流：应用层使用 `event.Prompt` 注入目标 Agent 的 input channel；信号性事件由应用自己的 channel / event bus 处理，不进入核心协议。
 
 不进入核心的能力：
 
@@ -101,7 +101,7 @@ func AsTool(agent blades.Agent, opts ...ToolOption) tools.Tool
 
 1. Tool 接收 JSON input。
 2. Bridge 将 JSON input 转成 `event.Prompt`。
-3. 调用 `agent.Run(ctx, input)`.
+3. 调用 `loop.Run(ctx, agent, input)`（Run 不在根包，由 `loop/` 提供，返回 `Generator[event.Output, error]`）。
 4. drain `event.Output`。
 5. Bridge 将最终输出转成 `tools.Result`。
 
@@ -127,21 +127,18 @@ type RunManager interface {
 }
 ```
 
-如果需要 fire-and-forget Memory 提取或任务摘要，应用层启动一个后台 run 或异步 job，并负责 drain 输出。结果回流使用 `event.Notification` 注入目标 Agent 的 input channel。
+如果需要 fire-and-forget Memory 提取或任务摘要，应用层启动一个后台 run 或异步 job，并负责 drain 输出。结果回流使用 `event.Prompt` 注入目标 Agent 的 input channel——多模态 Parts 自描述来源与负载，无需引入新的输入变体：
 
 ```go
-event.Notification{
-    Source: "memory.extractor",
-    Kind:   "memory",
-    ID:     jobID,
-    Status: "completed",
-    Parts: []event.InputPart{
-        event.JSONInput{Value: extracted},
+prompt := event.Prompt{
+    Parts: []content.Part{
+        content.Blob{MIME: "application/json", Source: content.InlineBytes(extracted)},
     },
 }
+inputCh <- prompt
 ```
 
-`Notification` 是 `event.Input`，不是 `event.Output`。这样内部回流和用户输入走同一条 Agent Loop 路径，同时保持 Event 层不依赖 `model/`。
+后台结果与用户输入走同一条 Agent Loop 路径，Event 层只保留 `Prompt` / `Steer` / `Abort` / `Pause` / `Resume` 五个 sealed 输入变体，不依赖 `model/`，也不新增开放扩展点。需要承载状态信号、进度、UI 通知时，应用层用自己的 channel / event bus 处理，不污染核心协议。
 
 ## 7.4 Workspace 隔离
 
@@ -209,7 +206,7 @@ func NewCoordinator(opts ...Option) blades.Agent
 - 用 `flow.Parallel` 并发派发独立任务。
 - 用 `flow.AsTool` 暴露 worker。
 - 用 `session/` 保存任务状态。
-- 用 `event.Notification` 回流 worker 完成状态。
+- 用 `event.Prompt` 回流 worker 完成状态（多模态 Parts 自描述来源与负载）。
 - 用 `policy/` 统一处理权限、安全和预算。
 
 不要让 worker 默认再创建 worker。是否允许嵌套编排应由 orchestrator policy 明确控制。
@@ -219,5 +216,5 @@ func NewCoordinator(opts ...Option) blades.Agent
 1. **Agent 接口保持稳定**：所有组合、后台、编排能力都不改变 `Run(context.Context, <-chan event.Input) (<-chan event.Output, error)`。
 2. **组合和编排分层**：`flow/` 做轻量组合，`orchestrator/` 做复杂调度，应用层做生命周期。
 3. **不把场景塞进核心**：coding worktree、Explore/Plan/Verify、Team/Swarm 都是应用层能力。
-4. **Notification 只做输入回流**：worker 和后台 job 的结果作为 `event.Notification` 注入 input，而不是伪造成 output。
+4. **后台回流统一走 `event.Prompt`**：worker 和后台 job 的结果作为 `Prompt` 注入 input，避免在 Event 层增加开放扩展点。
 5. **Bridge 显式化**：Output 到 Input、JSON 到 Prompt、Agent 到 Tool 都必须有明确 bridge，避免隐式把所有事件拼成文本。

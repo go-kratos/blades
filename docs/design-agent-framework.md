@@ -19,7 +19,7 @@ sub-docs:
   - design-memory.md
   - design-observability.md
   - design-graph.md
-  - design-migration.md
+  - design-streaming-optimization.md
 ---
 
 # Blades AgentOS Framework 设计蓝图
@@ -32,16 +32,16 @@ Blades 的目标是成为通用 AgentOS Core Runtime。核心层负责 Agent 事
 
 当前 Blades 已有 `Agent`、基于 `iter.Seq2` 的流式接口、`Invocation`、`Session`、`Middleware`、`flow/`、`graph/`、`tools/`、`skills/`、`memory/`、`recipe/` 和多 Provider 集成。本轮设计以新 API 为目标，把这些能力重组为清晰分层的 AgentOS。
 
-本文描述的是 AgentOS 目标架构，允许不兼容重构。文中的 `event/`、`model/`、`policy/`、`hook/`、`compact/` 和 `internal/loop` 等包名是目标拆分，不表示当前仓库已经全部存在。
+本文描述的是 AgentOS 目标架构，允许不兼容重构。文中的 `content/`、`event/`、`model/`、`policy/`、`hook/`、`compact/`、`loop/` 和 `internal/convert` 等包名是目标拆分，不表示当前仓库已经全部存在。
 
 核心目标：
 
 - **事件驱动**：外部应用通过 `event.Input` / `event.Output` 与 Agent 通信，channel 中直接传具体事件。
-- **Event / Message 分层**：Event 是用户协议层，Message 是模型上下文协议层；Agent Loop 是唯一转换边界。
+- **Event / Message 分层但模态共享**：Event 是用户协议层，Message 是模型上下文协议层；两者通过 `content.Part` 共享单一 Part union，Agent Loop 是唯一转换边界。
 - **通用 AgentOS 核心**：核心提供 runtime、policy、session、tool、memory 等基础能力；channel、host、workspace 和 coding-specific workflow 由应用层承接。
 - **应用层自持接入**：channel、workspace、配置、daemon、cron、外部平台 SDK 和产品交互由具体应用实现，推荐使用 `cmd/<app>/internal/*` 作为应用层样板。
-- **包依赖可证明**：协议叶子包互相独立；上层通过接口、函数注入和 typed capability context 连接，避免循环依赖。
-- **Go 惯用 API**：小接口、短包名、`package.Role` 命名、`context.Context` 取消与 trace 传播、Option 函数配置。
+- **包依赖可证明**：协议层单向依赖 `content/`；能力层 / 运行时层只允许向下依赖，不形成环。
+- **Go 惯用 API**：小接口、短包名、`package.Role` 命名、`context.Context` 取消与 trace 传播、Option 函数配置、`pkg.NewContext`/`pkg.FromContext` stdlib 风格 capability helper。
 - **流式优先**：Provider streaming、工具重叠执行、运行中 steering/control 都是一等能力。
 
 ## 核心结论
@@ -56,12 +56,14 @@ type Agent interface {
 }
 ```
 
-`event/` 是 Event 协议的唯一用户入口。根包不 re-export `event.Input`、`event.Output`、`event.InputPart`、`event.OutputPart`，也不提供 `Prompt`、`Steer`、`Abort` 这类 Event 构造函数。这样用户只需要理解一个 Event 包，避免同一类型同时出现在 `blades` 和 `event` 两个命名空间。
+`event/` 是 Event 协议的唯一用户入口。根包不 re-export `event.Input`、`event.Output`，也不提供 `Prompt`、`Steer`、`Abort` 这类 Event 构造函数。事件中的多模态字段直接使用 `content.Part`。这样用户只需要理解一个 Event 包，避免同一类型同时出现在 `blades` 和 `event` 两个命名空间。
+
+`event/` 文本糖通过构造函数提供：`event.NewPromptText(s string) Prompt` / `event.NewSteerText(s string) Steer`，无需独立事件类型。
 
 `Run` 的 channel 直接承载具体事件：
 
 ```go
-input <- event.PromptText("hello")
+input <- event.NewPromptText("hello")
 
 for out := range output {
     switch e := out.(type) {
@@ -75,7 +77,7 @@ for out := range output {
 }
 ```
 
-运行上下文使用 `context.Context` 传递取消、deadline、trace 和少量 typed capability。Session 是 Agent Loop 的核心运行能力，当前会话 ID 从 `session.Session` 自身读取：
+运行上下文使用 `context.Context` 传递取消、deadline、trace 和少量 typed capability。所有 capability helper 统一采用 stdlib 风格 `pkg.NewContext(ctx, x)` / `pkg.FromContext(ctx) (X, bool)`：
 
 ```go
 ctx = session.NewContext(ctx, sess)
@@ -86,17 +88,31 @@ if ok {
 }
 ```
 
-Core 保留 capability-specific context helper，例如 `session.NewContext/FromContext`、Agent 内省 context 和 `tools.Context`。`AppID`、`UserID`、`ChannelID`、`WorkspaceID`、chat ID、platform ID 和 notification target 由应用层自己的映射、context key 或事件 payload 管理。`TraceID` 使用 OpenTelemetry context 传播；动态业务字段使用具体事件或 Hook payload。context 中不要放大对象、可变 map、消息历史或工具结果。
+Core 保留三类 capability context helper：
+
+- `session.NewContext` / `session.FromContext`：当前会话。
+- `agent.NewContext` / `agent.FromContext`：当前 Agent 内省（name、parent、depth）。
+- `tools.NewContext` / `tools.FromContext`：当前工具执行上下文（`tools.Runtime{Resolver, Allowed []Tool}`）；工具签名仍为 `Handle(ctx context.Context, input json.RawMessage)`。
+
+**可入 context 三准则（硬约束）**：任何想进入核心 context 的 capability 必须**同时**满足：
+
+1. **runtime-scoped**：随 ctx 取消而失效，不是 long-lived global state。
+2. **稳定不变**：在一次 Agent 执行期间不会被替换（替换需派生新 ctx）。
+3. **多层共需**：至少跨 Loop / Tool / Hook / Middleware 中的两层。
+
+不满足任一条的字段（`AppID` / `UserID` / `ChannelID` / `WorkspaceID` / chat ID / platform ID / notification target / turn ID / tool call ID 等业务标识）**必须**由应用层用自己的 context key 管理，core 不提供 helper、不接受 PR 加 helper。`TraceID` 使用 OpenTelemetry context 传播。context 中禁止放大对象、可变 map、消息历史或工具结果。
 
 ### Event 类型
 
 ```go
 package event
 
-type Input interface{ input() }
+// 开放 marker：导出方法，contrib 与应用可贡献新变体。Loop 的 type switch 必须带 default。
+type Input  interface{ input()  }
 type Output interface{ output() }
-type InputPart interface{ inputPart() }
-type OutputPart interface{ outputPart() }
+
+// 多模态字段使用 content.Part。
+// 例如：event.Prompt.Parts 和 event.PartStart.Part 字段类型就是 content.Part / []content.Part。
 ```
 
 输入事件：
@@ -105,8 +121,7 @@ type OutputPart interface{ outputPart() }
 |------|------|
 | `Prompt` | 用户或系统发起一个新 turn |
 | `Steer` | Agent 运行中注入修正、追加上下文或继续指令 |
-| `Control` | Abort / Pause / Resume 控制信号 |
-| `Notification` | runtime、worker、后台任务或应用层接入注入的内部通知 |
+| `Abort` / `Pause` / `Resume` | 三种独立 Control 类型；`Abort{Reason string}` 与 `context.Cancel` 互补承载终止原因 |
 
 输出事件：
 
@@ -115,18 +130,29 @@ type OutputPart interface{ outputPart() }
 | `TextDelta` / `ThinkingDelta` | 文本和 thinking 的常用流式输出 |
 | `PartStart` / `PartDelta` / `PartEnd` | 多模态内容生命周期和高级增量输出 |
 | `ToolStart` / `ToolDelta` / `ToolEnd` | 工具执行生命周期 |
-| `TurnEnd` | 一个模型 turn 结束，包含 `StopReason` 和 usage |
-| `Error` | 可恢复或终止错误 |
-| `Done` | Agent 生命周期结束 |
+| `TurnEnd` | 单 turn 结束（含 `Parts []content.Part`、`StopReason`、token usage 汇总） |
+| `Error` | 运行期错误（实现 `Output`，与其他事件同流；`event.Error{Err error}` 用 Go 标准 error，靠 `errors.Is/As` + 包内 sentinel 判断；fatal 错误走 `Run` 签名第二返回值） |
+| `Done` | Run 结束 sentinel；channel 关闭前发送，便于多 channel `select` 分支区分 |
 
-输入和输出都必须支持多模态 Part。输入 Part 包括 `TextInput`、`FileInput`、`DataInput`、`JSONInput`；输出 Part 包括 `TextOutput`、`ThinkingOutput`、`FileOutput`、`DataOutput`、`JSONOutput`。普通文本输入使用 `event.PromptText` / `event.SteerText`，普通文本输出使用 `event.TextDelta`；完整最终多模态结果仍在 `PartEnd.Part` 和 `TurnEnd.Parts` 中。工具结果在 `tools/` 中也是多模态 DTO，由 Agent Loop 转成 `event.OutputPart` 和 `model.ToolResultPart`。
+输入和输出都必须支持多模态 Part。**`content.Part` 是 AgentOS 唯一的 Part union**（sealed marker：私有 `part()` 方法），定义在 `content/` 包中（仅依赖标准库），统一覆盖用户协议与 provider 协议两类变体：
+
+- 用户多模态变体：`Text`、`Blob`、`Thinking`。`Blob{MIME, Source}` 用 sealed `BlobSource` 表达 inline bytes / URI / FileID；`Thinking` 携带 `Signature []byte` 以承载 Anthropic extended thinking / OpenAI o1 reasoning 的 provider 校验签名；JSON 通过 `Blob{MIME:"application/json"}` 或 `Text` 表达。
+- Provider/工具协议变体：`ToolUse{ID, Name, Input json.RawMessage}` 与 `ToolResult{ID, Name, Parts []content.Part, IsError bool}`。
+
+`event` 中的多模态字段、`tools.Result.Parts`、`model.Message.Parts`、`model.Response.Delta` 全部直接使用 `content.Part`，三个协议包不再各自定义 Part。`content/` 不引入统一 `Metadata map[string]any`——业务扩展通过应用层嵌入业务结构体实现。
+
+文本输入用 `event.NewPromptText(s)` / `event.NewSteerText(s)` 构造函数返回 `Prompt` / `Steer`；多模态输入直接构造 `Prompt{Parts: []content.Part{...}}` / `Steer{Parts: ...}`。流式文本/思考输出走紧凑值类型 `event.TextDelta` / `event.ThinkingDelta`（hot path，避免 interface boxing）；其他模态的流式增量走 `event.PartStart` / `event.PartDelta` / `event.PartEnd`（cold path，承载 Blob 流式 / 自定义 Part）。两条 delta 路径不重叠，由 Loop 按 part 模态分发。完整最终多模态结果在 `PartEnd.Part` 和 `TurnEnd.Parts` 中。
+
+Agent Loop 在工具结果落点做轻量包装而非全 DTO 复制：`tools.Result{Parts: []content.Part}` → `event.ToolEnd.Result` 直接复用同一切片，→ `model.Message.Parts` 中追加 `content.ToolResult{Parts: ...}` 同样直接复用。
 
 Event 和 Message 不合并。原因：
 
-- Event 面向用户、应用接入、hook 和 runtime，包含 streaming、control、notification、tool lifecycle。
+- Event 面向用户、应用接入、hook 和 runtime，包含 streaming、control、tool lifecycle。
 - Message 面向 LLM provider、session、compression，必须满足 provider message invariant。
 - 两者变化频率不同，合并会导致 Event 层依赖 model 层，并把 provider 约束泄漏到用户 API。
-- Agent Loop 是自然转换边界：`event.Input -> model.Message/Part -> Provider -> event.Output`。
+- Agent Loop 是自然转换边界：`event.Input -> model.Message + []content.Part -> Provider -> event.Output`。
+
+通用模态与工具协议变体共享同一 `content.Part` union：event 字段、`tools.Result.Parts`、`model.Message.Parts` 直接使用 `content.Part`，避免重复定义同构 DTO。
 
 ## 总体架构
 
@@ -141,21 +167,27 @@ Event 和 Message 不合并。原因：
 │    Agent, New, Option, runner helpers                             │
 ├─────────────────────────────────────────────────────────────────┤
 │  Agent Runtime                                                    │
-│    internal/loop   Event-driven Agent Loop                         │
-│    flow/           Sequential / Parallel / Loop 组合原语            │
+│    loop/        Agent Loop 默认实现 + Builder + Orchestrator       │
+│    flow/        Sequential / Parallel / Loop / AsTool 组合原语     │
+│    middleware/  InputMiddleware / OutputMiddleware                 │
 ├─────────────────────────────────────────────────────────────────┤
 │  Capability Layer                                                 │
-│    tools/      工具接口、Resolver、Result DTO                       │
-│    policy/     权限、安全、预算、速率限制、组织规则                   │
+│    tools/      工具接口、Resolver、Result（Parts: []content.Part）   │
+│    policy/     权限、安全、预算、速率限制、组织规则（开放 Request）   │
 │    hook/       生命周期事件与拦截点                                  │
 │    compact/    上下文压缩管线                                       │
 │    memory/     Memory 加载、召回、提取                              │
 │    session/    会话接口、Store、消息树、JSONL                         │
+│    prompt/     Prompt Builder + Section（函数类型），Memory 通过 prompt.Memory section 注入 │
 ├─────────────────────────────────────────────────────────────────┤
 │  Protocol Leaf Packages                                           │
-│    event/      Input/Output Event + 多模态 Part，不依赖 model/tools   │
-│    model/      Message/Part/Provider/Request/Response/Counter        │
-│    tools/      Tool/Result/Resolver，不依赖 event/model              │
+│    content/    Part, Text/Blob/Thinking（stdlib only）              │
+│    event/      Input/Output Event，多模态字段直接使用 content.Part        │
+│    model/      Message/Part/Provider(Stream+Count)/Request/Response；Part 仍 sealed │
+│    tools/      Tool/Result/Resolver；Result.Parts 复用 content.Part │
+├─────────────────────────────────────────────────────────────────┤
+│  Internal                                                          │
+│    internal/convert/   Event ↔ Message 唯一私有转换边界              │
 ├─────────────────────────────────────────────────────────────────┤
 │  Optional Systems                                                  │
 │    graph/      DAG 执行器，可选工作流系统                            │
@@ -163,7 +195,7 @@ Event 和 Message 不合并。原因：
 │    recipe/     声明式 Agent 构建                                     │
 ├─────────────────────────────────────────────────────────────────┤
 │  contrib/                                                            │
-│    openai / anthropic / gemini / mcp / otel                          │
+│    openai / anthropic / gemini / mcp / otel / preset                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -172,16 +204,20 @@ Event 和 Message 不合并。原因：
 | 原则 | 决策 |
 |------|------|
 | 根包极简 | `blades/` 只放 `Agent`、`New`、Option、必要错误和纯 Agent runner helper |
-| Event 是协议叶子包 | `event/` 不导入 `model/`、`tools/`、`session/`、`hook/` |
-| Message 是模型协议 | `model/` 不导入 `event/` 或 `tools/`，Provider 只处理 `model.Request/Response` |
-| Tool 是能力叶子包 | `tools/` 不导入 `event/` 或 `model/`，结果使用 `tools.ResultPart` |
-| Runtime 做转换 | `internal/loop` 是 Event、Tool、Message 之间的唯一编排和转换边界 |
-| Context 承载运行能力 | context 传递取消、deadline、trace、`session.Session`、Agent 内省和 `tools.Context` |
+| 协议叶子互独立 | `content/`、`event/`、`model/`、`tools/` 之间禁止形成循环；`event/tools` 单向依赖 `content/` |
+| 多模态共享叶子 | `content/` 仅依赖标准库；`Part` 为 sealed marker（私有 `part()`）；变体 = Text/Blob/Thinking/ToolUse/ToolResult；`Blob.Source` sealed（私有 `blobSource()`）覆盖 InlineBytes/URI/FileID；Thinking 含 Signature |
+| Provider 协议 sealed | 五处 sealed 例外全部封闭：`content.Part`（私有 `part()`）、`event.Input`（私有 `input()`）、`event.Output`（私有 `output()`）、`hook.Event`（runtime 契约不允许外部扩展）、`policy.Request`（强制 Policy 穷尽处理三种请求类型）。核心协议层无开放扩展接口；后台回流走 `event.Prompt`，应用业务事件由应用自己的 channel / event bus 承载 |
+| Tool 是能力叶子包 | `tools/` 单向依赖 `content/`；`tools.Result.Parts []content.Part` |
+| Runtime 公开可替换 | `loop/` 公开承载默认 Agent FSM、`Builder`（Request 构建）与 `Orchestrator`（工具编排）；contrib/preset 实现这两个接口即可替换 |
+| 唯一私有转换 | 仅 `internal/convert/` 持 Event ↔ Message 转换函数；用户不得绕过 Loop 直接转换 |
+| 不显式 FSM 枚举 | Loop 内部用顺序代码 + 行为事件 hook（PreModelCall / PostModelCall / PreToolCall / PostToolCall）表达流程；不导出 `State` 枚举 |
+| Context 三准则 | 入 ctx 的 capability 必须满足：runtime-scoped + Run 内不变 + 多层共需；否则下沉应用层 context key |
+| Context 命名统一 | `pkg.NewContext(ctx, x)` / `pkg.FromContext(ctx) (X, bool)` stdlib 风格；`session/agent/tools` 三处 helper 同形 |
+| Policy 直传完整对象 | `policy/` 允许 import `tools/model/event`（单向无环）；`Request` 是 sealed marker（私有 `policyRequest()`），`ToolRequest` 直持 `tools.Tool`，`ModelRequest` 直持 `*model.Request`，`ResourceRequest` 用 `Kind` 字段区分 fs/net/exec |
 | Prompt 独立 | system prompt 构建放在 `prompt/`，根包不导出 `PromptBuilder` |
 | Middleware 独立 | 输入/输出 middleware 放在 `middleware/`，只操作 Event channel |
 | Composition 不污染根包 | `Sequential/Parallel/Loop` 放 `flow/`，读作 `flow.Sequential(...)` |
 | 应用接入框架外实现 | CLI/HTTP/WebSocket/Slack/Scheduler 等属于具体应用，不作为 AgentOS 核心公开包 |
-| Policy stdlib-only | `policy/` 统一承载权限、安全、预算、速率限制和组织规则；包内只依赖标准库 |
 | Coding 不是核心 | `Explore/Plan/General/Verify` 不进 v1 核心；可放 examples、contrib preset 或业务 app |
 
 ## 包结构
@@ -193,86 +229,94 @@ blades/
 ├── runner.go                   纯 Agent 运行辅助
 ├── errors.go
 │
+├── content/
+│   ├── part.go                 Part 接口（sealed marker：私有 part()）
+│   ├── text.go                 Text{Text string}
+│   ├── blob.go                 Blob{MIME, Source}, BlobSource（sealed：blobSource()）；type InlineBytes []byte / type URI string / type FileID string
+│   ├── thinking.go             Thinking{Text string, Signature []byte}
+│   └── tool.go                 ToolUse{ID, Name, Input json.RawMessage}, ToolResult{ID, Name, Parts []Part, IsError bool}
+│
+├── event/
+│   ├── event.go                Input（sealed：input()）, Output（sealed：output()）
+│   ├── control.go              Abort{Reason string}, Pause{}, Resume{}（三种独立 Control 类型）
+│   ├── input.go                Prompt{Parts []content.Part}, Steer{Parts []content.Part}, NewPromptText/NewSteerText 构造函数
+│   ├── output.go               输出事件公共类型（字段类型为 content.Part）
+│   ├── stream.go               TextDelta/ThinkingDelta（hot path，紧凑值类型），PartStart/PartDelta/PartEnd（cold path：字段类型为 content.Part）
+│   ├── tool.go                 ToolStart, ToolDelta, ToolEnd
+│   ├── terminal.go             Usage, StopReason, TurnEnd{Parts []content.Part, StopReason, Usage}, Error{Err error}, Done{}
+│
+├── model/
+│   ├── message.go              Message{Role, Parts []content.Part}, type Role string（命名常量 RoleUser/RoleAssistant/RoleTool；system 走 Request.System）
+│   ├── system.go               SystemBlock{Text, CacheControl}（顶层 system，支持 prompt cache breakpoint）
+│   ├── provider.go             Provider 接口（Name + Stream(ctx,*Request) blades.Generator[*Response,error] + Count(ctx,*Request) (int,error)）；EmbeddingProvider 平级独立接口
+│   ├── request.go              Request{Model, System []*SystemBlock, Messages, Tools, Temperature, MaxTokens, ...}, Response{Delta []content.Part, StopReason, Usage}, ToolSpec, Usage, StopReason
+│   └── collect.go              Collect(gen) (*Response, error) 累加流式为完整响应（非流式 sugar）
+│
+├── tools/
+│   ├── tool.go                 Tool 核心接口（Spec()ToolSpec + Handle(ctx,input)(*Result,error) 两方法）；可选能力接口仅 3 个：ReadOnlyTool / DestructiveTool / StreamingTool
+│   ├── result.go               Result{Parts []content.Part}（错误走 Handle error 第二返回值，IsError 由 Loop 在 err!=nil 时设置）
+│   ├── resolver.go             Resolver
+│   ├── filter.go               ToolFilter（纯集合操作，留在 tools/）+ ReadOnly/AllowOnly/Disallow/And/Or
+│   └── context.go              tools.Runtime{Resolver, Allowed []Tool}, tools.NewContext/FromContext（stdlib 风格；不含 AgentName，由 agent.FromContext 提供）
+│
 ├── prompt/
-│   ├── builder.go              Builder + Section + CacheBreakpoint
-│   └── prompt.go               SystemPrompt + cache metadata
+│   ├── prompt.go               Builder 接口 + Section 函数类型（func(ctx) ([]content.Part, error)）+ New(sections...) Builder
+│   └── section.go              内置 Section 工厂：Static / Dynamic / System(text) / Memory(m, query, k)
 │
 ├── middleware/
 │   └── middleware.go           InputMiddleware / OutputMiddleware
 │
-├── event/
-│   ├── event.go                Input, Output, Control, Notification
-│   ├── input.go                Prompt, Steer, PromptText/SteerText, InputPart, TextInput/FileInput/DataInput/JSONInput
-│   ├── output.go               OutputPart, TextOutput/ThinkingOutput/FileOutput/DataOutput/JSONOutput
-│   ├── stream.go               PartStart, TextDelta, ThinkingDelta, PartDelta, PartEnd
-│   ├── tool.go                 ToolStart, ToolDelta, ToolEnd
-│   └── turn.go                 Usage, StopReason, TurnEnd, Error, Done
-│
-├── model/
-│   ├── message.go              Message, Role, Status
-│   ├── part.go                 Part, TextPart, FilePart, DataPart, ToolUsePart, ToolResultPart, ThinkingPart
-│   ├── provider.go             Provider
-│   ├── request.go              Request, Response, ToolSpec
-│   ├── token.go                TokenUsage
-│   └── counter.go              Counter + CharCounter/ProviderCounter/CachedCounter
-│
-├── tools/
-│   ├── tool.go                 Tool 核心接口 + 可选能力接口
-│   ├── result.go               Result + ResultPart
-│   ├── resolver.go             Resolver
-│   ├── filter.go               ToolFilter + ReadOnly/AllowOnly/Disallow/And/Or
-│   └── context.go              工具执行上下文辅助
+├── loop/
+│   ├── loop.go                 Run(ctx, agent, input) Generator[Output, error]：默认 FSM 实现（顺序代码，不导出 State 枚举）
+│   ├── builder.go              Builder 接口：(agent, input) → *model.Request（默认实现内部调用 prompt.Builder + Session + Compact + Tools）
+│   └── orchestrator.go         Orchestrator 接口：([]ToolUsePart, []Tool) → []event.ToolEnd（默认串行执行；可换并行/限流策略）
 │
 ├── flow/
 │   ├── sequential.go           Sequential(...) blades.Agent
 │   ├── parallel.go             Parallel(...) blades.Agent
 │   ├── loop.go                 Loop(...) blades.Agent
-│   └── tool.go                 AsTool(agent) tools.Tool，可选 Agent-as-Tool 适配
+│   └── tool.go                 AsTool(agent) tools.Tool
 │
 ├── session/
-│   ├── session.go              Session 接口 + NewMemory/Open
-│   ├── store.go                Store + Writer + Header + Snapshot
-│   ├── entry.go                Entry 联合类型
-│   ├── tree.go                 Tree + Branch/Leaf/Path
-│   ├── memory.go
-│   ├── persistent.go
-│   └── file.go
+│   ├── session.go              Session 接口（5 方法：ID/Append/Messages/Truncate/Replace）+ CheckpointSession 可选接口 + NewContext/FromContext
+│   ├── store.go                Store（Open/Create/Delete）
+│   ├── memory.go               in-memory 实现
+│   └── file.go                 JSONL 文件实现（Writer + Header 内部细节）
 │
 ├── compact/
-│   ├── pipeline.go             Pipeline
-│   ├── strategy.go             Strategy
-│   ├── budget.go               ToolResultBudget
-│   ├── summary.go              LLM 摘要策略，Summarizer 函数注入
-│   └── invariant.go            Provider invariant 保护
+│   ├── compact.go              Compactor 接口（Compact(ctx, msgs) -> msgs）+ Chain + Window
+│   ├── budget.go               ToolResultBudget(maxBytes) Compactor（截断超大 tool result）
+│   └── summary.go              Summarize(provider, ...) Compactor（LLM 摘要）
 │
 ├── hook/
-│   ├── event.go                hook.Event 判别联合
-│   ├── registry.go             Registry
-│   └── handler.go              Observe / Intercept handlers
+│   ├── event.go                hook.Event（sealed marker：私有 hookEvent()）+ 核心 events 全集（PreModelCall/PostModelCall/PreToolCall/PostToolCall/TurnStart/TurnEnd）
+│   ├── registry.go             Registry（内部 type switch 分发）
+│   └── handler.go              Observer/Interceptor 二元划分 + 泛型注册 helper（OnPreModelCall/OnPostToolCall/...）
 │
 ├── policy/
-│   ├── decision.go             Decision
-│   ├── request.go              Request + ToolRequest/ModelRequest/ResourceRequest
-│   ├── chain.go                Chain
-│   ├── rule.go                 Rule
-│   ├── safety.go               SafetyChecker
-│   ├── budget.go               BudgetPolicy
-│   └── rate.go                 RateLimiter
+│   ├── policy.go               Policy 接口（Check(ctx, Request) Decision）+ Decision/Action
+│   ├── request.go              Request（sealed marker：私有 policyRequest()）+ ToolRequest/ModelRequest/ResourceRequest
+│   └── builtin.go              Chain/Budget/RateLimit/SafetyCheck 工厂函数（均返回 Policy）
 │
 ├── memory/
-├── graph/
-├── recipe/
-├── evaluator/
+│   ├── memory.go               Memory 接口（Recall+Remember 两方法）+ Item
+│   └── store.go                可选 Store 后端抽象（KV/向量库扩展点）
+├── graph/                      声明式 DAG 调度（节点+边+条件路由），与命令式 flow/ 互补不重叠
+│
+│   非核心（保留代码但不属于 14 个核心包）：
+├── recipe/                     预设模板（应用层）
+├── evaluator/                  评测工具（开发期）
+│
 ├── internal/
-│   └── loop/
-└── contrib/
+│   └── convert/                Event ↔ Message 唯一私有转换
+└── contrib/                    provider/preset/observability 集成（含 contrib/otel）
 ```
 
-### runner.go 边界
+### Runner helper 边界
 
-`runner.go` 可以留在根包，因为它直接服务 `blades.Agent` 的基本运行体验。边界必须足够硬：它只能提供同步调用、drain、collect、一次性 run 等无状态 helper，帮助调用方把 `Agent.Run` 的 channel API 用得更顺手。
+同步调用 / drain / collect 等执行 helper 一律放在 `loop/` 包：`loop.Collect(ctx, agent, input)` 同步收集所有 Output，`loop.Drain(...)` 仅消耗 stream。根包保持极简：仅 `Agent` 数据 + `New` 构造 + `Option` + `With*` + `Generator` 类型别名。
 
-`runner.go` 不承载 run manager 语义，不定义 run ID、队列、daemon、cron、后台 job、主动通知、channel adapter、workspace 映射、配置加载或 session 映射。这些都属于应用接入层。
+run manager 语义（run ID、队列、daemon、cron、后台 job、主动通知、channel adapter、workspace 映射、配置加载、session 映射）一律不在核心，属于应用接入层。
 
 ### 为什么不用根包放 Sequential / Parallel / Loop
 
@@ -282,6 +326,13 @@ blades/
 - `flow.Sequential` 读作组合领域的构造函数。
 - `flow/` 可以依赖根包，根包不依赖 `flow/`，无循环。
 - 原有 `flow/` 可迁移保留，但只留下通用三件套；`Routing`、`Deep` 这类策略型 Agent 不进入核心。
+
+### loop/ vs flow/ 边界
+
+容易混淆，明确区分：
+
+- **`loop/`**：*单个* Agent 内部的运行循环（Prepare → Stream → Act → 循环）。`loop.Run`、`loop.Builder`、`loop.Orchestrator`。contrib/preset 替换 Builder 或 Orchestrator 即可定制 RAG/Coding/工具优先 Loop，无需另起包。
+- **`flow/`**：*多个* Agent 之间的组合（Sequential / Parallel / Loop / AsTool）。`flow.Loop` 与 `loop.Run` 同名不同义——`flow.Loop` 是把另一个 Agent 反复调用，`loop.Run` 是单 Agent 内部的 prepare-stream-act 循环。
 
 ### agents/ 包的取舍
 
@@ -300,30 +351,38 @@ blades/
 ## 依赖关系
 
 ```
-event/      -> standard library only
-model/      -> standard library only
-tools/      -> standard library only + jsonschema
+content/    -> standard library only
+event/      -> content/
+model/      -> content/                                 // Message.Parts: []content.Part；Response.Delta: []content.Part
+tools/      -> content/ + jsonschema                    // Result.Parts: []content.Part
 
 session/    -> model/
-compact/    -> model/                         // Summarizer 函数由上层注入
-memory/     -> model/                         // Fork/Recall 函数由上层注入
-policy/     -> standard library only
-hook/       -> event/, model/, tools/, policy/
+compact/    -> model/                                   // Summarizer 函数由上层注入
+memory/     -> stdlib only                              // Memory 接口；具体后端通过 contrib 实现
+prompt/     -> content/, model/, memory/                // Memory section 引用
+hook/       -> content/, event/, model/, tools/, policy/
+policy/     -> content/, event/, model/, tools/         // 直传完整对象，单向无环
 
-blades/     -> event/, model/, tools/, session/, compact/, hook/, policy/, prompt/
+middleware/ -> event/
 flow/       -> blades/, event/, tools/
+loop/       -> event/, model/, tools/, content/, session/, compact/, prompt/, hook/, policy/, internal/convert/
+
+internal/convert/ -> content/, event/, model/, tools/
+
+blades/     -> model/, tools/, session/, compact/, hook/, policy/, prompt/   // 仅持有配置类型；不依赖 loop/event 避免运行时绑定
 
 recipe/     -> blades/, tools/, model/, prompt/
 contrib/*   -> model/ 或 tools/
-internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/, prompt/
 ```
 
 循环依赖规避规则：
 
-- `event/`、`model/`、`tools/` 三个协议/能力叶子包互不依赖。
-- `policy/` 只依赖标准库，不导入 `tools/`、`model/`、`event/`、`blades/` 或 `hook/`；工具元数据到 policy request 的映射在 Agent Loop 或应用 bridge 中完成。
+- `content/` 是最底层叶子，**硬约束仅依赖标准库**（`go list -deps ./content/...` 不得出现非 stdlib 包）；任何包都可单向依赖它。
+- `event/`、`model/`、`tools/` 三个协议包都依赖 `content/`，但互不依赖。
+- `policy/` 单向依赖协议层（`content/event/model/tools/`），sealed `Request` 接口（私有 `policyRequest()`）穷尽三种内置请求类型。
 - `compact/` 不依赖 Provider 或 root Agent；摘要能力通过 `func(ctx, []*model.Message) (string, error)` 注入。
-- `memory/` 不依赖 root Agent；提取和召回通过函数接口注入。
+- `memory/` 不依赖 root Agent 也不依赖 model；仅暴露 `Memory` 接口供应用层在 prompt section 中调用。
+- `loop/` 是运行时汇聚层，依赖所有协议与能力包；`internal/convert/` 是 Loop 内部专用的 Event ↔ Message 转换实现，不导出给用户。
 - CLI、HTTP、WebSocket、Slack、Scheduler 等接入层不进入核心依赖图；具体应用自行把外部协议转换成 `event.Input` / `event.Output`。
 - 后台运行、队列、drain、取消、主动通知等运行管理不进入核心依赖图；具体应用可以在 `cmd/<app>/internal` 内实现。
 
@@ -331,37 +390,42 @@ internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/, pro
 
 | 包 | 核心类型 | 示例 |
 |----|----------|------|
-| `blades` | `Agent`, `Option`, runner helpers | `blades.Agent` |
-| `event` | `Input`, `Output`, `Prompt`, `Steer`, `Control`, `Notification`, `TextDelta`, `PartDelta`, `TurnEnd`, `Done` | `event.PromptText` |
-| `model` | `Message`, `Part`, `Provider`, `Request`, `Response`, `ToolSpec`, `Counter` | `model.Provider` |
-| `tools` | `Tool`, `Result`, `ResultPart`, `Resolver`, `ToolFilter` | `tools.Tool` |
-| `prompt` | `Builder`, `Section`, `SystemPrompt`, `Breakpoint` | `prompt.Builder` |
+| `blades` (root) | `Agent`, `New`, `Option`, `Generator[T,E]`, `WithModel`/`WithTools`/`WithSession`/`WithPolicy`/`WithHook`/`WithCompact`/`WithPrompt` | `blades.Agent` |
+| `content` | `Part`（sealed marker：私有 `part()`），`Text`，`Blob{MIME, Source}`，`BlobSource`（sealed：`blobSource()`），`InlineBytes`，`URI`，`FileID`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.Text{Text: "hi"}` |
+| `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `PartStart`, `PartDelta`, `PartEnd`, `ToolStart`, `ToolDelta`, `ToolEnd`, `TurnEnd`, `Error`, `Done`；构造糖：`NewPromptText`, `NewSteerText` | `event.NewPromptText("hi")` |
+| `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `SystemBlock{Text, CacheControl}`, `Provider`(Name+Stream+Count), `EmbeddingProvider`, `Request{System []*SystemBlock, Messages []*Message, Tools []ToolSpec, ...}`, `Response{Delta []content.Part, StopReason, Usage}`, `ToolSpec`, `Usage`, `StopReason`, `Collect` | `model.Provider` |
+| `tools` | `Tool`(Spec+Handle 两方法), `ToolSpec`(=model.ToolSpec), `Result`(`Parts: []content.Part`), `ReadOnlyTool` / `DestructiveTool` / `StreamingTool`（仅 3 个可选能力接口）, `Resolver`(List+Resolve), `ToolFilter`, `Runtime`{Resolver,Allowed}, `NewContext`/`FromContext` | `tools.Tool` |
+| `prompt` | `Builder`(接口), `Section`(函数类型), `Static`/`Dynamic`/`System`/`Memory` 工厂, `New` | `prompt.Builder` |
+| `loop` | `Run`, `Builder`, `Orchestrator` | `loop.Builder` |
 | `flow` | `Sequential`, `Parallel`, `Loop`, `AsTool` | `flow.Parallel(a, b)` |
-| `session` | `Session`, `Store`, `Writer`, `Entry`, `Tree` | `session.Session` |
-| `policy` | `Chain`, `Decision`, `Rule`, `SafetyChecker`, `BudgetPolicy`, `RateLimiter` | `policy.Chain` |
-| `hook` | `Event`, `Registry`, handlers | `hook.Registry` |
-| `compact` | `Pipeline`, `Strategy`, `PostCompactRestorer` | `compact.Pipeline` |
-| `memory` | `Store`, `Loader`, `Extractor`, `Recaller` | `memory.Store` |
+| `middleware` | `InputMiddleware`, `OutputMiddleware` | `middleware.InputMiddleware` |
+| `session` | `Session`(5 方法), `CheckpointSession`(可选), `Store`, `NewContext`, `FromContext` | `session.Session` |
+| `policy` | `Policy`(Check 单方法), `Decision`, `Action`, `Request`(sealed), `ToolRequest`, `ModelRequest`, `ResourceRequest`, `Chain`/`Budget`/`RateLimit`/`SafetyCheck` 工厂函数 | `policy.Policy` |
+| `hook` | `Event`(sealed), `Registry`, `Observer`, `Interceptor`, `OnPreModelCall`/`OnPostModelCall`/`OnPreToolCall`/`OnPostToolCall`/`OnTurnStart`/`OnTurnEnd` 泛型 helpers | `hook.Registry` |
+| `compact` | `Compactor`(单方法接口), `Chain`, `Window`, `ToolResultBudget`, `Summarize` | `compact.Compactor` |
+| `memory` | `Memory`(Recall+Remember), `Item`, `Store`(可选后端) | `memory.Memory` |
 
 ## 模块详细设计
 
 ### Event 系统与 Agent Loop
 
-Event 是用户协议层，定义 `event.Input` / `event.Output` 和多模态 `InputPart` / `OutputPart`。Event 不依赖 `model/`，也不和 `model.Message` 共享 Go 类型。Agent Loop 是状态机（Idle -> Preparing -> Streaming -> Acting），负责：
+Event 是用户协议层，定义 `event.Input` / `event.Output`，多模态字段直接使用 `content.Part`。Event 不和 `model.Message` 共享 Go 类型，但通过 `content.Part` 实现"零样板模态共享"。Agent Loop 在 `loop/` 公开包中实现，使用顺序代码 + 行为事件 hook 表达流程（不导出 FSM 状态枚举），负责：
 
 - 把 `event.Prompt` / `event.Steer` 转成 `model.Message`。
-- 用 ContextBuilder 从 Session、Memory、`prompt.Builder`、ToolSpec 构建 `model.Request`。
+- 通过 `loop.Builder` 从 Session、`prompt.Builder`、ToolSpec、Compact 构建 `model.Request`。Memory 不直接被 loop 感知；如需注入由应用通过 `prompt.Memory` section 实现。
 - 调用 `model.Provider`。
 - 把 `model.Response` 转成 `event.TextDelta`、`event.Part*`、`event.Tool*`、`event.TurnEnd`。
-- 把工具结果同时转成 `event.OutputPart` 和 `model.ToolResultPart`。
+- 把工具结果（`tools.Result.Parts: []content.Part`）零拷贝包装为 `event.ToolEnd.Result`，并将 `content.ToolResult{Parts: ...}` 直接追加到 `model.Message.Parts` 中。
+
+唯一的 Event ↔ Message 转换函数留在 `internal/convert/`，用户不得绕过 Loop 直接调用。
 
 详细定义见 [design-event-agent-loop.md](design-event-agent-loop.md)。
 
 ### Agent Runtime
 
-Runtime 包括根包 `blades/`、`internal/loop` 和 `flow/`。
+Runtime 包括根包 `blades/`、`loop/`、`flow/` 与 `middleware/`。
 
-`blades.New(name, opts...)` 创建基础 Agent。基础 Agent 持有 model provider、tools resolver、session provider、prompt builder、policy chain、hook registry、compact pipeline、memory loader 等配置，但这些能力都通过接口注入。
+`blades.New(name, opts...)` 创建基础 Agent。Agent 是配置容器，持有 model provider、tools resolver、session provider、prompt builder、policy、hook registry、compact 等配置，全部通过接口注入。Memory 不在根 Agent 内置（由应用层通过 prompt section 注入）。**根包不绑定执行语义**——`Agent.Run` 不存在；执行入口由 `loop.Run(ctx, agent, input) Generator[Output, error]` 提供，contrib/preset 通过实现 `loop.Builder` 或 `loop.Orchestrator` 替换 Request 构建或工具编排逻辑。
 
 `flow.Sequential/Parallel/Loop` 返回普通 `blades.Agent`：
 
@@ -392,7 +456,7 @@ Agent 不知道自己来自 CLI、HTTP 还是消息平台；它只读 input chan
 
 原 `permission/` 命名过窄。AgentOS 需要统一处理权限、安全、预算、速率限制和组织策略，因此核心包命名为 `policy/`。
 
-`policy.Chain` 接收 core-sealed 的 `ToolRequest`、`ModelRequest`、`ResourceRequest`，返回 allow/deny/ask/modify。应用如果要接入额外资源类型，应先映射为 `ResourceRequest` 或在自己的 checker 中解释这些稳定 DTO；不要让 `policy/` 导入应用类型。Plan Mode、Accept Edits、Auto Mode 不作为 AgentOS 核心目标；它们是产品交互策略，应放在具体应用、examples 或 contrib 包中，基于 core policy primitives 组合实现。
+`policy/` 单向依赖协议层（`content/event/model/tools/`），允许 Request 直传完整对象（`ToolRequest{Tool: tools.Tool, Input: json.RawMessage}`、`ModelRequest{Request: *model.Request}`、`ResourceRequest{Kind, ...}`），消除 Agent Loop 的元数据映射样板，让 Policy 实现直接读取工具的 `ReadOnlyTool`/`DestructiveTool` 等可选能力。`policy.Request` 是 sealed 接口（私有 `policyRequest()`），强制 Policy 实现穷尽处理三种内置变体；新增请求类型由核心扩展，应用层不直接增加变体，避免破坏 sealed 契约。`Policy` 是单方法接口 `Check(ctx, Request) Decision`；`Chain`/`Budget`/`RateLimit`/`SafetyCheck` 等内置实现都是返回 `Policy` 的工厂函数。`Decision.Action` 含 Allow/Deny/Ask/Modify。Plan Mode、Accept Edits、Auto Mode 不作为 AgentOS 核心目标；它们是产品交互策略，应放在具体应用、examples 或 contrib 包中，基于 core policy primitives 组合实现。
 
 ### 子 Agent 与 Multi-Agent
 
@@ -411,11 +475,11 @@ v1 核心只保留两个通用原语：
 
 ### Session / Memory / Compact
 
-`session.Session` 面向 Agent Loop，只提供消息历史、追加、分支和状态访问。Entry、Tree、JSONL、Store 是持久化层细节。
+`session.Session` 面向 Agent Loop，只提供消息历史的最小操作集（ID/Append 原子批量/Messages/Truncate/Replace 五方法）。Checkpoint 下沉到可选接口 `CheckpointSession`；JSONL、Store、Writer 是持久化实现细节，不是 Session 接口的一部分。
 
-`compact.Pipeline` 从 Session 中取出的 `[]*model.Message` 进行预算控制和摘要，不依赖 root Agent。LLM 摘要通过 Summarizer 函数注入。
+`compact.Compactor` 是一个纯函数式接口 `Compact(ctx, []*Message) ([]*Message, error)`，不感知触发时机（由 Loop 在 token 接近上限时调用）。内置实现 `ToolResultBudget` / `Summarize` / `Window` 都满足 Compactor，通过 `Chain` 串联组合。每个实现自身负责保护 provider message invariant（共享 `internal/convert.ValidateMessages` helper）。
 
-`memory/` 负责多层 Memory 加载、召回和提取。Memory 提取不要求框架内置 BackgroundAgent；应用层可以启动独立 run 或异步 job，把提取结果写回 memory store。
+`memory/` 提供 `Memory` 接口（Recall+Remember 两方法），不在 root Agent 内置。应用层在 prompt builder 中调用 `memory.Recall` 注入相关记忆，在 turn 结束后调用 `memory.Remember` 抽取写入。Memory 不进根 Agent 配置；保持根包极简。
 
 ## 子文档职责
 
@@ -423,47 +487,48 @@ v1 核心只保留两个通用原语：
 
 | 子文档 | 职责 |
 |--------|------|
-| [design-event-agent-loop.md](design-event-agent-loop.md) | Event 协议、Agent Loop 状态机、Event/Message 转换边界 |
+| [design-event-agent-loop.md](design-event-agent-loop.md) | Event 协议、Agent Loop 顺序流程与行为事件 hook、Event/Message 转换边界 |
 | [design-model-provider.md](design-model-provider.md) | `model/` Message、Part、Provider、Request/Response、重试、token 计数 |
 | [design-prompt.md](design-prompt.md) | `prompt/` Builder、Section、缓存断点和静态/动态 prompt 组织 |
-| [design-compact.md](design-compact.md) | `compact/` Pipeline、Strategy、工具结果预算、不变量保护和摘要注入 |
+| [design-compact.md](design-compact.md) | `compact/` Compactor 接口与内置实现（Window/ToolResultBudget/Summarize/Chain），provider invariant 保护策略 |
 | [design-tool-system.md](design-tool-system.md) | `tools/` Tool、Result、Resolver、Filter 和执行上下文 |
 | [design-hook-extension.md](design-hook-extension.md) | core-sealed hook event、观察/拦截边界和应用事件隔离 |
-| [design-session.md](design-session.md) | Session、Store、Entry、Tree 和持久化 |
-| [design-policy-mode.md](design-policy-mode.md) | stdlib-only policy core 与应用交互模式边界 |
+| [design-session.md](design-session.md) | Session 接口（5 方法）、CheckpointSession、Store 与持久化（JSONL）|
+| [design-policy-mode.md](design-policy-mode.md) | policy core（开放 `Request` 接口、依赖协议层）与应用交互模式边界 |
 | [design-agent-orchestration.md](design-agent-orchestration.md) | `flow/` 组合、Agent-as-Tool 和多 Agent 边界 |
-| [design-memory.md](design-memory.md) | Memory 加载、召回、提取与应用异步任务边界 |
-| [design-observability.md](design-observability.md) | Hook 驱动的 OTel 集成和 span 生命周期 |
+| [design-memory.md](design-memory.md) | `memory.Memory` 接口（Recall+Remember）、应用层注入策略与异步抽取边界 |
+| [design-observability.md](design-observability.md) | OTel 集成方案：通过 `contrib/otel` 注册 hook Observer 监听 PreModelCall/PostModelCall/PreToolCall/PostToolCall/TurnStart/TurnEnd |
 | [design-graph.md](design-graph.md) | 独立 DAG 子系统定位和与 Agent 的桥接方式 |
-| [design-migration.md](design-migration.md) | 旧 API 到 v1 目标架构的迁移路径 |
-
-`design-message-context.md` 与 `design-infra.md` 保留为历史聚合文档，不再作为 v1 主索引入口。`design-streaming-optimization.md` 是已实现流式优化参考，不属于 v1 子设计。
+| [design-streaming-optimization.md](design-streaming-optimization.md) | v1 流式协议参考：`iter.Seq2` + `context.Context` 取消、Delta 路径与背压策略 |
 
 ## 实现计划
 
-### 阶段 1：协议与 Agent Loop
+### 阶段 1：协议叶子（content/event）与 Agent Loop
 
-- [ ] 定义 `event/`：`Input` / `Output`、多模态 `InputPart` / `OutputPart`、`Prompt`、`Steer`、`PromptText`、`SteerText`、`Control`、`Notification`、`TextDelta`、`ThinkingDelta`、`Part*`、`Tool*`、`TurnEnd`、`Error`、`Done`
+- [ ] 定义 `content/`：`Part`（sealed marker：私有 `part()`）、`Text`、`Blob{MIME, Source}`（`BlobSource` sealed 私有 marker `blobSource()`：`InlineBytes` / `URI` / `FileID`）、`Thinking{Text, Signature []byte}`、`ToolUse{ID, Name, Input json.RawMessage}`、`ToolResult{ID, Name, Parts []Part, IsError bool}`
+- [ ] 定义 `event/`：`Input`（sealed：`input()`） / `Output`（sealed：`output()`），多模态字段使用 `content.Part`、`Prompt{Parts []content.Part}`、`Steer{Parts []content.Part}`、`NewPromptText` / `NewSteerText` 构造函数、`Abort{Reason string}`、`Pause{}`、`Resume{}`、`TextDelta`、`ThinkingDelta`（hot path）、`PartStart`/`PartDelta`/`PartEnd`（cold path 多模态）、`Tool*`、`TurnEnd`、`Error`、`Done`
 - [ ] 根包不 re-export Event 类型或构造函数；用户代码统一导入 `event/`
 - [ ] Agent 接口改为 `Run(context.Context, <-chan event.Input) (<-chan event.Output, error)`
-- [ ] 实现 Agent Loop 对 `session.Session`、Agent 内省 context 和 `tools.Context` 的读取与传递
-- [ ] 实现 Event -> model.Message/Part -> Provider -> Event 转换边界
+- [ ] 实现 `loop/` 公开包：`Run`/`Builder`/`Orchestrator` 三件套，Orchestrator 返回 `[]event.ToolEnd`，不导出 FSM 状态枚举
+- [ ] 实现 Agent Loop 对 `session.Session`、Agent 内省 context（`agent.NewContext`/`agent.FromContext`）和 `tools.FromContext` 的读取与传递
+- [ ] 在 `internal/convert/` 实现唯一的 Event ↔ Message 转换函数
 - [ ] 在 `middleware/` 实现 InputMiddleware / OutputMiddleware
 
 ### 阶段 2：model/session/compact
 
-- [ ] 实现 `model/`：Message、Part、Provider、Request、Response、ToolSpec、Counter
-- [ ] 实现 `session.Session` 与 `session.Store`
-- [ ] 实现 ContextBuilder 和 streamAndRecord
-- [ ] 实现 `compact.Pipeline` 与 provider invariant 保护
+- [ ] 实现 `model/`：`Message{Role, Parts []content.Part}`、`SystemBlock{Text, CacheControl}`、Provider 接口三方法（Name/Stream/Count，Stream 返回 `blades.Generator[*Response, error]`）、EmbeddingProvider 独立接口、`Request{System []*SystemBlock, Messages []*Message, Tools []ToolSpec, ...}`、`Response{Delta []content.Part, StopReason, Usage}`、`ToolSpec`、`Usage`、`StopReason`、`Collect` 流式累加 helper
+- [ ] 实现 `session.Session` 与 `session.Store`，提供 `session.NewContext`/`session.FromContext`
+- [ ] 实现 `loop.Builder` 与 streamAndRecord
+- [ ] 实现 `compact.Compactor` 内置组合（Window/ToolResultBudget/Summarize/Chain）与 provider invariant 保护
 - [ ] 在 `prompt/` 实现 `Builder` 静态/动态 section 与 cache breakpoint
 
 ### 阶段 3：tools/policy/hook
 
-- [ ] 精简 `tools.Tool`，定义 `tools.ResultPart`
-- [ ] 实现 ToolFilter、Resolver、StreamingToolExecutor
-- [ ] 实现 `policy.Chain`、SafetyChecker、BudgetPolicy、RateLimiter
-- [ ] 实现 `hook.Registry` 和 Agent/Model/Tool 生命周期事件
+- [ ] 精简 `tools.Tool` 为两方法接口（`Spec() ToolSpec` + `Handle(ctx, input json.RawMessage) (*Result, error)`），`ToolSpec` 与 `model.ToolSpec` 同构；保留 3 个可选能力接口 `ReadOnlyTool` / `DestructiveTool` / `StreamingTool`；`tools.Result.Parts: []content.Part` 直接复用 content/，错误走 Handle error 第二返回值
+- [ ] 实现 ToolFilter、Resolver、StreamingToolExecutor、`tools.NewContext`/`tools.FromContext`
+- [ ] 实现 `policy.Policy` 单方法接口 + 内置工厂（Chain/Budget/RateLimit/SafetyCheck），`Request` 为 sealed marker
+- [ ] 实现 SafetyChecker、BudgetPolicy、RateLimiter
+- [ ] 实现 `hook.Registry`：sealed hook events 全集、Observer/Interceptor 二元 handler、`OnPreModelCall`/`OnPostToolCall` 等泛型注册 helper
 - [ ] 在 Agent Loop 中串联 tool validation、policy、hook、execution、result conversion
 
 ### 阶段 4：应用接入样板与边界验证
@@ -485,7 +550,7 @@ v1 核心只保留两个通用原语：
 | 风险 | 影响 | 缓解 |
 |------|------|------|
 | Event 接口变更大 | 高 | 保持 `event/` 作为唯一入口，迁移围绕 `event.Input` / `event.Output` 和具体事件类型 |
-| Event/Message 转换复杂 | 高 | 转换只允许在 `internal/loop`，增加 golden tests 覆盖多模态和工具调用 |
+| Event/Message 转换复杂 | 高 | 转换只允许在 `internal/convert`，增加 golden tests 覆盖多模态和工具调用 |
 | context 被滥用 | 中 | context 只传取消、deadline、trace 和 typed capability；业务字段走 Event/Hook/Session 或应用层映射 |
 | 包数量增加 | 中 | 保持叶子包小接口，应用层负责接入和装配，避免根包重新膨胀 |
 | policy 语义过宽 | 中 | `Decision` 和请求类型保持小而稳定，模式/预算/组织规则通过可选实现扩展 |
@@ -507,7 +572,6 @@ v1 核心只保留两个通用原语：
 - [Memory 系统](design-memory.md)
 - [Observability](design-observability.md)
 - [Graph 定位](design-graph.md)
-- [迁移路径](design-migration.md)
+- [流式协议最终态](design-streaming-optimization.md)
 - [Claude Code Agent 参考设计](reference-claude-code-agent.md)
 - [pi-agent Framework 参考设计](reference-pi-agent-framework.md)
-- [流式响应优化设计](design-streaming-optimization.md)（历史已实现参考，不属于 AgentOS v1 子设计）

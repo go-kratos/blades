@@ -1,206 +1,141 @@
 ---
 type: design
-title: 流式响应优化设计
-date: 2024-11-16
-status: implemented
-author: Blades Team
-related: []
-tags: [streaming, performance, core]
+title: 流式协议最终态参考
+date: 2026-05-05
+status: draft
+parent: design-agent-framework.md
+related: [design-agent-framework.md]
+tags: [agentos, streaming, model, event, performance]
 ---
 
-# 流式响应优化设计
+# 流式协议最终态参考
 
-## 背景与动机
+## 1. 当前协议态
 
-### 现状
+AgentOS v1 的流式协议以 Go generator 与 context 取消为核心：
 
-当前 Blades 框架已经支持流式响应，但在处理大规模数据流时存在以下问题：
-- 内存占用较高
-- 缓冲区管理不够灵活
-- 缺少背压（backpressure）机制
-
-### 问题
-
-1. 在高并发场景下，流式响应可能导致内存溢出
-2. 生产者和消费者速度不匹配时，缺少有效的流控机制
-3. 错误处理不够完善，可能导致资源泄漏
-
-### 目标
-
-- 优化内存使用，降低峰值内存占用 50%
-- 实现背压机制，保证系统稳定性
-- 完善错误处理，避免资源泄漏
-
-## 方案设计
-
-### 方案概述
-
-通过引入可配置的缓冲区和背压机制，优化流式响应的性能和稳定性。核心思想是：
-1. 使用环形缓冲区减少内存分配
-2. 实现基于令牌桶的背压控制
-3. 增强错误处理和资源清理
-
-### 架构设计
-
-```mermaid
-graph LR
-    A[ModelProvider] -->|生成| B[Buffer]
-    B -->|背压控制| C[iter.Seq2]
-    C -->|消费| D[Application]
-    E[ErrorHandler] -.监控.-> B
-    E -.监控.-> C
-```
-
-### 详细设计
-
-#### 模块 1: 环形缓冲区
-
-**目标**: 减少内存分配，提高吞吐量
-
-**实现**:
 ```go
-type RingBuffer struct {
-    buffer []interface{}
-    size   int
-    head   int
-    tail   int
-    mu     sync.Mutex
+type Provider interface {
+    Name() string
+    Stream(ctx context.Context, req *model.Request) blades.Generator[*model.Response, error]
+    Count(ctx context.Context, req *model.Request) (int, error)
 }
 ```
 
-**关键点**:
-- 固定大小，避免动态扩容
-- 使用 head/tail 指针实现循环
-- 线程安全
+`blades.Generator[*model.Response, error]` 等价于 `iter.Seq2[*model.Response, error]` 风格序列。Provider 逐帧 yield `*model.Response`，错误通过序列第二返回值 yield。
 
-#### 模块 2: 背压控制
+最终态约束：
 
-**目标**: 防止生产者速度过快导致内存溢出
+- 没有单独的流式配置对象。
+- 没有 provider 关闭方法。
+- 没有独立 buffer 层。
+- 资源回收唯一入口是 `ctx` 取消、deadline 或调用栈自然退出。
+- 同步生成由 `model.Collect` 从 `Stream` 累加实现。
+- token 计数由 `Provider.Count` 完成，不拆出独立计数接口。
 
-**实现**:
-```go
-type BackpressureController struct {
-    tokens    int
-    maxTokens int
-    mu        sync.Mutex
-    cond      *sync.Cond
-}
-```
-
-**关键点**:
-- 基于令牌桶算法
-- 生产者获取令牌才能写入
-- 消费者消费后归还令牌
-
-## 方案对比
-
-### 方案 A: 无限缓冲（当前方案）
-
-**优点**: 实现简单
-**缺点**: 内存占用不可控
-
-### 方案 B: 固定缓冲 + 阻塞（本方案）
-
-**优点**: 内存可控，性能稳定
-**缺点**: 需要调优缓冲区大小
-
-### 方案 C: 动态缓冲 + 丢弃策略
-
-**优点**: 灵活性高
-**缺点**: 可能丢失数据，不适合 LLM 场景
-
-## API 设计
-
-### 配置选项
+调用方如果提前停止消费，必须取消 context：
 
 ```go
-type StreamOptions struct {
-    BufferSize      int           // 缓冲区大小，默认 100
-    BackpressureEnabled bool      // 是否启用背压，默认 true
-    MaxWaitTime     time.Duration // 最大等待时间，默认 30s
-}
-
-type Request struct {
-    Messages      []*model.Message
-    Tools         []model.ToolSpec
-    StreamOptions StreamOptions
-}
-```
-
-### 使用示例
-
-```go
-provider := openai.NewProvider("gpt-4", openai.Config{
-    APIKey: os.Getenv("OPENAI_API_KEY"),
-})
-
-req.StreamOptions = model.StreamOptions{
-    BufferSize:          200,
-    BackpressureEnabled: true,
-}
+ctx, cancel := context.WithCancel(parent)
+defer cancel()
 
 for resp, err := range provider.Stream(ctx, req) {
     if err != nil {
         return err
     }
-    // 处理 resp
+    if stopEarly(resp) {
+        cancel()
+        break
+    }
 }
 ```
 
-## 实现计划
+Loop 将 provider 响应转换为用户协议输出：
 
-### 阶段 1: 核心实现（已完成）
-- [x] 实现环形缓冲区
-- [x] 实现背压控制器
-- [x] 集成到 `iter.Seq2` 流式返回路径
-
-### 阶段 2: 测试与优化（已完成）
-- [x] 单元测试
-- [x] 压力测试
-- [x] 性能基准测试
-
-### 阶段 3: 文档与示例（已完成）
-- [x] API 文档
-- [x] 使用示例
-- [x] 最佳实践指南
-
-## 性能指标
-
-### 优化前
-- 峰值内存: 500MB
-- 吞吐量: 1000 msg/s
-- P99 延迟: 200ms
-
-### 优化后
-- 峰值内存: 250MB ✅ (降低 50%)
-- 吞吐量: 1200 msg/s ✅ (提升 20%)
-- P99 延迟: 180ms ✅ (降低 10%)
-
-## 兼容性
-
-最终设计不保留旧 `NewStreaming` API。流式能力统一收敛到 `model.Provider.Stream(ctx, *model.Request)`，背压和缓冲策略通过 `model.Request.StreamOptions` 或 Agent 配置在构造 request 时写入。
-
-### 迁移指南
-如需启用新特性：
 ```go
-req.StreamOptions = model.StreamOptions{BufferSize: 200}
+for resp, err := range provider.Stream(ctx, req) {
+    if err != nil {
+        yield(event.Error{Err: err}, nil)
+        continue
+    }
+    for _, part := range resp.Delta {
+        emitPart(part)
+    }
+}
 ```
 
-## 风险与缓解
+fatal 错误通过 `loop.Run` 返回的 generator yield error；运行期错误通过 `event.Error{Err error}` 进入输出流。
 
-| 风险 | 影响 | 缓解措施 |
-|------|------|----------|
-| 缓冲区大小配置不当 | 中 | 提供默认值和配置指南 |
-| 背压导致延迟增加 | 低 | 可配置关闭背压 |
-| 并发安全问题 | 高 | 充分的并发测试 |
+## 2. 背压与资源释放
 
-## 后续工作
+1. `iter.Seq2` 已把生产与消费耦合为拉取式序列，天然提供消费侧节奏控制。
+2. `context.Context` 覆盖取消、deadline 和资源释放信号。
+3. provider adapter 持有底层 HTTP / SSE / WebSocket / SDK 句柄，使用 `defer` 在 `Stream` 范围内释放。
+4. 协议层不暴露独立缓冲或控制对象；批量、节流、合并、UI 刷新频率控制由应用层或 middleware 包装 generator 完成。
 
-- [ ] 支持自适应缓冲区大小
-- [ ] 添加更多的监控指标
-- [ ] 支持自定义背压策略
+## 3. 性能注意点
 
-## 参考资料
+### 3.1 Event hot path
 
-- [Reactive Streams Specification](https://www.reactive-streams.org/)
-- [Go Concurrency Patterns](https://go.dev/blog/pipelines)
+文本和思考是最高频流式输出，使用紧凑值类型：
+
+```go
+type TextDelta struct {
+    Text string
+}
+
+type ThinkingDelta struct {
+    Text      string
+    Signature []byte
+}
+```
+
+Loop 在识别到文本或思考增量时直接产出这些事件，避免额外 part 包装和接口装箱。
+
+### 3.2 Event cold path
+
+多模态、二进制、文件引用和其他低频内容走 part 生命周期事件：
+
+```go
+type PartStart struct {
+    Index int
+    Part  content.Part
+}
+
+type PartDelta struct {
+    Index int
+    Part  content.Part
+}
+
+type PartEnd struct {
+    Index int
+    Part  content.Part
+}
+```
+
+cold path 允许携带 `content.Blob`、`content.Thinking` 或完整 part 快照。它与 hot path 不重叠，由 Loop 按模态选择输出路径。
+
+### 3.3 Provider adapter 职责
+
+Provider adapter 应：
+
+- 尽快把底层流转换为 `model.Response`。
+- 在 `ctx.Done()` 后停止读取并释放连接。
+- 避免在协议层引入全局队列或长期 goroutine。
+- 将 provider 原生停止原因映射到 `model.StopReason`。
+- 将 token 用量写入 `model.Usage`。
+
+### 3.4 应用层包装
+
+应用可以在不改变核心协议的前提下包装流：
+
+- 合并小文本片段以降低 UI 刷新频率。
+- 按时间窗口刷新终端或 WebSocket。
+- 记录审计日志或指标。
+- 对慢消费者做应用层丢弃或降采样。
+
+这些包装不得改变 `Provider.Stream`、`loop.Run` 和 `event.Output` 的协议形状。
+
+## 与红线对照
+
+本文覆盖 r10、r12、r13、r25。
