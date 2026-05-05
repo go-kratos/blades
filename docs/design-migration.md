@@ -21,7 +21,14 @@ modules: [module-13]
 | `Message` 暴露在根包 | `model.Message` | Message 只属于模型上下文层 |
 | `Middleware func(Handler) Handler` | `InputMiddleware` / `OutputMiddleware` / Hook | Event 流处理与生命周期 Hook 分离 |
 
-`event.Input` 和 `event.Output` 是直接接口联合，channel 中直接传 `event.Prompt`、`event.Steer`、`event.PartDelta`、`event.ToolEnd` 等具体事件，不增加 `Input{Event: ...}` / `Output{Event: ...}` 包装层。
+`event.Input` 和 `event.Output` 是直接接口联合，channel 中直接传 `event.Prompt`、`event.Steer`、`event.TextDelta`、`event.PartDelta`、`event.ToolEnd` 等具体事件，不增加 `Input{Event: ...}` / `Output{Event: ...}` 包装层。
+
+普通文本路径迁移到文本一等公民 API：
+
+- 文本输入优先使用 `event.PromptText("hello")` 和 `event.SteerText("continue")`；多模态输入使用 `event.NewPrompt(event.Text("hello"), event.FileInput{...})` 或 struct literal。
+- 文本流式输出从“`PartDelta` 携带 `TextOutput`”迁移为 `event.TextDelta{Text: ...}`。
+- thinking 流式输出从“`PartDelta` 携带 `ThinkingOutput`”迁移为 `event.ThinkingDelta{Text: ...}`。
+- `event.PartDelta` 只保留给非文本、非 thinking 的高级多模态增量；最终完整内容仍从 `event.PartEnd.Part` 或 `event.TurnEnd.Parts` 读取。
 
 ## 13.2 根包迁移
 
@@ -46,7 +53,7 @@ modules: [module-13]
 
 | 包 | 动作 | 说明 |
 |----|------|------|
-| `event/` | 新增 | 用户协议层：`Input`、`Output`、多模态 `InputPart` / `OutputPart` |
+| `event/` | 新增 | 用户协议层：`Input`、`Output`、`PromptText` / `TextDelta`、多模态 `InputPart` / `OutputPart` |
 | `model/` | 新增 | 模型协议层：Message、Part、Provider、Request、Response、Counter |
 | `tools/` | 重构 | 工具接口、Resolver、Result DTO；不依赖 `event/` 或 `model/` |
 | `scope/` | 新增 | context scope helper |

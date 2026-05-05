@@ -54,12 +54,12 @@ type Agent interface {
 `Run` 的 channel 直接承载具体事件：
 
 ```go
-input <- event.Prompt{Parts: []event.InputPart{event.TextInput{Text: "hello"}}}
+input <- event.PromptText("hello")
 
 for out := range output {
     switch e := out.(type) {
-    case event.PartDelta:
-        // e.Delta is event.OutputPart
+    case event.TextDelta:
+        // e.Text is the streamed text delta
     case event.TurnEnd:
         // one model turn ended
     case event.Done:
@@ -113,13 +113,14 @@ type OutputPart interface{ outputPart() }
 
 | 事件 | 用途 |
 |------|------|
-| `PartStart` / `PartDelta` / `PartEnd` | 多模态内容流式输出 |
+| `TextDelta` / `ThinkingDelta` | 文本和 thinking 的常用流式输出 |
+| `PartStart` / `PartDelta` / `PartEnd` | 多模态内容生命周期和高级增量输出 |
 | `ToolStart` / `ToolDelta` / `ToolEnd` | 工具执行生命周期 |
 | `TurnEnd` | 一个模型 turn 结束，包含 `StopReason` 和 usage |
 | `Error` | 可恢复或终止错误 |
 | `Done` | Agent 生命周期结束 |
 
-输入和输出都必须支持多模态 Part。输入 Part 包括 `TextInput`、`FileInput`、`DataInput`、`JSONInput`；输出 Part 包括 `TextOutput`、`ThinkingOutput`、`FileOutput`、`DataOutput`、`JSONOutput`。工具结果在 `tools/` 中也是多模态 DTO，由 Agent Loop 转成 `event.OutputPart` 和 `model.ToolResultPart`。
+输入和输出都必须支持多模态 Part。输入 Part 包括 `TextInput`、`FileInput`、`DataInput`、`JSONInput`；输出 Part 包括 `TextOutput`、`ThinkingOutput`、`FileOutput`、`DataOutput`、`JSONOutput`。普通文本输入使用 `event.PromptText` / `event.SteerText`，普通文本输出使用 `event.TextDelta`；完整最终多模态结果仍在 `PartEnd.Part` 和 `TurnEnd.Parts` 中。工具结果在 `tools/` 中也是多模态 DTO，由 Agent Loop 转成 `event.OutputPart` 和 `model.ToolResultPart`。
 
 Event 和 Message 不合并。原因：
 
@@ -196,9 +197,9 @@ blades/
 │
 ├── event/
 │   ├── event.go                Input, Output, Control, Notification
-│   ├── input.go                Prompt, Steer, InputPart, TextInput/FileInput/DataInput/JSONInput
+│   ├── input.go                Prompt, Steer, PromptText/SteerText, InputPart, TextInput/FileInput/DataInput/JSONInput
 │   ├── output.go               OutputPart, TextOutput/ThinkingOutput/FileOutput/DataOutput/JSONOutput
-│   ├── stream.go               PartStart, PartDelta, PartEnd
+│   ├── stream.go               PartStart, TextDelta, ThinkingDelta, PartDelta, PartEnd
 │   ├── tool.go                 ToolStart, ToolDelta, ToolEnd
 │   └── turn.go                 Usage, StopReason, TurnEnd, Error, Done
 │
@@ -349,7 +350,7 @@ internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/, sco
 | 包 | 核心类型 | 示例 |
 |----|----------|------|
 | `blades` | `Agent`, `Option`, `PromptBuilder` | `blades.Agent` |
-| `event` | `Input`, `Output`, `Prompt`, `Steer`, `Control`, `Notification`, `PartDelta`, `TurnEnd`, `Done` | `event.Prompt` |
+| `event` | `Input`, `Output`, `Prompt`, `Steer`, `Control`, `Notification`, `TextDelta`, `PartDelta`, `TurnEnd`, `Done` | `event.PromptText` |
 | `model` | `Message`, `Part`, `Provider`, `Request`, `Response`, `ToolSpec`, `Counter` | `model.Provider` |
 | `tools` | `Tool`, `Result`, `ResultPart`, `Resolver`, `ToolFilter` | `tools.Tool` |
 | `scope` | `Scope`, `NewContext`, `FromContext` | `scope.Scope` |
@@ -373,7 +374,7 @@ Event 是用户协议层，定义 `event.Input` / `event.Output` 和多模态 `I
 - 把 `event.Prompt` / `event.Steer` 转成 `model.Message`。
 - 用 ContextBuilder 从 Session、Memory、PromptBuilder、ToolSpec 构建 `model.Request`。
 - 调用 `model.Provider`。
-- 把 `model.Response` 转成 `event.Part*`、`event.Tool*`、`event.TurnEnd`。
+- 把 `model.Response` 转成 `event.TextDelta`、`event.Part*`、`event.Tool*`、`event.TurnEnd`。
 - 把工具结果同时转成 `event.OutputPart` 和 `model.ToolResultPart`。
 
 详细定义见 [design-event-agent-loop.md](design-event-agent-loop.md)。
@@ -442,7 +443,7 @@ v1 核心只保留两个通用原语：
 
 ### 阶段 1：协议与 Agent Loop
 
-- [ ] 定义 `event/`：`Input` / `Output`、多模态 `InputPart` / `OutputPart`、`Prompt`、`Steer`、`Control`、`Notification`、`Part*`、`Tool*`、`TurnEnd`、`Error`、`Done`
+- [ ] 定义 `event/`：`Input` / `Output`、多模态 `InputPart` / `OutputPart`、`Prompt`、`Steer`、`PromptText`、`SteerText`、`Control`、`Notification`、`TextDelta`、`ThinkingDelta`、`Part*`、`Tool*`、`TurnEnd`、`Error`、`Done`
 - [ ] 根包不 re-export Event 类型或构造函数；用户代码统一导入 `event/`
 - [ ] Agent 接口改为 `Run(context.Context, <-chan event.Input) (<-chan event.Output, error)`
 - [ ] 实现 `scope/` 包和 Agent Loop context scope 读取

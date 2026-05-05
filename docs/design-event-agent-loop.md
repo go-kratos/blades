@@ -33,7 +33,7 @@ Event 和 Message 保持分层，不合并。
 │  event/（叶子包，用户协议 DTO）                            │
 │    Input, Output                                          │
 │    InputPart, OutputPart                                  │
-│    Prompt, Steer, PartDelta, ToolEnd                       │
+│    Prompt, Steer, TextDelta, PartDelta, ToolEnd             │
 ├──────────────────────────────────────────────────────────┤
 │  Agent Loop（internal/loop，转换与状态机）                  │
 │    event.InputPart  -> model.Part                         │
@@ -137,11 +137,19 @@ const (
     ActionPause  ControlAction = "pause"
     ActionResume ControlAction = "resume"
 )
+
+func Text(text string) TextInput
+func NewPrompt(parts ...InputPart) Prompt
+func PromptText(text string) Prompt
+func NewSteer(parts ...InputPart) Steer
+func SteerText(text string) Steer
 ```
 
 `Prompt` 开始一轮用户输入。`Steer` 在 Agent 运行中途注入指令；它不会中断正在进行的模型 streaming，而是在当前轮次工具执行完成后、下一轮 `ContextBuilder.Build` 前按 FIFO 顺序转成 user message。
 
 `Notification` 是框架内部的输入通知，供 host、channel、orchestrator、后台 job 或长任务把状态回流到某个 Agent 的 input channel。它仍然属于 `event/` 包，原因是 `Input` 使用非导出 marker method，外部包不能自行定义新的输入事件类型。通知内容只使用 `InputPart`、`Usage` 和普通 metadata，不导入 `model/`。
+
+`Prompt` / `Steer` 的完整表达仍然是 `[]InputPart`，用于文本、文件、二进制数据和结构化 JSON 的组合输入。为了降低最常见文本路径的成本，`event/` 包提供少量构造 helper。helper 只存在于 `event/` 包，根包 `blades` 不提供第二套 Event API。
 
 输入 Part：
 
@@ -167,7 +175,7 @@ type JSONInput struct {
 }
 ```
 
-选择 `TextInput` / `TextOutput` 这种方向性命名，而不是共用 `TextPart`，是为了让 Event API 的方向语义更清晰，并避免与 `model.TextPart` 产生包外歧义。
+选择 `TextInput` / `TextOutput` 这种方向性命名，而不是共用 `TextPart`，是为了让 Event API 的方向语义更清晰，并避免与 `model.TextPart` 产生包外歧义。`event.Text("hello")` 只是 `TextInput{Text: "hello"}` 的短构造函数，不引入新的 Part 类型。
 
 ### 多模态输出
 
@@ -219,6 +227,20 @@ type PartStart struct {
     Kind  PartKind `json:"kind"`
 }
 
+type TextDelta struct {
+    Turn  int    `json:"turn"`
+    ID    string `json:"id"`
+    Index int    `json:"index"`
+    Text  string `json:"text"`
+}
+
+type ThinkingDelta struct {
+    Turn  int    `json:"turn"`
+    ID    string `json:"id"`
+    Index int    `json:"index"`
+    Text  string `json:"text"`
+}
+
 type PartDelta struct {
     Turn  int        `json:"turn"`
     ID    string     `json:"id"`
@@ -234,7 +256,9 @@ type PartEnd struct {
 }
 ```
 
-`PartDelta` 是流式主路径。文本、thinking、结构化 JSON、文件引用、二进制数据都通过 `OutputPart` 表达。Provider 不支持某些 delta 类型时，Agent Loop 可以只发 `PartEnd`。
+`TextDelta` 是普通文本流式输出的主路径，`ThinkingDelta` 是 thinking 流式输出的主路径。这样最常见的文本消费只需要 switch 一层，不需要再从 `PartDelta.Delta` 中二次拆 `TextOutput`。
+
+`PartDelta` 保留为高级多模态增量逃生口，用于非文本、非 thinking 的结构化 JSON、文件引用、二进制数据或未来扩展 part。Provider 不支持某些 delta 类型时，Agent Loop 可以只发 `PartEnd`。`PartEnd.Part` 和 `TurnEnd.Parts` 始终承载最终完整多模态结果，Agent Loop 负责把 `TextDelta` / `ThinkingDelta` 累积成 `TextOutput` / `ThinkingOutput`。
 
 ### 工具事件
 
@@ -317,20 +341,20 @@ const (
 
 ## Event 构造方式
 
-Event 类型使用普通 struct literal 构造，不在根包增加别名或便捷函数：
+Event 类型可以使用普通 struct literal 构造；`event/` 包也提供少量文本和 variadic helper，服务最常见路径。根包不增加别名或便捷函数。
 
 ```go
-event.Prompt{
-    Parts: []event.InputPart{
-        event.TextInput{Text: "hello"},
-        event.FileInput{URI: "file:///tmp/a.png", MimeType: "image/png"},
-    },
-}
+event.PromptText("hello")
+
+event.NewPrompt(
+    event.Text("hello"),
+    event.FileInput{URI: "file:///tmp/a.png", MimeType: "image/png"},
+)
 
 event.Control{Action: event.ActionAbort}
 ```
 
-这样做让 Event 协议只有一个入口：类型定义、构造方式和 switch 处理都来自 `event/`。如果后续确实需要减少样板，应优先在调用侧封装业务 helper，而不是在根包提供第二套 Event API。
+这样做让 Event 协议只有一个入口：类型定义、构造方式和 switch 处理都来自 `event/`。如果后续确实需要更多样板封装，也应优先加在 `event/` 包或调用侧业务 helper，而不是在根包提供第二套 Event API。
 
 ## 使用方式
 
@@ -338,11 +362,7 @@ event.Control{Action: event.ActionAbort}
 
 ```go
 input := make(chan event.Input, 1)
-input <- event.Prompt{
-    Parts: []event.InputPart{
-        event.TextInput{Text: "hello"},
-    },
-}
+input <- event.PromptText("hello")
 close(input)
 
 output, err := agent.Run(ctx, input)
@@ -352,10 +372,8 @@ if err != nil {
 
 for ev := range output {
     switch e := ev.(type) {
-    case event.PartDelta:
-        if text, ok := e.Delta.(event.TextOutput); ok {
-            fmt.Print(text.Text)
-        }
+    case event.TextDelta:
+        fmt.Print(e.Text)
     case event.Error:
         log.Printf("error: %v", e.Err)
     case event.TurnEnd:
@@ -368,11 +386,7 @@ for ev := range output {
 
 ```go
 input := make(chan event.Input, 4)
-input <- event.Prompt{
-    Parts: []event.InputPart{
-        event.TextInput{Text: "分析这段代码"},
-    },
-}
+input <- event.PromptText("分析这段代码")
 
 output, err := agent.Run(ctx, input)
 if err != nil {
@@ -381,16 +395,10 @@ if err != nil {
 
 for ev := range output {
     switch e := ev.(type) {
-    case event.PartDelta:
-        if text, ok := e.Delta.(event.TextOutput); ok {
-            fmt.Print(text.Text)
-        }
+    case event.TextDelta:
+        fmt.Print(e.Text)
     case event.ToolStart:
-        input <- event.Steer{
-            Parts: []event.InputPart{
-                event.TextInput{Text: "同时检查测试覆盖率"},
-            },
-        }
+        input <- event.SteerText("同时检查测试覆盖率")
     case event.TurnEnd:
         if e.StopReason == event.StopReasonToolUse {
             continue
@@ -405,12 +413,12 @@ for ev := range output {
 ```go
 for ev := range output {
     switch e := ev.(type) {
+    case event.TextDelta:
+        fmt.Print(e.Text)
+    case event.ThinkingDelta:
+        debugLog(e.Text)
     case event.PartDelta:
         switch p := e.Delta.(type) {
-        case event.TextOutput:
-            fmt.Print(p.Text)
-        case event.ThinkingOutput:
-            debugLog(p.Text)
         case event.JSONOutput:
             renderJSON(p.Value)
         }
@@ -489,7 +497,7 @@ func (a *agent) streamAndRecord(
 
 职责：
 
-- 将 `model.Response` 增量转为 `PartStart` / `PartDelta` / `PartEnd` / `ToolStart`。
+- 将 `model.Response` 增量转为 `PartStart` / `TextDelta` / `ThinkingDelta` / `PartDelta` / `PartEnd` / `ToolStart`。
 - 累积完整 assistant `model.Message` 并写入 session。
 - 提取完整 tool calls，交给 ToolOrchestrator 执行。
 - 将 usage 从 `model.TokenUsage` 转为 `event.Usage`。
@@ -501,7 +509,7 @@ Provider 特定格式转换仍在 `contrib/*` 内部完成。Internal Service La
 ```
 User                                  Agent Loop
   │                                       │
-  │ input <- event.Prompt{Parts: ...}     │
+  │ input <- event.PromptText("...")      │
   │ ───────────────────────────────────→  │
   │                                       ├─→ event.InputPart -> model.Part
   │                                       ├─→ ContextBuilder.Build(session)
@@ -510,19 +518,19 @@ User                                  Agent Loop
   │                                       ├─→ streamAndRecord(...)
   │  output: PartStart                   │
   │ ←───────────────────────────────────  │
-  │  output: PartDelta{TextOutput}        │
+  │  output: TextDelta                    │
   │ ←───────────────────────────────────  │
   │  output: ToolStart                    │
   │ ←───────────────────────────────────  │
   │                                       ├─→ tool.Handle(ctx, args)
-  │ input <- Steer("检查测试")            │
+  │ input <- event.SteerText("检查测试")  │
   │ ───────────────────────────────────→  │  Steer 排队
   │  output: ToolEnd{[]OutputPart}        │
   │ ←───────────────────────────────────  │
   │  output: TurnEnd{tool_use}            │
   │ ←───────────────────────────────────  │
   │                                       │  下一轮注入 Steer
-  │  output: PartDelta{TextOutput}        │
+  │  output: TextDelta                    │
   │ ←───────────────────────────────────  │
   │  output: TurnEnd{stop}                │
   │ ←───────────────────────────────────  │
@@ -568,6 +576,7 @@ Idle      --[Control:Abort]----> Done
 Preparing --[request ready]----> Streaming
 Preparing --[compact needed]---> Preparing
 
+Streaming --[text delta]-------> Streaming  (yield TextDelta)
 Streaming --[part delta]-------> Streaming  (yield PartDelta)
 Streaming --[tool call]--------> Acting     (yield ToolStart)
 Streaming --[stop]-------------> StopHooks
@@ -676,7 +685,7 @@ func (a *agent) handlePrompt(
 
 2. **Event 不依赖 model**：Event 层不能出现 `model.TokenUsage`、`model.Part` 或 `model.Message`。需要相似数据时定义独立 DTO，例如 `event.Usage` 和 `event.OutputPart`。
 
-3. **输出也多模态**：模型可能输出文件、结构化 JSON、图像、音频引用或 thinking。用 `PartDelta` / `PartEnd` 承载 `OutputPart`，比 `Text` + 少量特殊事件更稳定。
+3. **文本一等公民，输出仍多模态**：模型最常见输出是文本，因此用 `TextDelta` 降低消费成本；thinking 用 `ThinkingDelta` 保持同样的单层消费体验。完整输出仍通过 `PartEnd` / `TurnEnd.Parts` 承载 `OutputPart`，非文本高级增量使用 `PartDelta`。
 
 4. **工具结果多模态**：工具返回 `[]OutputPart`，Agent Loop 再转换成 `model.ToolResultPart`。这样工具系统不依赖模型层，同时保留向用户展示丰富结果的能力。
 
