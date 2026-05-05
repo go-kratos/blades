@@ -53,7 +53,7 @@ Blades 的目标是成为通用 AgentOS Core Runtime。核心层负责 Agent 事
 type Agent interface {
     Name() string
     Description() string
-    Run(context.Context, <-chan event.Input) Generator[event.Output, error]
+    Run(context.Context, <-chan event.Input) (<-chan event.Output, error)
 }
 ```
 
@@ -63,22 +63,22 @@ type Agent interface {
 
 `event/` 文本糖通过构造函数提供：`event.NewPromptText(s string) Prompt` / `event.NewSteerText(s string) Steer`，无需独立事件类型。
 
-`Run` 的 channel 直接承载具体事件：
+`Run` 使用统一 channel 交互：输入 channel 承载 `event.Input`，返回的只读输出 channel 承载 `event.Output`。第二返回值只表示 Agent 无法启动或无法创建输出流；一旦 `Run` 成功返回 output channel，运行期错误也通过 `event.Error` 进入同一个输出流，最终发送 `event.Done` 后关闭 channel。
 
 ```go
-input := make(chan event.Input)
-go func() {
-    defer close(input)
-    input <- event.NewPromptText("hello")
-}()
+input <- event.NewPromptText("hello")
 
-for out, err := range agent.Run(ctx, input) {
-    if err != nil {
-        return err
-    }
+output, err := agent.Run(ctx, input)
+if err != nil {
+    return err
+}
+
+for out := range output {
     switch e := out.(type) {
     case event.TextDelta:
         // e.Text is the streamed text delta
+    case event.Error:
+        return e.Err
     case event.TurnEnd:
         // one model turn ended
     case event.Done:
@@ -141,7 +141,7 @@ type Output interface{ output() }
 | `PartStart` / `PartDelta` / `PartEnd` | 多模态内容生命周期和高级增量输出 |
 | `ToolStart` / `ToolDelta` / `ToolEnd` | 工具执行生命周期 |
 | `TurnEnd` | 单 turn 结束（含 `Parts []content.Part`、`StopReason`、token usage 汇总） |
-| `Error` | 运行期错误（实现 `Output`，与其他事件同流；`event.Error{Err error}` 用 Go 标准 error，靠 `errors.Is/As` + 包内 sentinel 判断；fatal 错误走 `Run` 签名第二返回值） |
+| `Error` | 运行期错误（实现 `Output`，与其他事件同流；`event.Error{Err error}` 用 Go 标准 error，靠 `errors.Is/As` + 包内 sentinel 判断；启动期错误走 `Run` 签名第二返回值） |
 | `Done` | Run 结束 sentinel；channel 关闭前发送，便于多 channel `select` 分支区分 |
 
 输入和输出都必须支持多模态 Part。**`content.Part` 是 AgentOS 唯一的 Part union**（sealed marker：私有 `part()` 方法），定义在 `content/` 包中（仅依赖标准库），统一覆盖用户协议与 provider 协议两类变体：
@@ -322,7 +322,7 @@ blades/
 
 ### Runner helper 边界
 
-同步调用 / drain / collect 等执行 helper 放在根包：`blades.Collect(ctx, agent, input)` 同步收集所有 Output，`blades.Drain(...)` 仅消耗 stream。根包是唯一运行入口：`Agent`、`NewAgent`、Option、`With*`、`Generator`、runner helpers 和默认 `llmAgent`。
+同步调用 / drain / collect 等执行 helper 放在根包：`blades.Collect(ctx, agent, input)` 同步收集所有 Output，`blades.Drain(...)` 仅消耗 stream。根包是唯一运行入口：`Agent`、`NewAgent`、Option、`With*`、runner helpers 和默认 `llmAgent`。
 
 run manager 语义（run ID、队列、daemon、cron、后台 job、主动通知、channel adapter、workspace 映射、配置加载、session 映射）一律不在核心，属于应用接入层。
 
@@ -397,7 +397,7 @@ contrib/*   -> model/ 或 tools/
 
 | 包 | 核心类型 | 示例 |
 |----|----------|------|
-| `blades` (root) | `Agent`, `NewAgent`, `Option`, `Generator[T,E]`, `RequestBuilder`, `ToolExecutor`, `Collect`/`Drain`, `WithModel`/`WithTools`/`WithSession`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithPrompt`/`WithRequestBuilder`/`WithToolExecutor`/`WithMaxSteps` | `blades.Agent` |
+| `blades` (root) | `Agent`, `NewAgent`, `Option`, `RequestBuilder`, `ToolExecutor`, `Collect`/`Drain`, `WithModel`/`WithTools`/`WithSession`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithPrompt`/`WithRequestBuilder`/`WithToolExecutor`/`WithMaxSteps` | `blades.Agent` |
 | `content` | `Part`（sealed marker：私有 `part()`），`Text`，`Blob{MIME, Source}`，`BlobSource`（sealed：`blobSource()`），`InlineBytes`，`URI`，`FileID`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.Text{Text: "hi"}` |
 | `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `PartStart`, `PartDelta`, `PartEnd`, `ToolStart`, `ToolDelta`, `ToolEnd`, `TurnEnd`, `Error`, `Done`；构造糖：`NewPromptText`, `NewSteerText` | `event.NewPromptText("hi")` |
 | `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `SystemBlock{Text, CacheControl}`, `Provider`(Name+Stream+Count，Stream 返回 `iter.Seq2[*Response,error]`), `EmbeddingProvider`, `Request{System []*SystemBlock, Messages []*Message, Tools []ToolSpec, ...}`, `Response{Delta []content.Part, StopReason, Usage}`, `ToolSpec`, `Usage`, `StopReason`, `Collect` | `model.Provider` |
@@ -514,7 +514,7 @@ v1 核心只保留两个通用原语：
 - [ ] 定义 `content/`：`Part`（sealed marker：私有 `part()`）、`Text`、`Blob{MIME, Source}`（`BlobSource` sealed 私有 marker `blobSource()`：`InlineBytes` / `URI` / `FileID`）、`Thinking{Text, Signature []byte}`、`ToolUse{ID, Name, Input json.RawMessage}`、`ToolResult{ID, Name, Parts []Part, IsError bool}`
 - [ ] 定义 `event/`：`Input`（sealed：`input()`） / `Output`（sealed：`output()`），多模态字段使用 `content.Part`、`Prompt{Parts []content.Part}`、`Steer{Parts []content.Part}`、`NewPromptText` / `NewSteerText` 构造函数、`Abort{Reason string}`、`Pause{}`、`Resume{}`、`TextDelta`、`ThinkingDelta`（hot path）、`PartStart`/`PartDelta`/`PartEnd`（cold path 多模态）、`Tool*`、`TurnEnd`、`Error`、`Done`
 - [ ] 根包不 re-export Event 类型或构造函数；用户代码统一导入 `event/`
-- [ ] Agent 接口改为 `Run(context.Context, <-chan event.Input) Generator[event.Output, error]`
+- [ ] Agent 接口改为 `Run(context.Context, <-chan event.Input) (<-chan event.Output, error)`
 - [ ] 在根包实现默认 `llmAgent` 内置运行时：Run / Turn / Step / Tool Wave 四层模型，不导出公开 `loop/` 包
 - [ ] 定义根包 `RequestBuilder` 与 `ToolExecutor` 扩展点，并提供 `WithRequestBuilder` / `WithToolExecutor` / `WithMaxSteps`
 - [ ] 实现 Agent Loop 对 `session.Session`、Agent 内省 context（`agent.NewContext`/`agent.FromContext`）和 `tools.FromContext` 的读取与传递
