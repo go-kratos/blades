@@ -15,8 +15,8 @@ modules: [module-3]
 |------|------------|--------|
 | 并发控制 | 全部并发（errgroup） | 自声明 ConcurrencyMode + 自动分区 |
 | 流式执行 | 等模型完成才执行 | StreamingToolExecutor 重叠执行 |
-| 生命周期 | 无 Hook | `hook.PreToolUse` / `hook.PostToolUse` |
-| 结果管理 | 无限制 | ToolResultBudget 截断 + 持久化 |
+| 生命周期 | 无 Hook | Agent Loop 在工具调用边界触发 `hook.PreToolUse` / `hook.PostToolUse` |
+| 结果管理 | 无限制 | Agent Loop/compact 执行工具结果预算、截断和持久化引用 |
 | 安全声明 | 无 | IsReadOnly / IsDestructive |
 
 ### 3.1 Tool 接口（精简核心 + 可选能力）
@@ -24,7 +24,7 @@ modules: [module-3]
 核心 `Tool` 接口保持精简（4 个方法），扩展能力通过可选接口（interface assertion）实现。
 这是 Go 惯用的可选接口模式（类似 `io.WriterTo`、`io.ReaderFrom`）。
 
-`tools/` 是能力叶子包，不导入 `model/` 或 `event/`。工具 schema 和工具结果在 Agent Loop 中转换：
+`tools/` 是能力叶子包，不导入 `model/`、`event/`、`hook/` 或 `policy/`。工具 schema、工具 metadata 和工具结果在 Agent Loop 中转换：
 
 - `tools.Tool` / JSON Schema -> `model.ToolSpec`
 - `tools.Result` -> `event.ToolEnd{Result: []event.OutputPart}`
@@ -59,13 +59,13 @@ type ConcurrentTool interface {
 }
 
 // ReadOnlyTool 声明此工具是否只读。
-// 用于权限系统快速判断和 plan 模式过滤。
+// Agent Loop 或应用 bridge 可读取该 metadata，再映射为 policy request。
 type ReadOnlyTool interface {
     IsReadOnly() bool
 }
 
 // DestructiveTool 声明此工具对给定输入是否有破坏性。
-// 用于权限系统决定是否需要确认。
+// Agent Loop 或应用 bridge 可读取该 metadata，再映射为 policy request。
 type DestructiveTool interface {
     IsDestructive(input json.RawMessage) bool
 }
@@ -188,14 +188,14 @@ type streamingToolEntry struct {
 #### 执行器定义
 
 ```go
-// StreamingToolExecutor 在模型仍在流式输出时就开始执行工具。
+// StreamingToolExecutor 是 internal/loop 的私有服务，不属于 tools/ 包。
+// 它在模型仍在流式输出时就开始执行工具。
 // 并发安全的工具在 tool call 参数完整后立即启动，
 // 串行工具排队等待。执行与模型生成重叠，降低端到端延迟。
 type StreamingToolExecutor struct {
-    tools   map[string]Tool
-    hooks   *hook.Registry
-    budget  *ToolResultBudget
-    maxConc int // 最大并发数，默认 10
+    tools        map[string]Tool
+    resultBudget *compact.ToolResultBudget
+    maxConc      int // 最大并发数，默认 10
 }
 
 // ExecuteStreaming 接收模型流式输出中逐步到达的 tool call。
@@ -277,7 +277,7 @@ func runPartitions(
 5. 权限检查            ← PolicyChain.Check()
 6. tool.Handle()       ← 实际执行，支持流式进度
 7. hook.PostToolUse    ← 可修改结果
-8. ToolResultBudget    ← 超大结果截断 + 持久化
+8. Result budgeting   ← 超大结果截断 + 持久化引用
 9. 发射事件            ← ToolDelta / ToolEnd
 ```
 
@@ -289,7 +289,7 @@ func runPartitions(
 
 3. **多模态工具结果** — 工具返回 `[]tools.ResultPart`，可以是文本、文件引用、二进制数据或结构化 JSON。Agent Loop 负责把它转换为面向用户的 `event.OutputPart` 和面向 Provider 的 `model.Part`，从而保持 `tools/` 与 `event/`、`model/` 解耦。
 
-4. **ToolResultBudget** — 当前工具结果无大小限制，大文件读取可能撑爆上下文。新设计为每个工具设置结果大小上限，超出时完整结果持久化到磁盘，向模型发送截断预览 + 磁盘路径引用。
+4. **工具结果预算** — 当前工具结果无大小限制，大文件读取可能撑爆上下文。新设计在 Agent Loop/compact 边界为工具结果设置大小上限，超出时完整结果持久化到磁盘，向模型发送截断预览 + 磁盘路径引用。
 
 5. **Sibling Abort 使用独立子 context 而非共享 abort controller** — 每个工具调用持有独立的 `context.CancelFunc`（通过 `context.WithCancel` 从父 context 派生）。相比共享的 abort controller 模式，独立子 context 有三个优势：（1）天然与 Go 的 context 传播机制集成，工具内部调用的所有下游操作（网络请求、子进程等）自动响应取消；（2）取消粒度精确到单个调用，不会误伤已完成的工具；（3）无需额外的同步原语——`CancelFunc` 本身是并发安全的，多次调用幂等。共享 abort controller 需要手动管理订阅/取消订阅，且在 Go 中没有标准实现，引入不必要的复杂度。
 

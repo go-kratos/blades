@@ -8,14 +8,17 @@ related: [reference-claude-code-agent.md, reference-pi-agent-framework.md]
 tags: [agentos, agent, framework, runtime, context-management, memory, tools, policy, hooks, session, streaming]
 sub-docs:
   - design-event-agent-loop.md
-  - design-message-context.md
+  - design-model-provider.md
+  - design-prompt.md
+  - design-compact.md
   - design-tool-system.md
   - design-hook-extension.md
   - design-session.md
   - design-policy-mode.md
   - design-agent-orchestration.md
   - design-memory.md
-  - design-infra.md
+  - design-observability.md
+  - design-graph.md
   - design-migration.md
 ---
 
@@ -39,7 +42,7 @@ Blades 的目标是成为通用 AgentOS Core Runtime。核心层负责 Agent 事
 - **应用层自持接入**：channel、workspace、配置、daemon、cron、外部平台 SDK 和产品交互由具体应用实现，推荐使用 `cmd/<app>/internal/*` 作为应用层样板。
 - **包依赖可证明**：协议叶子包互相独立；上层通过接口、函数注入和 typed capability context 连接，避免循环依赖。
 - **Go 惯用 API**：小接口、短包名、`package.Role` 命名、`context.Context` 取消与 trace 传播、Option 函数配置。
-- **流式优先**：Provider streaming、工具重叠执行、输出背压、运行中 steering/control 都是一等能力。
+- **流式优先**：Provider streaming、工具重叠执行、运行中 steering/control 都是一等能力。
 
 ## 核心结论
 
@@ -102,7 +105,7 @@ type OutputPart interface{ outputPart() }
 |------|------|
 | `Prompt` | 用户或系统发起一个新 turn |
 | `Steer` | Agent 运行中注入修正、追加上下文或继续指令 |
-| `Control` | Abort / Pause / Resume 等控制信号 |
+| `Control` | Abort / Pause / Resume 控制信号 |
 | `Notification` | runtime、worker、后台任务或应用层接入注入的内部通知 |
 
 输出事件：
@@ -135,7 +138,7 @@ Event 和 Message 不合并。原因：
 │    cmd/<app>/internal/workspace 工作目录、应用配置、资源治理         │
 ├─────────────────────────────────────────────────────────────────┤
 │  blades/（根包：最小用户 API）                                     │
-│    Agent, New, Option, PromptBuilder                              │
+│    Agent, New, Option, runner helpers                             │
 ├─────────────────────────────────────────────────────────────────┤
 │  Agent Runtime                                                    │
 │    internal/loop   Event-driven Agent Loop                         │
@@ -168,15 +171,17 @@ Event 和 Message 不合并。原因：
 
 | 原则 | 决策 |
 |------|------|
-| 根包极简 | `blades/` 只放 `Agent`、`New`、Option、`PromptBuilder` 和通用运行辅助 |
+| 根包极简 | `blades/` 只放 `Agent`、`New`、Option、必要错误和纯 Agent runner helper |
 | Event 是协议叶子包 | `event/` 不导入 `model/`、`tools/`、`session/`、`hook/` |
 | Message 是模型协议 | `model/` 不导入 `event/` 或 `tools/`，Provider 只处理 `model.Request/Response` |
 | Tool 是能力叶子包 | `tools/` 不导入 `event/` 或 `model/`，结果使用 `tools.ResultPart` |
 | Runtime 做转换 | `internal/loop` 是 Event、Tool、Message 之间的唯一编排和转换边界 |
 | Context 承载运行能力 | context 传递取消、deadline、trace、`session.Session`、Agent 内省和 `tools.Context` |
+| Prompt 独立 | system prompt 构建放在 `prompt/`，根包不导出 `PromptBuilder` |
+| Middleware 独立 | 输入/输出 middleware 放在 `middleware/`，只操作 Event channel |
 | Composition 不污染根包 | `Sequential/Parallel/Loop` 放 `flow/`，读作 `flow.Sequential(...)` |
 | 应用接入框架外实现 | CLI/HTTP/WebSocket/Slack/Scheduler 等属于具体应用，不作为 AgentOS 核心公开包 |
-| Policy 大于 Permission | `policy/` 统一承载权限、安全检查、预算、速率限制和组织规则；完整交互模式由应用或 contrib 承接 |
+| Policy stdlib-only | `policy/` 统一承载权限、安全、预算、速率限制和组织规则；包内只依赖标准库 |
 | Coding 不是核心 | `Explore/Plan/General/Verify` 不进 v1 核心；可放 examples、contrib preset 或业务 app |
 
 ## 包结构
@@ -185,10 +190,15 @@ Event 和 Message 不合并。原因：
 blades/
 ├── agent.go                    Agent 接口 + New 构造函数
 ├── option.go                   AgentOption + WithModel/WithTools/WithSession/...
-├── prompt.go                   PromptBuilder + Section + CacheBreakpoint
-├── middleware.go               InputMiddleware / OutputMiddleware
-├── runner.go                   简单运行辅助
+├── runner.go                   纯 Agent 运行辅助
 ├── errors.go
+│
+├── prompt/
+│   ├── builder.go              Builder + Section + CacheBreakpoint
+│   └── prompt.go               SystemPrompt + cache metadata
+│
+├── middleware/
+│   └── middleware.go           InputMiddleware / OutputMiddleware
 │
 ├── event/
 │   ├── event.go                Input, Output, Control, Notification
@@ -242,6 +252,7 @@ blades/
 │
 ├── policy/
 │   ├── decision.go             Decision
+│   ├── request.go              Request + ToolRequest/ModelRequest/ResourceRequest
 │   ├── chain.go                Chain
 │   ├── rule.go                 Rule
 │   ├── safety.go               SafetyChecker
@@ -252,11 +263,16 @@ blades/
 ├── graph/
 ├── recipe/
 ├── evaluator/
-├── middleware/
 ├── internal/
 │   └── loop/
 └── contrib/
 ```
+
+### runner.go 边界
+
+`runner.go` 可以留在根包，因为它直接服务 `blades.Agent` 的基本运行体验。边界必须足够硬：它只能提供同步调用、drain、collect、一次性 run 等无状态 helper，帮助调用方把 `Agent.Run` 的 channel API 用得更顺手。
+
+`runner.go` 不承载 run manager 语义，不定义 run ID、队列、daemon、cron、后台 job、主动通知、channel adapter、workspace 映射、配置加载或 session 映射。这些都属于应用接入层。
 
 ### 为什么不用根包放 Sequential / Parallel / Loop
 
@@ -291,21 +307,21 @@ tools/      -> standard library only + jsonschema
 session/    -> model/
 compact/    -> model/                         // Summarizer 函数由上层注入
 memory/     -> model/                         // Fork/Recall 函数由上层注入
-policy/     -> tools/                         // 不依赖 blades/event/model
+policy/     -> standard library only
 hook/       -> event/, model/, tools/, policy/
 
-blades/     -> event/, model/, tools/, session/, compact/, hook/, policy/
+blades/     -> event/, model/, tools/, session/, compact/, hook/, policy/, prompt/
 flow/       -> blades/, event/, tools/
 
-recipe/     -> blades/, tools/, model/
+recipe/     -> blades/, tools/, model/, prompt/
 contrib/*   -> model/ 或 tools/
-internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/
+internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/, prompt/
 ```
 
 循环依赖规避规则：
 
 - `event/`、`model/`、`tools/` 三个协议/能力叶子包互不依赖。
-- `policy/` 不依赖 `blades/`，否则工具权限会和 Agent 构造形成循环。
+- `policy/` 只依赖标准库，不导入 `tools/`、`model/`、`event/`、`blades/` 或 `hook/`；工具元数据到 policy request 的映射在 Agent Loop 或应用 bridge 中完成。
 - `compact/` 不依赖 Provider 或 root Agent；摘要能力通过 `func(ctx, []*model.Message) (string, error)` 注入。
 - `memory/` 不依赖 root Agent；提取和召回通过函数接口注入。
 - CLI、HTTP、WebSocket、Slack、Scheduler 等接入层不进入核心依赖图；具体应用自行把外部协议转换成 `event.Input` / `event.Output`。
@@ -315,10 +331,11 @@ internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/
 
 | 包 | 核心类型 | 示例 |
 |----|----------|------|
-| `blades` | `Agent`, `Option`, `PromptBuilder` | `blades.Agent` |
+| `blades` | `Agent`, `Option`, runner helpers | `blades.Agent` |
 | `event` | `Input`, `Output`, `Prompt`, `Steer`, `Control`, `Notification`, `TextDelta`, `PartDelta`, `TurnEnd`, `Done` | `event.PromptText` |
 | `model` | `Message`, `Part`, `Provider`, `Request`, `Response`, `ToolSpec`, `Counter` | `model.Provider` |
 | `tools` | `Tool`, `Result`, `ResultPart`, `Resolver`, `ToolFilter` | `tools.Tool` |
+| `prompt` | `Builder`, `Section`, `SystemPrompt`, `Breakpoint` | `prompt.Builder` |
 | `flow` | `Sequential`, `Parallel`, `Loop`, `AsTool` | `flow.Parallel(a, b)` |
 | `session` | `Session`, `Store`, `Writer`, `Entry`, `Tree` | `session.Session` |
 | `policy` | `Chain`, `Decision`, `Rule`, `SafetyChecker`, `BudgetPolicy`, `RateLimiter` | `policy.Chain` |
@@ -333,7 +350,7 @@ internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/
 Event 是用户协议层，定义 `event.Input` / `event.Output` 和多模态 `InputPart` / `OutputPart`。Event 不依赖 `model/`，也不和 `model.Message` 共享 Go 类型。Agent Loop 是状态机（Idle -> Preparing -> Streaming -> Acting），负责：
 
 - 把 `event.Prompt` / `event.Steer` 转成 `model.Message`。
-- 用 ContextBuilder 从 Session、Memory、PromptBuilder、ToolSpec 构建 `model.Request`。
+- 用 ContextBuilder 从 Session、Memory、`prompt.Builder`、ToolSpec 构建 `model.Request`。
 - 调用 `model.Provider`。
 - 把 `model.Response` 转成 `event.TextDelta`、`event.Part*`、`event.Tool*`、`event.TurnEnd`。
 - 把工具结果同时转成 `event.OutputPart` 和 `model.ToolResultPart`。
@@ -375,7 +392,7 @@ Agent 不知道自己来自 CLI、HTTP 还是消息平台；它只读 input chan
 
 原 `permission/` 命名过窄。AgentOS 需要统一处理权限、安全、预算、速率限制和组织策略，因此核心包命名为 `policy/`。
 
-`policy.Chain` 接收 tool call、model request 或应用层定义的资源操作决策请求，返回 allow/deny/ask/modify。Plan Mode、Accept Edits、Auto Mode 不作为 AgentOS 核心目标；它们是产品交互策略，应放在具体应用、examples 或 contrib 包中，基于 core policy primitives 组合实现。
+`policy.Chain` 接收 core-sealed 的 `ToolRequest`、`ModelRequest`、`ResourceRequest`，返回 allow/deny/ask/modify。应用如果要接入额外资源类型，应先映射为 `ResourceRequest` 或在自己的 checker 中解释这些稳定 DTO；不要让 `policy/` 导入应用类型。Plan Mode、Accept Edits、Auto Mode 不作为 AgentOS 核心目标；它们是产品交互策略，应放在具体应用、examples 或 contrib 包中，基于 core policy primitives 组合实现。
 
 ### 子 Agent 与 Multi-Agent
 
@@ -400,6 +417,28 @@ v1 核心只保留两个通用原语：
 
 `memory/` 负责多层 Memory 加载、召回和提取。Memory 提取不要求框架内置 BackgroundAgent；应用层可以启动独立 run 或异步 job，把提取结果写回 memory store。
 
+## 子文档职责
+
+当前 v1 子文档按稳定边界拆分：
+
+| 子文档 | 职责 |
+|--------|------|
+| [design-event-agent-loop.md](design-event-agent-loop.md) | Event 协议、Agent Loop 状态机、Event/Message 转换边界 |
+| [design-model-provider.md](design-model-provider.md) | `model/` Message、Part、Provider、Request/Response、重试、token 计数 |
+| [design-prompt.md](design-prompt.md) | `prompt/` Builder、Section、缓存断点和静态/动态 prompt 组织 |
+| [design-compact.md](design-compact.md) | `compact/` Pipeline、Strategy、工具结果预算、不变量保护和摘要注入 |
+| [design-tool-system.md](design-tool-system.md) | `tools/` Tool、Result、Resolver、Filter 和执行上下文 |
+| [design-hook-extension.md](design-hook-extension.md) | core-sealed hook event、观察/拦截边界和应用事件隔离 |
+| [design-session.md](design-session.md) | Session、Store、Entry、Tree 和持久化 |
+| [design-policy-mode.md](design-policy-mode.md) | stdlib-only policy core 与应用交互模式边界 |
+| [design-agent-orchestration.md](design-agent-orchestration.md) | `flow/` 组合、Agent-as-Tool 和多 Agent 边界 |
+| [design-memory.md](design-memory.md) | Memory 加载、召回、提取与应用异步任务边界 |
+| [design-observability.md](design-observability.md) | Hook 驱动的 OTel 集成和 span 生命周期 |
+| [design-graph.md](design-graph.md) | 独立 DAG 子系统定位和与 Agent 的桥接方式 |
+| [design-migration.md](design-migration.md) | 旧 API 到 v1 目标架构的迁移路径 |
+
+`design-message-context.md` 与 `design-infra.md` 保留为历史聚合文档，不再作为 v1 主索引入口。`design-streaming-optimization.md` 是已实现流式优化参考，不属于 v1 子设计。
+
 ## 实现计划
 
 ### 阶段 1：协议与 Agent Loop
@@ -409,7 +448,7 @@ v1 核心只保留两个通用原语：
 - [ ] Agent 接口改为 `Run(context.Context, <-chan event.Input) (<-chan event.Output, error)`
 - [ ] 实现 Agent Loop 对 `session.Session`、Agent 内省 context 和 `tools.Context` 的读取与传递
 - [ ] 实现 Event -> model.Message/Part -> Provider -> Event 转换边界
-- [ ] 实现 InputMiddleware / OutputMiddleware
+- [ ] 在 `middleware/` 实现 InputMiddleware / OutputMiddleware
 
 ### 阶段 2：model/session/compact
 
@@ -417,7 +456,7 @@ v1 核心只保留两个通用原语：
 - [ ] 实现 `session.Session` 与 `session.Store`
 - [ ] 实现 ContextBuilder 和 streamAndRecord
 - [ ] 实现 `compact.Pipeline` 与 provider invariant 保护
-- [ ] 实现 `PromptBuilder` 静态/动态 section 与 cache breakpoint
+- [ ] 在 `prompt/` 实现 `Builder` 静态/动态 section 与 cache breakpoint
 
 ### 阶段 3：tools/policy/hook
 
@@ -450,20 +489,24 @@ v1 核心只保留两个通用原语：
 | context 被滥用 | 中 | context 只传取消、deadline、trace 和 typed capability；业务字段走 Event/Hook/Session 或应用层映射 |
 | 包数量增加 | 中 | 保持叶子包小接口，应用层负责接入和装配，避免根包重新膨胀 |
 | policy 语义过宽 | 中 | `Decision` 和请求类型保持小而稳定，模式/预算/组织规则通过可选实现扩展 |
+| 子文档漂移 | 中 | 以主文档 `sub-docs` 为 v1 索引；历史聚合文档只保留 superseded 注记 |
 | 去掉内置 coding presets 后示例不足 | 低 | 在 `examples/coding` 提供完整应用/recipe，不进入核心依赖路径 |
 | flow 与 graph 边界模糊 | 中 | flow 只组合 Agent channel，graph 负责 DAG/checkpoint/condition |
 
 ## 参考资料
 
 - [Event 系统与 Agent Loop](design-event-agent-loop.md)
-- [消息与上下文系统](design-message-context.md)
+- [Model 与 Provider](design-model-provider.md)
+- [Prompt 系统](design-prompt.md)
+- [Compact 系统](design-compact.md)
 - [工具系统](design-tool-system.md)
 - [Hook 系统](design-hook-extension.md)
 - [Session 系统](design-session.md)
 - [Policy 与交互模式边界](design-policy-mode.md)
 - [Agent 组合与编排](design-agent-orchestration.md)
 - [Memory 系统](design-memory.md)
-- [基础设施与 Graph 定位](design-infra.md)
+- [Observability](design-observability.md)
+- [Graph 定位](design-graph.md)
 - [迁移路径](design-migration.md)
 - [Claude Code Agent 参考设计](reference-claude-code-agent.md)
 - [pi-agent Framework 参考设计](reference-pi-agent-framework.md)

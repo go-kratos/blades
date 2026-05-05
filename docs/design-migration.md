@@ -55,7 +55,7 @@ modules: [module-13]
 |----|------|------|
 | `event/` | 新增 | 用户协议层：`Input`、`Output`、`PromptText` / `TextDelta`、多模态 `InputPart` / `OutputPart` |
 | `model/` | 新增 | 模型协议层：Message、Part、Provider、Request、Response、Counter |
-| `tools/` | 重构 | 工具接口、Resolver、Result DTO；不依赖 `event/` 或 `model/` |
+| `tools/` | 重构 | 工具接口、Resolver、Result DTO；不依赖 `event/`、`model/`、`hook/` 或 `policy/` |
 | `policy/` | 新增，替代核心 `permission/` | 权限、安全、预算、速率限制和组织规则统一决策 |
 | `compact/` | 新增 | Context 压缩管线 |
 | `hook/` | 新增 | 生命周期事件与拦截点 |

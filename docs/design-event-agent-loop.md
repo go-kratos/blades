@@ -16,6 +16,7 @@ Event 和 Message 保持分层，不合并。
 - `event/` 是用户协议层，只描述用户输入和 Agent 输出，不导入 `model/`。
 - `model/` 是模型上下文层，只描述 Provider、Session、Compression 需要的 Message/Part，不导入 `event/`。
 - Agent Loop 是唯一转换边界：`Event -> Agent Loop conversion -> Provider(Message/Part)`。
+- 不提供任何 public Event/Message 转换函数；转换器、ContextBuilder、streamAndRecord 都留在 `internal/loop`。
 - 输入和输出都必须支持多模态。输入使用 `InputPart`，输出使用 `OutputPart`，不能把输出简化为文本。
 - 用户直接导入 `event/` 使用 Event 类型。根包 `blades` 不 re-export Event 类型，也不提供 Event 构造函数。
 
@@ -138,6 +139,8 @@ func SteerText(text string) Steer
 ```
 
 `Prompt` 开始一轮用户输入。`Steer` 在 Agent 运行中途注入指令；它不会中断正在进行的模型 streaming，而是在当前轮次工具执行完成后、下一轮 `ContextBuilder.Build` 前按 FIFO 顺序转成 user message。
+
+`Control` 提供运行控制信号。`Abort` 终止当前 Agent 生命周期；`Pause` 暂停继续调度新 turn、follow-up 和 queued steer；`Resume` 恢复被暂停的调度。Pause/Resume v1 只定义调度语义，不强制定义 provider streaming、工具执行、session flush、hook timeout 或底层取消的抢占细节。
 
 `Notification` 是框架内部的输入通知，供 host、channel、orchestrator、后台 job 或长任务把状态回流到某个 Agent 的 input channel。它仍然属于 `event/` 包，原因是 `Input` 使用非导出 marker method，外部包不能自行定义新的输入事件类型。通知内容只使用 `InputPart`、`Usage` 和普通 metadata，不导入 `model/`。
 
@@ -428,6 +431,8 @@ for ev := range output {
 ## Middleware
 
 ```go
+package middleware
+
 type InputMiddleware func(<-chan event.Input) <-chan event.Input
 type OutputMiddleware func(<-chan event.Output) <-chan event.Output
 ```
@@ -455,7 +460,7 @@ func LogOutput(in <-chan event.Output) <-chan event.Output {
 ```go
 type ContextBuilder struct {
     compression *compact.Pipeline
-    prompt      *blades.PromptBuilder
+    prompt      *prompt.Builder
 }
 
 func (b *ContextBuilder) Build(
@@ -474,14 +479,14 @@ func (b *ContextBuilder) Build(
 - 将 `tools.Tool` 的 schema 转成 `model.ToolSpec`，避免 `model/` 依赖 `tools/`。
 - 执行 provider 能力过滤，例如 thinking 支持、文件支持、cache breakpoint 支持。
 
-不单独暴露 `MessageConverter` 接口。转换规则和 ContextBuilder 的上下文预算、provider 能力过滤强相关，作为私有实现更容易保持一致。
+`ContextBuilder` 是 `internal/loop` 私有服务，不作为 public API 暴露。不单独暴露 `MessageConverter` 接口。转换规则和 ContextBuilder 的上下文预算、provider 能力过滤强相关，作为私有实现更容易保持一致。
 
 ### streamAndRecord
 
 ```go
 func (a *agent) streamAndRecord(
     ctx context.Context,
-    stream iter.Seq2[*model.Response, error],
+    stream model.Stream,
     session session.Session,
     output chan<- event.Output,
 ) (msg *model.Message, toolCalls []ToolCall, err error)
@@ -495,6 +500,16 @@ func (a *agent) streamAndRecord(
 - 将 usage 从 `model.TokenUsage` 转为 `event.Usage`。
 
 Provider 特定格式转换仍在 `contrib/*` 内部完成。Internal Service Layer 只处理 provider-neutral 的 `model.Response`。
+
+### 唯一转换边界约束
+
+Event/Message 分层能否长期守住，取决于转换入口是否可控。v1 采用以下约束：
+
+- `event/`、`model/`、`tools/` 三个包互不导入，也不暴露互转函数。
+- `ContextBuilder`、`streamAndRecord`、tool result converter、usage converter 都在 `internal/loop`。
+- Hook 只能观察 model request/response snapshot，不能拿到 raw `*model.Request` 或注入 `model.Message`。
+- `session/` 只持久化 `model.Message`，不作为用户 I/O 的旁路。
+- `flow/` 只做 Event-to-Event composition；`flow.AsTool` 在 flow 边界完成 Agent-to-Tool 适配，不让 `tools/` 反向依赖 `blades/`。
 
 ## 数据流
 
@@ -555,6 +570,7 @@ const (
     StateStreaming
     StateActing
     StateStopHooks
+    StatePaused
     StateDone
 )
 ```
@@ -564,6 +580,7 @@ const (
 ```
 Idle      --[Prompt]-----------> Preparing
 Idle      --[Control:Abort]----> Done
+Idle      --[Control:Pause]----> Paused
 
 Preparing --[request ready]----> Streaming
 Preparing --[compact needed]---> Preparing
@@ -583,9 +600,15 @@ StopHooks --[continue]---------> Preparing
 StopHooks --[no continue]------> Idle       (yield TurnEnd{stop})
 StopHooks --[max turns]--------> Done       (yield Done{max_turns})
 
+Paused   --[Control:Resume]---> previous state
+Paused   --[Control:Abort]----> Done
+
 Any       --[Steer]------------> queue
 Any       --[Control:Abort]----> Done
+Any       --[Control:Pause]----> Paused
 ```
+
+进入 `Paused` 时，Agent Loop 记录暂停前状态，并停止调度新的 turn、follow-up 和 queued steer。已经进入 provider streaming 或工具执行的工作是否抢占取消，不在 v1 最小语义中规定。
 
 `TurnEnd.StopReason` 取代 `HasText`。有工具调用时使用 `tool_use`，正常停止时使用 `stop`，输出被截断时使用 `max_output`。
 
@@ -613,7 +636,7 @@ func (a *agent) Run(ctx context.Context, input <-chan event.Input) (<-chan event
     if a.provider == nil {
         return nil, ErrProviderRequired
     }
-    output := make(chan event.Output, a.outputBuffer)
+    output := make(chan event.Output)
     go a.loop(ctx, input, output)
     return output, nil
 }
@@ -639,7 +662,11 @@ func (a *agent) handlePrompt(
         currentInput = nil
         steerQueue = steerQueue[:0]
 
-        stream := a.provider.Stream(ctx, req)
+        stream, err := a.provider.Stream(ctx, req)
+        if err != nil {
+            output <- event.Done{Reason: event.ReasonError, Err: err}
+            return
+        }
         msg, toolCalls, err := a.streamAndRecord(ctx, stream, a.session, output)
         if err != nil {
             output <- event.Done{Reason: event.ReasonError, Err: err}

@@ -11,7 +11,7 @@ modules: [module-6, module-14]
 
 本文描述 AgentOS core 的 `policy/` 包，以及 Plan Mode、Accept Edits、Auto Mode 等交互模式与 core 的边界。
 
-核心结论：`policy/` 只提供通用决策原语，不内置完整产品交互模式。计划文件、审批工具、workspace 写入边界、AI 分类器和模式提示词由具体应用、examples 或 contrib 包实现。
+核心结论：`policy/` 只提供通用决策原语，不内置完整产品交互模式，并且包内只依赖 Go 标准库。计划文件、审批工具、workspace 写入边界、AI 分类器、工具元数据分类和模式提示词由具体应用、examples 或 contrib 包实现。
 
 ## Policy Core
 
@@ -51,9 +51,11 @@ type Decision struct {
 
 ### 决策请求
 
-Core 定义少量稳定请求类型。应用可以在自己的包中定义额外 request，并通过 `policy.Rule` 或自定义 checker 接入。
+Core 定义少量稳定请求类型。`Request` 使用非导出 marker method 封闭在 `policy/` 包内，避免应用随意扩展 request union 后让 checker 之间产生隐式协议。应用如果要接入额外资源类型，应映射为 `ResourceRequest`，或在应用自己的 `policy.Checker` 中解释这些 core request。
 
 ```go
+package policy
+
 type Request interface{ policyRequest() }
 
 type ToolRequest struct {
@@ -73,6 +75,8 @@ type ResourceRequest struct {
     Input  json.RawMessage
 }
 ```
+
+`ToolRequest` 只包含工具名和 JSON 输入，不携带 `tools.Tool`、schema、readonly metadata 或执行上下文。只读工具分类、schema 解释、MCP 元数据和应用资源边界都在 Agent Loop 或应用 bridge 中完成，再转换成 `ToolRequest` / `ResourceRequest` 交给 `policy.Chain`。
 
 ### 规则与来源
 
@@ -122,7 +126,7 @@ func (c *Chain) Check(ctx context.Context, req Request) (Decision, error)
 4. RateLimiter：请求频率和外部资源限流。
 5. DefaultDecision：没有命中规则时返回 `Ask` 或应用指定默认值。
 
-Hook 不嵌入 `policy.Chain`。Agent Loop 在调用 policy 前后触发 hook，以避免 `policy/` 反向依赖 `hook/`。
+Hook 不嵌入 `policy.Chain`。Agent Loop 在调用 policy 前后触发 hook，以避免 `policy/` 反向依赖 `hook/`。同理，`policy/` 不导入 `tools/`、`model/`、`event/`、`blades/` 或 `hook/`。
 
 ## Optional Modes
 
@@ -149,7 +153,7 @@ type ModeController interface {
 }
 ```
 
-Core 不定义全局 `policy.Mode` 枚举，避免把 coding app 的交互语义固定进通用 AgentOS。应用可以用自己的 mode 值，并把 mode 状态通过自定义 checker、tool filter、prompt section 和 hook 组合到 Agent Loop。
+Core 不定义全局 `policy.Mode` 枚举，避免把 coding app 的交互语义固定进通用 AgentOS。应用可以用自己的 mode 值，并把 mode 状态通过自定义 checker、tool filter、prompt section 和 hook 组合到 Agent Loop。这里的 tool filter 与 prompt section 属于应用或其它 core 包，不属于 `policy/` 包依赖。
 
 ### Plan Mode 推荐实现位置
 
@@ -159,7 +163,7 @@ Plan Mode 的完整生命周期包含只读工具过滤、计划文件、审批 
 package planmode
 
 func Tools(controller ModeController, opts ...Option) []tools.Tool
-func PromptSection(controller ModeController, opts ...Option) blades.PromptSection
+func PromptSection(controller ModeController, opts ...Option) prompt.Section
 func ToolFilter(controller ModeController) tools.Filter
 func PolicyChecker(controller ModeController) policy.Checker
 ```
@@ -169,7 +173,7 @@ func PolicyChecker(controller ModeController) policy.Checker
 - 计划文件目录由应用配置，不由 core 规定。
 - 审批 UI 由 channel/app 提供，不由 core 直接提示用户。
 - 预授权动作转换为 session 规则时，只产生 `policy.Rule`，不修改 core chain 结构。
-- 只读判定基于 `tools.ReadOnlyTool` 或应用自己的工具分类。
+- 只读判定基于工具 metadata、MCP annotation 或应用自己的工具分类；判定逻辑在应用 bridge 中，`policy/` 只看到 `ToolRequest` / `ResourceRequest`。
 
 ### Accept Edits 推荐实现位置
 

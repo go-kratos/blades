@@ -9,6 +9,8 @@ modules: [module-2]
 
 # 消息与上下文系统
 
+> Superseded: 本文是早期聚合设计笔记，不再作为 AgentOS v1 的权威子设计入口。当前拆分后的设计以 [design-model-provider.md](design-model-provider.md)、[design-prompt.md](design-prompt.md) 和 [design-compact.md](design-compact.md) 为准。
+
 ### 现状对比
 
 | 维度 | 当前 Blades | 新设计 |

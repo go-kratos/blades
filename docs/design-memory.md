@@ -107,10 +107,10 @@ type SummarizeFunc func(ctx context.Context, messages []*model.Message) (string,
 
 Agent Loop 推荐把 memory 分为两类注入：
 
-- Stable memory：进入 system prompt 或 PromptBuilder section，适合用户偏好、项目约定。
+- Stable memory：进入 system prompt 或 `prompt.Builder` section，适合用户偏好、项目约定。
 - Relevant memory：作为当前 turn 的 context message 或 prompt section，适合按任务召回的片段。
 
-注入格式由 Agent Loop 或 PromptBuilder 控制，memory item 本身不携带 provider-specific schema。
+注入格式由 Agent Loop 或 `prompt.Builder` 控制，memory item 本身不携带 provider-specific schema。
 
 ```go
 type Formatter interface {

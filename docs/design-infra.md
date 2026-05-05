@@ -9,6 +9,8 @@ modules: [module-9, module-10, module-11, module-12]
 
 # 基础设施（重试、Token 计数、可观测性、Graph）
 
+> Superseded: 本文是早期基础设施聚合设计笔记，不再作为 AgentOS v1 的权威子设计入口。当前拆分后的设计以 [design-model-provider.md](design-model-provider.md)、[design-observability.md](design-observability.md) 和 [design-graph.md](design-graph.md) 为准。
+
 ## 模块 9：API 错误处理与重试
 
 ### 现状对比
