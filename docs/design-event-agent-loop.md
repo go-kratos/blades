@@ -67,26 +67,18 @@ type Agent interface {
 
 `Run` 启动失败返回 error，运行时状态和错误通过 `event.Output` 传递。输入 channel 关闭表示用户不再发送新输入，Agent 在当前可完成工作结束后关闭输出 channel。
 
-稳定运行信息通过 `context.Context` 传递，而不是塞进每个 event：
+运行上下文通过 `context.Context` 传递取消、deadline、trace 和少量 typed capability。Agent Loop 需要当前会话时，从 session context 读取 `session.Session`，会话 ID 来自 `sess.ID()`：
 
 ```go
-package scope
+ctx = session.NewContext(ctx, sess)
 
-type Scope struct {
-    RunID       string
-    AppID       string
-    AgentID     string
-    SessionID   string
-    UserID      string
-    ChannelID   string
-    WorkspaceID string
+sess, ok := session.FromContext(ctx)
+if ok {
+    sessionID := sess.ID()
 }
-
-func NewContext(ctx context.Context, scope Scope) context.Context
-func FromContext(ctx context.Context) (Scope, bool)
 ```
 
-`Scope` 在一次 `Run` 内保持稳定。Agent Loop 从 context 读取 `SessionID`、`WorkspaceID` 等运行信息；`event/` 不承载 `SessionID`、`UserID`、`ChannelID` 或 `TraceID`。Trace 使用 OpenTelemetry 的 context 传播。禁止把大对象、可变 map、消息历史或工具结果塞进 context。
+Agent 内省信息通过 Agent context 或 Hook payload 传递，工具执行信息通过 `tools.Context` 传递。`AppID`、`UserID`、channel、chat、workspace、notification target 等应用级标识由应用层自己的 context key、session 映射或事件 payload 管理。`event/` 不承载 trace ID；Trace 使用 OpenTelemetry context 传播。context 中禁止放大对象、可变 map、消息历史或工具结果。
 
 ## Event 类型
 

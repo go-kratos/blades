@@ -24,16 +24,19 @@ sub-docs:
 
 ## 背景与目标
 
-Blades 的目标不是专用 Coding Agent，而是一个通用 AgentOS Runtime Platform：它提供 Agent 的事件协议、运行循环、上下文构建、工具编排、会话持久化、策略决策、Hook、Memory、Host 与 Channel 接入能力。Coding、客服、数据分析、自动化运维、研究助手等都应是运行在 AgentOS 上的应用或预设，而不是核心架构的默认假设。
+Blades 的目标是成为通用 AgentOS Core Runtime。核心层负责 Agent 事件协议、运行循环、模型上下文构建、工具编排、会话持久化、策略决策、Hook 和 Memory 等基础能力，并保持 API 面向通用 Agent 场景。
 
-当前 Blades 已有 `Agent`、基于 `iter.Seq2` 的流式接口、`Invocation`、`Session`、`Middleware`、`flow/`、`graph/`、`tools/`、`skills/`、`memory/`、`recipe/` 和多 Provider 集成。新设计不考虑向后兼容，目标是把这些能力重组为清晰分层的 AgentOS。
+应用层负责把核心能力装配成具体产品形态，包括 CLI、HTTP、微信、飞书、调度器等 channel 接入，workspace 管理，配置加载，daemon，cron，session 映射，主动通知和第三方 SDK 集成。`cmd/blades/internal/*` 是这类应用层实现的样板；Coding、客服、数据分析、自动化运维、研究助手等场景通过应用、recipe、examples 或 contrib preset 承接。
+
+当前 Blades 已有 `Agent`、基于 `iter.Seq2` 的流式接口、`Invocation`、`Session`、`Middleware`、`flow/`、`graph/`、`tools/`、`skills/`、`memory/`、`recipe/` 和多 Provider 集成。本轮设计以新 API 为目标，把这些能力重组为清晰分层的 AgentOS。
 
 核心目标：
 
-- **事件驱动**：外部只通过 `event.Input` / `event.Output` 与 Agent 通信，channel 中直接传具体事件，不做 `Input{Event: ...}` 这类二次封装。
-- **Event / Message 分层**：Event 是用户协议层，Message 是模型上下文协议层；`event/` 不依赖 `model/`，Agent Loop 是唯一转换边界。
-- **通用 AgentOS**：核心只提供通用 runtime、channel、workspace、policy、session、tool、memory 等能力，不内置 coding-specific workflow。
-- **包依赖可证明**：协议叶子包不互相依赖；上层通过接口、函数注入和 context scope 连接，避免循环依赖。
+- **事件驱动**：外部应用通过 `event.Input` / `event.Output` 与 Agent 通信，channel 中直接传具体事件。
+- **Event / Message 分层**：Event 是用户协议层，Message 是模型上下文协议层；Agent Loop 是唯一转换边界。
+- **通用 AgentOS 核心**：核心提供 runtime、policy、session、tool、memory 等基础能力；channel、host、workspace 和 coding-specific workflow 由应用层承接。
+- **应用层自持接入**：channel、workspace、配置、daemon、cron、外部平台 SDK 和产品交互由具体应用实现，`cmd/blades/internal/*` 提供应用层样板。
+- **包依赖可证明**：协议叶子包互相独立；上层通过接口、函数注入和 typed capability context 连接，避免循环依赖。
 - **Go 惯用 API**：小接口、短包名、`package.Role` 命名、`context.Context` 取消与 trace 传播、Option 函数配置。
 - **流式优先**：Provider streaming、工具重叠执行、输出背压、运行中 steering/control 都是一等能力。
 
@@ -68,26 +71,18 @@ for out := range output {
 }
 ```
 
-稳定运行信息通过 context 传递，不塞进每个事件：
+运行上下文使用 `context.Context` 传递取消、deadline、trace 和少量 typed capability。Session 是 Agent Loop 的核心运行能力，当前会话 ID 从 `session.Session` 自身读取：
 
 ```go
-package scope
+ctx = session.NewContext(ctx, sess)
 
-type Scope struct {
-    RunID       string
-    AppID       string
-    AgentID     string
-    SessionID   string
-    UserID      string
-    ChannelID   string
-    WorkspaceID string
+sess, ok := session.FromContext(ctx)
+if ok {
+    sessionID := sess.ID()
 }
-
-func NewContext(ctx context.Context, s Scope) context.Context
-func FromContext(ctx context.Context) (Scope, bool)
 ```
 
-`Scope` 在一次 `Run` 内保持稳定。`TraceID` 使用 OpenTelemetry context 传播；动态业务字段使用具体事件或 Hook payload，不放入 context。context 中不要放大对象、可变 map、消息历史或工具结果。
+Core 保留 capability-specific context helper，例如 `session.NewContext/FromContext`、Agent 内省 context 和 `tools.Context`。`AppID`、`UserID`、`ChannelID`、`WorkspaceID`、chat ID、platform ID 和 notification target 由应用层自己的映射、context key 或事件 payload 管理。`TraceID` 使用 OpenTelemetry context 传播；动态业务字段使用具体事件或 Hook payload。context 中不要放大对象、可变 map、消息历史或工具结果。
 
 ### Event 类型
 
@@ -107,7 +102,7 @@ type OutputPart interface{ outputPart() }
 | `Prompt` | 用户或系统发起一个新 turn |
 | `Steer` | Agent 运行中注入修正、追加上下文或继续指令 |
 | `Control` | Abort / Pause / Resume 等控制信号 |
-| `Notification` | runtime、worker、后台任务或 channel 注入的内部通知 |
+| `Notification` | runtime、worker、后台任务或应用层接入注入的内部通知 |
 
 输出事件：
 
@@ -124,7 +119,7 @@ type OutputPart interface{ outputPart() }
 
 Event 和 Message 不合并。原因：
 
-- Event 面向用户、channel、hook 和 runtime，包含 streaming、control、notification、tool lifecycle。
+- Event 面向用户、应用接入、hook 和 runtime，包含 streaming、control、notification、tool lifecycle。
 - Message 面向 LLM provider、session、compression，必须满足 provider message invariant。
 - 两者变化频率不同，合并会导致 Event 层依赖 model 层，并把 provider 约束泄漏到用户 API。
 - Agent Loop 是自然转换边界：`event.Input -> model.Message/Part -> Provider -> event.Output`。
@@ -133,10 +128,10 @@ Event 和 Message 不合并。原因：
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  AgentOS Application Layer                                       │
-│    app/       应用定义、依赖装配、运行配置                         │
-│    channel/   CLI、HTTP、WebSocket、Slack、Scheduler 等通道          │
-│    host/      Run 管理、Agent 生命周期、channel 接入、资源治理       │
+│  Application Layer（outside core / user-owned）                   │
+│    cmd/blades/internal/app       应用定义、依赖装配、运行配置        │
+│    cmd/blades/internal/channel   CLI、微信、飞书等通道               │
+│    cmd/blades/internal/workspace 工作目录、应用配置、资源治理        │
 ├─────────────────────────────────────────────────────────────────┤
 │  blades/（根包：最小用户 API）                                     │
 │    Agent, New, Option, PromptBuilder                              │
@@ -152,7 +147,6 @@ Event 和 Message 不合并。原因：
 │    compact/    上下文压缩管线                                       │
 │    memory/     Memory 加载、召回、提取                              │
 │    session/    会话接口、Store、消息树、JSONL                         │
-│    workspace/  工作目录、文件系统边界、artifact、环境                 │
 ├─────────────────────────────────────────────────────────────────┤
 │  Protocol Leaf Packages                                           │
 │    event/      Input/Output Event + 多模态 Part，不依赖 model/tools   │
@@ -162,10 +156,10 @@ Event 和 Message 不合并。原因：
 │  Optional Systems                                                  │
 │    graph/      DAG 执行器，可选工作流系统                            │
 │    evaluator/  评估系统                                              │
-│    recipe/     声明式应用构建                                        │
+│    recipe/     声明式 Agent 构建                                     │
 ├─────────────────────────────────────────────────────────────────┤
 │  contrib/                                                            │
-│    openai / anthropic / gemini / mcp / otel / channel adapters       │
+│    openai / anthropic / gemini / mcp / otel                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -178,9 +172,9 @@ Event 和 Message 不合并。原因：
 | Message 是模型协议 | `model/` 不导入 `event/` 或 `tools/`，Provider 只处理 `model.Request/Response` |
 | Tool 是能力叶子包 | `tools/` 不导入 `event/` 或 `model/`，结果使用 `tools.ResultPart` |
 | Runtime 做转换 | `internal/loop` 是 Event、Tool、Message 之间的唯一编排和转换边界 |
-| Scope 走 context | `SessionID/UserID/ChannelID/WorkspaceID` 这类稳定信息放 `scope.Scope` |
+| Context 承载运行能力 | context 传递取消、deadline、trace、`session.Session`、Agent 内省和 `tools.Context` |
 | Composition 不污染根包 | `Sequential/Parallel/Loop` 放 `flow/`，读作 `flow.Sequential(...)` |
-| 应用接入独立 | CLI/HTTP/WebSocket/Slack/Scheduler 等属于 `channel/` 和 `host/`，不是 Agent 接口的一部分 |
+| 应用接入框架外实现 | CLI/HTTP/WebSocket/Slack/Scheduler 等属于具体应用，不作为 AgentOS 核心公开包 |
 | Policy 大于 Permission | `policy/` 统一承载权限、安全检查、交互模式、预算、速率限制和组织规则 |
 | Coding 不是核心 | `Explore/Plan/General/Verify` 不进 v1 核心；可放 examples、contrib preset 或业务 app |
 
@@ -218,34 +212,11 @@ blades/
 │   ├── filter.go               ToolFilter + ReadOnly/AllowOnly/Disallow/And/Or
 │   └── context.go              工具执行上下文辅助
 │
-├── scope/
-│   └── scope.go                Scope + context helper
-│
 ├── flow/
 │   ├── sequential.go           Sequential(...) blades.Agent
 │   ├── parallel.go             Parallel(...) blades.Agent
 │   ├── loop.go                 Loop(...) blades.Agent
 │   └── tool.go                 AsTool(agent) tools.Tool，可选 Agent-as-Tool 适配
-│
-├── app/
-│   ├── app.go                  App 定义，装配 agent/channel/policy
-│   ├── config.go               Config 结构、默认值、合并规则
-│   └── builder.go              应用构建辅助
-│
-├── host/
-│   ├── host.go                 Host 管理 Run 生命周期
-│   ├── run.go                  Run handle、取消、drain、状态查询
-│   └── scheduler.go            可选调度入口
-│
-├── channel/
-│   ├── channel.go              Channel 接口，Event 与外部协议桥接
-│   ├── cli/
-│   ├── http/
-│   └── websocket/
-│
-├── workspace/
-│   ├── workspace.go            Workspace、PathPolicy、ArtifactStore
-│   └── fs.go                   文件系统边界与路径规范化
 │
 ├── session/
 │   ├── session.go              Session 接口 + NewMemory/Open
@@ -302,7 +273,7 @@ blades/
 
 - 命名过宽，容易让用户误以为框架内置了固定角色体系。
 - Explore/Plan/Verify 都强依赖软件工程场景，不适合作为通用 AgentOS 默认能力。
-- 预设 Agent 应该由 app、recipe、examples 或 contrib preset 提供。
+- 预设 Agent 应该由应用、recipe、examples 或 contrib preset 提供。
 
 推荐替代：
 
@@ -316,24 +287,19 @@ blades/
 event/      -> standard library only
 model/      -> standard library only
 tools/      -> standard library only + jsonschema
-scope/      -> context only
 
 session/    -> model/
 compact/    -> model/                         // Summarizer 函数由上层注入
 memory/     -> model/                         // Fork/Recall 函数由上层注入
-workspace/  -> standard library
-policy/     -> tools/, workspace/             // 不依赖 blades/event/model
+policy/     -> tools/                         // 不依赖 blades/event/model
 hook/       -> event/, model/, tools/, policy/
 
-blades/     -> event/, model/, tools/, session/, compact/, hook/, policy/, scope/
+blades/     -> event/, model/, tools/, session/, compact/, hook/, policy/
 flow/       -> blades/, event/, tools/
 
-channel/    -> event/, scope/
-host/       -> blades/, channel/, scope/, session/, workspace/
-app/        -> blades/, host/, channel/, policy/
-recipe/     -> app/, blades/, tools/, model/
-contrib/*   -> model/ 或 channel/ 或 tools/
-internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/, scope/
+recipe/     -> blades/, tools/, model/
+contrib/*   -> model/ 或 tools/
+internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/
 ```
 
 循环依赖规避规则：
@@ -342,8 +308,8 @@ internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/, sco
 - `policy/` 不依赖 `blades/`，否则工具权限会和 Agent 构造形成循环。
 - `compact/` 不依赖 Provider 或 root Agent；摘要能力通过 `func(ctx, []*model.Message) (string, error)` 注入。
 - `memory/` 不依赖 root Agent；提取和召回通过函数接口注入。
-- `channel/` 只做外部协议与 Event 的转换，不直接调用 Provider。
-- `host/` 负责装配 context scope、channel、agent run 和 lifecycle，是 AgentOS 运行层。
+- CLI、HTTP、WebSocket、Slack、Scheduler 等接入层不进入核心依赖图；具体应用自行把外部协议转换成 `event.Input` / `event.Output`。
+- 后台运行、队列、drain、取消、主动通知等运行管理不进入核心依赖图；具体应用可以在 `cmd/<app>/internal` 内实现。
 
 ## 核心包导出类型
 
@@ -353,12 +319,7 @@ internal/loop -> event/, model/, tools/, session/, compact/, hook/, policy/, sco
 | `event` | `Input`, `Output`, `Prompt`, `Steer`, `Control`, `Notification`, `TextDelta`, `PartDelta`, `TurnEnd`, `Done` | `event.PromptText` |
 | `model` | `Message`, `Part`, `Provider`, `Request`, `Response`, `ToolSpec`, `Counter` | `model.Provider` |
 | `tools` | `Tool`, `Result`, `ResultPart`, `Resolver`, `ToolFilter` | `tools.Tool` |
-| `scope` | `Scope`, `NewContext`, `FromContext` | `scope.Scope` |
 | `flow` | `Sequential`, `Parallel`, `Loop`, `AsTool` | `flow.Parallel(a, b)` |
-| `app` | `App`, `Builder`, `Config` | `app.New(...)` |
-| `host` | `Host`, `Run` | `host.Start(ctx, app)` |
-| `channel` | `Channel`, `Envelope`, adapters | `channel.Channel` |
-| `workspace` | `Workspace`, `PathPolicy`, `ArtifactStore` | `workspace.Workspace` |
 | `session` | `Session`, `Store`, `Writer`, `Entry`, `Tree` | `session.Session` |
 | `policy` | `Chain`, `Decision`, `Rule`, `ModeManager`, `SafetyChecker` | `policy.Chain` |
 | `hook` | `Event`, `Registry`, handlers | `hook.Registry` |
@@ -395,26 +356,26 @@ iterative := flow.Loop(worker, flow.WithMaxTurns(8))
 
 组合原语只组合 `event.Input` / `event.Output` channel，不读取 `model.Message`。如果需要复杂 DAG、checkpoint 或条件边，用 `graph/`，不要把所有工作流语义塞进 Agent 接口。
 
-### AgentOS Host / Channel
+### 应用接入层（框架外）
 
-`host/` 是 AgentOS 的运行入口，负责：
+AgentOS 核心不提供公开 `channel/`、`host/` 或 `app/` 包。应用层负责把外部协议、配置、运行生命周期和资源治理装配到核心 Agent API 上。`cmd/blades/internal/channel` 是推荐模式：在应用内部定义小接口，把 CLI、微信、飞书等外部消息转成一次 turn，再把 `event.Output` 或当前流式消息写回目标界面。
 
-- 为每次运行创建 `scope.Scope` 并写入 context。
-- 连接一个或多个 `channel.Channel`。
-- 管理 Agent Run 生命周期、取消、drain、错误归档。
-- 注入 workspace、session、policy、配置好的 Agent 依赖和 telemetry。
+应用层通常负责：
 
-配置不单独设计 `settings/` 包。`app.Config` 是应用装配输入，负责承载模型、工具、policy、channel、workspace、session 等声明式配置；文件加载、环境变量覆盖和默认值合并可以放在 `app.LoadConfig` 或具体 CLI 中。`host/` 只消费已经构造好的 Agent、Channel 和 Option，不读取配置文件。
+- 配置文件、环境变量、默认值合并和依赖装配。
+- CLI、HTTP、WebSocket、Slack、微信、飞书、Cron、Queue 等 transport 适配。
+- session ID 映射、slash command、消息去重、主动通知、daemon 生命周期。
+- 工作目录、文件系统边界、artifact、第三方 SDK 和资源治理。
 
-`channel/` 是外部协议适配层。CLI、HTTP、WebSocket、Slack、Cron、Queue 都实现 Channel，把外部 envelope 转为 `event.Input`，再把 `event.Output` 转回目标协议。
+配置不单独设计 `settings/` 包。配置结构和加载逻辑属于具体应用，例如 `cmd/blades/internal/config`、`cmd/blades/internal/app` 和 `cmd/blades/internal/workspace`。核心只消费已经构造好的 Agent、Provider、Tool、Session、Policy、Hook 等依赖。
 
-Agent 不知道自己来自 CLI 还是 HTTP；它只读 input channel 和 context scope。
+Agent 不知道自己来自 CLI、HTTP 还是消息平台；它只读 input channel 和 typed capability context。当前会话通过 `session.Session` 访问，应用级 channel、workspace、chat、user 等标识由应用层维护。
 
 ### Policy 系统
 
-原 `permission/` 命名过窄。AgentOS 需要统一处理权限、安全、模式、预算、速率限制、组织策略和 workspace 边界，因此核心包命名为 `policy/`。
+原 `permission/` 命名过窄。AgentOS 需要统一处理权限、安全、模式、预算、速率限制和组织策略，因此核心包命名为 `policy/`。
 
-`policy.Chain` 接收 tool call、workspace operation、model request 或 channel action 的决策请求，返回 allow/deny/ask/modify。Plan Mode、Accept Edits、Auto Mode 可以作为 policy mode 的实现，但不作为 AgentOS 核心目标；它们是交互策略，不是 Agent 接口的一部分。
+`policy.Chain` 接收 tool call、model request 或应用层定义的资源操作决策请求，返回 allow/deny/ask/modify。Plan Mode、Accept Edits、Auto Mode 可以作为 policy mode 的实现，但不作为 AgentOS 核心目标；它们是交互策略，不是 Agent 接口的一部分。
 
 ### 子 Agent 与 Multi-Agent
 
@@ -423,11 +384,11 @@ v1 核心只保留两个通用原语：
 - `flow.*`：同进程 Agent 组合。
 - `flow.AsTool(agent)`：把一个 Agent 暴露为 `tools.Tool`，让另一个 Agent 调用。
 
-不在核心内置 `BackgroundAgent`、`WorktreeAgent`、`team/Coordinator` 或 `Swarm/Team`。这些能力可以在 `host/`、`workspace/`、`channel/queue`、`recipe/` 或 contrib 包中组合出来。原因：
+不在核心内置 `BackgroundAgent`、`WorktreeAgent`、`team/Coordinator` 或 `Swarm/Team`。这些能力可以在应用层、`recipe/` 或 contrib 包中组合出来。原因：
 
-- Background 是运行生命周期问题，应由 host/run handle 管理，而不是改变 Agent 类型。
+- Background 是运行生命周期问题，应由应用层 run manager 管理，而不是改变 Agent 类型。
 - Worktree 是 coding workspace 隔离策略，不适合通用 AgentOS 核心。
-- Team/Swarm 是应用级协作协议，应该建立在 Agent、Tool、Session、Channel 之上。
+- Team/Swarm 是应用级协作协议，应该建立在 Agent、Tool、Session 和应用层调度之上。
 
 如果后续需要通用多 Agent，可以新增 `orchestrator/` 包，命名为 `orchestrator.Coordinator`、`orchestrator.Team`，而不是 `team/`。`team` 太偏人类团队语义，通用 AgentOS 中 `orchestrator` 更准确。
 
@@ -437,7 +398,7 @@ v1 核心只保留两个通用原语：
 
 `compact.Pipeline` 从 Session 中取出的 `[]*model.Message` 进行预算控制和摘要，不依赖 root Agent。LLM 摘要通过 Summarizer 函数注入。
 
-`memory/` 负责多层 Memory 加载、召回和提取。Memory 提取不要求框架内置 BackgroundAgent；host 可以启动独立 run 或异步 job，把提取结果写回 memory store。
+`memory/` 负责多层 Memory 加载、召回和提取。Memory 提取不要求框架内置 BackgroundAgent；应用层可以启动独立 run 或异步 job，把提取结果写回 memory store。
 
 ## 实现计划
 
@@ -446,7 +407,7 @@ v1 核心只保留两个通用原语：
 - [ ] 定义 `event/`：`Input` / `Output`、多模态 `InputPart` / `OutputPart`、`Prompt`、`Steer`、`PromptText`、`SteerText`、`Control`、`Notification`、`TextDelta`、`ThinkingDelta`、`Part*`、`Tool*`、`TurnEnd`、`Error`、`Done`
 - [ ] 根包不 re-export Event 类型或构造函数；用户代码统一导入 `event/`
 - [ ] Agent 接口改为 `Run(context.Context, <-chan event.Input) (<-chan event.Output, error)`
-- [ ] 实现 `scope/` 包和 Agent Loop context scope 读取
+- [ ] 实现 Agent Loop 对 `session.Session`、Agent 内省 context 和 `tools.Context` 的读取与传递
 - [ ] 实现 Event -> model.Message/Part -> Provider -> Event 转换边界
 - [ ] 实现 InputMiddleware / OutputMiddleware
 
@@ -466,20 +427,16 @@ v1 核心只保留两个通用原语：
 - [ ] 实现 `hook.Registry` 和 Agent/Model/Tool 生命周期事件
 - [ ] 在 Agent Loop 中串联 tool validation、policy、hook、execution、result conversion
 
-### 阶段 4：AgentOS host 层
+### 阶段 4：应用接入样板与边界验证
 
-- [ ] 实现 `scope.Scope`
-- [ ] 实现 `workspace.Workspace`、PathPolicy、ArtifactStore
-- [ ] 实现 `channel.Channel` 和 CLI channel
-- [ ] 实现 `host.Host` 和 Run handle
-- [ ] 实现 `app.Config`，在 app 层处理默认值、文件加载与环境覆盖
-- [ ] 把 CLI/HTTP/WebSocket 等外部协议从 Agent core 移出
+- [ ] 明确 `cmd/blades/internal/channel`、`cmd/blades/internal/app`、`cmd/blades/internal/workspace` 是应用层样板
+- [ ] 把 CLI/HTTP/WebSocket 等外部协议保留在具体应用、examples 或 contrib，不进入 Agent core
+- [ ] 用示例说明应用层如何管理 run lifecycle、session 映射、主动通知和配置加载
 
 ### 阶段 5：组合、应用与迁移
 
 - [ ] 保留并重构 `flow.Sequential/Parallel/Loop`，去掉 Routing/Deep
 - [ ] 在 `flow/` 中实现可选 `flow.AsTool(agent)`
-- [ ] 实现 `app.App` 和 `recipe/` 构建
 - [ ] 迁移 contrib providers 到 `model.Provider`
 - [ ] 迁移 skills 到新 `tools.Tool`
 - [ ] 把 coding presets 移到 `examples/coding` 或 `contrib/preset`
@@ -490,10 +447,10 @@ v1 核心只保留两个通用原语：
 |------|------|------|
 | Event 接口变更大 | 高 | 保持 `event/` 作为唯一入口，迁移围绕 `event.Input` / `event.Output` 和具体事件类型 |
 | Event/Message 转换复杂 | 高 | 转换只允许在 `internal/loop`，增加 golden tests 覆盖多模态和工具调用 |
-| context 被滥用 | 中 | `scope.Scope` 只放稳定 ID，其他信息必须走 Event/Hook/Session |
-| 包数量增加 | 中 | 保持叶子包小接口，Host/App 层负责装配，避免根包重新膨胀 |
+| context 被滥用 | 中 | context 只传取消、deadline、trace 和 typed capability；业务字段走 Event/Hook/Session 或应用层映射 |
+| 包数量增加 | 中 | 保持叶子包小接口，应用层负责接入和装配，避免根包重新膨胀 |
 | policy 语义过宽 | 中 | `Decision` 和请求类型保持小而稳定，模式/预算/组织规则通过可选实现扩展 |
-| 去掉内置 coding presets 后示例不足 | 低 | 在 `examples/coding` 提供完整 app/recipe，不进入核心依赖路径 |
+| 去掉内置 coding presets 后示例不足 | 低 | 在 `examples/coding` 提供完整应用/recipe，不进入核心依赖路径 |
 | flow 与 graph 边界模糊 | 中 | flow 只组合 Agent channel，graph 负责 DAG/checkpoint/condition |
 
 ## 参考资料

@@ -114,7 +114,20 @@ session.History() → 原始消息（含 Compaction 回放） → compact.Pipeli
 
 Session 接口只暴露 `Append(*model.Message)`，不暴露 `AppendEntry(Entry)`。Entry 是持久化层的概念，Agent Loop 不需要感知。Compaction Entry 等非消息类型的写入通过 persistentSession 的具体方法或内部机制处理，不污染 Session 接口。
 
-### 5.3 session.Store 接口
+### 5.3 session context
+
+Session 是 Agent Loop 的运行能力，通过 typed context helper 传递。context 中只保存 `Session` 对象；会话 ID、状态、历史和分支位置都从 `Session` 读取。
+
+```go
+func NewContext(ctx context.Context, sess Session) context.Context
+func FromContext(ctx context.Context) (Session, bool)
+
+func Require(ctx context.Context) (Session, error)
+```
+
+应用层可以把外部 chat ID、user ID 或 channel ID 映射到具体 Session，再把 Session 注入 Agent Run context。AgentOS Core 只消费 `Session` 接口。
+
+### 5.4 session.Store 接口
 
 ```go
 package session
@@ -156,7 +169,7 @@ Open 模式的优点：
 - 新建和打开已有会话统一为一个操作，调用方不需要区分
 - Close 释放资源，语义清晰，避免资源泄漏
 
-### 5.4 StoreOption
+### 5.5 StoreOption
 
 ```go
 type StoreOption func(*storeOptions)
@@ -177,7 +190,7 @@ func WithTitle(title string) StoreOption {
 
 StoreOption 仅在 Open 创建新会话时生效，用于设置 Header 中的 CWD 和 Title。
 
-### 5.5 session.Entry 联合类型
+### 5.6 session.Entry 联合类型
 
 ```go
 // Entry 是 JSONL 文件中每行的结构。
@@ -245,7 +258,7 @@ type ContentReplacementData struct {
 }
 ```
 
-### 5.6 session.Header
+### 5.7 session.Header
 
 ```go
 type Header struct {
@@ -260,7 +273,7 @@ type Header struct {
 
 JSONL 文件的第一行。`Leaf` 记录当前位置指针。元数据（Title、Leaf）采用 last-wins 读取策略——后续的 Entry 可以更新这些值。
 
-### 5.7 消息树
+### 5.8 消息树
 
 ```go
 // Tree 通过 ParentID 链构建消息树。
@@ -297,7 +310,7 @@ func Rebuild(entries []Entry, leaf string) (*Tree, error)
 
 Tree 是内部数据结构，不在 Session 接口中暴露。memorySession 和 persistentSession 内部都维护 Tree 实例。
 
-### 5.8 session.Snapshot
+### 5.9 session.Snapshot
 
 ```go
 // Snapshot 是加载会话后的完整快照。
@@ -309,7 +322,7 @@ type Snapshot struct {
 }
 ```
 
-### 5.9 构造函数
+### 5.10 构造函数
 
 ```go
 // NewMemory 创建纯内存 Session（测试、无状态场景、简单 Agent）。
@@ -334,7 +347,7 @@ func WithTitle(title string) Option    // 会话标题
 func WithState(state State) Option // 初始状态
 ```
 
-### 5.10 文件实现
+### 5.11 文件实现
 
 ```go
 // fileStore 使用 JSONL 文件实现 session.Store。
@@ -366,7 +379,7 @@ func (w *fileWriter) Close() error
 - **读取**：不需要锁（append-only 保证已写入的行不变）
 - **崩溃恢复**：Load 时检测并跳过不完整的最后一行
 
-### 5.11 会话恢复流程
+### 5.12 会话恢复流程
 
 ```
 1. 读取 JSONL 文件
@@ -383,7 +396,7 @@ func (w *fileWriter) Close() error
 10. 返回 Snapshot
 ```
 
-### 5.12 persistentSession 实现
+### 5.13 persistentSession 实现
 
 ```go
 // persistentSession 包装 Store，提供 Session 接口。
@@ -407,7 +420,7 @@ type persistentSession struct {
 - **Branch(nodeID)**：Tree.Branch(nodeID) + 重建 messages 缓存（从 Tree.Path 重新提取）
 - **Leaf()**：Tree.Leaf()
 
-### 5.13 memorySession 实现
+### 5.14 memorySession 实现
 
 ```go
 // memorySession 是纯内存实现，内部维护完整的 Tree 结构。
@@ -424,7 +437,7 @@ type memorySession struct {
 
 memorySession 和 persistentSession 的 Tree 操作逻辑完全一致，区别仅在于 persistentSession 额外写穿到 Store。
 
-### 5.14 State 管理
+### 5.15 State 管理
 
 保持 `map[string]any`，加约定和泛型辅助：
 
@@ -448,7 +461,7 @@ func GetState[T any](s Session, key string) (T, bool) {
 
 注意：持久化的 State 值必须是 JSON 可序列化的。反序列化后 struct 类型会变成 `map[string]interface{}`，使用 `GetState[T]` 时需要注意类型匹配。
 
-### 5.15 包结构
+### 5.16 包结构
 
 ```
 session/
@@ -467,7 +480,7 @@ session/
 └── state.go         // GetState[T] 泛型辅助
 ```
 
-### 5.16 Lite Reader
+### 5.17 Lite Reader
 
 会话列表（`Store.List`）需要读取所有会话的元信息。对于大型 JSONL 文件，完整解析代价过高。LiteReader 提供优化的读取路径：仅读取文件头部（Header）和尾部窗口（最近的元数据行），跳过中间的大块内容。
 
@@ -499,7 +512,7 @@ func WithLiteBufSize(size int) LiteReaderOption
 3. 从尾部行中提取 last-wins 元数据（title、leaf、tag 等）
 4. 合并头部 Header 和尾部元数据，返回结果
 
-### 5.17 Batch Writer
+### 5.18 Batch Writer
 
 高频写入场景（如流式 assistant 响应中的多次 Append）下，逐条 `write()` syscall 开销显著。BatchWriter 在 Writer 之上提供异步批量写入能力。
 
@@ -537,7 +550,7 @@ func WithFlushInterval(d time.Duration) BatchWriterOption
 
 BatchWriter 内部启动一个后台 goroutine 消费队列。`Drain` 发送关闭信号并等待后台 goroutine 退出，确保所有 entries 已持久化。
 
-### 5.18 大文件优化
+### 5.19 大文件优化
 
 ```go
 // --- 大文件优化 ---

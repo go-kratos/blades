@@ -15,12 +15,12 @@ AgentOS v1 不把 “SubAgent / BackgroundAgent / WorktreeAgent / Team” 作为
 
 - `flow.Sequential` / `flow.Parallel` / `flow.Loop`：组合多个 `blades.Agent`。
 - `flow.AsTool(agent)`：把 Agent 适配为 `tools.Tool`，让一个 Agent 可被另一个 Agent 调用。
-- `host.Run`：管理 Agent 运行生命周期、取消、drain、异步 job 和 channel 接入。
-- `event.Notification`：作为内部输入事件，把 worker、后台 job、channel 或 host 状态回流到 Agent input channel。
+- 应用层 run manager：管理 Agent 运行生命周期、取消、drain、异步 job 和 channel 接入，不作为核心包。
+- `event.Notification`：作为内部输入事件，把 worker、后台 job 或应用层接入状态回流到 Agent input channel。
 
 不进入核心的能力：
 
-- `BackgroundAgent`：这是 host 生命周期管理问题，不应改变 Agent 类型。
+- `BackgroundAgent`：这是应用层生命周期管理问题，不应改变 Agent 类型。
 - `WorktreeAgent`：这是 coding workspace 隔离策略，应放在 coding app 或 contrib。
 - `agents.Explore/Plan/General/Verify`：这是 coding preset，不适合通用 AgentOS 核心。
 - `team.Coordinator/Swarm`：这是应用级协作协议，可后续放 `orchestrator/` 或 `contrib/orchestrator`。
@@ -109,13 +109,11 @@ func AsTool(agent blades.Agent, opts ...ToolOption) tools.Tool
 
 不放进 `tools/` 的原因是 `tools/` 是能力叶子包，不应反向依赖 `blades.Agent` 或 `event/`。不放进根包的原因是它是组合适配能力，不是创建普通 Agent 的必需 API。放在 `flow/` 可以保持依赖方向为 `flow -> blades/event/tools`，根包和工具协议都不被污染。
 
-## 7.3 运行生命周期（host/）
+## 7.3 运行生命周期（应用层）
 
-后台执行、取消、drain、超时、队列和资源限制由 `host/` 管理。
+后台执行、取消、drain、超时、队列和资源限制由具体应用管理，不新增核心 `host/` 包。应用可以在 `cmd/<app>/internal` 内定义自己的 run handle，例如：
 
 ```go
-package host
-
 type Run interface {
     ID() string
     Output() <-chan event.Output
@@ -124,12 +122,12 @@ type Run interface {
     Err() error
 }
 
-type Host interface {
+type RunManager interface {
     Start(ctx context.Context, agent blades.Agent, input <-chan event.Input, opts ...RunOption) (Run, error)
 }
 ```
 
-如果需要 fire-and-forget Memory 提取或任务摘要，host 启动一个后台 run 或异步 job，并负责 drain 输出。结果回流使用 `event.Notification` 注入目标 Agent 的 input channel。
+如果需要 fire-and-forget Memory 提取或任务摘要，应用层启动一个后台 run 或异步 job，并负责 drain 输出。结果回流使用 `event.Notification` 注入目标 Agent 的 input channel。
 
 ```go
 event.Notification{
@@ -147,11 +145,9 @@ event.Notification{
 
 ## 7.4 Workspace 隔离
 
-Worktree、容器、远程 sandbox 都属于 workspace strategy，不是 Agent 类型。
+Worktree、容器、远程 sandbox 都属于应用层 workspace strategy，不是 Agent 类型，也不新增核心 `workspace/` 包。Coding 应用可以在自己的 internal 包或 contrib 中定义需要的接口：
 
 ```go
-package workspace
-
 type Workspace interface {
     ID() string
     Root() string
@@ -165,10 +161,10 @@ Coding app 可以在 contrib 中提供：
 ```go
 package codingworkspace
 
-func NewWorktree(ctx context.Context, base Workspace, opts ...Option) (workspace.Workspace, cleanup func() error, err error)
+func NewWorktree(ctx context.Context, base Workspace, opts ...Option) (Workspace, cleanup func() error, err error)
 ```
 
-Agent 只通过 context scope 得到 `WorkspaceID`，具体路径、安全边界、artifact 存储由 host 和 tools 注入。
+Agent 不直接依赖 workspace 类型。具体路径、安全边界、artifact 存储由应用层和工具实现注入；如需在运行期传递 workspace 标识，应用使用自己的 context key 或 tool config。
 
 ## 7.5 Preset Agent 的位置
 
@@ -191,7 +187,7 @@ func Plan(opts ...blades.Option) blades.Agent
 func Verify(opts ...blades.Option) blades.Agent
 ```
 
-这些包可以复用 `blades.New`、`tools.ToolFilter`、`policy.Mode`、`workspace.PathPolicy`，但不进入 AgentOS core。
+这些包可以复用 `blades.New`、`tools.ToolFilter` 和 `policy.Mode`，并在应用层自定义 workspace policy，但不进入 AgentOS core。
 
 ## 7.6 多 Agent 编排
 
@@ -221,7 +217,7 @@ func NewCoordinator(opts ...Option) blades.Agent
 ## 关键设计决策
 
 1. **Agent 接口保持稳定**：所有组合、后台、编排能力都不改变 `Run(context.Context, <-chan event.Input) (<-chan event.Output, error)`。
-2. **组合和编排分层**：`flow/` 做轻量组合，`orchestrator/` 做复杂调度，`host/` 做生命周期。
+2. **组合和编排分层**：`flow/` 做轻量组合，`orchestrator/` 做复杂调度，应用层做生命周期。
 3. **不把场景塞进核心**：coding worktree、Explore/Plan/Verify、Team/Swarm 都是应用层能力。
 4. **Notification 只做输入回流**：worker 和后台 job 的结果作为 `event.Notification` 注入 input，而不是伪造成 output。
 5. **Bridge 显式化**：Output 到 Input、JSON 到 Prompt、Agent 到 Tool 都必须有明确 bridge，避免隐式把所有事件拼成文本。

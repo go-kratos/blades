@@ -489,7 +489,11 @@ func (s *PlanModePromptSection) Build(ctx context.Context) (string, error) {
     if s.modeManager.Current() != policy.ModePlan {
         return "", nil
     }
-    sessionID := session.IDFromContext(ctx)
+    sess, ok := session.FromContext(ctx)
+    if !ok {
+        return "", fmt.Errorf("session missing from context")
+    }
+    sessionID := sess.ID()
     planPath := filepath.Join(s.planDir, sessionID+"-*.md") // 支持多计划：<sessionID>-<planName>.md
     return fmt.Sprintf(`=== PLAN MODE ===
 当前处于只读计划模式。禁止执行任何写入操作。
@@ -557,7 +561,11 @@ func (t *WritePlanTool) Handle(ctx context.Context, input string) (string, error
     if params.PlanName == "" {
         params.PlanName = "plan"
     }
-    sessionID := session.IDFromContext(ctx)
+    sess, ok := session.FromContext(ctx)
+    if !ok {
+        return "", fmt.Errorf("session missing from context")
+    }
+    sessionID := sess.ID()
     // 防御路径遍历：sessionID 和 planName 只能包含字母数字和连字符
     if !isSafeFilename(sessionID) || !isSafeFilename(params.PlanName) {
         return "", fmt.Errorf("invalid session ID or plan name")
