@@ -35,3 +35,6 @@ jobs:
             Apply existing labels only. Do not post comments.
           claude_args: |
             --allowedTools "Read,Bash(gh label list:*),mcp__github__get_issue,mcp__github__get_issue_comments,mcp__github__search_issues,mcp__github__list_issues,mcp__github__update_issue"
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}

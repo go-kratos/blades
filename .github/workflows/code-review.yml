@@ -40,3 +40,6 @@ jobs:
             Do not modify files, commit, or push.
           claude_args: |
             --allowedTools "Read,Glob,Grep,Bash(git diff:*),Bash(git show:*),Bash(git status:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
