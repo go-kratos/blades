@@ -1,6 +1,6 @@
 module github.com/go-kratos/blades/contrib/mcp
 
-go 1.24.0
+go 1.25.0
 
 replace github.com/go-kratos/blades => ../..
 

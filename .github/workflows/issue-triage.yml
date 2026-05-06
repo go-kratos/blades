@@ -4,14 +4,13 @@ on:
   issues:
     types: [opened]
 
-concurrency:
-  group: issue-${{ github.event.issue.number }}
-  cancel-in-progress: false
-
 jobs:
   triage:
+    if: contains(fromJSON('["MEMBER","OWNER","COLLABORATOR","CONTRIBUTOR"]'), github.event.issue.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: issue-triage-${{ github.event.issue.number }}
     permissions:
       contents: read
       issues: write
@@ -33,7 +32,6 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.DEEPSEEK_AUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          allowed_non_write_users: "*"
           prompt: |
             Use the Blades issue triage skill at .agents/skills/issue-triage/SKILL.md.
 

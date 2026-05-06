@@ -373,6 +373,9 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 				// Stateless mode: only include messages from this invocation.
 				req.Messages = localMessages
 			}
+			if i == 0 && len(invocation.EphemeralMessages) > 0 {
+				req.Messages = append(req.Messages, invocation.EphemeralMessages...)
+			}
 			var finalMessage *Message
 			if !invocation.Stream {
 				finalResponse, err := a.model.Generate(ctx, req)
