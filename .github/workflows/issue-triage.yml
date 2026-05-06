@@ -1,0 +1,44 @@
+name: Issue Triage
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  triage:
+    if: contains(fromJSON('["MEMBER","OWNER","COLLABORATOR","CONTRIBUTOR"]'), github.event.issue.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: issue-triage-${{ github.event.issue.number }}
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Triage issue
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.DEEPSEEK_AUTH_TOKEN }}
+          ANTHROPIC_DEFAULT_OPUS_MODEL: deepseek-v4-pro
+          ANTHROPIC_DEFAULT_SONNET_MODEL: deepseek-v4-pro
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-v4-flash
+        with:
+          anthropic_api_key: ${{ secrets.DEEPSEEK_AUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            Use the Blades issue triage skill at .agents/skills/issue-triage/SKILL.md.
+
+            Repository: ${{ github.repository }}
+            Issue: #${{ github.event.issue.number }}
+
+            Load and follow that skill exactly. Fetch the live repository labels before deciding.
+            Apply existing labels only. Do not post comments.
+          claude_args: |
+            --allowedTools "Read,Bash(gh label list:*),mcp__github__get_issue,mcp__github__get_issue_comments,mcp__github__search_issues,mcp__github__list_issues,mcp__github__update_issue"

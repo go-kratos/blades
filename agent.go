@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -372,6 +373,9 @@ func (a *agent) handle(ctx context.Context, session Session, invocation *Invocat
 			} else {
 				// Stateless mode: only include messages from this invocation.
 				req.Messages = localMessages
+			}
+			if i == 0 && len(invocation.EphemeralMessages) > 0 {
+				req.Messages = append(slices.Clone(req.Messages), invocation.EphemeralMessages...)
 			}
 			var finalMessage *Message
 			if !invocation.Stream {
