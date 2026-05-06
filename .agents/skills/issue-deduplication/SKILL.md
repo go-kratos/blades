@@ -14,14 +14,15 @@ Find true duplicates, not merely related issues. Only mark an issue as duplicate
 ## Workflow
 
 1. Fetch the new issue title, body, labels, and comments.
-2. Search open and recently closed issues using multiple focused queries from:
+2. Fetch the repository label list with `gh label list --limit 200`.
+3. Search open and recently closed issues using multiple focused queries from:
    - normalized title keywords,
    - package/module names,
    - error messages, panic text, or failing test names,
    - API names, provider names, CLI command names, or workflow names.
-3. Compare the new issue to the strongest candidates.
-4. If high confidence, add the existing `duplicate` label when available and post one concise comment linking the canonical issue.
-5. If confidence is medium or low, do nothing.
+4. Compare the new issue to the strongest candidates.
+5. If high confidence, add `duplicate` only when that exact label exists in the live repository label list, then post one concise comment linking the canonical issue.
+6. If confidence is medium or low, do nothing.
 
 ## Normalization
 
@@ -60,4 +61,4 @@ If there are multiple canonical issues, link the best one and mention the others
 
 ## Output
 
-If duplicate: apply the existing `duplicate` label when available and post the comment. If not duplicate: make no changes and do not comment.
+If duplicate: apply `duplicate` only when it exists in the live label list and post the comment. If the label does not exist, post only the comment. If not duplicate: make no changes and do not comment.

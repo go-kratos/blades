@@ -15,31 +15,34 @@ Apply accurate existing labels to a newly opened issue. Do not comment on the is
 
 - Repository: provided by the workflow prompt.
 - Issue number: provided by the workflow prompt.
-- GitHub labels: fetch live from the repository before deciding.
+- GitHub labels: fetch live with `gh label list --limit 200` before deciding.
 
 ## Workflow
 
 1. Fetch the issue title, body, current labels, and comments.
-2. Fetch the repository label list.
+2. Fetch the repository label list with `gh label list --limit 200`.
 3. Search recent and open issues for similar reports only to improve routing context.
 4. Infer issue type from the template, title prefix, body headings, and user intent.
-5. Apply only labels that already exist in the repository.
+5. Apply only labels that exist in the live repository label list.
 
 ## Blades Labeling Rules
 
 - Preserve labels already added by issue templates unless they are clearly wrong.
-- Prefer these template labels when present and available:
+- Treat the live repository label list as the source of truth. Do not invent labels and do not assume common labels exist.
+- Use these common label mappings only when the exact label exists in the live list:
   - `bug` for broken behavior, regressions, panics, races, build failures, test failures, or incorrect output.
-  - `feature` for new capability requests before implementation design is settled.
-  - `proposal` for implementation-design issues with API shape, usage examples, or architecture details.
+  - `documentation` for docs, README, example, comment, or generated documentation issues.
+  - `enhancement` for feature requests or proposals, including API shape, usage examples, or architecture ideas.
   - `question` for usage help, support questions, or clarification requests.
-- If a report is incomplete but actionable labels are available, add the issue-type label and any relevant status label such as `needs-info`.
-- If labels for package areas exist, use the affected surface:
+  - `invalid` for reports that are clearly not actionable, not a Blades issue, or based on a false premise.
+  - `duplicate` only when another open issue is clearly the same problem.
+- If a report is incomplete, apply the best existing type label when confident. Add a status label only if the live list contains a clearly matching one.
+- Use the affected surface as routing evidence, and apply area labels only when exact matching labels exist in the live list:
   - root framework: `agent.go`, `runner.go`, `message.go`, `model.go`, `tool.go`, `state.go`, `session.go`.
   - `flow`, `graph`, `recipe`, `skills`, `memory`, `middleware`, `tools`, `stream`, `evaluator`.
   - provider integrations under `contrib/openai`, `contrib/anthropic`, `contrib/gemini`, `contrib/mcp`, `contrib/otel`.
   - CLI and runtime under `cmd/blades`.
-- If no matching area labels exist, apply only the type/status labels.
+- If no matching area labels exist, apply only the available type/status labels.
 
 ## Evidence Rules
 
@@ -51,7 +54,7 @@ Apply accurate existing labels to a newly opened issue. Do not comment on the is
 
 ## Duplicate Handling
 
-This skill may add a duplicate label only when another open issue is clearly the same problem. Do not comment; the separate `issue-deduplication` skill handles duplicate comments.
+This skill may add `duplicate` only when the label exists in the live list and another open issue is clearly the same problem. Do not comment; the separate `issue-deduplication` skill handles duplicate comments.
 
 ## Output
 
