@@ -168,46 +168,28 @@ Event 和 Message 不合并。原因：
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Application Layer（outside core / user-owned）                   │
-│    cmd/<app>/internal/app       应用定义、依赖装配、运行配置         │
-│    cmd/<app>/internal/channel   CLI、微信、飞书等通道                │
-│    cmd/<app>/internal/workspace 工作目录、应用配置、资源治理         │
+│  Application Host（outside core / user-owned）                    │
+│    channel / workspace / config / daemon / cron / platform SDK    │
+│    CLI、HTTP、微信、飞书、调度器等外部接入与产品交互                 │
 ├─────────────────────────────────────────────────────────────────┤
-│  blades/（根包：最小用户 API）                                     │
-│    Agent, NewAgent, Option, llmAgent 默认 Run/Turn/Step/Tool Wave   │
+│  Agent Interface（blades 根包：最小用户入口）                      │
+│    Agent / NewAgent / Option / Collect / Drain                    │
 ├─────────────────────────────────────────────────────────────────┤
-│  Agent Runtime                                                    │
-│    root files   agent_run/turn/step/tools：默认 LLM Agent 内置循环   │
-│    flow/        Sequential / Parallel / Loop / AsTool 组合原语     │
-│    middleware/  InputMiddleware / OutputMiddleware                 │
+│  Execution Kernel                                                 │
+│    llmAgent 默认 Run / Turn / Step / Tool Wave 执行循环            │
+│    flow/ 组合原语；middleware/ 输入输出管线                         │
 ├─────────────────────────────────────────────────────────────────┤
-│  Capability Layer                                                 │
-│    tools/      工具接口、Resolver、Result（Parts: []content.Part）   │
-│    policy/     权限、安全、预算、速率限制、组织规则（开放 Request）   │
-│    hook/       生命周期事件与拦截点                                  │
-│    compact/    上下文压缩管线                                       │
-│    memory/     Memory 加载、召回、提取                              │
-│    session/    会话接口、Store、消息树、JSONL                         │
-│    prompt/     Prompt Builder + Section（函数类型），Memory 通过 prompt.Memory section 注入 │
+│  Extension Layer                                                  │
+│    tools / policy / hook / compact / memory / session / prompt    │
+│    可插拔工具、策略、Hook、压缩、记忆、会话与 Prompt 构建能力         │
 ├─────────────────────────────────────────────────────────────────┤
-│  Protocol Leaf Packages                                           │
-│    content/    Part, Text/Blob/Thinking（stdlib only）              │
-│    event/      Input/Output Event，多模态字段直接使用 content.Part        │
-│    model/      Message/Part/Provider(Stream+Count)/Request/Response；Part 仍 sealed │
-│    tools/      Tool/Result/Resolver；Result.Parts 复用 content.Part │
-├─────────────────────────────────────────────────────────────────┤
-│  Internal                                                          │
-│    internal/convert/   Event ↔ Message 唯一私有转换边界              │
-├─────────────────────────────────────────────────────────────────┤
-│  Optional Systems                                                  │
-│    graph/      DAG 执行器，可选工作流系统                            │
-│    evaluator/  评估系统                                              │
-│    recipe/     声明式 Agent 构建                                     │
-├─────────────────────────────────────────────────────────────────┤
-│  contrib/                                                            │
-│    openai / anthropic / gemini / mcp / otel / preset                 │
+│  Protocol Foundation                                              │
+│    content / event / model / internal/convert                      │
+│    内容协议、事件协议、模型协议与 Event ↔ Message 私有转换边界       │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+主链路是：Application Host 把外部输入转成 `event.Input`，通过 Agent Interface 进入 Execution Kernel；Kernel 驱动模型调用、工具执行、会话推进和流式输出，并在执行过程中调用 Extension Layer；Protocol Foundation 承载内容协议、事件协议、模型协议和 Event ↔ Message 私有转换边界。`contrib/openai`、`contrib/anthropic`、`contrib/gemini`、`contrib/mcp`、`contrib/otel` 和 preset 是基于 Protocol Foundation 与 Extension Layer 的集成包，不属于核心主链路。`graph/`、`evaluator/`、`recipe/` 是可选系统，不放入最小 Agent runtime 主链路。
 
 ## 设计原则
 
