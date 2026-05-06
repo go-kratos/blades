@@ -2,6 +2,8 @@ package blades
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -134,12 +136,20 @@ func (m *Message) Data() *DataPart {
 	return nil
 }
 
-// Clone creates a shallow copy of the message.
+// Clone creates a deep copy of the message.
 func (m *Message) Clone() *Message {
 	if m == nil {
 		return nil
 	}
-	return &(*m)
+	c := *m
+	c.Parts = slices.Clone(m.Parts)
+	if m.Actions != nil {
+		c.Actions = maps.Clone(m.Actions)
+	}
+	if m.Metadata != nil {
+		c.Metadata = maps.Clone(m.Metadata)
+	}
+	return &c
 }
 
 func (m *Message) String() string {
