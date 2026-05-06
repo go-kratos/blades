@@ -1,11 +1,11 @@
 ---
 name: issue-deduplication
-description: Detect high-confidence duplicate Blades GitHub issues and link them to the canonical issue.
+description: Detect high-confidence duplicate GitHub issues and link them to the canonical issue.
 ---
 
 # Issue Deduplication
 
-Use this skill for GitHub Actions duplicate detection on newly opened Blades issues.
+Use this skill for GitHub issue duplicate detection in any repository.
 
 ## Goal
 
@@ -26,10 +26,10 @@ Find true duplicates, not merely related issues. Only mark an issue as duplicate
 
 ## Normalization
 
-- Ignore low-signal prefixes such as `[Bug]`, `[Feature]`, `[Proposal]`, `[Question]`, `Bug:`, `Feature:`, and `Blades:`.
-- Treat Go version, OS, provider, and CLI flags as supporting evidence. They are duplicate blockers only when they materially change the failing behavior.
+- Ignore low-signal prefixes such as `[Bug]`, `[Feature]`, `[Proposal]`, `[Question]`, `Bug:`, `Feature:`, and repository or product names.
+- Treat runtime/dependency versions, OS, integrations, providers, and CLI flags as supporting evidence. They are duplicate blockers only when they materially change the failing behavior.
 - Treat wording differences as irrelevant when the same API, command, package, error, and reproduction path are involved.
-- Do not collapse separate Blades surfaces just because they share broad terms such as agent, model, provider, tool, recipe, graph, flow, memory, or skill.
+- Do not collapse separate product areas or components just because they share broad domain terms.
 
 ## High-Confidence Duplicate Criteria
 

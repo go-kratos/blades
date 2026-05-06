@@ -1,11 +1,11 @@
 ---
 name: issue-triage
-description: Triage newly opened Blades GitHub issues by applying existing repository labels without posting comments.
+description: Triage newly opened GitHub issues by applying existing repository labels without posting comments.
 ---
 
 # Issue Triage
 
-Use this skill for GitHub Actions issue triage in the Blades repository.
+Use this skill for GitHub issue triage in any repository.
 
 ## Goal
 
@@ -25,7 +25,7 @@ Apply accurate existing labels to a newly opened issue. Do not comment on the is
 4. Infer issue type from the template, title prefix, body headings, and user intent.
 5. Apply only labels that exist in the live repository label list.
 
-## Blades Labeling Rules
+## Labeling Rules
 
 - Preserve labels already added by issue templates unless they are clearly wrong.
 - Treat the live repository label list as the source of truth. Do not invent labels and do not assume common labels exist.
@@ -34,21 +34,20 @@ Apply accurate existing labels to a newly opened issue. Do not comment on the is
   - `documentation` for docs, README, example, comment, or generated documentation issues.
   - `enhancement` for feature requests or proposals, including API shape, usage examples, or architecture ideas.
   - `question` for usage help, support questions, or clarification requests.
-  - `invalid` for reports that are clearly not actionable, not a Blades issue, or based on a false premise.
+  - `invalid` for reports that are clearly not actionable, not related to the repository, or based on a false premise.
   - `duplicate` only when another open issue is clearly the same problem.
 - If a report is incomplete, apply the best existing type label when confident. Add a status label only if the live list contains a clearly matching one.
-- Use the affected surface as routing evidence, and apply area labels only when exact matching labels exist in the live list:
-  - root framework: `agent.go`, `runner.go`, `message.go`, `model.go`, `tool.go`, `state.go`, `session.go`.
-  - `flow`, `graph`, `recipe`, `skills`, `memory`, `middleware`, `tools`, `stream`, `evaluator`.
-  - provider integrations under `contrib/openai`, `contrib/anthropic`, `contrib/gemini`, `contrib/mcp`, `contrib/otel`.
-  - CLI and runtime under `cmd/blades`.
+- Use the affected surface as routing evidence, and apply area or component labels only when exact matching labels exist in the live list:
+  - File paths, package names, modules, directories, commands, products, or integrations explicitly mentioned in the issue.
+  - Template fields, issue title prefixes, stack traces, reproduction steps, or linked code references that identify a component.
+  - Existing labels whose wording clearly matches the reported affected surface.
 - If no matching area labels exist, apply only the available type/status labels.
 
 ## Evidence Rules
 
 - Use the user's reported behavior as primary evidence. Treat guesses about root cause as hypotheses.
 - Do not ask for private API keys, account identifiers, tokens, or full unredacted logs.
-- For bugs, look for Blades version, Go version, OS, reproduction steps, expected behavior, and actual behavior.
+- For bugs, look for project version, dependency/runtime versions, OS or environment, reproduction steps, expected behavior, and actual behavior.
 - For feature requests and proposals, distinguish desired user capability from suggested implementation details.
 - For questions, prefer `question` over `bug` unless the user provides a clear failure.
 
