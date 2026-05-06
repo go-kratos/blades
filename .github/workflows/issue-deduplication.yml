@@ -1,0 +1,37 @@
+name: Issue Deduplication
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  deduplicate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Check for duplicates
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          allowed_non_write_users: "*"
+          prompt: |
+            Use the Blades issue deduplication skill at .agents/skills/issue-deduplication/SKILL.md.
+
+            Repository: ${{ github.repository }}
+            Issue: #${{ github.event.issue.number }}
+
+            Load and follow that skill exactly. Mark duplicates only when confidence is high.
+            If the issue is not a duplicate, do not comment.
+          claude_args: |
+            --allowedTools "Read,Bash(gh label list:*),mcp__github__get_issue,mcp__github__get_issue_comments,mcp__github__search_issues,mcp__github__list_issues,mcp__github__create_issue_comment,mcp__github__update_issue"
