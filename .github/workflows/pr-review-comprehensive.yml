@@ -31,7 +31,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.DEEPSEEK_AUTH_TOKEN }}
           # Enable progress tracking
-          track_progress: true
+          track_progress: false
 
           # Your custom review instructions
           prompt: |
