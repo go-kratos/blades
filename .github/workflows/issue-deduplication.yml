@@ -27,6 +27,7 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-v4-flash
         with:
           anthropic_api_key: ${{ secrets.DEEPSEEK_AUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
             Analyze this new issue and check if it's a duplicate of existing issues in the repository.
 
