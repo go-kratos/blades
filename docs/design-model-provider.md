@@ -23,10 +23,12 @@ tags: [agentos, model, provider, protocol]
 
 本文档相比上一版主要变化：
 
-- Provider 接口由 *stream-only* 调整为 **`Generate` + `Stream` + `Count`** 三方法并列，与各 provider 原生 SDK 直接对齐，同步路径无需经 `Collect` 累加。
+- Provider 接口由 *stream-only* 调整为 **`Generate` + `Stream`** 双方法并列，与各 provider 原生 SDK 直接对齐，同步路径无需经 `Collect` 累加。
+- token 计数从 `Provider` 抽离为独立的 **`TokenCounter` 接口**，按能力探测；返回 `Usage` 而非裸 `int`。
 - `Response` 拆分为两个类型：**`Response`（同步终态）** 与 **`Chunk`（流式增量帧）**，避免一种类型承担两种语义。
 - `Message` 收敛为 **protocol-only**（仅 `Role` + `Parts`），`Status` / `FinishReason` / `TokenUsage` 等运行时字段移到 `Response`/`Chunk` 上。
 - `Chunk` 复用 `content.Part`：流式增量直接是 `[]content.Part`，不引入独立的 *Delta* 变体。
+- `Request.System` 简化为 `string`（不再用 `[]*SystemBlock`）；引入 `Request.Options` sealed Option 列表承载 cache / reasoning / response_format / sampling 等 provider hints，adapter 选择性应用。
 
 ## 2. 设计目标与原则
 
@@ -52,11 +54,13 @@ type Provider interface {
     // Stream executes a request and yields incremental Chunks until the
     // provider terminates the response.
     Stream(ctx context.Context, req *Request) iter.Seq2[*Chunk, error]
+}
 
-    // Count returns the number of input tokens the request would consume.
-    // Token counting is provider-coupled (model id, encoder, tool schema,
-    // system blocks), so it lives on Provider rather than as a free helper.
-    Count(ctx context.Context, req *Request) (int, error)
+// TokenCounter estimates token usage for a request without invoking the model.
+// It is split from Provider because counting is often offered by a separate
+// endpoint (or pure local encoder) and not all providers support it.
+type TokenCounter interface {
+    Count(ctx context.Context, req *Request) (Usage, error)
 }
 ```
 
@@ -64,7 +68,8 @@ type Provider interface {
 
 - `Generate` 与 `Stream` 平级独立，调用方按需选择。两者对同一 `Request` 的最终态语义必须等价。
 - `Stream` 返回 `iter.Seq2[*Chunk, error]`，避免 `model/` 反向依赖根包；调用方用 `for chunk, err := range provider.Stream(ctx, req)` 消费。
-- `Count` 合并在 `Provider` 内，因为 token 计数与模型、编码器、工具 schema 与 system block 强耦合，独立 helper 难以保证一致性。
+- **`TokenCounter` 从 `Provider` 抽离**：token 计数与生成是两类能力 —— 一些 provider 走独立 endpoint（Anthropic `/v1/messages/count_tokens`、OpenAI tiktoken 本地编码），一些 provider 不支持。adapter 可同时实现 `Provider` 与 `TokenCounter`，调用方按 `if tc, ok := p.(TokenCounter); ok { ... }` 探测能力。
+- `TokenCounter.Count` 返回 `Usage`（与 `Response.Usage` 同类型），可同时给出 input / output 估算；不支持的字段填 0。
 - 资源释放依赖 `ctx` 取消、deadline 与 provider 内部 `defer`，不提供额外关闭方法。
 - `Request` 不包含流式开关，是否流式由调用方法决定。
 
@@ -85,24 +90,96 @@ type EmbeddingProvider interface {
 
 ```go
 type Request struct {
-    Model    string         // model identifier, may differ from Provider.Name()
-    System   []*SystemBlock // top-level system content with optional cache control
-    Messages []*Message     // conversation history (user / assistant / tool)
-    Tools    []ToolSpec     // tool schemas exposed to the model
-}
-
-type SystemBlock struct {
-    Text         string
-    CacheControl CacheControl
+    Model    string     // model identifier, may differ from Provider.Name()
+    System   string     // top-level system instruction; empty means none
+    Messages []*Message // conversation history (user / assistant / tool)
+    Tools    []ToolSpec // tool schemas exposed to the model
+    Options  []Option   // provider hints; adapters apply what they understand
 }
 ```
 
 要点：
 
-- `System` 是顶层独立字段，不通过消息角色表达。adapter 可直接映射到 Anthropic system blocks、OpenAI instructions / system role 或其他等价字段，并独立处理缓存控制。
+- `System` 简化为单个 `string`。绝大多数 provider 只接受单段 system 文本（OpenAI / Gemini / Mistral / DeepSeek 等），少数支持多块或缓存控制（Anthropic）。**多块结构与缓存策略不进入协议层字段**，统一通过 `Options` 表达。
 - `Messages` 仅承载 user / assistant / tool 三角色（参见 §6）。
 - `Tools` 描述工具 schema，工具调用与结果通过 `Message.Parts` 中的 `content.ToolUse` / `content.ToolResult` 表达。
-- `Request` 不含 stream/temperature/max_tokens 等参数：模型采样参数由 adapter 在构造时通过自身配置注入；协议层只表达"请求内容"。
+- `Options` 是 provider hints 容器：协议层不预设语义，adapter 选择性应用，不识别的 Option **安全忽略**。详见 §4.1。
+
+### 4.1 Options：provider hints 设计
+
+设计动机：cache control / reasoning effort / response format / 采样参数等能力在各 provider 间差异巨大，多数模型并不支持。把它们放进 `Request` 顶层字段会污染协议；放进 adapter 又无法在请求级覆盖。`Options` 用 sealed union + 默认值机制兼顾这两点。
+
+```go
+// Option is a sealed provider hint. Adapters apply known variants and
+// silently ignore the rest, so adding a new Option is non-breaking.
+type Option interface { isOption() }
+
+// CacheHint requests provider-side prompt caching where supported
+// (e.g. Anthropic prompt caching, OpenAI cached input). Scope=System
+// caches the system block; Scope=Tools caches tool schemas.
+type CacheHint struct {
+    Scope CacheScope    // System | Tools | LastUserMessage
+    TTL   time.Duration // 0 = provider default
+}
+
+// ReasoningEffort tunes thinking depth on reasoning models
+// (OpenAI o-series, Anthropic extended thinking, Gemini thinking).
+type ReasoningEffort struct {
+    Level string // "minimal" | "low" | "medium" | "high"
+}
+
+// ResponseFormat constrains the model output shape.
+type ResponseFormat struct {
+    Schema *jsonschema.Schema // nil → free-form JSON object
+    Strict bool
+}
+
+// Sampling carries common sampling knobs. Pointer fields distinguish
+// "not set" from zero value so adapters can fall back to their defaults.
+type Sampling struct {
+    Temperature *float64
+    TopP        *float64
+    MaxTokens   *int
+    Stop        []string
+}
+
+func (CacheHint) isOption()       {}
+func (ReasoningEffort) isOption() {}
+func (ResponseFormat) isOption()  {}
+func (Sampling) isOption()        {}
+```
+
+**默认值与覆盖优先级**：
+
+```go
+// Adapter 构造时设默认 options（provider 级）
+m := openai.NewModel("gpt-4o", openai.Config{
+    DefaultOptions: []model.Option{
+        model.Sampling{Temperature: ptr(0.7)},
+    },
+})
+
+// 单次 Request.Options 覆盖（key 维度去重）
+req := &model.Request{
+    System:  "you are a helpful assistant",
+    Options: []model.Option{
+        model.CacheHint{Scope: model.CacheScopeSystem, TTL: 5 * time.Minute},
+        model.Sampling{Temperature: ptr(0.2)}, // 覆盖默认 0.7
+    },
+}
+```
+
+合并规则（adapter 内部 helper `model.MergeOptions(defaults, request)` 实现）：
+
+- 同一 Option 类型按"后者覆盖前者"，即 `Request.Options` 优先于 `DefaultOptions`。
+- `Sampling` 等多字段 Option **整体替换**，不做字段级 patch（避免歧义）。
+- `CacheHint` 在不同 `Scope` 下被视为不同 key，可叠加。
+- 不识别的 Option 由 adapter 静默忽略，便于跨 provider 共享一份 `Request`。
+
+**要点**：
+
+- `Request` 不含 stream 开关；是否流式由调用方法决定。
+- `Request` 不含 stream/temperature/max_tokens 等顶层字段；采样参数走 `Options` 中的 `Sampling`，保持顶层稳定。
 
 ## 5. Response 与 Chunk
 
@@ -262,13 +339,22 @@ for chunk, err := range provider.Stream(ctx, req) {
 | `StopReason` | `finish_reason` 映射（stop→`StopEnd`、tool_calls→`StopToolUse`、length→`StopMaxTokens`） |
 | `Usage` | 终止 chunk 或响应 `usage` 字段 |
 
+Options 处理：
+
+| Option | OpenAI 映射 |
+|--------|------------|
+| `Sampling` | `temperature` / `top_p` / `max_tokens` / `stop` |
+| `ResponseFormat` | `response_format`（`json_schema` / `json_object`） |
+| `ReasoningEffort` | `reasoning_effort`（仅 o-series 模型） |
+| `CacheHint` | 忽略（OpenAI 自动缓存，无显式开关）；或映射到 `prompt_cache_key`（如启用） |
+
 text 增量：`delta.content` → `content.Text{Text: chunk}`。tool_call 增量：按 `tool_calls[].index` / `id` 累加 `arguments`。
 
 ### 10.2 Anthropic Messages
 
 | 协议字段 | Anthropic 映射 |
 |---------|---------------|
-| `Request.System` | `system: [{type:"text", text, cache_control}]` |
+| `Request.System` | `system: [{type:"text", text}]`（单 block） |
 | `Request.Messages` | `messages[]`，role ∈ user/assistant |
 | `Message.Parts` 中 `content.ToolUse` | content block `tool_use` |
 | `Message.Parts` 中 `content.ToolResult` | user 消息的 `tool_result` content block |
@@ -278,17 +364,27 @@ text 增量：`delta.content` → `content.Text{Text: chunk}`。tool_call 增量
 | `StopReason` | `message_delta.stop_reason`（end_turn / tool_use / max_tokens） |
 | `Usage` | `message_start.usage` + `message_delta.usage`（增量补充） |
 
+Options 处理：
+
+| Option | Anthropic 映射 |
+|--------|---------------|
+| `Sampling` | `temperature` / `top_p` / `max_tokens` / `stop_sequences` |
+| `CacheHint{Scope:System}` | 在 `system[0]` 上加 `cache_control: {type:"ephemeral"}` |
+| `CacheHint{Scope:Tools}` | 在 `tools[last]` 上加 `cache_control: {type:"ephemeral"}` |
+| `ReasoningEffort` | `thinking: {type:"enabled", budget_tokens: ...}` |
+| `ResponseFormat` | 当前无原生支持，adapter 可选退化为 prompt 注入或忽略 |
+
 `content_block_delta` 中的 `text_delta` → `content.Text{Text: delta}`；`input_json_delta` 按 block index 累加到对应 `content.ToolUse.Input`。
 
 ## 11. 实现职责边界
 
-`model/` 只定义协议和最小 helper（`Collect`）。以下能力由 provider adapter 或上层组合实现，不进入协议字段：
+`model/` 只定义协议和最小 helper（`Collect`、`MergeOptions`）。以下能力由 provider adapter 或上层组合实现，不进入协议字段：
 
 - 网络重试、限速、熔断与 provider fallback。
 - token 编码器加载与缓存。
 - 请求签名、鉴权与区域选择。
-- 采样参数（temperature / top_p / max_tokens）注入。
-- provider 私有字段映射（response_format / reasoning_effort / 自定义 header）。
+- `Options` 解释与默认值合并：adapter 自行决定支持哪些 `Option`、不识别的 Option 静默忽略；同 provider 不同模型可有不同支持集。
+- provider 私有字段映射（自定义 header、region routing 等）超出 `Option` 体系的能力。
 
 这样 `model/` 保持稳定，具体 provider 可在 `contrib/<provider>` 中独立演进。
 

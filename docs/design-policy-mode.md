@@ -130,7 +130,7 @@ d = p.Check(ctx, policy.ResourceRequest{
 })
 ```
 
-`model.Request` 保持 v1 形态：`System []*model.SystemBlock`、`Messages []*model.Message`、`Tools []model.ToolSpec`。Policy 可以检查这些对象，但不改变协议定义。
+`model.Request` 保持 v1 形态：`System string`、`Messages []*model.Message`、`Tools []model.ToolSpec`、`Options []model.Option`。Policy 可以检查这些对象，但不改变协议定义。
 
 ## 应用层交互模式
 

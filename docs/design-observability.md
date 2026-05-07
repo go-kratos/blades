@@ -61,7 +61,7 @@ out := agent.Run(ctx, input)
 生命周期规则：
 
 1. `TurnStart` / `TurnEnd` 包裹一轮 Agent Loop；根包 `Agent.Run(ctx, input <-chan event.Input) blades.Generator[event.Output, error]` 的每次 turn 都应形成一个根 span。
-2. `PreModelCall` / `PostModelCall` 包裹一次 `model.Provider.Stream`；Provider 接口只有 `Name`、`Stream`、`Count` 三方法，token 统计由 `model.Usage` 或 `Provider.Count` 辅助产出。
+2. `PreModelCall` / `PostModelCall` 包裹一次 `model.Provider.Stream` 或 `model.Provider.Generate`；`Provider` 接口只有 `Name`、`Generate`、`Stream` 三方法，token 统计由 `model.Usage` 字段或独立的 `model.TokenCounter`（按能力探测）辅助产出。
 3. `PreToolCall` / `PostToolCall` 包裹一次 `tools.Tool.Handle`；tool spec 与 `model.ToolSpec` 同构，便于统一记录工具 schema 信息。
 4. 如果 ctx 被取消，span 状态应体现 cancellation；如果 hook 自身失败，应记录本地错误并避免影响主流程。
 5. `PostModelCall` 可记录 token usage metric；`PostToolCall` 可记录工具耗时、错误计数和结果大小 metric；`TurnEnd` 可记录一轮汇总 metric。

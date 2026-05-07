@@ -243,10 +243,10 @@ blades/
 │
 ├── model/
 │   ├── message.go              Message{Role, Parts []content.Part}, type Role string（命名常量 RoleUser/RoleAssistant/RoleTool；system 走 Request.System）
-│   ├── system.go               SystemBlock{Text, CacheControl}（顶层 system，支持 prompt cache breakpoint）
-│   ├── provider.go             Provider 接口（Name + Stream(ctx,*Request) iter.Seq2[*Response,error] + Count(ctx,*Request) (int,error)）；EmbeddingProvider 平级独立接口
-│   ├── request.go              Request{Model, System []*SystemBlock, Messages, Tools, Temperature, MaxTokens, ...}, Response{Delta []content.Part, StopReason, Usage}, ToolSpec, Usage, StopReason
-│   └── collect.go              Collect(gen) (*Response, error) 累加流式为完整响应（非流式 sugar）
+│   ├── option.go               Option sealed interface + 内置 CacheHint/ReasoningEffort/ResponseFormat/Sampling；MergeOptions(defaults, request)
+│   ├── provider.go             Provider 接口（Name + Generate(ctx,*Request) (*Response,error) + Stream(ctx,*Request) iter.Seq2[*Chunk,error]）；TokenCounter 独立接口（Count(ctx,*Request) (Usage,error)）；EmbeddingProvider 平级独立接口
+│   ├── request.go              Request{Model, System string, Messages, Tools, Options []Option}, Response{Message *Message, StopReason, Usage}, Chunk{Parts []content.Part, StopReason, Usage *Usage}, ToolSpec, Usage, StopReason
+│   └── collect.go              Collect(seq) (*Response, error) 累加流式为完整响应（非流式 sugar，stream-only adapter 用）
 │
 ├── tools/
 │   ├── tool.go                 Tool 核心接口（Spec()ToolSpec + Handle(ctx,input)(*Result,error) 两方法）；可选能力接口仅 3 个：ReadOnlyTool / DestructiveTool / StreamingTool
@@ -382,7 +382,7 @@ contrib/*   -> model/ 或 tools/
 | `blades` (root) | `Agent`, `NewAgent`, `Option`, `RequestBuilder`, `ToolExecutor`, `Collect`/`Drain`, `WithModel`/`WithTools`/`WithSession`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithPrompt`/`WithRequestBuilder`/`WithToolExecutor`/`WithMaxSteps` | `blades.Agent` |
 | `content` | `Part`（sealed marker：私有 `part()`），`Text`，`Blob{MIME, Source}`，`BlobSource`（sealed：`blobSource()`），`InlineBytes`，`URI`，`FileID`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.Text{Text: "hi"}` |
 | `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `PartStart`, `PartDelta`, `PartEnd`, `ToolStart`, `ToolDelta`, `ToolEnd`, `TurnEnd`, `Error`, `Done`；构造糖：`NewPromptText`, `NewSteerText` | `event.NewPromptText("hi")` |
-| `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `SystemBlock{Text, CacheControl}`, `Provider`(Name+Stream+Count，Stream 返回 `iter.Seq2[*Response,error]`), `EmbeddingProvider`, `Request{System []*SystemBlock, Messages []*Message, Tools []ToolSpec, ...}`, `Response{Delta []content.Part, StopReason, Usage}`, `ToolSpec`, `Usage`, `StopReason`, `Collect` | `model.Provider` |
+| `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `Provider`(Name+Generate+Stream，Stream 返回 `iter.Seq2[*Chunk,error]`), `TokenCounter`(Count→Usage，按能力探测), `EmbeddingProvider`, `Request{Model, System string, Messages []*Message, Tools []ToolSpec, Options []Option}`, `Response{Message *Message, StopReason, Usage}`, `Chunk{Parts []content.Part, StopReason, Usage *Usage}`, `Option` sealed（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`）, `ToolSpec`, `Usage`, `StopReason`, `Collect`, `MergeOptions` | `model.Provider` |
 | `tools` | `Tool`(Spec+Handle 两方法), `ToolSpec`(=model.ToolSpec), `Result`(`Parts: []content.Part`), `ReadOnlyTool` / `DestructiveTool` / `StreamingTool`（仅 3 个可选能力接口）, `Resolver`(List+Resolve), `ToolFilter`, `Runtime`{Resolver,Allowed}, `NewContext`/`FromContext` | `tools.Tool` |
 | `prompt` | `Builder`(接口), `Section`(函数类型), `Static`/`Dynamic`/`System`/`Memory` 工厂, `New` | `prompt.Builder` |
 | `flow` | `Sequential`, `Parallel`, `Loop`, `AsTool` | `flow.Parallel(a, b)` |
@@ -505,7 +505,7 @@ v1 核心只保留两个通用原语：
 
 ### 阶段 2：model/session/compact
 
-- [ ] 实现 `model/`：`Message{Role, Parts []content.Part}`、`SystemBlock{Text, CacheControl}`、Provider 接口三方法（Name/Stream/Count，Stream 返回 `iter.Seq2[*Response, error]`，避免 model 依赖根包）、EmbeddingProvider 独立接口、`Request{System []*SystemBlock, Messages []*Message, Tools []ToolSpec, ...}`、`Response{Delta []content.Part, StopReason, Usage}`、`ToolSpec`、`Usage`、`StopReason`、`Collect` 流式累加 helper
+- [ ] 实现 `model/`：`Message{Role, Parts []content.Part}`、`Provider` 接口（Name + Generate + Stream，Stream 返回 `iter.Seq2[*Chunk, error]`，避免 model 依赖根包）、`TokenCounter` 独立接口（Count→Usage，按能力探测）、`EmbeddingProvider` 平级独立接口、`Request{Model, System string, Messages []*Message, Tools []ToolSpec, Options []Option}`、`Response{Message *Message, StopReason, Usage}`、`Chunk{Parts []content.Part, StopReason, Usage *Usage}`、`Option` sealed union（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`）、`ToolSpec`、`Usage`、`StopReason`、`Collect` 流式累加 helper、`MergeOptions(defaults, request)` 默认值合并
 - [ ] 实现 `session.Session` 与 `session.Store`，提供 `session.NewContext`/`session.FromContext`
 - [ ] 实现默认 `RequestBuilder` 与 streamAndRecord
 - [ ] 实现 `compact.Compactor` 内置组合（Window/ToolResultBudget/Summarize/Chain）与 provider invariant 保护

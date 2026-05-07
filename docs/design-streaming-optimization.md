@@ -30,8 +30,8 @@ Provider 逐帧 yield `*model.Response`，错误通过序列第二返回值 yiel
 - 没有 provider 关闭方法。
 - 没有独立 buffer 层。
 - 资源回收唯一入口是 `ctx` 取消、deadline 或调用栈自然退出。
-- 同步生成由 `model.Collect` 从 `Stream` 累加实现。
-- token 计数由 `Provider.Count` 完成，不拆出独立计数接口。
+- 同步生成由 `Provider.Generate` 直接返回；`model.Collect` 仅作为 stream-only adapter 的兜底 helper。
+- token 计数由独立的 `model.TokenCounter` 接口承担（按能力探测），不在 `Provider` 内强制。
 
 调用方如果提前停止消费，必须取消 context：
 

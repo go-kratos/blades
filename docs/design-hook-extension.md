@@ -221,7 +221,8 @@ func Abort(reason string) error { return &AbortError{Reason: reason, Err: ErrAbo
 ```go
 type ModelRequestMutator struct{ /* internal */ }
 func (m *ModelRequestMutator) ReplaceRequest(*model.Request)
-func (m *ModelRequestMutator) SetSystem([]*model.SystemBlock)
+func (m *ModelRequestMutator) SetSystem(string)
+func (m *ModelRequestMutator) SetOptions([]model.Option)
 
 type ModelResponseMutator struct{ /* internal */ }
 func (m *ModelResponseMutator) ReplaceResponse(*model.Response)

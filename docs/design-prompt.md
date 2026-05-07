@@ -108,22 +108,22 @@ if err != nil {
 }
 
 req := &model.Request{
-    System:  systemBlocksFrom(parts),
+    System:   systemTextFrom(parts),
     Messages: messages,
     Tools:    toolSpecs,
 }
 ```
 
-`model.SystemBlock` 承载 provider-neutral 系统上下文。普通 part 进入消息或其他上下文位置的规则由 Loop 统一处理，避免 Section 直接依赖 provider adapter。
+`model.Request.System` 是单段 `string`，承载 provider-neutral 系统上下文。普通 part 进入消息或其他上下文位置的规则由 Loop 统一处理，避免 Section 直接依赖 provider adapter。
 
 ## cache control
 
-Cache control 直接放在 `content.Part` 或 `model.SystemBlock` 的字段上，由 provider 转换层解释。
+Cache control 不进入 `model.Request` 顶层字段；走 `model.Request.Options` 中的 `CacheHint{Scope, TTL}` 表达，由 provider 转换层选择性解释（不支持的 provider 安全忽略）。
 
 这样做的边界更清晰：
 
 - `prompt/` 只生产 part。
-- `model/` 表达 provider-neutral 请求结构。
+- `model/` 表达 provider-neutral 请求结构；`Options` 承载可选 hint。
 - contrib provider 把字段转换为 Anthropic、OpenAI、Gemini 等具体参数。
 
 ## 设计决策
