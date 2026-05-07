@@ -143,19 +143,21 @@ msgs, err := c.Compact(ctx, original)
 
 ## 触发时机
 
-Compactor 的调用点位于 Agent Loop。Loop 在以下条件触发：
+Compactor 的调用点位于 Agent Loop / `RequestBuilder`，遵循**"Loop 无条件调用、Compactor 自适应"**契约：
 
-1. **软阈值**：构建 `ModelRequest` 前用 `TokenCounter` 估算消息总量超过配置阈值。
-2. **provider 硬错误重试**：provider 返回 context-too-long 类错误后单次重试。为避免死循环：
-   - 设置最大重试次数（建议 1–2 次）。
-   - 每次重试要求消息长度严格单调下降；不下降则停止并向上抛错。
-3. **显式 API**：应用层主动要求整理会话（如 `/compact` 命令）。
-4. **工具结果落入历史前**：可在工具执行返回后立即对单条做 `ToolResultBudget`，避免下一轮再次触发完整 compact。
+1. **Loop 无条件调用**：每个 model step 构建 `*model.Request` 之前，Loop 都通过 `RequestBuilder` 调用一次 `compactor.Compact(ctx, snapshot)`（hint 通过 `compact.WithHint(ctx, ...)` 注入 ctx）。Loop 不再判断"是否到了该压缩的时机"。
+2. **Compactor 自适应短路**：
+   - `Window` / `ToolResultBudget` 等纯函数策略在已经低于预算时直接 `return msgs, nil` 零成本透传。
+   - `Summarize` 等带状态策略读取 `Session.State()` 中的 rolling summary 键（`__compact_summary_offset__` / `__compact_summary_content__`），仅当未摘要部分增长跨过阈值时才调用 LLM；其余调用直接拼接已有摘要 + 增量原文返回。
+3. **provider 硬错误重试**：当 provider 返回 context-too-long 类错误后，Loop 用 `BuildInput.Hint = HintShrink` 再进入一次 `RequestBuilder`，由 RequestBuilder 通过 `compact.WithHint(ctx, HintShrink)` 透传给 `compactor.Compact`，Compactor 必须返回**严格单调下降**的视图。最大重试次数默认 1 次；若仍未下降，Loop fail-fast 抛出 `event.Error` 并终止 turn。
+4. **应用层显式整理**：`/compact` 命令、TTL 触发等由应用层主动调用 `RequestBuilder` 或 `Memory` API 完成，与 Loop 路径解耦。Compactor 自身只关心"按预算压"。
+5. **工具结果裁剪**：`compact.NewToolResultBudget(maxBytes)` 作为 Chain 中的一个阶段，统一受上述流程驱动，不需要在 Loop 中做特化分支。
 
-落地结果：
+落地规则：
 
-- compact 输出可作为本轮 `ModelRequest.Messages` 直接使用；
-- Loop 决定是否将压缩结果回写到 Session（覆盖原历史 / 仅作为本轮视图）。无回写时，下次调用 compact 仍会重做（除非 Summarize 通过 Session 复用了 rolling summary）。
+- compact 输出仅用于本次 `*model.Request.Messages`；
+- **不写回 Session**：Session 严格 view-only（参见 [design-session.md](design-session.md) §4）；Compactor 的 rolling state 通过 `Session.State()` 私有 key 持久化，与协议历史正交；
+- 下次 step 重新调用 compact，仍由 Compactor 自身决定是短路透传还是重新计算（Summarize 借助 rolling summary 复用，避免重复 LLM 调用）。
 
 ## 不变量与 provider 兼容
 
@@ -168,16 +170,14 @@ Compactor 的调用点位于 Agent Loop。Loop 在以下条件触发：
 
 ## 错误处理与可观测性
 
-错误回退策略（推荐由 Loop 实现）：
+错误回退策略（由 Loop 实现）：
 
-- compact 返回 error 时，Loop 不应静默把原历史送给 provider；应当：
-  - 记录指标与 error；
-  - 若是 Summarize 的 LLM 错误：降级为一次性 `Window`-only 压缩或返回给上层；
-  - 若是不变量违反：直接 fail-fast，避免污染 Session。
+- compact 返回 error 时，Loop **fail-fast**：以 `event.Error` 输出错误并结束当前 turn，不静默把原历史送给 provider，也不静默吞掉错误。
+- 上层（应用、hook、observability）可在收到 `event.Error` 后选择重试、降级到只读 `Window` 策略，或提示用户。
 
 推荐 metric / log：
 
-- `compact_triggered_total{reason=soft|retry|explicit|tool}`
+- `compact_triggered_total{reason=step|retry|explicit|tool}`
 - `compact_token_before` / `compact_token_after`（直方图）
 - `compact_summarize_latency_seconds`、`compact_summarize_tokens`
 - `compact_invariant_violations_total`（启用校验时）
@@ -188,7 +188,7 @@ Compactor 的调用点位于 Agent Loop。Loop 在以下条件触发：
 2. **TokenCounter 与 Compactor 解耦**：估算与压缩各司其职，便于在 Loop / 监控 / 不同策略中复用同一计数器。
 3. **摘要器以 `ModelProvider` 注入**：复用 provider 的 instruction、流式、超时、重试与工具豁免能力；不引入新的 `SummarizeFunc` 抽象。
 4. **状态可选**：无 Session = 等价无状态调用；有 Session = 借助 `State()` 做增量摘要。compact 不暴露独立的状态接口。
-5. **触发由 Loop 控制**：compact 实现不感知运行循环状态，便于单测与替换。
+5. **Loop 无条件调用、Compactor 自适应**：compact 实现不感知"是否到该压"，由策略自身决定短路或工作；Loop 不写"判断阈值再触发"分支，避免重复实现与漂移。
 6. **配对完整性是 compact 自身责任**：不外推到 provider adapter，避免重复实现。
 
 ## 与相邻设计的接口面

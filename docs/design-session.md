@@ -97,11 +97,11 @@ Session 与 compaction **完全解耦**：
 
 - Session 接口、构造选项、字段中**不出现**任何 compressor 概念。
 - `Messages()` 永远返回完整原始快照（Session 是审计真相）。
-- Compaction 是 **Agent Loop** 的策略层职责，且**不写回 Session**。Loop 每次构造模型请求时按以下流程：
+- Compaction 是 **Agent Loop / RequestBuilder** 的策略层职责，且**不写回 Session**。Loop 每次构造模型请求时按以下流程（Compactor 自适应契约见 [design-compact.md](design-compact.md) §触发时机）：
   1. `msgs, _ := session.Messages(ctx)`
-  2. `view, err := compactor.Compact(ctx, msgs)`  // 纯变换，不副作用
+  2. `view, err := compactor.Compact(ctx, msgs, hint)`  // 纯变换，不副作用；Compactor 自身决定是否短路
   3. 用 `view` 组装 `model.Request` 调用 provider
-  4. provider 返回的 final assistant/tool 消息通过 `Append` 写回 Session（仍然是完整原始消息，不是压缩后的视图）
+  4. provider 返回的 final assistant 消息与本 step 的全部 tool 结果作为一个语义组通过一次 `Append` 写回 Session（仍然是完整原始消息，不是压缩后的视图）
 - compactor 的滚动状态（如 summarize 的 `offset` / `summaryContent`）通过 `Session.State()` 持久化，避免每轮重算。参见 [design-compact.md](design-compact.md) §3。
 
 这种"view-only"模型的好处：
@@ -115,23 +115,21 @@ Session 与 compaction **完全解耦**：
 
 ## 5. Context helper
 
-Session 通过 context 注入运行时，命名沿用根包现状：
+Session 通过 context 注入运行时。最终态命名按 AgentOS 蓝图统一为 `session/` 子包导出：
 
 ```go
-ctx = blades.NewSessionContext(ctx, sess)
+ctx = session.NewContext(ctx, sess)
 
-if sess, ok := blades.SessionFromContext(ctx); ok {
+if sess, ok := session.FromContext(ctx); ok {
     msgs, err := sess.Messages(ctx)
     _ = msgs
     _ = err
 }
 
-sess := blades.EnsureSession(ctx) // 不存在则新建内存实例
+sess := session.Ensure(ctx) // 不存在则新建内存实例
 ```
 
 helper 只承载当前 Session 引用，不负责创建、查找或恢复会话。
-
-> Note：`design-agent-framework.md` 的 AgentOS 蓝图中 Session 位于 `session/` 子包并暴露 `session.NewContext` / `session.FromContext`。本文按当前根包实现描述；若框架蓝图后续推进子包拆分，命名将一并迁移，届时 `blades.NewSessionContext` 在过渡期作为 alias。
 
 ## 6. 多会话管理
 
@@ -147,7 +145,7 @@ Session core 不提供 Manager 抽象。常见做法由应用层组合：
 
 - **单实例内**：`Append` / `Messages` 串行可见；并发安全由实现自身保证（`sessionInMemory` 使用并发容器；远程后端可用 mutex 或追加日志）。
 - **跨进程**：core 不规定一致性级别。具体后端在自身文档中声明（last-write-wins 不适用，因为没有覆盖语义；纯追加场景下后端通常实现"顺序追加 + 单调读"）。
-- **推荐使用模式**：每条 user turn 一次 `Append(ctx, msgs...)`；compaction 不写回 Session（参见 §4）；不要把这些操作拆成长事务。
+- **推荐使用模式**：以 step 为原子单元写入——turn 起始 `Append(ctx, userMsg)`；每个 model step + tool wave 完成后 `Append(ctx, assistantMsg, toolResultMsgs...)` 一次性写入语义组（参见 [design-event-agent-loop.md](design-event-agent-loop.md) §9）；compaction 不写回 Session（参见 §4）；不要把这些操作拆成长事务。
 - 应用层可基于 `Metadata()` 与 `State()` 实现版本号、租约、乐观锁，core 不内置。
 
 
@@ -193,25 +191,17 @@ expB, _ := blades.Fork(ctx, base, blades.WithMetadata(blades.Metadata{"exp": "B"
 
 这个设计的核心是：**Session 标识一段单调演进的对话历史**。任何"看起来要修改历史"的操作（fork、A/B、回放、撤销、压缩落盘）都是另一段历史，应该是另一个 Session。core 用最小接口承载这个不变量，应用层（必要时配合 helper）在其上构建任意复杂的历史视图（树形、版本化、分支管理）。
 
-## 9. 与现状的迁移路径（附录）
+## 9. 参考实现路径（附录）
 
-> 主轴是上文目标态。本节仅说明从当前实现到目标态的演进顺序，不作为接口规范。
+> 主轴是上文目标态。本节仅说明从早期实现演进到目标态的参考顺序，不作为接口规范，也不暗含任何"过渡 alias 永久保留"。
 
-当前 `session.go` 现状：
+参考路径：
 
-- `Session{ID, State, SetState, Append(单条), History(ctx)}`
-- `History` 内置 `ContextCompressor` 在每次返回前压缩
-- `WithContextCompressor` 选项
-
-迁移步骤：
-
-1. 新增 `Append(ctx, msgs ...*Message)` 变参原子写入；保留单条 `Append` 作为兼容入口直至迁移完成。
-2. 新增 `Messages(ctx)` 返回完整原始快照；`History(ctx)` 暂作为 `Messages` 的 deprecated alias，过渡期保留。
-3. 新增 `Metadata()` 与 `WithMessages` / `WithSessionID` / `WithMetadata` / `WithState` 构造选项。
-4. 把当前 `History` 内的 compressor 调用迁移到 Agent Loop（具体落点由 [design-compact.md](design-compact.md) §3 与 Agent Loop 设计描述），迁移为 view-only 模式，同时移除 `WithContextCompressor` 选项。
-5. 移除 `History` alias，最终接口与本文 §2 完全一致。
-
-迁移期间，文档以本目标态为准；任何与目标态冲突的实现细节都视为过渡形态，不进入规范。
+1. 引入 `Append(ctx, msgs ...*Message)` 变参原子写入。
+2. 引入 `Messages(ctx)` 返回完整原始快照。
+3. 引入 `Metadata()` 与 `WithMessages` / `WithSessionID` / `WithMetadata` / `WithState` 构造选项。
+4. 把任何残留在 Session 内的 compactor 调用迁出到 Agent Loop 的 `RequestBuilder`（具体落点由 [design-compact.md](design-compact.md) 与 [design-event-agent-loop.md](design-event-agent-loop.md) 描述），Session 严格 view-only。
+5. 完成后接口最终形态与本文 §2 完全一致：6 方法 append-only + `blades.Fork` helper。
 
 ## 10. 设计决策
 
@@ -227,5 +217,5 @@ expB, _ := blades.Fork(ctx, base, blades.WithMetadata(blades.Metadata{"exp": "B"
 ## 11. 与红线对照
 
 - **r18**：Session 接口固定为 `{ID, Metadata, State, SetState, Append, Messages}` 六方法（全部在根包），纯追加；非追加初始化走 `NewSession + WithMessages` / `WithSessionID` / `WithMetadata` / `WithState`；常用 fork 由根包 helper `blades.Fork(ctx, src, opts...)` 提供。
-- **r19**：Context helper 使用 `blades.NewSessionContext` / `blades.SessionFromContext` / `blades.EnsureSession`；如未来按蓝图迁入 `session/` 子包，则启用 `session.NewContext` / `session.FromContext`，旧名作为 alias。
+- **r19**：Context helper 使用 `session.NewContext` / `session.FromContext` / `session.Ensure`（最终态在 `session/` 子包暴露）。
 - **r29**：会话是线性 `*Message` 列表；fork、A/B、回放、撤销在应用层用"新建 Session + WithMessages"实现；events 不并入 Session。

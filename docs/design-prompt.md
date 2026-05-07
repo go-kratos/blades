@@ -103,7 +103,7 @@ func New(sections ...Section) Builder
 
 ## System section 到 model.Request.System
 
-Agent Loop 是 prompt 输出进入模型请求的边界。推荐流程：
+Agent Loop 是 prompt 输出进入模型请求的边界。Builder 输出的 `[]content.Part` 与 `model.Request.System: string` 的结构差异，统一由 Loop 通过一个 helper 处理：
 
 ```go
 parts, err := builder.Build(ctx)
@@ -112,13 +112,20 @@ if err != nil {
 }
 
 req := &model.Request{
-    System:   systemTextFrom(parts),
+    System:   systemTextFrom(parts), // 抽取所有 system 文本 part 并拼接
     Messages: messages,
     Tools:    toolSpecs,
 }
 ```
 
-`model.Request.System` 是单段 `string`，承载 provider-neutral 系统上下文。普通 part 进入消息或其他上下文位置的规则由 Loop 统一处理，避免 Section 直接依赖 provider adapter。
+契约：
+
+- Builder 不区分 system / user：所有 Section 通过 `[]content.Part` 输出，必要时通过私有的 system marker part（`internal/promptmark`）标记某些 part 属于"系统说明"。
+- `systemTextFrom(parts)` 仅抽取并拼接被标记为 system 的纯文本 part，其余 part 留给 Loop 决定挂在 `Messages` 上的位置。
+- `prompt.System(text)` / `prompt.SystemSection(...)` 等工厂会生成被 system marker 标记的 part；普通 `prompt.Section` 默认产出非 system part。
+- `model.Request.System` 是单段 `string`，承载 provider-neutral 系统上下文；非系统 part 由 Loop 按规则（如注入到第一条 user message 之前）合入 `Messages`，避免 Section 直接依赖 provider adapter。
+
+应用层若需要替换 system 抽取规则，可通过 `WithRequestBuilder` 替换默认 RequestBuilder（参见 [design-event-agent-loop.md](design-event-agent-loop.md) §7）。
 
 ## cache control
 

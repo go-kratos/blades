@@ -192,9 +192,24 @@ type ToolEnd struct {
     Result *tools.Result
     Err    error
 }
+
+// LoopExit 与 Handoff 是工具触发的运行时控制信号，作为 sealed Output 变体在
+// stream 上紧跟在产生它们的 ToolEnd 帧之后。
+type LoopExit struct {
+    ToolID   string
+    ToolName string
+    Escalate bool // true 表示向外层 flow.LoopAgent 升级（以 ErrLoopEscalated 终止）
+}
+
+type Handoff struct {
+    ToolID   string
+    ToolName string
+    Agent    string              // 目标子 Agent 名字
+    Carry    *content.ToolResult // 可选的转交 payload
+}
 ```
 
-`ToolEnd.Result.Parts` 直接复用 `tools.Result{Parts []content.Part}`。工具 recoverable error 会同时出现在 `ToolEnd.Err`，并被转换成 `content.ToolResult{IsError:true}` 反馈给模型；context cancel/deadline 属于 fatal。
+`ToolEnd.Result.Parts` 直接复用 `tools.Result{Parts []content.Part}`。控制信号不再放进 `ToolEnd` 字段，而是作为独立的 sealed Output 帧 `event.LoopExit` / `event.Handoff` 紧跟在 `ToolEnd` 之后；翻译规则见 [design-tool-system.md](design-tool-system.md) §6，与 `model.Message` 的隔离约束见 [design-model-provider.md](design-model-provider.md) §6。工具 recoverable error 同时出现在 `ToolEnd.Err`，并被转换成 `content.ToolResult{IsError:true}` 反馈给模型；context cancel/deadline 属于 fatal。
 
 单 turn 结束和整个 Run 结束是两个事件：
 
@@ -209,7 +224,7 @@ type TurnEnd struct {
 type Done struct{}
 ```
 
-`TurnEnd` 只在整个 turn 完成时输出一次。工具中间轮次不输出 `TurnEnd`，只输出 `StepEnd` 和 `Tool*`。`Done` 是整个 Run 的结束 sentinel，通常在 input channel 关闭或 context 取消后输出一次。
+`TurnEnd` 只在整个 turn 完成时输出一次。工具中间轮次不输出 `TurnEnd`，只输出 `StepEnd` 和 `Tool*`。本 turn 内出现的 `LoopExit` / `Handoff` 帧已经按发生顺序在流上呈现给消费者，`TurnEnd` 不再做"聚合"。`Done` 是整个 Run 的结束 sentinel，通常在 input channel 关闭或 context 取消后输出一次。
 
 运行期错误作为输出事件进入同一条流：
 
@@ -219,7 +234,7 @@ type Error struct {
 }
 ```
 
-错误分类使用 Go 标准 `errors.Is` / `errors.As` 与 `event` 包内 sentinel。无法作为普通输出恢复的 fatal 错误通过 `Agent.Run` 返回的 generator yield error 表达。
+错误分类使用 Go 标准 `errors.Is` / `errors.As` 与 `event` 包内 sentinel。Run 返回的 `<-chan event.Output` 在 `event.Done` 之前可以多次输出 `event.Error`；fatal、无法继续运行的错误以 `event.Error` 形式输出后立即输出 `event.Done` 并关闭通道。仅当 Run 在启动阶段就无法建立通道（参数错误、依赖装配失败等）时，才通过 `Run` 第二返回值 `error` 直接返回。
 
 ## 5. 根包 Agent 运行接口
 
@@ -231,11 +246,11 @@ package blades
 type Agent interface {
     Name() string
     Description() string
-    Run(context.Context, <-chan event.Input) Generator[event.Output, error]
+    Run(context.Context, <-chan event.Input) (<-chan event.Output, error)
 }
 ```
 
-`blades.NewAgent(name, opts...)` 返回默认 `llmAgent`。`llmAgent` 内部持有 provider、tools、session、prompt、compact、policy、hooks、request builder、tool executor 等依赖。
+`blades.NewAgent(name, opts...)` 返回默认 `llmAgent`。`llmAgent` 内部持有 provider、tools、session、prompt、compact、policy、hooks、request builder、tool executor 等依赖。Run 返回的 `<-chan event.Output` 在 `event.Done` 输出后被关闭；运行期错误以 `event.Error` 写入同一通道，仅当无法启动 Run 时通过第二返回值 `error` 抛出。
 
 默认运行时的代码在根包内按职责拆分，而不是暴露为用户可导入包：
 
@@ -255,14 +270,15 @@ type Agent interface {
 
 单 turn 推荐流程：
 
-1. 收到 `Prompt`，触发 `TurnStart` hook，并 append user prompt。
-2. 构建第 0 个 model step 的 `*model.Request`。
+1. 收到 `Prompt`，触发 `TurnStart` hook，并 append user prompt（一次 `Session.Append`）。
+2. 构建第 0 个 model step 的 `*model.Request`（通过 `RequestBuilder`：snapshot session → prompt builder → compactor → 组装 request）。
 3. 触发 `PreModelCall`，调用 `model.Provider.Stream(ctx, req)`。
 4. 消费 provider stream，将文本、思考、多模态 part 和 tool use 转为 `event.Output`。
-5. 触发 `PostModelCall`，append assistant message，输出 `StepEnd`。
-6. 如存在 tool use，触发 `PreToolCall` / `PostToolCall`，执行 tool wave，append tool result message。
-7. 将 tool result 和 pending steer 注入下一 step，继续循环。
-8. 若没有 tool use，或收到 abort/error/max steps，输出 `TurnEnd`，触发 `TurnEnd` hook。
+5. 触发 `PostModelCall`，输出 `StepEnd`。
+6. 若存在 tool use，触发 `PreToolCall` / `PostToolCall`，执行 tool wave；识别 `ErrLoopExit` / `ErrHandoff` sentinel，紧跟在产生它的 `ToolEnd` 帧后发出 `event.LoopExit` / `event.Handoff` Output 帧。
+7. 将本 step 的 `assistant` 消息与本轮 tool wave 全部 `tool` 结果消息合并为一个语义组，调用一次 `Session.Append(ctx, assistantMsg, toolResultMsgs...)`。
+8. 将 tool result 和 pending steer 注入下一 step，继续循环。
+9. 若没有 tool use，或收到 abort/error/max steps、本 turn 已经发出 `LoopExit` / `Handoff`，输出 `TurnEnd`，触发 `TurnEnd` hook。`LoopExit` / `Handoff` 不进 `Session`（Session 只承载 `model.Message`），消费者按发生顺序在 Output 流上自行识别。
 
 Hook 名称固定为行为事件：`PreModelCall`、`PostModelCall`、`PreToolCall`、`PostToolCall`、`TurnStart`、`TurnEnd`。这些事件描述发生了什么，而不是暴露内部状态枚举。
 
@@ -306,14 +322,15 @@ Event 面向用户协议，Message 面向 provider 协议。二者通过 `conten
 
 ## 9. Session 写入规则
 
-Session 写入顺序固定：
+Session 历史只追加 protocol-only 的 `model.Message`，并以"语义组"为原子单元写入：
 
-1. turn 开始时 append user prompt。
-2. 每个 model step 完成后 append assistant message。
-3. 每个 tool wave 完成后 append tool result message。
-4. final assistant message 完成后输出 `TurnEnd`。
+1. **turn 起始**：append user prompt（一次 `Append(ctx, userMsg)`）。
+2. **每个 model step + tool wave 完成后**：将本 step 的 `assistant` 消息与同 step 全部 `tool` 结果消息作为一组，调用一次 `Append(ctx, assistantMsg, toolResultMsgs...)`。该组写入是 step 级原子单元，避免崩溃留下"有 tool_call 但无 tool_result"的半截历史。
+3. final assistant message 完成且无新工具调用后输出 `TurnEnd`。
 
-Stateless mode 不读取 session history，但仍维护 turn-local transcript 以支持多 step 工具循环。Compact 只在构建 request 前运行，输入是 session history + turn-local transcript，输出必须满足 provider message invariant。
+**不写回 Session 的内容**：compact view、summary、被截断的 tool result 视图、以及 `event.LoopExit` / `event.Handoff` 等运行时控制信号——这些由 `RequestBuilder` 在每次构造 `*model.Request` 时按需生成（见 [design-compact.md](design-compact.md)）；控制信号仅出现在 Output 流上。Compactor 的 rolling state 通过 `session.State()` 的私有 key 持久化，与协议历史正交。
+
+Stateless mode 不读取 session history，但仍维护 turn-local transcript 以支持多 step 工具循环。Compact 只在构建 request 前运行，输入是 session 快照 + turn-local pending parts，输出必须满足 provider message invariant。
 
 ## 与红线对照
 

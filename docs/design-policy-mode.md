@@ -243,5 +243,3 @@ core 不内置 Plan、Accept、Auto 模式。应用通过组合实现：
 - r23：`Policy.Check(ctx, ToolRequest) (Decision, error)` 是单一接口；`Chain`、`Budget`、`RateLimit`、`SafetyCheck` 均返回 `Policy`。
 - r23：v1 不再使用 sealed union；唯一请求结构是 `ToolRequest`。如未来扩展到模型/资源等其它边界，将作为非兼容版本演进。
 - r23：`Decision{Action, Reason, Modified, Metadata}` 使用 `Allow / Deny / Ask / Modify` 四类动作。
-
-> 说明：`design-agent-framework.md` 当前仍提到 `policy.Request` sealed 与 `ModelRequest / ResourceRequest`；该处需要在后续同步修订（不在本轮范围）。

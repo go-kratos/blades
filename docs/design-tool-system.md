@@ -53,7 +53,13 @@ func (EchoTool) Spec() tools.ToolSpec {
     return tools.ToolSpec{
         Name:        "echo",
         Description: "return input text",
-        InputSchema: json.RawMessage(`{"type":"object"}`),
+        InputSchema: &jsonschema.Schema{
+            Type: "object",
+            Properties: map[string]*jsonschema.Schema{
+                "text": {Type: "string"},
+            },
+            Required: []string{"text"},
+        },
     }
 }
 
@@ -94,9 +100,10 @@ type Result struct {
 
 ## 4. 可选能力接口
 
-v1 保留四个可选能力接口，全部为协议层 opt-in：未实现的工具按默认行为处理。
+v1 在 `tools.Tool` 之外保留**3 个工具能力接口**与**1 个集合过滤器**，全部为协议层 opt-in：未实现的工具按默认行为处理。
 
 ```go
+// 工具能力接口（嵌入 Tool）：
 type ReadOnlyTool interface {
     Tool
     ReadOnly() bool
@@ -107,10 +114,6 @@ type DestructiveTool interface {
     Destructive() bool
 }
 
-type ToolFilter interface {
-    Filter(ctx context.Context, tools []Tool) ([]Tool, error)
-}
-
 type StreamingTool interface {
     Tool
     // Stream 以增量语义产出结果：每次 yield 的 *Result 仅包含相对上一次
@@ -118,14 +121,19 @@ type StreamingTool interface {
     // 形成最终回传给模型的工具结果。
     Stream(ctx context.Context, input json.RawMessage) iter.Seq2[*Result, error]
 }
+
+// 工具集合过滤器（不嵌入 Tool，作用于工具列表）：
+type ToolFilter interface {
+    Filter(ctx context.Context, tools []Tool) ([]Tool, error)
+}
 ```
 
 语义：
 
 - `ReadOnlyTool`：工具声明自身是否只读，供 policy 和 UI 使用。
 - `DestructiveTool`：工具声明自身是否可能产生破坏性副作用，供 policy 要求确认或拒绝。
-- `ToolFilter`：协议层过滤器，按模型能力、运行模式、用户选择或 policy 预检查裁剪工具列表。最终是否允许调用仍由 policy 在执行前裁决。
-- `StreamingTool`：工具按增量语义逐步产出 `Result`。`ToolExecutor` 在累积过程中可以将增量同步转发给上层流（例如 Agent 的 `Generator[*Message, error]`），最终再以累积结果回写给模型。`Stream` 与 `Handle` 同时存在，运行时优先使用 `Stream`；`Handle` 作为非流式回退使用。
+- `StreamingTool`：工具按增量语义逐步产出 `Result`。`ToolExecutor` 在累积过程中可以将增量同步转发给上层流，最终再以累积结果回写给模型。`Stream` 与 `Handle` 同时存在，运行时优先使用 `Stream`；`Handle` 作为非流式回退使用。
+- `ToolFilter`：协议层过滤器，按模型能力、运行模式、用户选择或 policy 预检查裁剪工具列表。最终是否允许调用仍由 policy 在执行前裁决。`ToolFilter` 不嵌入 `Tool`，作用对象是 `[]Tool` 集合。
 
 以下能力不进入 `tools.Tool` 协议：
 
@@ -148,28 +156,52 @@ type Resolver interface {
 
 `ToolFilter`（见第 4 节）与 `Resolver` 组合即可表达"按 policy / 模型能力裁剪运行时可见工具"的诉求。
 
-## 6. 控制流信号：sentinel error
+## 6. 控制流信号：sentinel error → 专用 Output 帧
 
-`tools` 不引入 `ToolContext`、`Runtime` 或 context-scoped 注入。工具需要影响 Agent loop 控制流时，通过返回 sentinel error 完成；运行时使用 `errors.As` 识别并翻译为 `message.Actions`。
+`tools` 提供 **`ToolContext`** 暴露当前工具调用的运行时元数据；工具需要影响 Agent loop 控制流时，通过返回 sentinel error 完成。这两类 sentinel error 类型 `ErrLoopExit` / `ErrHandoff` 定义在 `tools` 包内（`tools/errors.go`），运行时使用 `errors.As` 识别，并紧跟在产生它的 `event.ToolEnd` 之后发出**专用 Output 帧** `event.LoopExit` / `event.Handoff`（运行时控制信号承载于独立 Output 变体上而非 `model.Message`，参见 [design-model-provider.md](design-model-provider.md) §6 与 [design-event-agent-loop.md](design-event-agent-loop.md) §4.2）。
 
 ```go
+// package tools (tools/context.go)
+
+// ToolContext 暴露当前工具调用的运行时元数据，由 ToolExecutor 在调用 Tool.Handle
+// 之前注入到 ctx；不承载控制信号（控制流统一走 sentinel error）。
+type ToolContext interface {
+    ID() string   // 当前 tool call 的唯一 ID（与 event.ToolStart/ToolEnd.ToolID 同源）
+    Name() string // 当前工具名（与 Tool.Spec().Name 一致）
+}
+
+func NewContext(ctx context.Context, tc ToolContext) context.Context
+func FromContext(ctx context.Context) (ToolContext, bool)
+```
+
+```go
+// package tools (tools/errors.go)
+
 type ErrLoopExit struct {
     Escalate bool
 }
 
+func (e *ErrLoopExit) Error() string { return "tools: loop exit" }
+
 type ErrHandoff struct {
     Agent string
+    Carry *content.ToolResult // 可选转交 payload
 }
+
+func (e *ErrHandoff) Error() string { return "tools: handoff to " + e.Agent }
 ```
 
-- `ExitTool` 返回 `&ErrLoopExit{Escalate: req.Escalate}`，`ToolExecutor` 翻译为 `message.Actions[tools.ActionLoopExit]`，`LoopAgent` 据此终止循环。
-- Handoff 工具返回 `&ErrHandoff{Agent: name}`，`ToolExecutor` 翻译为 `message.Actions[tools.ActionHandoffToAgent]`，`RoutingAgent` 据此切换执行目标。
+翻译规则（由 `ToolExecutor` 实施）：
+
+- `ExitTool` 返回 `&ErrLoopExit{Escalate: req.Escalate}`：发出 `event.ToolEnd` 后紧跟一帧 `event.LoopExit{ToolID, ToolName, Escalate}`；`flow.LoopAgent` 据此终止循环。
+- Handoff 工具返回 `&ErrHandoff{Agent: name, Carry: ...}`：发出 `event.ToolEnd` 后紧跟一帧 `event.Handoff{ToolID, ToolName, Agent, Carry}`；`flow.RoutingAgent` 据此切换执行目标。
 
 约束：
 
-1. sentinel error 仅承载控制信号，不包含业务负载；如果模型仍需要工具结果文本，由 `ToolExecutor` 在识别 sentinel 后合成默认成功 payload。
-2. 控制信号集合受协议层管控：新增控制语义必须在本设计文档中显式定义，再由 `ToolExecutor` 和对应 flow agent 同时支持。
-3. 工具实现不再访问任何 `tools.ToolContext`/`Runtime`/`NewContext`/`FromContext` helper —— 它们已从 `tools` 包移除。Resolver、allowed list、当前 invocation 等运行时能力保留在 root/agent 层，通过 `Invocation` 或 `agent.FromContext` 暴露。
+1. sentinel error 仅承载控制信号，不包含业务负载；如果模型仍需要工具结果文本，由 `ToolExecutor` 在识别 sentinel 后合成默认成功 payload，写入 `ToolEnd.Result.Parts`。
+2. 控制信号集合受协议层管控：新增控制语义必须在本设计文档中显式定义新的 sentinel error **与对应的 sealed Output 变体**（在 `event/` 包中），再由 `ToolExecutor` 和对应 flow agent 同时支持；不再使用 `map[string]any` + 字符串 key。
+3. 工具实现通过 `tc, ok := tools.FromContext(ctx)` 获取当前 `ToolContext`（`ID` / `Name`）；`ToolContext` 仅暴露调用元数据，不再承载 `Actions` / `SetAction` 等控制信号——控制流一律走 sentinel error 与 sealed Output 帧。Resolver、allowed list 等 Agent 级运行时能力仍保留在 root/agent 层，通过 `Invocation` 或 `agent.FromContext` 暴露，不与 `tools.ToolContext` 混淆。
+4. **控制信号不进入 `model.Message` 也不进入 `Session`**：协议层 `model.Message` 严格保持 protocol-only；运行时控制信号仅以 `event.LoopExit` / `event.Handoff` 帧出现在 Output 流上，由 flow 编排层与 hook 读取（hook 侧对应 `hook.LoopExit` / `hook.Handoff` 同源同步触发，详见 [design-hook-extension.md](design-hook-extension.md)）。
 
 ## 7. 工具执行编排边界
 
@@ -185,8 +217,9 @@ ToolExecutor 负责：
 
 - 通过 Agent 持有的 `tools.Resolver`（或 `Invocation.Tools`）查找工具。
 - 执行 policy 检查与 `ToolFilter` 裁剪。
+- 在调用 `Tool.Handle` 之前，通过 `tools.NewContext(ctx, tc)` 注入当前 `ToolContext`（携带本次 tool call 的 `ID` / `Name`，与同源 `event.ToolStart`/`event.ToolEnd` 字段对齐）。
 - 调用 `Tool.Handle`；当工具同时实现 `StreamingTool` 时优先使用 `Stream`，按增量语义累积 Parts。
-- 识别 sentinel error（`ErrLoopExit` / `ErrHandoff`），翻译为 `message.Actions`，并在需要时合成默认成功 payload。
+- 识别 sentinel error（`ErrLoopExit` / `ErrHandoff`），在 `event.ToolEnd` 之后紧跟发出 `event.LoopExit` / `event.Handoff` 控制帧，并在需要时为模型 tool-message 合成默认成功 payload。
 - 将结果转换为 `event.ToolEnd`，把多模态 `Result.Parts` 序列化进 provider 期望的 tool-message 内容（v1：纯文本拼接；`content.Blob` 以 `{"mime":..,"data_base64":..}` JSON 信封内嵌；provider 原生多模态编码留给后续迭代）。
 - 把运行错误交回默认 `llmAgent`。
 

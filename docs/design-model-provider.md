@@ -274,6 +274,7 @@ const (
   - 业务态（author、invocationId、metadata）归 `event/` 与上层 session；
   - compact 与 session 重放只需要 protocol-only 的 Message。
 - Message 历史只保存 provider 可重放的协议内容。Loop / session / compact 必须维护 provider message invariant，避免生成无法被 adapter 发送的历史。
+- **运行时控制流信号不入 Message**：工具触发的 `ErrLoopExit` / `ErrHandoff` 等 sentinel 由 ToolExecutor 翻译为专用 sealed Output 变体 `event.LoopExit` / `event.Handoff`（参见 [design-event-agent-loop.md](design-event-agent-loop.md) §4.2 与 [design-tool-system.md](design-tool-system.md) §6），不污染协议层 `Message`。
 
 ## 7. Part
 

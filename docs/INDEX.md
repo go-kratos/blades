@@ -11,10 +11,10 @@
 - [Blades AgentOS Framework 设计蓝图](./design-agent-framework.md) - AgentOS 总体目标、包边界、依赖图和迁移阶段 `[draft]`
 - [Event 系统与 Agent Loop](./design-event-agent-loop.md) - Event/Message 分层、Agent Loop 顺序流程与行为事件 hook、Event/Message 转换边界 `[draft]`
 - [工具系统](./design-tool-system.md) - `tools/` 接口（Spec+Handle 两方法）、Result、Resolver、Filter 和执行上下文 `[draft]`
-- [扩展与 Hook 系统](./design-hook-extension.md) - core sealed hook 事件、Observer/Interceptor 二元划分和应用事件隔离 `[draft]`
+- [扩展与 Hook 系统](./design-hook-extension.md) - core sealed hook 事件、单一 Hook 接口与应用事件隔离 `[draft]`
 - [会话与持久化](./design-session.md) - Session 接口（6 方法纯追加）、`*Message` 载荷、与 compaction 解耦、fork/replay 走 NewSession+WithMessages `[draft]`
 - [Policy 与交互模式边界](./design-policy-mode.md) - 单一 Policy.Check 接口与应用层模式边界 `[draft]`
-- [Agent 组合与编排](./design-agent-orchestration.md) - `flow/` 组合（Sequential/Parallel/Loop/AsTool）、Agent-as-Tool 和多 Agent 边界 `[draft]`
+- [Agent 组合与编排](./design-agent-orchestration.md) - `flow/` 组合（Sequential/Parallel/Loop/Routing/Deep）与多 Agent 边界 `[draft]`
 - [Memory 系统](./design-memory.md) - Memory 接口（Recall+Remember+Forget，全部 variadic option）、`Entry` 数据载体、应用层经 prompt.Memory 注入策略 `[draft]`
 - [Prompt 系统](./design-prompt.md) - Builder 接口 + Section 函数类型；Static/Dynamic/System/Memory 工厂 `[draft]`
 - [Compact 系统](./design-compact.md) - 单一 Compactor 接口与内置实现（Window/ToolResultBudget/Summarize/Chain） `[draft]`
