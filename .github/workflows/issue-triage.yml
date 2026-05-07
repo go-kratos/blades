@@ -1,5 +1,4 @@
 name: Claude Issue Triage
-description: Run Claude Code for issue triage in GitHub Actions
 on:
   issues:
     types: [opened]
@@ -11,7 +10,6 @@ jobs:
     permissions:
       contents: read
       issues: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -27,8 +25,8 @@ jobs:
           ANTHROPIC_DEFAULT_SONNET_MODEL: deepseek-v4-pro
           ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-v4-flash
         with:
+          anthropic_api_key: ${{ secrets.DEEPSEEK_AUTH_TOKEN }}
           # NOTE: /label-issue requires .claude/commands/label-issue.md and scripts/edit-issue-labels.sh in your repo (see this repo for examples)
           prompt: "/label-issue REPO: ${{ github.repository }} ISSUE_NUMBER: ${{ github.event.issue.number }}"
-
           allowed_non_write_users: "*" # Required for issue triage workflow, if users without repo write access create issues
           github_token: ${{ secrets.GITHUB_TOKEN }}
