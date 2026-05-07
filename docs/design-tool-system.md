@@ -201,7 +201,7 @@ func (e *ErrHandoff) Error() string { return "tools: handoff to " + e.Agent }
 1. sentinel error 仅承载控制信号，不包含业务负载；如果模型仍需要工具结果文本，由 `ToolExecutor` 在识别 sentinel 后合成默认成功 payload，写入 `ToolEnd.Result.Parts`。
 2. 控制信号集合受协议层管控：新增控制语义必须在本设计文档中显式定义新的 sentinel error **与对应的 sealed Output 变体**（在 `event/` 包中），再由 `ToolExecutor` 和对应 flow agent 同时支持；不再使用 `map[string]any` + 字符串 key。
 3. 工具实现通过 `tc, ok := tools.FromContext(ctx)` 获取当前 `ToolContext`（`ID` / `Spec`）；`ToolContext` 仅暴露调用元数据，不再承载 `Actions` / `SetAction` 等控制信号——控制流一律走 sentinel error 与 sealed Output 帧。Resolver、allowed list 等 Agent 级运行时能力仍保留在 root/agent 层，通过 `Invocation` 或 `agent.FromContext` 暴露，不与 `tools.ToolContext` 混淆。
-4. **控制信号不进入 `model.Message` 也不进入 `Session`**：协议层 `model.Message` 严格保持 protocol-only；运行时控制信号仅以 `event.LoopExit` / `event.Handoff` 帧出现在 Output 流上，由 flow 编排层与 hook 读取（hook 侧对应 `hook.LoopExit` / `hook.Handoff` 同源同步触发，详见 [design-hook-extension.md](design-hook-extension.md)）。
+4. **控制信号不进入 `model.Message` 也不进入 `Session`**：协议层 `model.Message` 严格保持 protocol-only；运行时控制信号仅以 `event.LoopExit` / `event.Handoff` 帧出现在 Output 流上，由 flow 编排层读取。Hook 不再承载这两类控制信号——应用如需观察，直接消费 `<-chan event.Output`（详见 [design-hook-extension.md](design-hook-extension.md)）。
 
 ## 7. 工具执行编排边界
 

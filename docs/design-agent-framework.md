@@ -196,7 +196,7 @@ Event 和 Message 不合并。原因：
 | 根包极简 | `blades/` 放 `Agent`、`NewAgent`、Option、默认 `llmAgent`、必要错误和纯 Agent runner helper |
 | 协议叶子互独立 | `content/`、`event/`、`model/`、`tools/` 之间禁止形成循环；`event/tools` 单向依赖 `content/` |
 | 多模态共享叶子 | `content/` 仅依赖标准库；`Part` 为 sealed marker（私有 `part()`）；变体 = Text/Blob/Thinking/ToolUse/ToolResult；`Blob.Source` sealed（私有 `blobSource()`）覆盖 InlineBytes/URI/FileID；Thinking 含 Signature |
-| Provider 协议 sealed | 四处 sealed 例外全部封闭：`content.Part`（私有 `part()`）、`event.Input`（私有 `input()`）、`event.Output`（私有 `output()`）、`hook.Event`（runtime 契约不允许外部扩展）。核心协议层无开放扩展接口；后台回流走 `event.Prompt`，应用业务事件由应用自己的 channel / event bus 承载 |
+| Provider 协议 sealed | 三处 sealed 例外全部封闭：`content.Part`（私有 `part()`）、`event.Input`（私有 `input()`）、`event.Output`（私有 `output()`）。核心协议层无开放扩展接口；后台回流走 `event.Prompt`，应用业务事件由应用自己的 channel / event bus 承载。`hook/` 不再使用 sealed event union，改为单 `Hook` 接口（6 个生命周期方法）+ `hook.Noop` 嵌入式默认实现（详见 `design-hook-extension.md`） |
 | Tool 是能力叶子包 | `tools/` 单向依赖 `content/`；`tools.Result.Parts []content.Part` |
 | Runtime 根包内置 | 默认 Agent Loop 是根包 `llmAgent` 的内部机制，不暴露公开 `loop/` 包；通过 `WithRequestBuilder` / `WithToolExecutor` 等 options 替换局部策略 |
 | 唯一私有转换 | 仅 `internal/convert/` 持 Event ↔ Message 转换函数；用户不得绕过 Loop 直接转换 |
@@ -280,8 +280,7 @@ blades/
 │   └── summary.go              Summarize(provider, ...) Compactor（LLM 摘要）
 │
 ├── hook/
-│   ├── event.go                hook.Event（sealed marker：私有 hookEvent()）+ 核心 events 全集（PreModelCall/PostModelCall/PreToolCall/PostToolCall/TurnStart/TurnEnd/LoopExit/Handoff，共 8 类）；LoopExit/Handoff 内嵌对应 event.LoopExit/event.Handoff，与 Output 流同源同步触发
-│   └── hook.go                 单一 Hook 接口（Handle(ctx, Event) error）+ 类型安全 helper（OnPreModelCall/OnPostToolCall/...）
+│   └── hook.go                 单一 hook.Hook 接口（6 个生命周期方法：BeforeModel/AfterModel/BeforeTool/AfterTool/BeforeTurn/AfterTurn）+ hook.Noop 嵌入式默认实现 + carrier 结构（ToolCall/Turn/TurnSummary）+ Abort/ErrAbort/AbortError；嵌入 Noop 后只重写关心的方法，改写直接修改指针入参；控制信号 LoopExit/Handoff 不在 hook，由 event.Output 流承载
 │
 ├── policy/
 │   ├── policy.go               Policy 接口（Check(ctx, ToolRequest) Decision）+ Decision/Action（Allow/Deny/Ask/Modify）
@@ -390,7 +389,7 @@ contrib/*   -> model/ 或 tools/
 | `middleware` | `InputMiddleware`, `OutputMiddleware` | `middleware.InputMiddleware` |
 | `session` | `Session`(6 方法 append-only), `Fork` helper, `NewSession`, `WithSessionID`/`WithMessages`/`WithMetadata`/`WithState`, `NewContext`, `FromContext`, `Ensure` | `session.Session` |
 | `policy` | `Policy`(Check 单方法), `Decision`, `Action`(Allow/Deny/Ask/Modify), `ToolRequest`, `Chain`/`Budget`/`RateLimit`/`SafetyCheck` 工厂函数 | `policy.Policy` |
-| `hook` | `Event`(sealed), `Hook`(Handle 单方法), `OnPreModelCall`/`OnPostModelCall`/`OnPreToolCall`/`OnPostToolCall`/`OnTurnStart`/`OnTurnEnd` 返回 `Hook` 的类型安全 helpers | `hook.Hook` |
+| `hook` | `Hook` 接口（6 个生命周期方法：`BeforeModel`/`AfterModel`/`BeforeTool`/`AfterTool`/`BeforeTurn`/`AfterTurn`），`Noop` 嵌入式默认实现，carrier `ToolCall`/`Turn`/`TurnSummary`，`Abort`/`ErrAbort`/`AbortError` | `hook.Hook` |
 | `compact` | `Compactor`(单方法接口), `Chain`, `Window`, `ToolResultBudget`, `Summarize`, `WithHint`/`HintShrink`（ctx hint 注入与常量） | `compact.Compactor` |
 | `memory` | `Memory`(Recall+Remember+Forget，全部 variadic option), `Entry`, `Store`(可选后端：Put/Search/Delete) | `memory.Memory` |
 
@@ -519,7 +518,7 @@ v1 核心保留五个组合原语 + 一个 Agent→Tool 适配器：
 - [ ] 实现 ToolFilter、Resolver、StreamingToolExecutor；`tools/context.go` 提供 `ToolContext` 接口（`ID` / `Spec`）与 `NewContext` / `FromContext`；`tools/errors.go` 提供 `ErrLoopExit`/`ErrHandoff` sentinel（ToolExecutor 翻译为 `event.LoopExit` / `event.Handoff` 专用 Output 帧）
 - [ ] 实现 `policy.Policy` 单方法接口 + 内置工厂（Chain/Budget/RateLimit/SafetyCheck），v1 唯一请求为 `ToolRequest`（不引入 sealed `Request`）
 - [ ] 实现 SafetyChecker、BudgetPolicy、RateLimiter
-- [ ] 实现 `hook.Hook`：sealed hook events 全集、单一 Hook 接口、`OnPreModelCall`/`OnPostToolCall` 等返回 `Hook` 的泛型 helper；Registry 如有需要由应用层实现并作为一个 `hook.Hook` 注入
+- [ ] 实现 `hook.Hook`：单接口 + 6 个生命周期方法（`BeforeModel`/`AfterModel`/`BeforeTool`/`AfterTool`/`BeforeTurn`/`AfterTurn`）+ `hook.Noop` 嵌入式默认实现；carrier `ToolCall`/`Turn`/`TurnSummary`；保留 `Abort`/`ErrAbort`/`AbortError` 三件套与传播矩阵；`WithHooks(...hook.Hook)` 按注册顺序串行派发；不引入 sealed event union、helper 与 Mutator
 - [ ] 在 Agent Loop 中串联 tool validation、policy、hook、execution、result conversion
 
 ### 阶段 4：应用接入样板与边界验证

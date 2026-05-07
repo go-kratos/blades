@@ -270,17 +270,17 @@ type Agent interface {
 
 单 turn 推荐流程：
 
-1. 收到 `Prompt`，触发 `TurnStart` hook，并 append user prompt（一次 `Session.Append`）。
+1. 收到 `Prompt`，触发 `Hook.BeforeTurn`，并 append user prompt（一次 `Session.Append`）。
 2. 构建第 0 个 model step 的 `*model.Request`（通过 `RequestBuilder`：snapshot session → prompt builder → compactor → 组装 request）。
-3. 触发 `PreModelCall`，调用 `model.Provider.Stream(ctx, req)`。
+3. 触发 `Hook.BeforeModel`，调用 `model.Provider.Stream(ctx, req)`。
 4. 消费 provider stream，将文本、思考、多模态 part 和 tool use 转为 `event.Output`。
-5. 触发 `PostModelCall`，输出 `StepEnd`。
-6. 若存在 tool use，触发 `PreToolCall` / `PostToolCall`，执行 tool wave；识别 `ErrLoopExit` / `ErrHandoff` sentinel，紧跟在产生它的 `ToolEnd` 帧后发出 `event.LoopExit` / `event.Handoff` Output 帧。
+5. 触发 `Hook.AfterModel`，输出 `StepEnd`。
+6. 若存在 tool use，触发 `Hook.BeforeTool` / `Hook.AfterTool`，执行 tool wave；识别 `ErrLoopExit` / `ErrHandoff` sentinel，紧跟在产生它的 `ToolEnd` 帧后发出 `event.LoopExit` / `event.Handoff` Output 帧。
 7. 将本 step 的 `assistant` 消息与本轮 tool wave 全部 `tool` 结果消息合并为一个语义组，调用一次 `Session.Append(ctx, assistantMsg, toolResultMsgs...)`。
 8. 将 tool result 和 pending steer 注入下一 step，继续循环。
-9. 若没有 tool use，或收到 abort/error/max steps、本 turn 已经发出 `LoopExit` / `Handoff`，输出 `TurnEnd`，触发 `TurnEnd` hook。`LoopExit` / `Handoff` 不进 `Session`（Session 只承载 `model.Message`），消费者按发生顺序在 Output 流上自行识别。
+9. 若没有 tool use，或收到 abort/error/max steps、本 turn 已经发出 `LoopExit` / `Handoff`，输出 `TurnEnd`，触发 `Hook.AfterTurn`。`LoopExit` / `Handoff` 不进 `Session`（Session 只承载 `model.Message`），消费者按发生顺序在 Output 流上自行识别。
 
-Hook 名称固定为行为事件：`PreModelCall`、`PostModelCall`、`PreToolCall`、`PostToolCall`、`TurnStart`、`TurnEnd`。这些事件描述发生了什么，而不是暴露内部状态枚举。
+Hook 回调位置固定为六个生命周期边界：`BeforeModel` / `AfterModel`（每个 model step 前后）、`BeforeTool` / `AfterTool`（每个工具调用前后）、`BeforeTurn` / `AfterTurn`（每个 turn 前后）。详见 `design-hook-extension.md`。
 
 ## 7. 扩展点
 
@@ -301,7 +301,7 @@ type ToolExecutor interface {
 - `WithRequestBuilder(RequestBuilder)`：替换 prompt/session/compact/tools 到 `model.Request` 的构建策略。
 - `WithToolExecutor(ToolExecutor)`：替换 tool wave 的执行策略，例如串行、并行、限流或审批。
 - `WithMaxSteps(int)`：限制单 turn 内 model step 数。
-- `WithHooks(...hook.Hook)`、`WithPolicy(policy.Policy)`：观察、拦截和策略决策。若应用需要 registry / fan-out / 条件分发，可在应用层实现一个聚合型 `hook.Hook` 后注入。
+- `WithHooks(...hook.Hook)`、`WithPolicy(policy.Policy)`：观察、拦截和策略决策。`hook.Hook` 是一个接口，6 个生命周期方法（`BeforeModel`/`AfterModel`/`BeforeTool`/`AfterTool`/`BeforeTurn`/`AfterTurn`）；用户嵌入 `hook.Noop` 后只重写关心的方法。多次调用 `WithHooks` 与单次传多个 `Hook` 等价，按注册顺序串行派发。详见 `design-hook-extension.md`。
 
 完全特殊的运行时不通过公开 loop API 扩展，而是直接实现 `blades.Agent`。
 

@@ -159,7 +159,7 @@ key 抽取通常基于 `session.FromContext` / `agent.FromContext` 等 ctx helpe
 
 core 不内置审计存储；可观测性走两条通路：
 
-1. **Hook**：`PreToolCall / PostToolCall` 钩子在 Policy 调用前后观察 `Decision`，把 `Action / Reason / Metadata` 写入应用日志或 trace（参考 `design-hook-extension.md`）。
+1. **Hook**：`Hook.BeforeTool / Hook.AfterTool` 在 Policy 调用前后观察 `Decision`，把 `Action / Reason / Metadata` 写入应用日志或 trace（参考 `design-hook-extension.md`）。
 2. **Event**：`Deny / Ask` 通过 `event.Prompt` 或应用自定义 channel 回流到外部界面，应用决定是否重试、走人工审批或终止 Run。
 
 `Decision.Metadata` 是 Policy 实现与审计层之间的可选 payload 通道（命中规则、预算余量、限流剩余配额、远端 trace id 等）；core 不规定字段名，避免锁死实现。
@@ -172,13 +172,13 @@ core 不内置审计存储；可观测性走两条通路：
 Run
 └── Turn
     └── Step
-        ├── PreModelCall hook    ← 模型请求改写在此发生（注入 system、裁剪 tools、调整 sampling）
+        ├── Hook.BeforeModel     ← 模型请求改写在此发生（注入 system、裁剪 tools、调整 sampling）
         ├── model.Generate / Stream
         └── Tool Wave (并行)
-            ├── PreToolCall hook
+            ├── Hook.BeforeTool
             ├── policy.Check(ToolRequest{Tool, Input}) ← v1 唯一 Policy 边界
             ├── tool.Handle
-            └── PostToolCall hook
+            └── Hook.AfterTool
 ```
 
 ### 与 tools
@@ -189,7 +189,7 @@ Run
 
 ### 与 hook（替代模型边界 Policy）
 
-- 模型请求的运行时改写（注入 system block、裁剪 `Tools`、调整 sampling 等）由 `PreModelCall` hook Mutator 承担，而非 Policy。
+- 模型请求的运行时改写（注入 system block、裁剪 `Tools`、调整 sampling 等）由 `hook.Hook` 的 `BeforeModel` 方法直接修改 `*model.Request` 承担，而非 Policy。
 - 模型调用的观察（耗时、token 用量、错误）也走 hook，不在 Policy 类型系统里。
 - Hook 与 Policy 关注点互补：Hook 观察/扩展、可改写模型请求；Policy 裁决工具调用。
 

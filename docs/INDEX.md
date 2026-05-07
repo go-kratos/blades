@@ -11,7 +11,7 @@
 - [Blades AgentOS Framework 设计蓝图](./design-agent-framework.md) - AgentOS 总体目标、包边界、依赖图和迁移阶段 `[draft]`
 - [Event 系统与 Agent Loop](./design-event-agent-loop.md) - Event/Message 分层、Agent Loop 顺序流程与行为事件 hook、Event/Message 转换边界 `[draft]`
 - [工具系统](./design-tool-system.md) - `tools/` 接口（Spec+Handle 两方法）、Result、Resolver、Filter 和执行上下文 `[draft]`
-- [扩展与 Hook 系统](./design-hook-extension.md) - core sealed hook 事件、单一 Hook 接口与应用事件隔离 `[draft]`
+- [扩展与 Hook 系统](./design-hook-extension.md) - 单 `hook.Hook` 接口（6 个生命周期方法：BeforeModel/AfterModel/BeforeTool/AfterTool/BeforeTurn/AfterTurn）+ `hook.Noop` 嵌入式默认实现、指针改写、Abort 三件套、应用事件隔离 `[draft]`
 - [会话与持久化](./design-session.md) - Session 接口（6 方法纯追加）、`*Message` 载荷、与 compaction 解耦、fork/replay 走 NewSession+WithMessages `[draft]`
 - [Policy 与交互模式边界](./design-policy-mode.md) - 单一 Policy.Check 接口与应用层模式边界 `[draft]`
 - [Agent 组合与编排](./design-agent-orchestration.md) - `flow/` 组合（Sequential/Parallel/Loop/Routing/Deep）与多 Agent 边界 `[draft]`
