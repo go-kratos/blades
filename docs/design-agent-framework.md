@@ -100,7 +100,7 @@ Core 保留两类 capability context helper：
 - `session.NewContext` / `session.FromContext`：当前会话。
 - `agent.NewContext` / `agent.FromContext`：当前 Agent 内省（name、parent、depth）。
 
-工具自身通过 `tools.NewContext` / `tools.FromContext` 取得每次调用的 `ToolContext`（`ID` / `Name`），由 ToolExecutor 在调用 `Tool.Handle` 前注入；`ToolContext` 仅暴露调用元数据，不承载控制信号。Resolver、Allowed 列表等 Agent 级运行时能力通过 `agent.FromContext(ctx)` 暴露的运行时上下文获取。工具签名仍为 `Handle(ctx context.Context, input json.RawMessage)`。控制流信号通过 sentinel error 返回，由 ToolExecutor 翻译为专用 sealed Output 帧 `event.LoopExit` / `event.Handoff`，紧跟在产生它的 `event.ToolEnd` 之后发出（参见 [design-tool-system.md](design-tool-system.md) §6 与 [design-event-agent-loop.md](design-event-agent-loop.md) §4.2）。
+工具自身通过 `tools.NewContext` / `tools.FromContext` 取得每次调用的 `ToolContext`（`ID` / `Spec`），由 ToolExecutor 在调用 `Tool.Handle` 前注入；`ToolContext` 仅暴露调用元数据，不承载控制信号。Resolver、Allowed 列表等 Agent 级运行时能力通过 `agent.FromContext(ctx)` 暴露的运行时上下文获取。工具签名仍为 `Handle(ctx context.Context, input json.RawMessage)`。控制流信号通过 sentinel error 返回，由 ToolExecutor 翻译为专用 sealed Output 帧 `event.LoopExit` / `event.Handoff`，紧跟在产生它的 `event.ToolEnd` 之后发出（参见 [design-tool-system.md](design-tool-system.md) §6 与 [design-event-agent-loop.md](design-event-agent-loop.md) §4.2）。
 
 **可入 context 三准则（硬约束）**：任何想进入核心 context 的 capability 必须**同时**满足：
 
@@ -252,7 +252,7 @@ blades/
 │   ├── result.go               Result{Parts []content.Part}（错误走 Handle error 第二返回值，IsError 由 Loop 在 err!=nil 时设置）
 │   ├── resolver.go             Resolver
 │   ├── filter.go               ToolFilter（纯集合操作，留在 tools/）+ ReadOnly/AllowOnly/Disallow/And/Or
-│   ├── context.go              ToolContext 接口（ID/Name，per-invocation 元数据，不含 Actions/SetAction）+ NewContext / FromContext 标准 stdlib 风格 helper
+│   ├── context.go              ToolContext 接口（ID/Spec，per-invocation 元数据，不含 Actions/SetAction）+ NewContext / FromContext 标准 stdlib 风格 helper
 │   └── errors.go               sentinel error（ErrLoopExit / ErrHandoff）；ToolExecutor 翻译为 `event.LoopExit` / `event.Handoff` 专用 Output 帧
 │
 ├── prompt/
@@ -384,7 +384,7 @@ contrib/*   -> model/ 或 tools/
 | `content` | `Part`（sealed marker：私有 `part()`），`Text`，`Blob{MIME, Source}`，`BlobSource`（sealed：`blobSource()`），`InlineBytes`，`URI`，`FileID`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.Text{Text: "hi"}` |
 | `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `PartStart`, `PartDelta`, `PartEnd`, `ToolStart`, `ToolDelta`, `ToolEnd`, `LoopExit{ToolID,ToolName,Escalate}`, `Handoff{ToolID,ToolName,Agent,Carry}`, `TurnEnd`, `Error`, `Done`；构造糖：`NewPromptText`, `NewSteerText` | `event.NewPromptText("hi")` |
 | `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `Provider`(Name+Generate+Stream，Stream 返回 `iter.Seq2[*Chunk,error]`), `TokenCounter`(Count→Usage，按能力探测), `EmbeddingProvider`, `Request{Model, System string, Messages []*Message, Tools []ToolSpec, Options []Option}`, `Response{Message *Message, StopReason, Usage}`, `Chunk{Parts []content.Part, StopReason, Usage *Usage}`, `Option` sealed（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`）, `ToolSpec`, `Usage`, `StopReason`, `Collect`, `MergeOptions` | `model.Provider` |
-| `tools` | `Tool`(Spec+Handle 两方法), `ToolSpec`(=model.ToolSpec), `Result`(`Parts: []content.Part`), `ReadOnlyTool` / `DestructiveTool` / `StreamingTool`（仅 3 个可选能力接口）, `Resolver`(List+Resolve), `ToolFilter`, `ToolContext`(ID+Name), `NewContext`, `FromContext`, `ErrLoopExit`, `ErrHandoff`（sentinel 由 ToolExecutor 翻译为 `event.LoopExit` / `event.Handoff`） | `tools.Tool` |
+| `tools` | `Tool`(Spec+Handle 两方法), `ToolSpec`(=model.ToolSpec), `Result`(`Parts: []content.Part`), `ReadOnlyTool` / `DestructiveTool` / `StreamingTool`（仅 3 个可选能力接口）, `Resolver`(List+Resolve), `ToolFilter`, `ToolContext`(ID+Spec), `NewContext`, `FromContext`, `ErrLoopExit`, `ErrHandoff`（sentinel 由 ToolExecutor 翻译为 `event.LoopExit` / `event.Handoff`） | `tools.Tool` |
 | `prompt` | `Builder`(接口), `Section`(函数类型), `Static`/`Dynamic`/`System`/`Memory` 工厂, `New` | `prompt.Builder` |
 | `flow` | `NewSequentialAgent`/`NewParallelAgent`/`NewLoopAgent`/`NewRoutingAgent`/`NewDeepAgent` 与对应 `*Config` 结构体（不含 `NewAgentTool`，`NewAgentTool` 由根包提供） | `flow.NewParallelAgent(cfg)` |
 | `middleware` | `InputMiddleware`, `OutputMiddleware` | `middleware.InputMiddleware` |
@@ -516,7 +516,7 @@ v1 核心保留五个组合原语 + 一个 Agent→Tool 适配器：
 ### 阶段 3：tools/policy/hook
 
 - [ ] 精简 `tools.Tool` 为两方法接口（`Spec() ToolSpec` + `Handle(ctx, input json.RawMessage) (*Result, error)`），`ToolSpec` 与 `model.ToolSpec` 同构；保留 3 个可选能力接口 `ReadOnlyTool` / `DestructiveTool` / `StreamingTool`；`tools.Result.Parts: []content.Part` 直接复用 content/，错误走 Handle error 第二返回值
-- [ ] 实现 ToolFilter、Resolver、StreamingToolExecutor；`tools/context.go` 提供 `ToolContext` 接口（`ID` / `Name`）与 `NewContext` / `FromContext`；`tools/errors.go` 提供 `ErrLoopExit`/`ErrHandoff` sentinel（ToolExecutor 翻译为 `event.LoopExit` / `event.Handoff` 专用 Output 帧）
+- [ ] 实现 ToolFilter、Resolver、StreamingToolExecutor；`tools/context.go` 提供 `ToolContext` 接口（`ID` / `Spec`）与 `NewContext` / `FromContext`；`tools/errors.go` 提供 `ErrLoopExit`/`ErrHandoff` sentinel（ToolExecutor 翻译为 `event.LoopExit` / `event.Handoff` 专用 Output 帧）
 - [ ] 实现 `policy.Policy` 单方法接口 + 内置工厂（Chain/Budget/RateLimit/SafetyCheck），v1 唯一请求为 `ToolRequest`（不引入 sealed `Request`）
 - [ ] 实现 SafetyChecker、BudgetPolicy、RateLimiter
 - [ ] 实现 `hook.Hook`：sealed hook events 全集、单一 Hook 接口、`OnPreModelCall`/`OnPostToolCall` 等返回 `Hook` 的泛型 helper；Registry 如有需要由应用层实现并作为一个 `hook.Hook` 注入

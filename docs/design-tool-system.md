@@ -166,8 +166,8 @@ type Resolver interface {
 // ToolContext 暴露当前工具调用的运行时元数据，由 ToolExecutor 在调用 Tool.Handle
 // 之前注入到 ctx；不承载控制信号（控制流统一走 sentinel error）。
 type ToolContext interface {
-    ID() string   // 当前 tool call 的唯一 ID（与 event.ToolStart/ToolEnd.ToolID 同源）
-    Name() string // 当前工具名（与 Tool.Spec().Name 一致）
+    ID() string       // 当前 tool call 的唯一 ID（与 event.ToolStart/ToolEnd.ToolID 同源）
+    Spec() ToolSpec   // 当前工具的完整声明（Name 与 event.ToolStart/ToolEnd.ToolName 一致）
 }
 
 func NewContext(ctx context.Context, tc ToolContext) context.Context
@@ -200,7 +200,7 @@ func (e *ErrHandoff) Error() string { return "tools: handoff to " + e.Agent }
 
 1. sentinel error 仅承载控制信号，不包含业务负载；如果模型仍需要工具结果文本，由 `ToolExecutor` 在识别 sentinel 后合成默认成功 payload，写入 `ToolEnd.Result.Parts`。
 2. 控制信号集合受协议层管控：新增控制语义必须在本设计文档中显式定义新的 sentinel error **与对应的 sealed Output 变体**（在 `event/` 包中），再由 `ToolExecutor` 和对应 flow agent 同时支持；不再使用 `map[string]any` + 字符串 key。
-3. 工具实现通过 `tc, ok := tools.FromContext(ctx)` 获取当前 `ToolContext`（`ID` / `Name`）；`ToolContext` 仅暴露调用元数据，不再承载 `Actions` / `SetAction` 等控制信号——控制流一律走 sentinel error 与 sealed Output 帧。Resolver、allowed list 等 Agent 级运行时能力仍保留在 root/agent 层，通过 `Invocation` 或 `agent.FromContext` 暴露，不与 `tools.ToolContext` 混淆。
+3. 工具实现通过 `tc, ok := tools.FromContext(ctx)` 获取当前 `ToolContext`（`ID` / `Spec`）；`ToolContext` 仅暴露调用元数据，不再承载 `Actions` / `SetAction` 等控制信号——控制流一律走 sentinel error 与 sealed Output 帧。Resolver、allowed list 等 Agent 级运行时能力仍保留在 root/agent 层，通过 `Invocation` 或 `agent.FromContext` 暴露，不与 `tools.ToolContext` 混淆。
 4. **控制信号不进入 `model.Message` 也不进入 `Session`**：协议层 `model.Message` 严格保持 protocol-only；运行时控制信号仅以 `event.LoopExit` / `event.Handoff` 帧出现在 Output 流上，由 flow 编排层与 hook 读取（hook 侧对应 `hook.LoopExit` / `hook.Handoff` 同源同步触发，详见 [design-hook-extension.md](design-hook-extension.md)）。
 
 ## 7. 工具执行编排边界
@@ -217,7 +217,7 @@ ToolExecutor 负责：
 
 - 通过 Agent 持有的 `tools.Resolver`（或 `Invocation.Tools`）查找工具。
 - 执行 policy 检查与 `ToolFilter` 裁剪。
-- 在调用 `Tool.Handle` 之前，通过 `tools.NewContext(ctx, tc)` 注入当前 `ToolContext`（携带本次 tool call 的 `ID` / `Name`，与同源 `event.ToolStart`/`event.ToolEnd` 字段对齐）。
+- 在调用 `Tool.Handle` 之前，通过 `tools.NewContext(ctx, tc)` 注入当前 `ToolContext`（携带本次 tool call 的 `ID` 与 `Spec`，其中 `Spec().Name` 与同源 `event.ToolStart`/`event.ToolEnd.ToolName` 字段对齐）。
 - 调用 `Tool.Handle`；当工具同时实现 `StreamingTool` 时优先使用 `Stream`，按增量语义累积 Parts。
 - 识别 sentinel error（`ErrLoopExit` / `ErrHandoff`），在 `event.ToolEnd` 之后紧跟发出 `event.LoopExit` / `event.Handoff` 控制帧，并在需要时为模型 tool-message 合成默认成功 payload。
 - 将结果转换为 `event.ToolEnd`，把多模态 `Result.Parts` 序列化进 provider 期望的 tool-message 内容（v1：纯文本拼接；`content.Blob` 以 `{"mime":..,"data_base64":..}` JSON 信封内嵌；provider 原生多模态编码留给后续迭代）。
