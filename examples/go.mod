@@ -1,6 +1,6 @@
 module github.com/go-kratos/blades/examples
 
-go 1.24.6
+go 1.25.0
 
 replace (
 	github.com/go-kratos/blades => ../

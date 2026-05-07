@@ -2,6 +2,7 @@ package blades
 
 import (
 	"context"
+	"sync/atomic"
 )
 
 // RunOption defines options for configuring the Runner.
@@ -57,11 +58,12 @@ func NewRunner(rootAgent Agent, opts ...RunnerOption) *Runner {
 // buildInvocation constructs an Invocation object for the given message and options.
 func (r *Runner) buildInvocation(message *Message, stream bool, o *RunOptions) *Invocation {
 	return &Invocation{
-		ID:      o.InvocationID,
-		Session: o.Session,
-		Resume:  o.Resume,
-		Stream:  stream,
-		Message: message,
+		ID:        o.InvocationID,
+		Session:   o.Session,
+		Resume:    o.Resume,
+		Stream:    stream,
+		Message:   message,
+		committed: new(atomic.Bool),
 	}
 }
 
