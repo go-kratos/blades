@@ -226,6 +226,57 @@ core 不内置 Plan、Accept、Auto 模式。应用通过组合实现：
 - **Accept**：Policy 对破坏性工具或 Input 命中敏感规则的调用返回 `Ask`；UI 拿到 `Ask` 事件让用户确认，确认后重新提交（必要时附加 `Metadata` 表示已批准）。
 - **Auto**：组合 Budget / RateLimit / SafetyCheck / 工具能力裁决 Policy，在允许范围内自动执行；预算用尽 → `Deny`；触达限流 → `Deny` 或 `Ask`。
 
+## 内置工具决策矩阵
+
+本节给出 `read` / `write` / `edit` / `bash` / `find` / `grep` / `ls` 在四种典型 Policy 配置下的决策结果，作为应用组合的参考。能力标注（`ReadOnly` / `Destructive`）取自 [design-tool-system.md §4.1 内置工具能力标注](design-tool-system.md#41-内置工具能力标注参考)。
+
+矩阵遵循"能力标注做粗筛、Input 解析做细筛"的两层结构：所有非平凡决策都由 `policy.Policy` 在 `ToolRequest` 边界完成，`tools.Tool` 实现不感知 policy。
+
+### 模式与决策
+
+| 工具    | 默认（仅能力标注） | Plan（计划阶段） | Accept（确认模式） | Auto（沙箱内自动） |
+| ------- | ------------------ | ---------------- | ------------------ | ------------------ |
+| `ls`    | Allow              | Allow            | Allow              | Allow              |
+| `find`  | Allow              | Allow            | Allow              | Allow              |
+| `grep`  | Allow              | Allow            | Allow              | Allow              |
+| `read`  | Allow              | Allow            | Allow              | Allow（路径越界 → Modify 重写到沙箱，无法重写则 Deny）|
+| `write` | Allow（依赖 policy 进一步裁决）| Deny | Ask | Allow（路径越界 → Deny；预算/限流命中 → Deny 或 Ask）|
+| `edit`  | Allow（依赖 policy 进一步裁决）| Deny | Ask | Allow（路径越界 → Deny；预算/限流命中 → Deny 或 Ask）|
+| `bash`  | Allow（依赖 policy 进一步裁决）| Deny | 见下方 command allowlist | 见下方 command allowlist |
+
+说明：
+
+- **默认列**仅基于能力标注作粗筛——`ReadOnly=true` 的工具直接 Allow；`Destructive=true` 的工具不会被自动拒绝，需要应用追加细粒度 policy 才有意义，因此默认列对它们标记"Allow（依赖 policy 进一步裁决）"。
+- **Plan**：通过组合 prompt section 让模型先输出计划；policy 对所有 `Destructive=true` 的工具一律返回 `Deny`，只允许 `ReadOnly=true` 工具执行。
+- **Accept**：policy 对 `Destructive=true` 的工具返回 `Ask`，由 UI 拿到 Ask 事件让用户确认；确认后重新提交（必要时附加 `Decision.Metadata` 表示已批准）。
+- **Auto**：在沙箱/工作区根、预算与限流约束下尽量自动执行；典型组合 `Chain(PathAllowlist, Budget, RateLimit, SafetyCheck)`。路径越界对 `read` 这类 ReadOnly 工具可考虑 `Modify`（把路径重写到沙箱根内）；对 `Destructive` 工具则直接 `Deny` 或 `Ask`。OS 级隔离 / 远程沙箱 / 单次调用资源配额不在 policy 边界，落点见 [design-tool-system.md §8 沙箱与隔离](design-tool-system.md#8-沙箱与隔离)。
+
+### bash 的 command allowlist 语义
+
+`bash` 在能力接口上保守标注 `Destructive=true`，但实际语义高度依赖 `Input.command`。推荐在 policy 实现中按命令名分流：
+
+| 命令类别       | 示例                                         | Accept 行为 | Auto 行为                    |
+| -------------- | -------------------------------------------- | ----------- | ---------------------------- |
+| 只读查询       | `ls`, `cat`, `pwd`, `grep`, `find`, `wc`     | Allow       | Allow                        |
+| 信息型版本控制 | `git status`, `git diff`, `git log`          | Allow       | Allow                        |
+| 网络只读       | `curl -I`, `ping -c`                         | Ask         | Deny（默认 Auto 不出网）      |
+| 写入型         | `git commit`, `npm install`, `make`          | Ask         | Deny 或 Ask（看预算/沙箱）   |
+| 高危/不可逆    | `rm`, `mv`, `dd`, `chmod -R`, `sudo`, `kill` | Ask         | Deny                         |
+| 未知命令       | 白名单未覆盖                                 | Ask         | Deny                         |
+
+约束：
+
+1. 命令分流策略由 policy 实现承载，core 不内置具体清单；应用应根据自身风险模型定义白名单。
+2. 解析 `Input.command` 时仅按**命令名**匹配，不深入解析参数模式（如 `git push --force`）。需要更细粒度时，应用可继续在 policy 内做 ad-hoc 校验，但不属于 v1 推荐范围。
+3. 即便是只读命令，Auto 模式仍受 `Budget` / `RateLimit` 约束；命中预算或限流时返回 `Deny` 或 `Ask`，不影响命令本身的语义分类。
+4. `Modify` 不用于改写 `bash` 的命令名（会破坏调用点契约对 `Tool` 不变的约束）；只允许改写参数或工作目录等 `Input` 字段（例如把 `cwd` 锁到沙箱根）。
+
+### 与本文其它章节的关系
+
+- 决策语义沿用 [Policy 接口与 Decision](#policy-接口与-decision) 的 `Allow/Deny/Ask/Modify` 四元；`Modify` 仍受 [ToolRequest 调用点契约](#toolrequest-调用点契约) 的约束（仅改 `Input`）。
+- 模式行为与 [应用层交互模式](#应用层交互模式) 一致，本节仅给出针对这组工具的具体取值。
+- 矩阵不进入 core；core 只提供 `Chain` / `Budget` / `RateLimit` / `SafetyCheck` 等可组合原语。
+
 ## 设计决策
 
 1. **v1 Policy 仅工具裁决**：唯一边界是 `ToolRequest`，不引入 `Request` sealed union 与 `ModelRequest`，模型侧改写交给 hook，模型预算/限流交给 middleware。带来的好处：核心类型最小，工具是模型唯一的副作用接触面，能力标注 + Input 解析已足够。
