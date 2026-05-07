@@ -271,7 +271,19 @@ type Agent interface {
 单 turn 推荐流程：
 
 1. 收到 `Prompt`，触发 `Hook.BeforeTurn`，并 append user prompt（一次 `Session.Append`）。
-2. 构建第 0 个 model step 的 `*model.Request`（通过 `RequestBuilder`：snapshot session → prompt builder → compactor → 组装 request）。
+2. 构建第 0 个 model step 的 `*model.Request`。`RequestBuilder` 内部按以下有序 pipeline 执行——**先 compact 再 prompt**，两段产物在最后汇合：
+   ```
+   snapshot := session.Messages(ctx)            // 1. 全量原始消息（append-only 快照）
+   view     := compactor.Compact(ctx, snapshot) // 2. 仅作用于 messages 段；
+                                                //    Compactor 自身决定短路 / 增量 / 迭代折叠
+   system   := prompt.Builder.Build(ctx)        // 3. 构建 system 段；memory.Recall 在此处发生
+   request  := &model.Request{
+       System:   systemTextFrom(system),        // memory 召回结果在 system 内
+       Messages: view + turnLocalPending,       // compact 视图 + 本 turn 内未持久化的 part
+       Tools, Options,
+   }
+   ```
+   关键约束：Compactor 仅看 `Messages`、prompt builder 仅看 `System`，二者互不感知；预算分摊由应用层三段（System / Messages / Response）控制，core 不内置裁剪兜底。详见 [design-compact.md](design-compact.md) §与 Memory 的关系。
 3. 触发 `Hook.BeforeModel`，调用 `model.Provider.Stream(ctx, req)`。
 4. 消费 provider stream，将文本、思考、多模态 part 和 tool use 转为 `event.Output`。
 5. 触发 `Hook.AfterModel`，输出 `StepEnd`。
@@ -328,9 +340,20 @@ Session 历史只追加 protocol-only 的 `model.Message`，并以"语义组"为
 2. **每个 model step + tool wave 完成后**：将本 step 的 `assistant` 消息与同 step 全部 `tool` 结果消息作为一组，调用一次 `Append(ctx, assistantMsg, toolResultMsgs...)`。该组写入是 step 级原子单元，避免崩溃留下"有 tool_call 但无 tool_result"的半截历史。
 3. final assistant message 完成且无新工具调用后输出 `TurnEnd`。
 
-**不写回 Session 的内容**：compact view、summary、被截断的 tool result 视图、以及 `event.LoopExit` / `event.Handoff` 等运行时控制信号——这些由 `RequestBuilder` 在每次构造 `*model.Request` 时按需生成（见 [design-compact.md](design-compact.md)）；控制信号仅出现在 Output 流上。Compactor 的 rolling state 通过 `session.State()` 的私有 key 持久化，与协议历史正交。
+**不写回 Session 的内容**：compact view、summary、被截断的 tool result 视图、以及 `event.LoopExit` / `event.Handoff` 等运行时控制信号——这些由 `RequestBuilder` 在每次构造 `*model.Request` 时按需生成（见 [design-compact.md](design-compact.md)）；控制信号仅出现在 Output 流上。Compactor 的 rolling state 通过 `session.State()` 的私有 key（保留前缀 `__compact_*__`，参见 [design-session.md](design-session.md) §State 键命名空间）持久化，与协议历史正交，不会出现在 `Session.Messages()` 中。
 
 Stateless mode 不读取 session history，但仍维护 turn-local transcript 以支持多 step 工具循环。Compact 只在构建 request 前运行，输入是 session 快照 + turn-local pending parts，输出必须满足 provider message invariant。
+
+### 上下文超长的两层兜底
+
+provider 真实 token 计费与 Compactor 的 `TokenCounter` 估算之间总会存在偏差，因此在 Compactor 自身的[迭代压缩契约](design-compact.md#迭代压缩契约)之上，Loop 再提供一层 step 间的 hint 重试：
+
+| 层级 | 触发主体 | 触发条件 | 行为 |
+|------|----------|----------|------|
+| Step 内迭代 | Compactor 自身 | 当前视图估算超 `MaxTokens` | 在单次 `Compact` 调用内循环折叠批次（推进 offset / 调 Summarize LLM）直到 ① 满足预算 ② offset 抵达 `len(msgs) - KeepRecent` 无可压区 ③ 触发安全阀 |
+| Step 间 hint | Agent Loop | provider 实际返回 context-too-long 类错误 | Loop 透传 `compact.WithHint(ctx, HintShrink)` 重新进入**同一 step 的第二次** `RequestBuilder`；Compactor 在 hint 模式下必须返回 token 严格单调下降的视图。最大重试 1 次；仍未下降 → `event.Error` fail-fast 终止 turn |
+
+两层是正交关系，不互相替代：step 内迭代解决"按预算逼近"，step 间 hint 解决"估算与真实账本之间的最后一公里"。Loop 不在估算阶段做任何阈值判断（保持 [触发时机](design-compact.md#触发时机) 中"Loop 无条件调用、Compactor 自适应"的契约）。
 
 ## 与红线对照
 

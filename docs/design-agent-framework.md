@@ -467,11 +467,18 @@ v1 核心保留五个组合原语 + 一个 Agent→Tool 适配器：
 
 `session.Session` 面向 Agent Loop，提供消息历史的最小操作集（`ID/Metadata/State/SetState/Append/Messages` 6 方法 append-only），不存在 `Truncate / Replace / Checkpoint / Store` 概念。常用 fork 由根包 helper `blades.Fork(ctx, src, opts...)` 提供（薄包装 `NewSession + WithMessages + WithMetadata`），不是接口的一部分。JSONL、SQLite、Redis 等持久化后端独立暴露自身 API，不在 `session/` 包内置。详见 [design-session.md](design-session.md)。
 
-`compact.Compactor` 是一个纯函数式接口 `Compact(ctx, []*Message) ([]*Message, error)`。Loop 在每个 model step 构建 `*model.Request` 之前**无条件**调用一次 `Compact`，由 Compactor 自身决定短路（已在预算内零成本透传）或工作（增量摘要、窗口裁剪、tool result 截断）。Compactor 永不写回 Session；其滚动状态（如 summarize 的 offset / summary 内容）通过 `Session.State()` 私有 key（`__compact_summary_offset__` / `__compact_summary_content__`）持久化。provider 返回 context-too-long 时 Loop 通过 `compact.WithHint(ctx, HintShrink)` 透传 hint，要求 Compactor 返回严格单调下降视图；不下降则 fail-fast。详见 [design-compact.md](design-compact.md) §触发时机 与 [design-event-agent-loop.md](design-event-agent-loop.md) §9。
+`compact.Compactor` 是一个纯函数式接口 `Compact(ctx, []*Message) ([]*Message, error)`。Loop 在每个 model step 构建 `*model.Request` 之前**无条件**调用一次 `Compact`，由 Compactor 自身决定短路（已在预算内零成本透传）或工作（增量摘要、窗口裁剪、tool result 截断）。Compactor 永不写回 Session；其滚动状态（如 summarize 的 offset / summary 内容）通过 `Session.State()` 私有 key（`__compact_summary_offset__` / `__compact_summary_content__`）持久化。详见 [design-compact.md](design-compact.md) §触发时机 与 [design-event-agent-loop.md](design-event-agent-loop.md) §9。
 
-`RequestBuilder` 是 Session / Prompt / Compact 与 `*model.Request` 之间的**唯一边界**：`snapshot ← session.Messages(ctx)`；`systemParts ← prompt.Builder.Build(ctx)`；`view ← compactor.Compact(ctx, snapshot)`；最终 `*model.Request{System: systemTextFrom(systemParts), Messages: view + turn-local pending, Tools, Options}`。应用层可通过 `WithRequestBuilder` 替换默认实现。
+**增量与迭代两个契约支撑"按需控制上下文大小"**：
+
+- **增量压缩**：Session append-only ⇒ 消息下标稳定 ⇒ Compactor 仅需在 `Session.State()` 中维护单调递增的 `offset` 即可区分"已压缩区"与"未压缩区"，每次只对 `msgs[offset:]` 中新增的部分做工作，不会重复对已折叠的历史调用摘要 LLM。详见 [design-compact.md](design-compact.md) §增量压缩契约、[design-session.md](design-session.md) §为什么 append-only 是增量压缩的前提。
+- **迭代压缩 + Hint 重试两层兜底**：单次 `Compact` 调用内部循环折叠批次直到 ① 满足预算 ② `offset` 抵达 `len(msgs) - KeepRecent` 无可压区 ③ 触发安全阀（Step 内）；provider 真实仍报 context-too-long 时由 Loop 透传 `HintShrink` 重试 1 次（Step 间），仍未严格下降则 fail-fast `event.Error`。两层正交不互相替代。详见 [design-compact.md](design-compact.md) §迭代压缩契约、[design-event-agent-loop.md](design-event-agent-loop.md) §上下文超长的两层兜底。
+
+`RequestBuilder` 是 Session / Prompt / Compact 与 `*model.Request` 之间的**唯一边界**，内部按有序 pipeline 装配——**先 compact 再 prompt**：`snapshot ← session.Messages(ctx)`；`view ← compactor.Compact(ctx, snapshot)`；`systemParts ← prompt.Builder.Build(ctx)`（memory 召回在此发生）；最终 `*model.Request{System: systemTextFrom(systemParts), Messages: view + turn-local pending, Tools, Options}`。Compactor 仅看 messages、prompt builder 仅看 system，二者互不感知。应用层可通过 `WithRequestBuilder` 替换默认实现。
 
 `memory/` 提供 `Memory` 接口（`Recall + Remember + Forget` 三方法，全部使用 variadic option），不在根 Agent 内置。应用层在 prompt builder 中调用 `memory.Recall` 注入相关记忆，在 turn 结束后调用 `memory.Remember` 抽取写入，并在用户撤回 / TTL 过期 / 人工纠错时调用 `memory.Forget` 删除条目（必须显式 IDs 或 Filter，禁止无参全清）。Memory 不进根 Agent 配置；保持根包极简。
+
+**Memory 与 Compact 解耦**：Memory 召回结果通过 `prompt.Memory` section 进入 `Request.System`，与 Compactor 作用的 `Request.Messages` **完全正交**——Compactor 不会再次裁剪 memory 段；memory 体量控制（`WithLimit`、section 内 token 估算）由 memory 实现与应用层负责，core 不做兜底。建议应用层把 provider 上下文上限三段分摊：`SystemBudget`（含 memory）/ `MessagesBudget`（compact 的 `MaxTokens`）/ `ResponseReserve`，分别注入 prompt 与 compact 配置。详见 [design-memory.md](design-memory.md) §与 Compact 的边界、[design-compact.md](design-compact.md) §与 Memory 的关系。
 
 ## 子文档职责
 

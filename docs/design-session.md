@@ -104,6 +104,30 @@ Session 与 compaction **完全解耦**：
   4. provider 返回的 final assistant 消息与本 step 的全部 tool 结果作为一个语义组通过一次 `Append` 写回 Session（仍然是完整原始消息，不是压缩后的视图）
 - compactor 的滚动状态（如 summarize 的 `offset` / `summaryContent`）通过 `Session.State()` 持久化，避免每轮重算。参见 [design-compact.md](design-compact.md) §3。
 
+### 为什么 append-only 是增量压缩的前提
+
+Session 一旦 `Append`，已存在消息在 `Messages()` 返回切片中的下标就保持稳定，不会因后续追加前移、也不会被原地修改或删除。这一不变量直接支撑了 Compactor 的**增量摘要**实现：
+
+- Compactor（典型为 `Summarize`）只需要在 `Session.State()` 中维护一个**单调递增**的 `offset`，即可在每次调用中精确区分"已压缩区 `msgs[:offset]`"与"未压缩区 `msgs[offset:]`"，无需对消息做内容指纹或显式 ID 追踪。
+- 每次 `Compact` 调用只对 `msgs[offset:]` 中**新增**的部分做工作（必要时调 LLM 折叠），把 `msgs[:offset]` 已折叠到的 `summaryContent` 直接复用——避免对同一段历史重复调用摘要 LLM。
+- 如果 Session 接口允许截断 / 覆盖 / 删除（即非 append-only），Compactor 就必须为每条消息分配稳定 ID 并维护映射，状态结构与失效语义会显著复杂化。append-only 把这部分复杂度直接消除。
+- 反过来，"撤销 / fork / A/B" 等"看似改写历史"的操作通过新建 Session（参见 §8）承载，新 Session 的 compactor state 也是独立的，不会污染原 Session 的 offset。
+
+详细的 offset 单调性、配对原子性、`KeepRecent` 硬上界、外部 reset 后回零等规则参见 [design-compact.md](design-compact.md) §增量压缩契约。
+
+### State 键命名空间
+
+`Session.State()` 是 agent 间共享 k/v 与策略层滚动状态的混合存储。为避免冲突，core **保留 `__` 双下划线前缀**作为内部命名空间：
+
+| 前缀 | 归属 | 用途 |
+|------|------|------|
+| `__compact_*__` | `compact/` 包私有 | Compactor 的滚动状态，例如 `__compact_summary_offset__` / `__compact_summary_content__` |
+| `__<corepkg>_*__` | core 其他子包预留 | 未来若需在 State 中存放运行时元数据（如 hint 缓存等） |
+
+应用层在 `SetState` 时**应避免使用 `__` 前缀**，以免与 core 私有键冲突或被 core 实现升级时覆盖。Session 实现自身不强校验前缀（保持接口最小），但 Compactor 等内部组件读写自己的键时必须遵守此约定。
+
+Compactor 的 state 键写入是 view-only 模型（参见上一段）下唯一允许的 Session 副作用，且与 message append 是不同 key 命名空间，互不污染——`Messages()` 返回的快照不会包含 state 内容，`State()` 不暴露消息历史。
+
 这种"view-only"模型的好处：
 
 - **审计与回放**：Session 永远保留完整真相，任何时点都能拿到原始消息列表。
