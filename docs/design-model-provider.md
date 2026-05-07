@@ -151,30 +151,35 @@ func (Sampling) isOption()        {}
 
 **默认值与覆盖优先级**：
 
-```go
-// Adapter 构造时设默认 options（provider 级）
-m := openai.NewModel("gpt-4o", openai.Config{
-    DefaultOptions: []model.Option{
-        model.Sampling{Temperature: ptr(0.7)},
-    },
-})
+adapter 构造采用 **Functional Options（`WithXxx`）** 风格表达默认值，由各 contrib provider 自行定义；`model/` 协议层不暴露这些 helper。请求级 `Request.Options` 覆盖 adapter 默认值。
 
-// 单次 Request.Options 覆盖（key 维度去重）
+```go
+// adapter 级默认值：通过 WithXxx 设置
+m := openai.NewModel("gpt-4o",
+    openai.WithTemperature(0.7),
+    openai.WithMaxTokens(2048),
+    openai.WithReasoningEffort("medium"),
+)
+
+// 请求级 hint：覆盖 adapter 默认值
 req := &model.Request{
-    System:  "you are a helpful assistant",
+    System: "you are a helpful assistant",
     Options: []model.Option{
         model.CacheHint{Scope: model.CacheScopeSystem, TTL: 5 * time.Minute},
-        model.Sampling{Temperature: ptr(0.2)}, // 覆盖默认 0.7
+        model.Sampling{Temperature: ptr(0.2)}, // 覆盖 adapter 默认 0.7
     },
 }
 ```
 
-合并规则（adapter 内部 helper `model.MergeOptions(defaults, request)` 实现）：
+优先级与合并规则：
 
-- 同一 Option 类型按"后者覆盖前者"，即 `Request.Options` 优先于 `DefaultOptions`。
+- **adapter 默认值（`WithXxx`） → `Request.Options` 覆盖**：adapter 内部把自身 `WithXxx` 累积的默认值与 `Request.Options` 合并后再下发。
+- 同一 Option 类型按"请求级覆盖默认级"。
 - `Sampling` 等多字段 Option **整体替换**，不做字段级 patch（避免歧义）。
 - `CacheHint` 在不同 `Scope` 下被视为不同 key，可叠加。
-- 不识别的 Option 由 adapter 静默忽略，便于跨 provider 共享一份 `Request`。
+- 不识别的 Option 由 adapter 静默忽略，便于跨 provider 共享同一份 `Request`。
+
+> 协议层只规定 `Request.Options` 的 sealed union 与上述优先级语义；adapter 构造时的 `WithXxx` 命名、粒度、是否暴露成 `Config` 结构体均由各 contrib provider 决定。
 
 **要点**：
 
