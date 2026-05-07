@@ -12,7 +12,7 @@
 - [Event 系统与 Agent Loop](./design-event-agent-loop.md) - Event/Message 分层、Agent Loop 顺序流程与行为事件 hook、Event/Message 转换边界 `[draft]`
 - [工具系统](./design-tool-system.md) - `tools/` 接口（Spec+Handle 两方法）、Result、Resolver、Filter 和执行上下文 `[draft]`
 - [扩展与 Hook 系统](./design-hook-extension.md) - core sealed hook 事件、Observer/Interceptor 二元划分和应用事件隔离 `[draft]`
-- [会话与持久化](./design-session.md) - Session 接口（5 方法）、CheckpointSession、Store 与持久化 `[draft]`
+- [会话与持久化](./design-session.md) - Session 接口（6 方法纯追加）、`*Message` 载荷、与 compaction 解耦、fork/replay 走 NewSession+WithMessages `[draft]`
 - [Policy 与交互模式边界](./design-policy-mode.md) - 单一 Policy.Check 接口与应用层模式边界 `[draft]`
 - [Agent 组合与编排](./design-agent-orchestration.md) - `flow/` 组合（Sequential/Parallel/Loop/AsTool）、Agent-as-Tool 和多 Agent 边界 `[draft]`
 - [Memory 系统](./design-memory.md) - Memory 接口（Recall+Remember）、应用层经 prompt.Memory 注入策略 `[draft]`
