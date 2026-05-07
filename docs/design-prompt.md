@@ -49,7 +49,7 @@ func Dynamic(fn func(context.Context) ([]content.Part, error)) Section
 
 func System(text string) Section
 
-func Memory(mem memory.Memory, query func(context.Context) (string, error)) Section
+func Memory(mem memory.Memory, query func(context.Context) (string, error), opts ...memory.RecallOption) Section
 ```
 
 语义：
@@ -57,7 +57,7 @@ func Memory(mem memory.Memory, query func(context.Context) (string, error)) Sect
 - `Static` 返回固定 part 序列。
 - `Dynamic` 在每次构建时执行函数，适合环境、时间、session 摘要和应用层状态。
 - `System` 标记系统说明文本；Builder 输出时仍表现为 part，Agent Loop 在请求组装阶段提取到 `model.Request.System`。
-- `Memory` 调用 `memory.Memory.Recall(ctx, query)`，把召回结果作为 Section 输出。
+- `Memory` 调用 `memory.Memory.Recall(ctx, query, opts...)`，把召回结果作为 Section 输出。`opts` 透传给 Memory 实现，常用形态包括 `memory.WithLimit(n)`、`memory.WithFilter(...)`。
 
 示例：
 
@@ -72,9 +72,13 @@ b := prompt.New(
         }
         return []content.Part{content.Text("Session: " + s.ID())}, nil
     }),
-    prompt.Memory(mem, func(ctx context.Context) (string, error) {
-        return "current task", nil
-    }),
+    prompt.Memory(
+        mem,
+        func(ctx context.Context) (string, error) {
+            return "current task", nil
+        },
+        memory.WithLimit(8),
+    ),
 )
 
 parts, err := b.Build(ctx)
@@ -136,5 +140,5 @@ Cache control 不进入 `model.Request` 顶层字段；走 `model.Request.Option
 ## 与红线对照
 
 - r24：`Builder.Build(ctx) ([]content.Part, error)` 与 `Section func(ctx) ([]content.Part, error)`。
-- r21：Memory 通过 `prompt.Memory(mem, query)` 注入 recall 结果，不进入 root Agent 配置。
+- r21：Memory 通过 `prompt.Memory(mem, query, ...memory.RecallOption)` 注入 recall 结果，不进入 root Agent 配置。Memory 接口本身固定为 Recall+Remember+Forget 三方法，详见 [design-memory.md](design-memory.md)。
 - r1-r3：遵守 `content.Part` sealed marker、`model.Message` 与 `model.Request` v1 协议形态。

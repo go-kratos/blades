@@ -15,13 +15,10 @@
 - [会话与持久化](./design-session.md) - Session 接口（6 方法纯追加）、`*Message` 载荷、与 compaction 解耦、fork/replay 走 NewSession+WithMessages `[draft]`
 - [Policy 与交互模式边界](./design-policy-mode.md) - 单一 Policy.Check 接口与应用层模式边界 `[draft]`
 - [Agent 组合与编排](./design-agent-orchestration.md) - `flow/` 组合（Sequential/Parallel/Loop/AsTool）、Agent-as-Tool 和多 Agent 边界 `[draft]`
-- [Memory 系统](./design-memory.md) - Memory 接口（Recall+Remember）、应用层经 prompt.Memory 注入策略 `[draft]`
+- [Memory 系统](./design-memory.md) - Memory 接口（Recall+Remember+Forget，全部 variadic option）、`Entry` 数据载体、应用层经 prompt.Memory 注入策略 `[draft]`
 - [Prompt 系统](./design-prompt.md) - Builder 接口 + Section 函数类型；Static/Dynamic/System/Memory 工厂 `[draft]`
 - [Compact 系统](./design-compact.md) - 单一 Compactor 接口与内置实现（Window/ToolResultBudget/Summarize/Chain） `[draft]`
 - [Model 与 Provider](./design-model-provider.md) - `model/` Message、Part、Provider（Name/Generate/Stream）、TokenCounter（按能力探测）、Request/Response/Chunk、Options sealed union `[draft]`
-- [流式协议最终态](./design-streaming-optimization.md) - v1 流式协议参考：`iter.Seq2` + `context.Context` 取消、Delta 路径与背压策略 `[draft]`
-- [Observability](./design-observability.md) - OTel 集成方案：通过 `contrib/otel` 提供 `hook.Hook`，核心包不引入 observability 抽象 `[draft]`
-- [Graph 定位](./design-graph.md) - 独立 DAG 子系统定位（graph→flow 单向硬边界） `[draft]`
 
 ## 参考文档
 
@@ -37,7 +34,6 @@
 - [Model 与 Provider](./design-model-provider.md)
 - [工具系统](./design-tool-system.md)
 - [会话与持久化](./design-session.md)
-- [流式协议最终态](./design-streaming-optimization.md)
 
 ### Capability
 
@@ -46,12 +42,10 @@
 - [Memory 系统](./design-memory.md)
 - [Prompt 系统](./design-prompt.md)
 - [Compact 系统](./design-compact.md)
-- [Observability](./design-observability.md)
 
 ### Composition
 
 - [Agent 组合与编排](./design-agent-orchestration.md)
-- [Graph 定位](./design-graph.md)
 
 ### Reference
 
@@ -60,7 +54,7 @@
 
 ## 文档状态统计
 
-- Draft: 14
+- Draft: 11
 - Review: 0
 - Approved: 0
 - Implemented: 0

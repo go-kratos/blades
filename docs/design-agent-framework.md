@@ -17,9 +17,6 @@ sub-docs:
   - design-policy-mode.md
   - design-agent-orchestration.md
   - design-memory.md
-  - design-observability.md
-  - design-graph.md
-  - design-streaming-optimization.md
 ---
 
 # Blades AgentOS Framework 设计蓝图
@@ -257,7 +254,7 @@ blades/
 │
 ├── prompt/
 │   ├── prompt.go               Builder 接口 + Section 函数类型（func(ctx) ([]content.Part, error)）+ New(sections...) Builder
-│   └── section.go              内置 Section 工厂：Static / Dynamic / System(text) / Memory(m, query, k)
+│   └── section.go              内置 Section 工厂：Static / Dynamic / System(text) / Memory(m, query, ...RecallOption)
 │
 ├── middleware/
 │   └── middleware.go           InputMiddleware / OutputMiddleware
@@ -289,8 +286,8 @@ blades/
 │   └── builtin.go              Chain/Budget/RateLimit/SafetyCheck 工厂函数（均返回 Policy）
 │
 ├── memory/
-│   ├── memory.go               Memory 接口（Recall+Remember 两方法）+ Item
-│   └── store.go                可选 Store 后端抽象（KV/向量库扩展点）
+│   ├── memory.go               Memory 接口（Recall+Remember+Forget 三方法，全部 variadic option）+ Entry
+│   └── store.go                可选 Store 后端抽象（Put/Search/Delete，对称 Memory 三方法）
 ├── graph/                      声明式 DAG 调度（节点+边+条件路由），与命令式 flow/ 互补不重叠
 │
 │   非核心（保留代码但不属于 14 个核心包）：
@@ -391,7 +388,7 @@ contrib/*   -> model/ 或 tools/
 | `policy` | `Policy`(Check 单方法), `Decision`, `Action`, `Request`(sealed), `ToolRequest`, `ModelRequest`, `ResourceRequest`, `Chain`/`Budget`/`RateLimit`/`SafetyCheck` 工厂函数 | `policy.Policy` |
 | `hook` | `Event`(sealed), `Hook`(Handle 单方法), `Observer`, `Interceptor`, `Chain`, `OnPreModelCall`/`OnPostModelCall`/`OnPreToolCall`/`OnPostToolCall`/`OnTurnStart`/`OnTurnEnd` 返回 `Hook` 的类型安全 helpers | `hook.Hook` |
 | `compact` | `Compactor`(单方法接口), `Chain`, `Window`, `ToolResultBudget`, `Summarize` | `compact.Compactor` |
-| `memory` | `Memory`(Recall+Remember), `Item`, `Store`(可选后端) | `memory.Memory` |
+| `memory` | `Memory`(Recall+Remember+Forget，全部 variadic option), `Entry`, `Store`(可选后端：Put/Search/Delete) | `memory.Memory` |
 
 ## 模块详细设计
 
@@ -467,7 +464,7 @@ v1 核心只保留两个通用原语：
 
 `compact.Compactor` 是一个纯函数式接口 `Compact(ctx, []*Message) ([]*Message, error)`，不感知触发时机（由 Loop 在 token 接近上限时调用）。内置实现 `ToolResultBudget` / `Summarize` / `Window` 都满足 Compactor，通过 `Chain` 串联组合。每个实现自身负责保护 provider message invariant（共享 `internal/convert.ValidateMessages` helper）。
 
-`memory/` 提供 `Memory` 接口（Recall+Remember 两方法），不在 root Agent 内置。应用层在 prompt builder 中调用 `memory.Recall` 注入相关记忆，在 turn 结束后调用 `memory.Remember` 抽取写入。Memory 不进根 Agent 配置；保持根包极简。
+`memory/` 提供 `Memory` 接口（Recall+Remember+Forget 三方法，全部使用 variadic option），不在 root Agent 内置。应用层在 prompt builder 中调用 `memory.Recall` 注入相关记忆，在 turn 结束后调用 `memory.Remember` 抽取写入，并在用户撤回 / TTL 过期 / 人工纠错时调用 `memory.Forget` 删除条目（必须显式 IDs 或 Filter，禁止无参全清）。Memory 不进根 Agent 配置；保持根包极简。
 
 ## 子文档职责
 
@@ -484,10 +481,7 @@ v1 核心只保留两个通用原语：
 | [design-session.md](design-session.md) | Session 接口（5 方法）、CheckpointSession、Store 与持久化（JSONL）|
 | [design-policy-mode.md](design-policy-mode.md) | policy core（开放 `Request` 接口、依赖协议层）与应用交互模式边界 |
 | [design-agent-orchestration.md](design-agent-orchestration.md) | `flow/` 组合、Agent-as-Tool 和多 Agent 边界 |
-| [design-memory.md](design-memory.md) | `memory.Memory` 接口（Recall+Remember）、应用层注入策略与异步抽取边界 |
-| [design-observability.md](design-observability.md) | OTel 集成方案：通过 `contrib/otel` 提供 `hook.Hook` 监听 PreModelCall/PostModelCall/PreToolCall/PostToolCall/TurnStart/TurnEnd |
-| [design-graph.md](design-graph.md) | 独立 DAG 子系统定位和与 Agent 的桥接方式 |
-| [design-streaming-optimization.md](design-streaming-optimization.md) | v1 流式协议参考：`iter.Seq2` + `context.Context` 取消、Delta 路径与背压策略 |
+| [design-memory.md](design-memory.md) | `memory.Memory` 接口（Recall+Remember+Forget，全部 variadic option）、`Entry` 数据载体、应用层注入策略与异步抽取/遗忘边界 |
 
 ## 实现计划
 
@@ -559,8 +553,5 @@ v1 核心只保留两个通用原语：
 - [Policy 与交互模式边界](design-policy-mode.md)
 - [Agent 组合与编排](design-agent-orchestration.md)
 - [Memory 系统](design-memory.md)
-- [Observability](design-observability.md)
-- [Graph 定位](design-graph.md)
-- [流式协议最终态](design-streaming-optimization.md)
 - [Claude Code Agent 参考设计](reference-claude-code-agent.md)
 - [pi-agent Framework 参考设计](reference-pi-agent-framework.md)

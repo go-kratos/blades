@@ -262,7 +262,7 @@ Hook 不是通用事件总线。下列事件不进入 `hook/`：
 - 产品 UI notification、进度条、命令状态。
 - workspace、文件系统、配置刷新、账号状态。
 - 应用自定义任务、队列、channel、后台 job。
-- Memory 的业务抽取任务；v1 `memory.Memory` 只有 `Recall` 与 `Remember` 两方法，应用可在 prompt section 或 turn 后处理里调用。
+- Memory 的业务抽取任务；v1 `memory.Memory` 暴露 `Recall` / `Remember` / `Forget` 三方法（全部 variadic option），应用可在 prompt section 或 turn 后处理里调用。
 
 应用如需事件系统，应在自身包内定义 bus，并可在 bus handler 中调用 AgentOS API。核心只保证六类 hook event 的兼容性。
 
