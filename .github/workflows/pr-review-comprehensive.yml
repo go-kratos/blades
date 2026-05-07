@@ -28,6 +28,7 @@ jobs:
           ANTHROPIC_DEFAULT_SONNET_MODEL: deepseek-v4-pro
           ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-v4-flash
         with:
+          anthropic_api_key: ${{ secrets.DEEPSEEK_AUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           # Disable progress tracking to avoid id-token: write requirement
           track_progress: false
@@ -70,9 +71,3 @@ jobs:
           # Tools for comprehensive PR review
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
-
-# When track_progress is enabled:
-# - Creates a tracking comment with progress checkboxes
-# - Includes all PR context (comments, attachments, images)
-# - Updates progress as the review proceeds
-# - Marks as completed when done

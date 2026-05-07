@@ -38,3 +38,6 @@ jobs:
           ANTHROPIC_DEFAULT_OPUS_MODEL: deepseek-v4-pro
           ANTHROPIC_DEFAULT_SONNET_MODEL: deepseek-v4-pro
           ANTHROPIC_DEFAULT_HAIKU_MODEL: deepseek-v4-flash
+        with:
+          anthropic_api_key: ${{ secrets.DEEPSEEK_AUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
