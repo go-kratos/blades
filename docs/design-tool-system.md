@@ -31,11 +31,18 @@ type Tool interface {
 
 `Spec()` 返回工具声明，供 provider tool calling 与应用展示使用。`Handle` 接收原始 JSON 输入，由工具自行解码和校验。
 
-`tools.ToolSpec` 与 `model.ToolSpec` 同构，用于避免上层在工具协议和 provider 请求之间反复转换：
+`ToolSpec` 只定义在 `tools` 包，是工具元数据的唯一真源。`model/` 与各 provider 直接依赖 `tools.ToolSpec`，不做类型别名也不在 `model` 包重复定义：
 
 ```go
-type ToolSpec = model.ToolSpec
+type ToolSpec struct {
+    Name         string
+    Description  string
+    InputSchema  *jsonschema.Schema
+    OutputSchema *jsonschema.Schema
+}
 ```
+
+`OutputSchema` 保留在 `ToolSpec` 内：Gemini 等 provider 以及结构化输出评估器依赖它来描述工具结果的 schema。Provider 通过 `tool.Spec()` 获取所有元数据，禁止再为名称、描述或 schema 暴露独立的 getter。
 
 典型实现：
 
@@ -87,18 +94,28 @@ type Result struct {
 
 ## 4. 可选能力接口
 
-v1 只保留三个可选能力接口：
+v1 保留四个可选能力接口，全部为协议层 opt-in：未实现的工具按默认行为处理。
 
 ```go
 type ReadOnlyTool interface {
+    Tool
     ReadOnly() bool
 }
 
 type DestructiveTool interface {
+    Tool
     Destructive() bool
 }
 
+type ToolFilter interface {
+    Filter(ctx context.Context, tools []Tool) ([]Tool, error)
+}
+
 type StreamingTool interface {
+    Tool
+    // Stream 以增量语义产出结果：每次 yield 的 *Result 仅包含相对上一次
+    // yield 新增的 Parts，不是累计快照。ToolExecutor 负责按顺序累积 Parts，
+    // 形成最终回传给模型的工具结果。
     Stream(ctx context.Context, input json.RawMessage) iter.Seq2[*Result, error]
 }
 ```
@@ -107,7 +124,8 @@ type StreamingTool interface {
 
 - `ReadOnlyTool`：工具声明自身是否只读，供 policy 和 UI 使用。
 - `DestructiveTool`：工具声明自身是否可能产生破坏性副作用，供 policy 要求确认或拒绝。
-- `StreamingTool`：工具可逐步产出 `Result`，由 `ToolExecutor` 转为工具增量输出。
+- `ToolFilter`：协议层过滤器，按模型能力、运行模式、用户选择或 policy 预检查裁剪工具列表。最终是否允许调用仍由 policy 在执行前裁决。
+- `StreamingTool`：工具按增量语义逐步产出 `Result`。`ToolExecutor` 在累积过程中可以将增量同步转发给上层流（例如 Agent 的 `Generator[*Message, error]`），最终再以累积结果回写给模型。`Stream` 与 `Handle` 同时存在，运行时优先使用 `Stream`；`Handle` 作为非流式回退使用。
 
 以下能力不进入 `tools.Tool` 协议：
 
@@ -115,7 +133,7 @@ type StreamingTool interface {
 - 授权：由 `policy.Policy` 基于工具、输入和上下文裁决。
 - 业务注解：由应用层嵌入业务结构体，不进入核心协议。
 
-## 5. Resolver 与 ToolFilter
+## 5. Resolver
 
 工具发现与解析由 `Resolver` 完成：
 
@@ -126,45 +144,32 @@ type Resolver interface {
 }
 ```
 
-`List` 返回当前运行时可见工具集合；`Resolve` 按名称解析单个工具。解析失败应返回普通 Go error，由调用侧使用 `errors.Is` / `errors.As` 判断。
+`List` 返回当前运行时可见工具集合；`Resolve` 按名称解析单个工具。解析失败应返回普通 Go error，由调用侧使用 `errors.Is` / `errors.As` 判断。`tools` 提供 `StaticResolver` 作为内置实现；MCP、registry 等动态来源可以提供自己的 `Resolver`。
 
-`ToolFilter` 位于 `tools/` 包，用于对工具集合做协议层过滤：
+`ToolFilter`（见第 4 节）与 `Resolver` 组合即可表达"按 policy / 模型能力裁剪运行时可见工具"的诉求。
+
+## 6. 控制流信号：sentinel error
+
+`tools` 不引入 `ToolContext`、`Runtime` 或 context-scoped 注入。工具需要影响 Agent loop 控制流时，通过返回 sentinel error 完成；运行时使用 `errors.As` 识别并翻译为 `message.Actions`。
 
 ```go
-type ToolFilter interface {
-    Filter(ctx context.Context, tools []Tool) ([]Tool, error)
+type ErrLoopExit struct {
+    Escalate bool
+}
+
+type ErrHandoff struct {
+    Agent string
 }
 ```
 
-过滤可用于按模型能力、运行模式、用户选择或 policy 预检查裁剪工具列表。最终是否允许调用仍由 policy 在执行前裁决。
+- `ExitTool` 返回 `&ErrLoopExit{Escalate: req.Escalate}`，`ToolExecutor` 翻译为 `message.Actions[tools.ActionLoopExit]`，`LoopAgent` 据此终止循环。
+- Handoff 工具返回 `&ErrHandoff{Agent: name}`，`ToolExecutor` 翻译为 `message.Actions[tools.ActionHandoffToAgent]`，`RoutingAgent` 据此切换执行目标。
 
-## 6. Runtime 与 context helper
+约束：
 
-工具运行时能力通过 `tools.Runtime` 表达：
-
-```go
-type Runtime struct {
-    Resolver Resolver
-    Allowed  []Tool
-}
-```
-
-`Runtime` 不包含 Agent 名称。当前 Agent 内省由 `agent.FromContext` 提供，避免在工具协议中重复携带身份字段。
-
-`tools/` 使用 stdlib 风格 context helper：
-
-```go
-func NewContext(ctx context.Context, runtime Runtime) context.Context
-func FromContext(ctx context.Context) (Runtime, bool)
-```
-
-进入核心 context 的工具 runtime 必须满足三条准则：
-
-1. runtime-scoped：随本次运行取消而失效。
-2. 一次 Run 内稳定不变。
-3. 至少被 Loop、Tool、Hook 或 Middleware 中两层共同需要。
-
-应用层标识例如用户、渠道、工作区、会话映射等不进入 `tools.Runtime`，应由应用自己的 context key 管理。
+1. sentinel error 仅承载控制信号，不包含业务负载；如果模型仍需要工具结果文本，由 `ToolExecutor` 在识别 sentinel 后合成默认成功 payload。
+2. 控制信号集合受协议层管控：新增控制语义必须在本设计文档中显式定义，再由 `ToolExecutor` 和对应 flow agent 同时支持。
+3. 工具实现不再访问任何 `tools.ToolContext`/`Runtime`/`NewContext`/`FromContext` helper —— 它们已从 `tools` 包移除。Resolver、allowed list、当前 invocation 等运行时能力保留在 root/agent 层，通过 `Invocation` 或 `agent.FromContext` 暴露。
 
 ## 7. 工具执行编排边界
 
@@ -178,10 +183,11 @@ type ToolExecutor interface {
 
 ToolExecutor 负责：
 
-- 根据 `tools.Runtime.Resolver` 查找工具。
-- 执行 policy 检查。
-- 调用 `Tool.Handle` 或 `StreamingTool.Stream`。
-- 将结果转换为 `event.ToolEnd`。
+- 通过 Agent 持有的 `tools.Resolver`（或 `Invocation.Tools`）查找工具。
+- 执行 policy 检查与 `ToolFilter` 裁剪。
+- 调用 `Tool.Handle`；当工具同时实现 `StreamingTool` 时优先使用 `Stream`，按增量语义累积 Parts。
+- 识别 sentinel error（`ErrLoopExit` / `ErrHandoff`），翻译为 `message.Actions`，并在需要时合成默认成功 payload。
+- 将结果转换为 `event.ToolEnd`，把多模态 `Result.Parts` 序列化进 provider 期望的 tool-message 内容（v1：纯文本拼接；`content.Blob` 以 `{"mime":..,"data_base64":..}` JSON 信封内嵌；provider 原生多模态编码留给后续迭代）。
 - 把运行错误交回默认 `llmAgent`。
 
 默认 `llmAgent` 再把 `event.ToolEnd.Result.Parts` 包装为 `content.ToolResult`，继续后续模型调用。
