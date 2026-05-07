@@ -166,6 +166,85 @@ Welcome to give the project a ⭐️ Star, explore more usage examples in the `e
 We look forward to any feedback, suggestions, and contributions from you to jointly promote the prosperity of the Go AI ecosystem.
 
 
+
+## ❓ FAQ
+
+### What is Blades?
+Blades is a multimodal AI Agent framework for the Go language, supporting custom models, tools, memory, middleware, and more.
+
+### How is Blades different from other AI Agent frameworks?
+- **Go Idiomatic**: Built entirely according to Go philosophy
+- **Middleware Ecosystem**: Kratos-style middleware design for observability, guardrails, etc.
+- **Highly Extensible**: Unified interfaces and pluggable components
+- **Simple to Use**: Define AI Agents through concise code declarations
+
+### What Go version is required?
+Go 1.21+ is recommended for using Blades.
+
+### How do I install Blades?
+```bash
+go get github.com/go-kratos/blades
+```
+
+### What are the core components?
+- **Agent**: The core unit that executes tasks, invoking models and tools
+- **Prompt**: Templated text for LLM interactions with dynamic variable substitution
+- **Chain**: Connects multiple Agents for complex workflows
+- **ModelProvider**: Pluggable LLM interface (OpenAI, DeepSeek, Gemini, etc.)
+- **Tool**: External capabilities (APIs, databases, file system)
+- **Memory**: Short-term or long-term memory for context continuity
+- **Middleware**: Cross-cutting control (logging, monitoring, authentication)
+
+### What LLM providers are supported?
+- OpenAI
+- DeepSeek
+- Gemini
+- Custom providers through the ModelProvider interface
+
+### How do I create a simple Agent?
+```go
+agent := blades.NewAgent(
+    "My Agent",
+    blades.WithModel(model),
+    blades.WithInstruction("You are a helpful assistant."),
+)
+runner := blades.NewRunner(agent)
+output, err := runner.Run(context.Background(), input)
+```
+
+### How do I add tools/skills to an Agent?
+Use `WithSkills(...)` to inject skills:
+```go
+skills, err := skills.NewFromDir("./skills")
+agent := blades.NewAgent(
+    "SkillsAgent",
+    blades.WithModel(model),
+    blades.WithSkills(skills...),
+)
+```
+
+### How does Memory work?
+Memory provides conversation context across multiple turns. Use the built-in InMemory implementation or extend for persistent storage:
+```go
+type Memory interface {
+    AddMemory(context.Context, *Memory) error
+    SaveSession(context.Context, blades.Session) error
+    SearchMemory(context.Context, string) ([]*Memory, error)
+}
+```
+
+### Where can I find examples?
+See the [examples](./examples) directory in the repository.
+
+### How can I contribute?
+- Give the project a ⭐️ Star
+- Explore examples and build your first Go LLM application
+- Submit feedback, suggestions, or PRs on GitHub
+
+### Where can I get help?
+- Check the [examples](./examples) directory
+- File issues on [GitHub](https://github.com/go-kratos/blades/issues)
+- Read the documentation at [pkg.go.dev](https://pkg.go.dev/github.com/go-kratos/blades)
 ## 📄 License
 
 Blades is licensed under the MIT License. For details, please see the [LICENSE](LICENSE) file.
