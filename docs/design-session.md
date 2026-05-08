@@ -34,7 +34,6 @@ package blades
 
 type Session interface {
     ID() string
-    Metadata() Metadata
     State() State
     SetState(key string, value any)
 
@@ -50,14 +49,12 @@ func NewSession(opts ...SessionOption) Session
 
 func WithSessionID(id string) SessionOption
 func WithMessages(msgs ...*Message) SessionOption
-func WithMetadata(md Metadata) SessionOption
 func WithState(state map[string]any) SessionOption
 ```
 
 方法语义：
 
 - `ID` 返回稳定标识。默认 `uuid.NewString()` 全局唯一；构造时可注入自定义 ID（`WithSessionID`）。
-- `Metadata` 返回会话级标签的只读快照（`map[string]any`），承载 `user`、`tags`、`agent-name`、`channel` 等业务标识。Metadata 可演化，ID 不可变。
 - `State` / `SetState` 提供会话级 k/v 存取，供 agent 之间共享数据，以及 compactor 等策略层存放滚动状态（如增量摘要的 `offset`、`summaryContent`，参见 [design-compact.md](design-compact.md)）。
 - `Append` 以变参追加消息；**同一次调用必须作为一个原子写入单元**，避免一次模型轮次中 assistant + tool 等成组消息被部分持久化。
 - `Messages` 返回**当前消息的完整原始快照**，无任何压缩、过滤、截断；调用方不得依赖返回 slice 可被原地修改。
@@ -65,7 +62,7 @@ func WithState(state map[string]any) SessionOption
 构造选项语义：
 
 - `WithMessages(msgs...)`：会话起始消息（恢复、回放、fork 等场景的入口）。一次性写入，等价于在空 Session 上做一次 `Append`。
-- `WithMetadata` / `WithState`：初始化标签与 k/v 状态。
+- `WithState`：初始化会话级 k/v 状态。
 
 Session **不**负责：token 预算、模型请求组装、工具执行、长期记忆召回、历史压缩、消息删除/截断/替换。这些能力分别属于 Agent Loop、`tools/`、`memory/`、`compact/`，以及"新建一个 Session"的应用层组合。
 
@@ -170,7 +167,7 @@ Session core 不提供 Manager 抽象。常见做法由应用层组合：
 - **单实例内**：`Append` / `Messages` 串行可见；并发安全由实现自身保证（`sessionInMemory` 使用并发容器；远程后端可用 mutex 或追加日志）。
 - **跨进程**：core 不规定一致性级别。具体后端在自身文档中声明（last-write-wins 不适用，因为没有覆盖语义；纯追加场景下后端通常实现"顺序追加 + 单调读"）。
 - **推荐使用模式**：以 step 为原子单元写入——turn 起始 `Append(ctx, userMsg)`；每个 model step + tool wave 完成后 `Append(ctx, assistantMsg, toolResultMsgs...)` 一次性写入语义组（参见 [design-event-agent-loop.md](design-event-agent-loop.md) §9）；compaction 不写回 Session（参见 §4）；不要把这些操作拆成长事务。
-- 应用层可基于 `Metadata()` 与 `State()` 实现版本号、租约、乐观锁，core 不内置。
+- 应用层可基于 `State()` 或后端自身字段实现版本号、租约、乐观锁，core 不内置。
 
 
 ## 8. 应用层 fork、A/B 与回放
@@ -178,7 +175,7 @@ Session core 不提供 Manager 抽象。常见做法由应用层组合：
 core 不在 Session 接口上提供 `Fork` / `Replace` 这类方法。所有"从已有消息构造新会话"的需求统一通过 `NewSession + WithMessages` 完成。常见的 **fork** 场景由 core 提供一个 helper 函数，避免每个调用方重复"读快照 + 构造"模板代码：
 
 ```go
-// Fork 从 src 拷贝消息与 metadata 构造一个新 ID 的 Session；额外 opts 可覆盖默认值。
+// Fork 从 src 拷贝消息构造一个新 ID 的 Session；额外 opts 可覆盖默认值。
 func Fork(ctx context.Context, src Session, opts ...SessionOption) (Session, error) {
     msgs, err := src.Messages(ctx)
     if err != nil {
@@ -186,13 +183,12 @@ func Fork(ctx context.Context, src Session, opts ...SessionOption) (Session, err
     }
     base := []SessionOption{
         WithMessages(msgs...),
-        WithMetadata(src.Metadata()),
     }
     return NewSession(append(base, opts...)...), nil
 }
 ```
 
-`Fork` 只是 `NewSession + WithMessages + WithMetadata` 的薄包装，不是 Session 接口的一部分。这样接口保持 6 方法，常用便利则通过 helper 暴露，未来增加更多组合（如 `ForkAt(ctx, src, n)`、`ForkUntil(ctx, src, predicate)`）也无须扩展接口。
+`Fork` 只是 `NewSession + WithMessages` 的薄包装，不是 Session 接口的一部分。这样接口保持 5 方法，常用便利则通过 helper 暴露，未来增加更多组合（如 `ForkAt(ctx, src, n)`、`ForkUntil(ctx, src, predicate)`）也无须扩展接口。
 
 典型用法：
 
@@ -206,9 +202,9 @@ replay := blades.NewSession(
     blades.WithMessages(loaded...),
 )
 
-// A/B：每个实验分配独立 ID（用 Metadata 关联实验组），各自独立追加
-expA, _ := blades.Fork(ctx, base, blades.WithMetadata(blades.Metadata{"exp": "A"}))
-expB, _ := blades.Fork(ctx, base, blades.WithMetadata(blades.Metadata{"exp": "B"}))
+// A/B：每个实验分配独立 ID（实验组由应用层外部索引关联），各自独立追加
+expA, _ := blades.Fork(ctx, base, blades.WithSessionID("sess_exp_a"))
+expB, _ := blades.Fork(ctx, base, blades.WithSessionID("sess_exp_b"))
 ```
 
 **撤销不支持原地回退**：Session 是纯追加的，撤销由应用层用"快照 + 新建 Session"实现——在关键节点保存 Message 列表（或借助外部存储），需要回退时构造新 Session 并切换引用。
@@ -223,9 +219,9 @@ expB, _ := blades.Fork(ctx, base, blades.WithMetadata(blades.Metadata{"exp": "B"
 
 1. 引入 `Append(ctx, msgs ...*Message)` 变参原子写入。
 2. 引入 `Messages(ctx)` 返回完整原始快照。
-3. 引入 `Metadata()` 与 `WithMessages` / `WithSessionID` / `WithMetadata` / `WithState` 构造选项。
+3. 引入 `WithMessages` / `WithSessionID` / `WithState` 构造选项。
 4. 把任何残留在 Session 内的 compactor 调用迁出到 Agent Loop 的 `RequestBuilder`（具体落点由 [design-compact.md](design-compact.md) 与 [design-event-agent-loop.md](design-event-agent-loop.md) 描述），Session 严格 view-only。
-5. 完成后接口最终形态与本文 §2 完全一致：6 方法 append-only + `blades.Fork` helper。
+5. 完成后接口最终形态与本文 §2 完全一致：5 方法 append-only + `blades.Fork` helper。
 
 ## 10. 设计决策
 
@@ -235,11 +231,11 @@ expB, _ := blades.Fork(ctx, base, blades.WithMetadata(blades.Metadata{"exp": "B"
 4. **fork/replay/撤销 = 新建 Session**：用 `NewSession(WithMessages(...))` 统一入口；常用 fork 场景由 `blades.Fork(ctx, src, opts...)` helper 提供，不在 Session 接口上暴露 `Fork`/`Replace`/`Truncate`。
 5. **Session 与 compaction 完全解耦**：compactor 是 view 层纯变换，不写回 Session。
 6. **保留 State k/v**：服务于 agent 间共享数据与 compactor 滚动状态（避免每轮重算摘要）。
-7. **Metadata 与 ID 分离**：ID 不可变，Metadata 可演化。
+7. **业务索引不进 Session 接口**：用户、标签、渠道、实验组等查询维度由应用层或具体存储后端维护，避免把通用会话接口扩成索引模型。
 8. **后端可选**：内存、JSONL、SQLite、Redis、远程服务都能实现同一 Session 语义；core 不为后端定义统一 `Store` 接口（避免过早抽象），由具体后端暴露各自 API。
 
 ## 11. 与红线对照
 
-- **r18**：Session 接口固定为 `{ID, Metadata, State, SetState, Append, Messages}` 六方法（全部在根包），纯追加；非追加初始化走 `NewSession + WithMessages` / `WithSessionID` / `WithMetadata` / `WithState`；常用 fork 由根包 helper `blades.Fork(ctx, src, opts...)` 提供。
+- **r18**：Session 接口固定为 `{ID, State, SetState, Append, Messages}` 五方法（全部在根包），纯追加；非追加初始化走 `NewSession + WithMessages` / `WithSessionID` / `WithState`；常用 fork 由根包 helper `blades.Fork(ctx, src, opts...)` 提供。
 - **r19**：Context helper 使用 `session.NewContext` / `session.FromContext` / `session.Ensure`（最终态在 `session/` 子包暴露）。
 - **r29**：会话是线性 `*Message` 列表；fork、A/B、回放、撤销在应用层用"新建 Session + WithMessages"实现；events 不并入 Session。
