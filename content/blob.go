@@ -1,29 +1,25 @@
 package content
 
-// BlobSource is the sealed interface for blob data sources.
-type BlobSource interface {
-	blobSource()
+// FilePart represents binary content referenced by URI.
+type FilePart struct {
+	URI      string
+	MIME     string
+	Filename string
 }
 
-// InlineBytes represents raw byte content embedded inline.
-type InlineBytes []byte
-
-func (InlineBytes) blobSource() {}
-
-// URI represents a reference to content by URL.
-type URI string
-
-func (URI) blobSource() {}
-
-// FileID represents a reference to content by file identifier.
-type FileID string
-
-func (FileID) blobSource() {}
-
-// Blob is a binary content part with MIME type and source.
-type Blob struct {
-	MIME   string
-	Source BlobSource
+// FileRefPart represents binary content referenced by provider-managed file ID.
+type FileRefPart struct {
+	ID   string
+	MIME string
 }
 
-func (Blob) part() {}
+// DataPart represents binary content embedded inline.
+type DataPart struct {
+	Bytes    []byte
+	MIME     string
+	Filename string
+}
+
+func (FilePart) part()    {}
+func (FileRefPart) part() {}
+func (DataPart) part()    {}
