@@ -11,26 +11,21 @@ import (
 	"github.com/go-kratos/blades/tools"
 )
 
-// Result pairs a tool result with an optional control signal.
-type Result struct {
-	content.ToolResult
-	Control event.Output
-}
-
 // Wave executes a batch of tool calls concurrently with policy checks.
 // It emits ToolStart/ToolEnd events to the output channel.
-func Wave(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool, p policy.Policy, output chan<- event.Output) []Result {
+// Returns the tool results and an Action if any tool signaled a control action.
+func Wave(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool, p policy.Policy, output chan<- event.Output) ([]content.ToolResult, event.Action) {
 	for _, call := range calls {
 		output <- event.ToolStart{ID: call.ID, Name: call.Name, Input: call.Input}
 	}
 
-	results := run(ctx, calls, allTools, p)
+	results, action := run(ctx, calls, allTools, p)
 
 	for _, r := range results {
 		output <- event.ToolEnd{ID: r.ID, Name: r.Name, Parts: r.Parts, IsError: r.IsError}
 	}
 
-	return results
+	return results, action
 }
 
 // ExtractToolUses extracts ToolUse parts from an assistant message.
@@ -47,8 +42,13 @@ func ExtractToolUses(msg *model.Message) []content.ToolUse {
 	return calls
 }
 
-func run(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool, p policy.Policy) []Result {
-	results := make([]Result, len(calls))
+type result struct {
+	content.ToolResult
+	action event.Action
+}
+
+func run(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool, p policy.Policy) ([]content.ToolResult, event.Action) {
+	results := make([]result, len(calls))
 	toolMap := make(map[string]tools.Tool, len(allTools))
 	for _, t := range allTools {
 		toolMap[t.Spec().Name] = t
@@ -62,13 +62,22 @@ func run(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool, p 
 		}()
 	}
 	wg.Wait()
-	return results
+
+	var action event.Action
+	toolResults := make([]content.ToolResult, len(results))
+	for i, r := range results {
+		toolResults[i] = r.ToolResult
+		if r.action != nil {
+			action = r.action
+		}
+	}
+	return toolResults, action
 }
 
-func executeSingle(ctx context.Context, call content.ToolUse, toolMap map[string]tools.Tool, p policy.Policy) Result {
+func executeSingle(ctx context.Context, call content.ToolUse, toolMap map[string]tools.Tool, p policy.Policy) result {
 	tool, ok := toolMap[call.Name]
 	if !ok {
-		return Result{
+		return result{
 			ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "tool not found: " + call.Name}}, IsError: true},
 		}
 	}
@@ -83,7 +92,7 @@ func executeSingle(ctx context.Context, call content.ToolUse, toolMap map[string
 			} else if decision.Reason != "" {
 				reason = decision.Reason
 			}
-			return Result{
+			return result{
 				ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: reason}}, IsError: true},
 			}
 		}
@@ -96,18 +105,18 @@ func executeSingle(ctx context.Context, call content.ToolUse, toolMap map[string
 	res, err := tool.Handle(tools.NewContext(ctx, tc), input)
 	if err != nil {
 		if le, ok := tools.IsLoopExit(err); ok {
-			return Result{
+			return result{
 				ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "loop exit"}}},
-				Control:    event.LoopExit{ToolID: call.ID, ToolName: call.Name, Escalate: le.Escalate},
+				action:     event.LoopExit{Escalate: le.Escalate},
 			}
 		}
 		if h, ok := tools.IsHandoff(err); ok {
-			return Result{
+			return result{
 				ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "handoff to " + h.Agent}}},
-				Control:    event.Handoff{ToolID: call.ID, ToolName: call.Name, Agent: h.Agent},
+				action:     event.Handoff{Agent: h.Agent},
 			}
 		}
-		return Result{
+		return result{
 			ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "tool error: " + err.Error()}}, IsError: true},
 		}
 	}
@@ -116,7 +125,7 @@ func executeSingle(ctx context.Context, call content.ToolUse, toolMap map[string
 	if res != nil {
 		parts = res.Parts
 	}
-	return Result{
+	return result{
 		ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: parts},
 	}
 }

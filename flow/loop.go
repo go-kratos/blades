@@ -12,7 +12,7 @@ type LoopCondition func(ctx context.Context, state LoopState) (bool, error)
 
 // LoopState carries iteration state for the condition check.
 type LoopState struct {
-	Iteration int
+	Iteration  int
 	LastOutput event.TurnEnd
 }
 
@@ -66,12 +66,12 @@ func (a *loopAgent) run(ctx context.Context, input <-chan event.Input, output ch
 				switch v := o.(type) {
 				case event.Done:
 					continue
-				case event.LoopExit:
-					output <- v
-					return
 				case event.TurnEnd:
 					lastTurn = v
 					output <- o
+					if _, ok := v.Action.(event.LoopExit); ok {
+						return
+					}
 				default:
 					output <- o
 				}

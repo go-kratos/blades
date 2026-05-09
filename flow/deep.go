@@ -53,13 +53,10 @@ func (a *deepAgent) run(ctx context.Context, input <-chan event.Input, output ch
 			}
 
 			var lastTurn event.TurnEnd
-			var handoff *event.Handoff
 			for o := range subOut {
 				switch v := o.(type) {
 				case event.Done:
 					continue
-				case event.Handoff:
-					handoff = &v
 				case event.TurnEnd:
 					lastTurn = v
 					output <- o
@@ -68,8 +65,8 @@ func (a *deepAgent) run(ctx context.Context, input <-chan event.Input, output ch
 				}
 			}
 
-			if handoff != nil {
-				target := a.findAgent(handoff.Agent)
+			if h, ok := lastTurn.Action.(event.Handoff); ok {
+				target := a.findAgent(h.Agent)
 				if target != nil {
 					ch := make(chan event.Input, 1)
 					ch <- event.Prompt{Parts: lastTurn.Parts}

@@ -2,7 +2,6 @@ package blades
 
 import (
 	"context"
-	"sync"
 
 	"github.com/go-kratos/blades/compact"
 	"github.com/go-kratos/blades/content"
@@ -16,6 +15,8 @@ import (
 	"github.com/go-kratos/blades/session"
 	"github.com/go-kratos/blades/tools"
 )
+
+const outputBufferSize = 64
 
 // Agent is the core interface for all agents in the system.
 type Agent interface {
@@ -59,16 +60,11 @@ func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan ev
 		return nil, err
 	}
 	sess := session.Ensure(ctx)
-	output := make(chan event.Output, 64)
+	output := make(chan event.Output, outputBufferSize)
 	go a.loop(ctx, input, output, sess, allTools)
 	return output, nil
 }
 
-// loop is the agent's main execution loop, structured after pi-agent's runLoop:
-//   - Outer for: follow-up loop (re-enters when new input arrives after turn completes)
-//   - Inner for: step loop (model call → tool wave → repeat while hasMore)
-//   - consumeSteering: non-blocking drain (= pi-agent's getSteeringMessages)
-//   - awaitFollowUp: blocking wait (= pi-agent's getFollowUpMessages)
 func (a *llmAgent) loop(ctx context.Context, input <-chan event.Input, output chan<- event.Output, sess session.Session, allTools []tools.Tool) {
 	defer func() {
 		output <- event.Done{}
@@ -77,7 +73,6 @@ func (a *llmAgent) loop(ctx context.Context, input <-chan event.Input, output ch
 
 	var turnNum int
 
-	// Wait for the first Prompt to start
 	if !a.awaitFollowUp(ctx, input, sess, output) {
 		return
 	}
@@ -89,9 +84,9 @@ func (a *llmAgent) loop(ctx context.Context, input <-chan event.Input, output ch
 			totalUsage event.Usage
 			finalParts []content.Part
 			stopReason event.StopReason
+			turnAction event.Action
 		)
 
-		// BeforeTurn hooks
 		for _, h := range a.hooks {
 			if err := h.BeforeTurn(ctx, &hook.Turn{AgentName: a.name, Turn: turnNum}); err != nil {
 				if hook.IsAbort(err) {
@@ -103,7 +98,6 @@ func (a *llmAgent) loop(ctx context.Context, input <-chan event.Input, output ch
 			}
 		}
 
-		// Step loop (= pi-agent inner while)
 		for hasMore {
 			req, err := a.buildRequest(ctx, sess, allTools)
 			if err != nil {
@@ -146,26 +140,23 @@ func (a *llmAgent) loop(ctx context.Context, input <-chan event.Input, output ch
 			totalUsage.OutputTokens += stepUsage.OutputTokens
 
 			if resp.Message != nil {
-				_ = sess.Append(ctx, resp.Message)
+				if err := sess.Append(ctx, resp.Message); err != nil {
+					output <- event.Error{Err: err}
+					return
+				}
 				finalParts = resp.Message.Parts
 			}
 
-			output <- event.StepEnd{
-				StopReason: event.StopReason(resp.StopReason),
-				Usage:      stepUsage,
-			}
-
-			// Check tool calls
 			hasMore = false
 			if toolUses := execute.ExtractToolUses(resp.Message); len(toolUses) > 0 {
-				control, err := a.executeToolWave(ctx, toolUses, allTools, output, sess, turnNum)
+				action, err := a.executeToolWave(ctx, toolUses, allTools, output, sess, turnNum)
 				if err != nil {
 					output <- event.Error{Err: err}
 					return
 				}
-				if control != nil {
-					output <- control
+				if action != nil {
 					stopReason = event.StopToolUse
+					turnAction = action
 					break
 				}
 				hasMore = true
@@ -173,20 +164,24 @@ func (a *llmAgent) loop(ctx context.Context, input <-chan event.Input, output ch
 				stopReason = event.StopReason(resp.StopReason)
 			}
 
-			// Poll steering (= pi-agent's getSteeringMessages at end of each step)
-			if a.consumeSteering(ctx, input, sess) {
+			consumed, aborted := a.consumeSteering(ctx, input, sess)
+			if aborted {
+				stopReason = event.StopAbort
+				hasMore = false
+				break
+			}
+			if consumed {
 				hasMore = true
 			}
 		}
 
-		// Emit TurnEnd
 		output <- event.TurnEnd{
 			Parts:      finalParts,
 			StopReason: stopReason,
 			Usage:      totalUsage,
+			Action:     turnAction,
 		}
 
-		// AfterTurn hooks
 		summary := &hook.TurnSummary{
 			Parts:      finalParts,
 			StopReason: model.StopReason(stopReason),
@@ -196,47 +191,27 @@ func (a *llmAgent) loop(ctx context.Context, input <-chan event.Input, output ch
 			_ = h.AfterTurn(ctx, &hook.Turn{AgentName: a.name, Turn: turnNum}, summary, nil)
 		}
 
-		// Wait for follow-up (= pi-agent's getFollowUpMessages)
 		if !a.awaitFollowUp(ctx, input, sess, output) {
 			return
 		}
 	}
 }
 
-// executeToolWave orchestrates hook calls around tool execution.
-func (a *llmAgent) executeToolWave(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool, output chan<- event.Output, sess session.Session, turnNum int) (event.Output, error) {
-	// BeforeTool hooks
+func (a *llmAgent) executeToolWave(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool, output chan<- event.Output, sess session.Session, turnNum int) (event.Action, error) {
 	for _, call := range calls {
 		for _, h := range a.hooks {
 			if err := h.BeforeTool(ctx, &hook.ToolCall{AgentName: a.name, Turn: turnNum, Input: call.Input}); err != nil {
-				if hook.IsAbort(err) {
-					return nil, err
-				}
+				return nil, err
 			}
 		}
 	}
 
-	// Execute tools (emits ToolStart/ToolEnd to output)
-	results := execute.Wave(ctx, calls, allTools, a.policy, output)
+	results, action := execute.Wave(ctx, calls, allTools, a.policy, output)
 
-	// Collect results and control signals
-	var (
-		toolResults []content.ToolResult
-		controlOut  event.Output
-	)
-	for _, r := range results {
-		toolResults = append(toolResults, r.ToolResult)
-		if r.Control != nil {
-			controlOut = r.Control
-		}
-	}
-
-	// Append tool results to session
-	if err := sess.Append(ctx, convert.ToolResultToMessage(toolResults)); err != nil {
+	if err := sess.Append(ctx, convert.ToolResultToMessage(results)); err != nil {
 		return nil, err
 	}
 
-	// AfterTool hooks
 	for _, h := range a.hooks {
 		for i, call := range calls {
 			var result *tools.Result
@@ -247,27 +222,26 @@ func (a *llmAgent) executeToolWave(ctx context.Context, calls []content.ToolUse,
 		}
 	}
 
-	return controlOut, nil
+	return action, nil
 }
 
 // consumeSteering non-blocking drains Steer events from input into session.
-func (a *llmAgent) consumeSteering(ctx context.Context, input <-chan event.Input, sess session.Session) bool {
-	consumed := false
+func (a *llmAgent) consumeSteering(ctx context.Context, input <-chan event.Input, sess session.Session) (consumed bool, aborted bool) {
 	for {
 		select {
 		case in, ok := <-input:
 			if !ok {
-				return consumed
+				return consumed, true
 			}
 			switch v := in.(type) {
 			case event.Steer:
 				_ = sess.Append(ctx, convert.SteerToMessage(v))
 				consumed = true
 			case event.Abort:
-				return false
+				return consumed, true
 			}
 		default:
-			return consumed
+			return consumed, false
 		}
 	}
 }
@@ -296,13 +270,11 @@ func (a *llmAgent) awaitFollowUp(ctx context.Context, input <-chan event.Input, 
 	}
 }
 
-// streamStep calls the provider and streams chunks to the output channel.
 func (a *llmAgent) streamStep(ctx context.Context, req *model.Request, output chan<- event.Output) (*model.Response, event.Usage, error) {
 	var (
 		parts      []content.Part
 		stopReason model.StopReason
 		usage      model.Usage
-		mu         sync.Mutex
 	)
 
 	for chunk, err := range a.provider.Stream(ctx, req) {
@@ -315,7 +287,6 @@ func (a *llmAgent) streamStep(ctx context.Context, req *model.Request, output ch
 		for _, o := range convert.ChunkToOutputs(chunk) {
 			output <- o
 		}
-		mu.Lock()
 		parts = append(parts, chunk.Parts...)
 		if chunk.StopReason != "" {
 			stopReason = chunk.StopReason
@@ -324,7 +295,6 @@ func (a *llmAgent) streamStep(ctx context.Context, req *model.Request, output ch
 			usage.InputTokens += chunk.Usage.InputTokens
 			usage.OutputTokens += chunk.Usage.OutputTokens
 		}
-		mu.Unlock()
 	}
 
 	return &model.Response{
@@ -348,16 +318,11 @@ func (a *llmAgent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
 }
 
 func (a *llmAgent) buildRequest(ctx context.Context, sess session.Session, allTools []tools.Tool) (*model.Request, error) {
-	var msgs []*model.Message
-	if sess != nil {
-		var err error
-		msgs, err = sess.Messages(ctx)
-		if err != nil {
-			return nil, err
-		}
+	msgs, err := sess.Messages(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if a.compactor != nil {
-		var err error
 		msgs, err = a.compactor.Compact(ctx, msgs)
 		if err != nil {
 			return nil, err
