@@ -13,7 +13,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "goimports -w {.tool_input.file_path}"
+            "command": "jq -r '.tool_input.file_path' | { read -r f; goimports -w \"$f\"; } 2>/dev/null || true"
           }
         ]
       }

@@ -36,3 +36,17 @@ func (b *builder) Build(ctx context.Context) ([]content.Part, error) {
 	}
 	return parts, nil
 }
+
+// SystemText extracts text from parts and joins them as a single system string.
+func SystemText(parts []content.Part) string {
+	var text string
+	for _, p := range parts {
+		if t, ok := p.(content.Text); ok {
+			if text != "" {
+				text += "\n\n"
+			}
+			text += t.Text
+		}
+	}
+	return text
+}

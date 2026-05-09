@@ -9,6 +9,7 @@ import (
 	"github.com/go-kratos/blades/event"
 	"github.com/go-kratos/blades/hook"
 	"github.com/go-kratos/blades/internal/convert"
+	"github.com/go-kratos/blades/internal/execute"
 	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/policy"
 	"github.com/go-kratos/blades/prompt"
@@ -48,7 +49,7 @@ func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 	return a, nil
 }
 
-func (a *llmAgent) Name() string       { return a.name }
+func (a *llmAgent) Name() string        { return a.name }
 func (a *llmAgent) Description() string { return a.description }
 
 // Run implements the Agent interface.
@@ -156,7 +157,7 @@ func (a *llmAgent) loop(ctx context.Context, input <-chan event.Input, output ch
 
 			// Check tool calls
 			hasMore = false
-			if toolUses := extractToolUses(resp.Message); len(toolUses) > 0 {
+			if toolUses := execute.ExtractToolUses(resp.Message); len(toolUses) > 0 {
 				control, err := a.executeToolWave(ctx, toolUses, allTools, output, sess, turnNum)
 				if err != nil {
 					output <- event.Error{Err: err}
@@ -202,8 +203,54 @@ func (a *llmAgent) loop(ctx context.Context, input <-chan event.Input, output ch
 	}
 }
 
+// executeToolWave orchestrates hook calls around tool execution.
+func (a *llmAgent) executeToolWave(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool, output chan<- event.Output, sess session.Session, turnNum int) (event.Output, error) {
+	// BeforeTool hooks
+	for _, call := range calls {
+		for _, h := range a.hooks {
+			if err := h.BeforeTool(ctx, &hook.ToolCall{AgentName: a.name, Turn: turnNum, Input: call.Input}); err != nil {
+				if hook.IsAbort(err) {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	// Execute tools (emits ToolStart/ToolEnd to output)
+	results := execute.Wave(ctx, calls, allTools, a.policy, output)
+
+	// Collect results and control signals
+	var (
+		toolResults []content.ToolResult
+		controlOut  event.Output
+	)
+	for _, r := range results {
+		toolResults = append(toolResults, r.ToolResult)
+		if r.Control != nil {
+			controlOut = r.Control
+		}
+	}
+
+	// Append tool results to session
+	if err := sess.Append(ctx, convert.ToolResultToMessage(toolResults)); err != nil {
+		return nil, err
+	}
+
+	// AfterTool hooks
+	for _, h := range a.hooks {
+		for i, call := range calls {
+			var result *tools.Result
+			if i < len(results) {
+				result = &tools.Result{Parts: results[i].Parts}
+			}
+			_ = h.AfterTool(ctx, &hook.ToolCall{AgentName: a.name, Turn: turnNum, Input: call.Input}, result, nil)
+		}
+	}
+
+	return controlOut, nil
+}
+
 // consumeSteering non-blocking drains Steer events from input into session.
-// Returns true if any messages were consumed (step loop should continue).
 func (a *llmAgent) consumeSteering(ctx context.Context, input <-chan event.Input, sess session.Session) bool {
 	consumed := false
 	for {
@@ -287,146 +334,6 @@ func (a *llmAgent) streamStep(ctx context.Context, req *model.Request, output ch
 	}, event.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens}, nil
 }
 
-// executeToolWave runs a batch of tool calls, emitting lifecycle events.
-func (a *llmAgent) executeToolWave(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool, output chan<- event.Output, sess session.Session, turnNum int) (event.Output, error) {
-	for _, call := range calls {
-		output <- event.ToolStart{ID: call.ID, Name: call.Name, Input: call.Input}
-	}
-
-	for _, call := range calls {
-		for _, h := range a.hooks {
-			if err := h.BeforeTool(ctx, &hook.ToolCall{AgentName: a.name, Turn: turnNum, Input: call.Input}); err != nil {
-				if hook.IsAbort(err) {
-					return nil, err
-				}
-			}
-		}
-	}
-
-	results := a.executeTools(ctx, calls, allTools)
-
-	var (
-		toolResults []content.ToolResult
-		controlOut  event.Output
-	)
-	for _, r := range results {
-		output <- event.ToolEnd{ID: r.ID, Name: r.Name, Parts: r.Parts, IsError: r.IsError}
-		toolResults = append(toolResults, r.ToolResult)
-		if r.Control != nil {
-			controlOut = r.Control
-		}
-	}
-
-	if err := sess.Append(ctx, convert.ToolResultToMessage(toolResults)); err != nil {
-		return nil, err
-	}
-
-	for _, h := range a.hooks {
-		for i, call := range calls {
-			var result *tools.Result
-			if i < len(results) {
-				result = &tools.Result{Parts: results[i].Parts}
-			}
-			_ = h.AfterTool(ctx, &hook.ToolCall{AgentName: a.name, Turn: turnNum, Input: call.Input}, result, nil)
-		}
-	}
-
-	return controlOut, nil
-}
-
-// toolExecResult pairs a tool result with an optional control signal.
-type toolExecResult struct {
-	content.ToolResult
-	Control event.Output
-}
-
-func (a *llmAgent) executeTools(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool) []toolExecResult {
-	results := make([]toolExecResult, len(calls))
-	toolMap := make(map[string]tools.Tool, len(allTools))
-	for _, t := range allTools {
-		toolMap[t.Spec().Name] = t
-	}
-	var wg sync.WaitGroup
-	for i, call := range calls {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			results[i] = a.executeSingleTool(ctx, call, toolMap)
-		}()
-	}
-	wg.Wait()
-	return results
-}
-
-func (a *llmAgent) executeSingleTool(ctx context.Context, call content.ToolUse, toolMap map[string]tools.Tool) toolExecResult {
-	tool, ok := toolMap[call.Name]
-	if !ok {
-		return toolExecResult{
-			ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "tool not found: " + call.Name}}, IsError: true},
-		}
-	}
-
-	input := call.Input
-	if a.policy != nil {
-		decision, err := a.policy.Check(ctx, policy.ToolRequest{Tool: tool, Input: input})
-		if err != nil || decision.Action == policy.Deny {
-			reason := "denied by policy"
-			if err != nil {
-				reason = err.Error()
-			} else if decision.Reason != "" {
-				reason = decision.Reason
-			}
-			return toolExecResult{
-				ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: reason}}, IsError: true},
-			}
-		}
-		if decision.Action == policy.Modify && decision.Modified != nil {
-			input = decision.Modified.Input
-		}
-	}
-
-	tc := &toolCtx{id: call.ID, spec: tool.Spec()}
-	res, err := tool.Handle(tools.NewContext(ctx, tc), input)
-	if err != nil {
-		if le, ok := tools.IsLoopExit(err); ok {
-			return toolExecResult{
-				ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "loop exit"}}},
-				Control:    event.LoopExit{ToolID: call.ID, ToolName: call.Name, Escalate: le.Escalate},
-			}
-		}
-		if h, ok := tools.IsHandoff(err); ok {
-			return toolExecResult{
-				ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "handoff to " + h.Agent}}},
-				Control:    event.Handoff{ToolID: call.ID, ToolName: call.Name, Agent: h.Agent},
-			}
-		}
-		return toolExecResult{
-			ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "tool error: " + err.Error()}}, IsError: true},
-		}
-	}
-
-	var parts []content.Part
-	if res != nil {
-		parts = res.Parts
-	}
-	return toolExecResult{
-		ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: parts},
-	}
-}
-
-func extractToolUses(msg *model.Message) []content.ToolUse {
-	if msg == nil {
-		return nil
-	}
-	var calls []content.ToolUse
-	for _, p := range msg.Parts {
-		if tu, ok := p.(content.ToolUse); ok {
-			calls = append(calls, tu)
-		}
-	}
-	return calls
-}
-
 func (a *llmAgent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
 	allTools := make([]tools.Tool, 0, len(a.tools))
 	allTools = append(allTools, a.tools...)
@@ -462,7 +369,7 @@ func (a *llmAgent) buildRequest(ctx context.Context, sess session.Session, allTo
 		if err != nil {
 			return nil, err
 		}
-		system = partsToSystemText(parts)
+		system = prompt.SystemText(parts)
 	}
 	var toolSpecs []tools.ToolSpec
 	for _, t := range allTools {
@@ -475,24 +382,3 @@ func (a *llmAgent) buildRequest(ctx context.Context, sess session.Session, allTo
 		Tools:    toolSpecs,
 	}, nil
 }
-
-func partsToSystemText(parts []content.Part) string {
-	var text string
-	for _, p := range parts {
-		if t, ok := p.(content.Text); ok {
-			if text != "" {
-				text += "\n\n"
-			}
-			text += t.Text
-		}
-	}
-	return text
-}
-
-type toolCtx struct {
-	id   string
-	spec tools.ToolSpec
-}
-
-func (t *toolCtx) ID() string         { return t.id }
-func (t *toolCtx) Spec() tools.ToolSpec { return t.spec }
