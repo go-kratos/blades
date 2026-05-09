@@ -67,10 +67,3 @@ func WithPrompt(b prompt.Builder) AgentOption {
 		a.promptBuilder = b
 	}
 }
-
-// WithMaxSteps sets the maximum number of model steps per turn.
-func WithMaxSteps(n int) AgentOption {
-	return func(a *llmAgent) {
-		a.maxSteps = n
-	}
-}
