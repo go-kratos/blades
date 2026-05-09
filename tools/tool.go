@@ -2,51 +2,23 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 
-	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/go-kratos/blades/content"
 )
 
-// Tool defines the interface for a tool that can be used in a system.
+// Tool is the core interface for agent tools.
 type Tool interface {
-	Name() string
-	Description() string
-	InputSchema() *jsonschema.Schema
-	OutputSchema() *jsonschema.Schema
-	Handler
+	Spec() ToolSpec
+	Handle(ctx context.Context, input json.RawMessage) (*Result, error)
 }
 
-// NewTool creates a new Tool with the given name, description, and handler.
-func NewTool(name string, description string, handler Handler, opts ...Option) Tool {
-	t := &baseTool{
-		name:        name,
-		description: description,
-		handler:     handler,
-	}
-	for _, opt := range opts {
-		opt(t)
-	}
-	return t
+// Result is the output of a tool invocation.
+type Result struct {
+	Parts []content.Part
 }
 
-// NewFunc creates a new Tool with the given name, description, input and output types, and handler.
-func NewFunc[I, O any](name string, description string, handler func(context.Context, I) (O, error), opts ...Option) (Tool, error) {
-	inputSchema, err := jsonschema.For[I](nil)
-	if err != nil {
-		return nil, err
-	}
-	outputSchema, err := jsonschema.For[O](nil)
-	if err != nil {
-		return nil, err
-	}
-	t := &baseTool{
-		name:         name,
-		description:  description,
-		inputSchema:  inputSchema,
-		outputSchema: outputSchema,
-		handler:      JSONAdapter(handler),
-	}
-	for _, opt := range opts {
-		opt(t)
-	}
-	return t, nil
+// TextResult creates a Result with a single text part.
+func TextResult(text string) *Result {
+	return &Result{Parts: []content.Part{content.Text{Text: text}}}
 }

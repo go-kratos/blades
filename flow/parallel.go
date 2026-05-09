@@ -2,72 +2,80 @@ package flow
 
 import (
 	"context"
+	"sync"
 
 	"github.com/go-kratos/blades"
-	"golang.org/x/sync/errgroup"
+	"github.com/go-kratos/blades/event"
 )
 
-// ParallelConfig is the configuration for a ParallelAgent.
+// ParallelConfig configures a parallel agent.
 type ParallelConfig struct {
 	Name        string
 	Description string
 	SubAgents   []blades.Agent
 }
 
-// ParallelAgent is an agent that runs sub-agents in parallel.
-type ParallelAgent struct {
-	config ParallelConfig
+// NewParallelAgent creates an agent that runs sub-agents concurrently.
+func NewParallelAgent(cfg ParallelConfig) blades.Agent {
+	return &parallelAgent{cfg: cfg}
 }
 
-// NewParallelAgent creates a new ParallelAgent.
-func NewParallelAgent(config ParallelConfig) blades.Agent {
-	return &ParallelAgent{config: config}
+type parallelAgent struct {
+	cfg ParallelConfig
 }
 
-// Name returns the name of the agent.
-func (p *ParallelAgent) Name() string {
-	return p.config.Name
+func (a *parallelAgent) Name() string        { return a.cfg.Name }
+func (a *parallelAgent) Description() string { return a.cfg.Description }
+
+func (a *parallelAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan event.Output, error) {
+	output := make(chan event.Output, 64)
+	go a.run(ctx, input, output)
+	return output, nil
 }
 
-// Description returns the description of the agent.
-func (p *ParallelAgent) Description() string {
-	return p.config.Description
-}
+func (a *parallelAgent) run(ctx context.Context, input <-chan event.Input, output chan<- event.Output) {
+	defer func() {
+		output <- event.Done{}
+		close(output)
+	}()
 
-// Run runs the sub-agents in parallel.
-func (p *ParallelAgent) Run(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
-	return func(yield func(*blades.Message, error) bool) {
-		type result struct {
-			message *blades.Message
-			err     error
-		}
-		ch := make(chan result, len(p.config.SubAgents)*8)
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		eg, ctx := errgroup.WithContext(ctx)
-		for _, agent := range p.config.SubAgents {
-			inv := invocation.Clone() // Clone sequentially before goroutine to avoid a data race on committed.
-			eg.Go(func() error {
-				for message, err := range agent.Run(ctx, inv) {
-					if err != nil {
-						// Send error result and stop
-						ch <- result{message: nil, err: err}
-						return err
-					}
-					ch <- result{message: message, err: nil}
-				}
-				return nil
-			})
-		}
-		go func() {
-			eg.Wait()
-			close(ch)
-		}()
-		for res := range ch {
-			if !yield(res.message, res.err) {
-				cancel()
-				break
-			}
-		}
+	// Collect initial input
+	var firstInput event.Input
+	for in := range input {
+		firstInput = in
+		break
 	}
+	if firstInput == nil {
+		return
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, sub := range a.cfg.SubAgents {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ch := make(chan event.Input, 1)
+			ch <- firstInput
+			close(ch)
+
+			subOut, err := sub.Run(ctx, ch)
+			if err != nil {
+				mu.Lock()
+				output <- event.Error{Err: err}
+				mu.Unlock()
+				return
+			}
+			for o := range subOut {
+				if _, ok := o.(event.Done); ok {
+					continue
+				}
+				mu.Lock()
+				output <- o
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
 }

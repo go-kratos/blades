@@ -2,119 +2,65 @@ package blades
 
 import (
 	"context"
-	"sync/atomic"
+
+	"github.com/go-kratos/blades/event"
 )
 
-// RunOption defines options for configuring the Runner.
-type RunOption func(*RunOptions)
-
-// WithSession sets a custom session for the Runner.
-func WithSession(session Session) RunOption {
-	return func(r *RunOptions) {
-		r.Session = session
-	}
-}
-
-// WithResume indicates whether to resume from the last session state.
-func WithResume(resume bool) RunOption {
-	return func(r *RunOptions) {
-		r.Resume = resume
-	}
-}
-
-// WithInvocationID sets a custom invocation ID for the Runner.
-func WithInvocationID(invocationID string) RunOption {
-	return func(r *RunOptions) {
-		r.InvocationID = invocationID
-	}
-}
-
-// RunOptions holds configuration options for running the agent.
-type RunOptions struct {
-	Session      Session
-	Resume       bool
-	InvocationID string
-}
-
-// RunnerOption configures a Runner at construction time.
+// RunnerOption configures a Runner.
 type RunnerOption func(*Runner)
 
-// Runner is responsible for executing a Runnable agent within a session context.
+// Runner provides convenience methods for running an Agent.
 type Runner struct {
-	rootAgent Agent
+	agent Agent
 }
 
-// NewRunner creates a new Runner with the given agent and options.
-func NewRunner(rootAgent Agent, opts ...RunnerOption) *Runner {
-	r := &Runner{
-		rootAgent: rootAgent,
-	}
+// NewRunner creates a Runner wrapping the given Agent.
+func NewRunner(agent Agent, opts ...RunnerOption) *Runner {
+	r := &Runner{agent: agent}
 	for _, opt := range opts {
 		opt(r)
 	}
 	return r
 }
 
-// buildInvocation constructs an Invocation object for the given message and options.
-func (r *Runner) buildInvocation(message *Message, stream bool, o *RunOptions) *Invocation {
-	return &Invocation{
-		ID:        o.InvocationID,
-		Session:   o.Session,
-		Resume:    o.Resume,
-		Stream:    stream,
-		Message:   message,
-		committed: new(atomic.Bool),
-	}
-}
+// Run sends a single input and blocks until the agent produces a final result.
+// Returns the last TurnEnd output. Runtime errors are extracted from event.Error.
+func (r *Runner) Run(ctx context.Context, in event.Input) (event.Output, error) {
+	ch := make(chan event.Input, 1)
+	ch <- in
+	close(ch)
 
-// Run executes the agent with the provided prompt and options within the session context.
-func (r *Runner) Run(ctx context.Context, message *Message, opts ...RunOption) (*Message, error) {
-	o := &RunOptions{
-		Session:      NewSession(),
-		InvocationID: NewInvocationID(),
+	output, err := r.agent.Run(ctx, ch)
+	if err != nil {
+		return nil, err
 	}
-	for _, opt := range opts {
-		opt(o)
-	}
-	var (
-		err    error
-		output *Message
-	)
-	invocation := r.buildInvocation(message, false, o)
-	runCtx := NewSessionContext(ctx, o.Session)
-	iter := r.rootAgent.Run(runCtx, invocation)
-	for output, err = range iter {
-		if err != nil {
-			return nil, err
+
+	var last event.Output
+	for out := range output {
+		switch v := out.(type) {
+		case event.Error:
+			return nil, v.Err
+		case event.Done:
+			return last, nil
+		case event.TurnEnd:
+			last = v
+		default:
+			last = out
 		}
 	}
-	if output == nil {
-		return nil, ErrNoFinalResponse
-	}
-	return output, nil
+	return last, nil
 }
 
-// RunStream executes the agent in a streaming manner, yielding messages as they are produced.
-func (r *Runner) RunStream(ctx context.Context, message *Message, opts ...RunOption) Generator[*Message, error] {
-	o := &RunOptions{
-		Session:      NewSession(),
-		InvocationID: NewInvocationID(),
-	}
-	for _, opt := range opts {
-		opt(o)
-	}
-	invocation := r.buildInvocation(message, true, o)
-	runCtx := NewSessionContext(ctx, o.Session)
-	return func(yield func(*Message, error) bool) {
-		iter := r.rootAgent.Run(runCtx, invocation)
-		for output, err := range iter {
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			if !yield(output, nil) {
-				return
-			}
-		}
-	}
+// RunStream sends a single input and returns the output channel for streaming consumption.
+func (r *Runner) RunStream(ctx context.Context, in event.Input) (<-chan event.Output, error) {
+	ch := make(chan event.Input, 1)
+	ch <- in
+	close(ch)
+
+	return r.agent.Run(ctx, ch)
+}
+
+// RunLive passes through an input channel for bidirectional interaction.
+func (r *Runner) RunLive(ctx context.Context, in <-chan event.Input) (<-chan event.Output, error) {
+	return r.agent.Run(ctx, in)
 }

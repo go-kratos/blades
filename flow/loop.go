@@ -4,102 +4,100 @@ import (
 	"context"
 
 	"github.com/go-kratos/blades"
-	"github.com/go-kratos/blades/tools"
+	"github.com/go-kratos/blades/event"
 )
 
-// LoopState captures the observable state available to a LoopCondition.
-type LoopState struct {
-	// Iteration is the 0-based index of the iteration that just completed.
-	Iteration int
-	// Input is the original input message to the LoopAgent.
-	Input *blades.Message
-	// Output is the last message produced in the current iteration.
-	Output *blades.Message
-}
-
-// LoopCondition is called once after every complete iteration.
-// Return true to run another iteration, false to stop normally,
-// or a non-nil error (e.g. blades.ErrLoopEscalated) to abort with an error.
+// LoopCondition determines whether the loop should continue.
 type LoopCondition func(ctx context.Context, state LoopState) (bool, error)
 
-// LoopConfig is the configuration for a LoopAgent.
+// LoopState carries iteration state for the condition check.
+type LoopState struct {
+	Iteration int
+	LastOutput event.TurnEnd
+}
+
+// LoopConfig configures a loop agent.
 type LoopConfig struct {
 	Name          string
 	Description   string
+	SubAgents     []blades.Agent
 	MaxIterations int
-	// Condition is evaluated after every iteration. It takes priority over ExitTool signals.
-	Condition LoopCondition
-	SubAgents []blades.Agent
+	Condition     LoopCondition
 }
 
-// LoopAgent is an agent that runs sub-agents in a loop.
-type LoopAgent struct {
-	config LoopConfig
-}
-
-// NewLoopAgent creates a new LoopAgent.
-func NewLoopAgent(config LoopConfig) blades.Agent {
-	if config.MaxIterations <= 0 {
-		config.MaxIterations = 10
+// NewLoopAgent creates an agent that iterates sub-agents until a condition is met.
+func NewLoopAgent(cfg LoopConfig) blades.Agent {
+	if cfg.MaxIterations <= 0 {
+		cfg.MaxIterations = 10
 	}
-	return &LoopAgent{config: config}
+	return &loopAgent{cfg: cfg}
 }
 
-func (a *LoopAgent) Name() string        { return a.config.Name }
-func (a *LoopAgent) Description() string { return a.config.Description }
+type loopAgent struct {
+	cfg LoopConfig
+}
 
-// Run runs the sub-agents in a loop. After each message yielded by a sub-agent
-// the loop checks message.Actions for an ActionLoopExit signal set by ExitTool.
-// Context compression across iterations is delegated to the ContextCompressor
-// configured on the Session (via blades.WithContextCompressor).
-func (a *LoopAgent) Run(ctx context.Context, input *blades.Invocation) blades.Generator[*blades.Message, error] {
-	return func(yield func(*blades.Message, error) bool) {
-		state := LoopState{}
-		for state.Iteration = 0; state.Iteration < a.config.MaxIterations; state.Iteration++ {
-			exitRequested := false
-			escalated := false
-			for _, agent := range a.config.SubAgents {
-				var (
-					err        error
-					message    *blades.Message
-					invocation = input.Clone()
-				)
-				for message, err = range agent.Run(ctx, invocation) {
-					if err != nil {
-						yield(nil, err)
-						return
-					}
-					if !yield(message, nil) {
-						return
-					}
-					if exit, ok := message.Actions[tools.ActionLoopExit]; ok {
-						if exitEscalated, ok := exit.(bool); ok {
-							exitRequested = true
-							escalated = exitEscalated
-						}
-					}
-				}
-				state.Input = input.Message
-				state.Output = message
-			}
-			if a.config.Condition != nil {
-				shouldContinue, err := a.config.Condition(ctx, state)
-				if err != nil {
-					yield(nil, err)
-					return
-				}
-				if !shouldContinue {
-					return
-				}
-				continue
-			}
-			if exitRequested {
-				if escalated {
-					yield(nil, blades.ErrLoopEscalated)
-					return
-				}
+func (a *loopAgent) Name() string        { return a.cfg.Name }
+func (a *loopAgent) Description() string { return a.cfg.Description }
+
+func (a *loopAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan event.Output, error) {
+	output := make(chan event.Output, 64)
+	go a.run(ctx, input, output)
+	return output, nil
+}
+
+func (a *loopAgent) run(ctx context.Context, input <-chan event.Input, output chan<- event.Output) {
+	defer func() {
+		output <- event.Done{}
+		close(output)
+	}()
+
+	currentInput := input
+	for i := 0; i < a.cfg.MaxIterations; i++ {
+		var lastTurn event.TurnEnd
+
+		for _, sub := range a.cfg.SubAgents {
+			subOut, err := sub.Run(ctx, currentInput)
+			if err != nil {
+				output <- event.Error{Err: err}
 				return
 			}
+			for o := range subOut {
+				switch v := o.(type) {
+				case event.Done:
+					continue
+				case event.LoopExit:
+					output <- v
+					return
+				case event.TurnEnd:
+					lastTurn = v
+					output <- o
+				default:
+					output <- o
+				}
+			}
+		}
+
+		// Check condition
+		if a.cfg.Condition != nil {
+			cont, err := a.cfg.Condition(ctx, LoopState{Iteration: i, LastOutput: lastTurn})
+			if err != nil {
+				output <- event.Error{Err: err}
+				return
+			}
+			if !cont {
+				return
+			}
+		}
+
+		// Bridge last output to next input
+		if len(lastTurn.Parts) > 0 {
+			ch := make(chan event.Input, 1)
+			ch <- event.Prompt{Parts: lastTurn.Parts}
+			close(ch)
+			currentInput = ch
+		} else {
+			return
 		}
 	}
 }

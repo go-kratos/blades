@@ -2,28 +2,21 @@ package tools
 
 import "context"
 
-// ToolContext provides metadata about a tool invocation and allows the tool
-// to communicate control-flow signals back to the caller through SetAction.
+// ToolContext provides per-invocation metadata to a tool handler.
 type ToolContext interface {
 	ID() string
-	Name() string
-	// Actions returns a copy of the tool's accumulated action map.
-	Actions() map[string]any
-	// SetAction records a control-flow action that callers (e.g. LoopAgent,
-	// RoutingAgent) can inspect on the yielded message after tool execution.
-	// Safe for concurrent use.
-	SetAction(key string, value any)
+	Spec() ToolSpec
 }
 
-type ctxToolKey struct{}
+type contextKey struct{}
 
-// NewContext returns a child context that carries the given ToolContext.
-func NewContext(ctx context.Context, tool ToolContext) context.Context {
-	return context.WithValue(ctx, ctxToolKey{}, tool)
+// NewContext injects a ToolContext into the context.
+func NewContext(ctx context.Context, tc ToolContext) context.Context {
+	return context.WithValue(ctx, contextKey{}, tc)
 }
 
-// FromContext retrieves the ToolContext stored by NewContext.
+// FromContext retrieves the ToolContext from the context.
 func FromContext(ctx context.Context) (ToolContext, bool) {
-	tool, ok := ctx.Value(ctxToolKey{}).(ToolContext)
-	return tool, ok
+	tc, ok := ctx.Value(contextKey{}).(ToolContext)
+	return tc, ok
 }
