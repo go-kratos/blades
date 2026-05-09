@@ -48,19 +48,6 @@ func Disallow(names ...string) ToolFilter {
 	})
 }
 
-// ReadOnlyFilter keeps only tools that implement ReadOnlyTool with ReadOnly() == true.
-func ReadOnlyFilter() ToolFilter {
-	return ToolFilterFunc(func(_ context.Context, tools []Tool) ([]Tool, error) {
-		var result []Tool
-		for _, t := range tools {
-			if ro, ok := t.(ReadOnlyTool); ok && ro.ReadOnly() {
-				result = append(result, t)
-			}
-		}
-		return result, nil
-	})
-}
-
 // And combines filters; a tool must pass all filters to be included.
 func And(filters ...ToolFilter) ToolFilter {
 	return ToolFilterFunc(func(ctx context.Context, ts []Tool) ([]Tool, error) {
