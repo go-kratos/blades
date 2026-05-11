@@ -19,6 +19,7 @@ var _ model.Provider = (*Provider)(nil)
 // Provider is a minimal model.Provider backed by predefined responses.
 type Provider struct {
 	responses []*model.Response
+	callCount int
 }
 
 // New creates a dummy provider with predefined responses.
@@ -39,7 +40,11 @@ func (p *Provider) Name() string {
 }
 
 // Generate implements model.Provider.
-func (p *Provider) Generate(context.Context, *model.Request) (*model.Response, error) {
+func (p *Provider) Generate(ctx context.Context, _ *model.Request) (*model.Response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	p.callCount++
 	if len(p.responses) == 0 {
 		return nil, ErrNoResponses
 	}
@@ -51,12 +56,20 @@ func (p *Provider) Generate(context.Context, *model.Request) (*model.Response, e
 // Stream implements model.Provider by streaming chunks derived from Generate.
 func (p *Provider) Stream(ctx context.Context, req *model.Request) iter.Seq2[*model.Chunk, error] {
 	return func(yield func(*model.Chunk, error) bool) {
+		if err := ctx.Err(); err != nil {
+			yield(nil, err)
+			return
+		}
 		resp, err := p.Generate(ctx, req)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
 		for _, chunk := range ChunksFromResponse(resp) {
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
 			if !yield(chunk, nil) {
 				return
 			}
@@ -67,6 +80,21 @@ func (p *Provider) Stream(ctx context.Context, req *model.Request) iter.Seq2[*mo
 // SetResponses replaces the predefined response queue.
 func (p *Provider) SetResponses(responses ...*model.Response) {
 	p.responses = responses
+}
+
+// AppendResponses appends predefined responses to the response queue.
+func (p *Provider) AppendResponses(responses ...*model.Response) {
+	p.responses = append(p.responses, responses...)
+}
+
+// PendingResponseCount returns the number of queued responses.
+func (p *Provider) PendingResponseCount() int {
+	return len(p.responses)
+}
+
+// CallCount returns the number of Generate calls.
+func (p *Provider) CallCount() int {
+	return p.callCount
 }
 
 type responseConfig struct {
