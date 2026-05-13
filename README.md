@@ -159,6 +159,111 @@ func createAgent(model blades.ModelProvider) (blades.Agent, error) {
 For more examples, please refer to the [examples](./examples) directory.
 
 ## 🤝 Contribution & Community
+
+## ❓ FAQ
+
+### Getting Started
+
+**Q: What is Blades?**  
+A: Blades is a multimodal AI Agent framework for Go. Built entirely according to Go's philosophy, it provides Agent/Chain/ModelProvider/Tool/Memory/Middleware components for building conversational AI applications.
+
+**Q: How is Blades different from LangChain?**  
+A: LangChain is Python-first with complex abstractions; Blades is Go-first with idiomatic design. Blades draws inspiration from Kratos middleware philosophy, making it natural for Go developers.
+
+**Q: What Go version is required?**  
+A: Go 1.21+ is recommended. The framework uses modern Go features like generics for type-safe interfaces.
+
+**Q: How do I install Blades?**  
+A:
+```bash
+go get github.com/go-kratos/blades
+go get github.com/go-kratos/blades/contrib/openai  # for OpenAI provider
+```
+
+### Core Components
+
+**Q: What is Agent?**  
+A: Agent is the core unit that executes tasks, implementing the `Agent` interface with `Name()`, `Description()`, and `Run()` methods. It orchestrates ModelProvider/Tool/Memory/Middleware.
+
+**Q: What is Chain?**  
+A: Chain connects multiple Agents to form complex workflows, where the output of one Agent serves as input for the next. Enables multi-step reasoning.
+
+**Q: What is ModelProvider?**  
+A: ModelProvider is the LLM abstraction layer. It provides `Generate()` for complete requests and `NewStreaming()` for real-time responses. Supports OpenAI/DeepSeek/Gemini.
+
+**Q: What is Tool?**  
+A: Tool extends Agent capabilities with external functions. Define via `InputSchema` for LLM guidance and `Handle` for execution logic.
+
+**Q: What is Memory?**  
+A: Memory provides conversation history storage. Built-in `InMemory` implementation; extensible to Redis/vector databases.
+
+**Q: What is Middleware?**  
+A: Middleware implements cross-cutting concerns (logging/monitoring/rate limiting). Uses "onion model" function chain for flexible flow control.
+
+### Usage
+
+**Q: How do I create a basic Agent?**  
+A:
+```go
+agent := blades.NewAgent(
+    "MyAgent",
+    blades.WithModel(model),
+    blades.WithInstruction("You are helpful."),
+)
+runner := blades.NewRunner(agent)
+output, _ := runner.Run(ctx, blades.UserMessage("Hello"))
+```
+
+**Q: How do I add Tools?**  
+A: Use `WithTools(...)` option when creating Agent. Define tools with `InputSchema` for structured parameters.
+
+**Q: How do I add Memory?**  
+A: Use `WithMemory(...)` option. Pass `InMemory` implementation or custom storage backend.
+
+**Q: How do I use Skills?**  
+A: Load skills from directory or embedded files:
+```go
+skills := skills.NewFromDir("./skills")
+agent := blades.NewAgent("name", blades.WithSkills(skills...))
+```
+
+### LLM Providers
+
+**Q: Which LLM providers are supported?**  
+A: Built-in OpenAI provider in `contrib/openai`. Extensible interface for DeepSeek/Gemini/custom providers.
+
+**Q: How do I configure OpenAI?**  
+A:
+```go
+model := openai.NewModel("gpt-4o", openai.Config{
+    APIKey: os.Getenv("OPENAI_API_KEY"),
+})
+```
+
+**Q: How do I use streaming responses?**  
+A: Use `NewStreaming()` method on ModelProvider for real-time typewriter-effect output.
+
+### Troubleshooting
+
+**Q: Agent fails with API key error?**  
+A: Check environment variable configuration. OpenAI requires `OPENAI_API_KEY`.
+
+**Q: Tools not being invoked?**  
+A: Ensure `InputSchema` is properly defined. LLM needs schema to generate correct parameters.
+
+**Q: Memory not persisting across sessions?**  
+A: Use `SaveSession()` method or extend Memory interface for persistent storage.
+
+**Q: How do I debug Agent execution?**  
+A: Add logging middleware with `WithMiddleware()` for tracing execution flow.
+
+### More Help
+
+Check [examples](./examples) directory or open an issue on GitHub.
+
+---
+
+## 🤝 Contribution & Community
 The project is currently in its early stages, and we are iterating continuously and rapidly. We sincerely invite all Go developers and AI enthusiasts to visit our GitHub repository and experience the joy of development that Blades brings firsthand.
 
 Welcome to give the project a ⭐️ Star, explore more usage examples in the `examples` directory, or directly start building your first Go LLM application!
