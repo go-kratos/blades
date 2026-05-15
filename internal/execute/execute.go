@@ -2,7 +2,7 @@ package execute
 
 import (
 	"context"
-	"sync"
+	"errors"
 
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/event"
@@ -11,21 +11,32 @@ import (
 	"github.com/go-kratos/blades/tools"
 )
 
-// Wave executes a batch of tool calls concurrently with policy checks.
-// It emits ToolStart/ToolEnd events to the output channel.
-// Returns the tool results and an Action if any tool signaled a control action.
-func Wave(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool, p policy.Policy, output chan<- event.Output) ([]content.ToolResult, event.Action) {
-	for _, call := range calls {
-		output <- event.ToolStart{ID: call.ID, Name: call.Name, Input: call.Input}
-	}
+// Result is the normalized outcome of one tool invocation.
+type Result struct {
+	content.ToolResult
+	Err    error
+	Action event.Action
+}
 
-	results, action := run(ctx, calls, allTools, p)
+// Runtime normalizes tool invocation details without owning Agent Loop events.
+type Runtime struct {
+	tools  map[string]tools.Tool
+	policy policy.Policy
+}
 
-	for _, r := range results {
-		output <- event.ToolEnd{ID: r.ID, Name: r.Name, Parts: r.Parts, IsError: r.IsError}
-	}
+// NewRuntime creates a tool execution runtime for a resolved tool set.
+func NewRuntime(allTools []tools.Tool, p policy.Policy) Runtime {
+	return Runtime{tools: toolsByName(allTools), policy: p}
+}
 
-	return results, action
+// Tool returns a resolved tool by name.
+func (r Runtime) Tool(name string) tools.Tool {
+	return r.tools[name]
+}
+
+// Call executes one tool call with policy checks and normalized errors.
+func (r Runtime) Call(ctx context.Context, call content.ToolUse) Result {
+	return executeSingle(ctx, call, r.tools, r.policy)
 }
 
 // ExtractToolUses extracts ToolUse parts from an assistant message.
@@ -42,62 +53,54 @@ func ExtractToolUses(msg *model.Message) []content.ToolUse {
 	return calls
 }
 
-type result struct {
-	content.ToolResult
-	action event.Action
-}
-
-func run(ctx context.Context, calls []content.ToolUse, allTools []tools.Tool, p policy.Policy) ([]content.ToolResult, event.Action) {
-	results := make([]result, len(calls))
+func toolsByName(allTools []tools.Tool) map[string]tools.Tool {
 	toolMap := make(map[string]tools.Tool, len(allTools))
 	for _, t := range allTools {
 		toolMap[t.Spec().Name] = t
 	}
-	var wg sync.WaitGroup
-	for i, call := range calls {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			results[i] = executeSingle(ctx, call, toolMap, p)
-		}()
-	}
-	wg.Wait()
-
-	var action event.Action
-	toolResults := make([]content.ToolResult, len(results))
-	for i, r := range results {
-		toolResults[i] = r.ToolResult
-		if r.action != nil {
-			action = r.action
-		}
-	}
-	return toolResults, action
+	return toolMap
 }
 
-func executeSingle(ctx context.Context, call content.ToolUse, toolMap map[string]tools.Tool, p policy.Policy) result {
+func executeSingle(ctx context.Context, call content.ToolUse, toolMap map[string]tools.Tool, p policy.Policy) Result {
 	tool, ok := toolMap[call.Name]
 	if !ok {
-		return result{
+		err := errors.New("tool not found: " + call.Name)
+		return Result{
 			ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "tool not found: " + call.Name}}, IsError: true},
+			Err:        err,
 		}
 	}
 
 	input := call.Input
 	if p != nil {
 		decision, err := p.Check(ctx, policy.ToolRequest{Tool: tool, Input: input})
-		if err != nil || decision.Action == policy.Deny {
-			reason := "denied by policy"
-			if err != nil {
-				reason = err.Error()
-			} else if decision.Reason != "" {
-				reason = decision.Reason
-			}
-			return result{
-				ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: reason}}, IsError: true},
-			}
+		if err != nil {
+			return toolErrorResult(call, err.Error(), err)
 		}
-		if decision.Action == policy.Modify && decision.Modified != nil {
+		switch decision.Action {
+		case policy.Allow:
+		case policy.Deny:
+			reason := decision.Reason
+			if reason == "" {
+				reason = "denied by policy"
+			}
+			return toolErrorResult(call, reason, errors.New(reason))
+		case policy.Ask:
+			reason := decision.Reason
+			if reason == "" {
+				reason = "requires approval by policy"
+			}
+			return toolErrorResult(call, reason, errors.New(reason))
+		case policy.Modify:
+			if decision.Modified == nil {
+				return toolErrorResult(call, "policy modify missing request", errors.New("policy modify missing request"))
+			}
+			if decision.Modified.Tool == nil || decision.Modified.Tool.Spec().Name != tool.Spec().Name {
+				return toolErrorResult(call, "policy modify changed tool", errors.New("policy modify changed tool"))
+			}
 			input = decision.Modified.Input
+		default:
+			return toolErrorResult(call, "unknown policy action: "+string(decision.Action), errors.New("unknown policy action: "+string(decision.Action)))
 		}
 	}
 
@@ -105,19 +108,20 @@ func executeSingle(ctx context.Context, call content.ToolUse, toolMap map[string
 	res, err := tool.Handle(tools.NewContext(ctx, tc), input)
 	if err != nil {
 		if le, ok := tools.IsLoopExit(err); ok {
-			return result{
+			return Result{
 				ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "loop exit"}}},
-				action:     event.LoopExit{Escalate: le.Escalate},
+				Action:     event.LoopExit{Escalate: le.Escalate},
 			}
 		}
 		if h, ok := tools.IsHandoff(err); ok {
-			return result{
+			return Result{
 				ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "handoff to " + h.Agent}}},
-				action:     event.Handoff{Agent: h.Agent},
+				Action:     event.Handoff{Agent: h.Agent},
 			}
 		}
-		return result{
+		return Result{
 			ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "tool error: " + err.Error()}}, IsError: true},
+			Err:        err,
 		}
 	}
 
@@ -125,8 +129,15 @@ func executeSingle(ctx context.Context, call content.ToolUse, toolMap map[string
 	if res != nil {
 		parts = res.Parts
 	}
-	return result{
+	return Result{
 		ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: parts},
+	}
+}
+
+func toolErrorResult(call content.ToolUse, text string, err error) Result {
+	return Result{
+		ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: text}}, IsError: true},
+		Err:        err,
 	}
 }
 

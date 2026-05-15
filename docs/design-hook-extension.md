@@ -14,7 +14,7 @@ tags: [agentos, hook, extension, guardrail]
 
 `hook/` 是 AgentOS core 的生命周期回调命名空间。v1 只提供一个接口 `Hook`：6 个生命周期方法（`BeforeModel` / `AfterModel` / `BeforeTool` / `AfterTool` / `BeforeTurn` / `AfterTurn`），用户嵌入 `hook.Noop` 后只重写自己关心的方法即可。改写直接修改指针入参，拦截通过返回 `Abort(reason)` 表达。无 sealed event union、无 Mutator、无 type-safe helper、无中间件包装。
 
-Hook 只承载 Agent Loop 的稳定生命周期契约，不承载应用业务事件。配置加载、文件监听、任务队列、UI notification、workspace 事件等由应用自己的 event bus 处理。控制信号（`LoopExit` / `Handoff`）也不在 hook 范围内——它们已经是 `event.Output` 流上的 sealed 变体，应用消费 `<-chan event.Output` 即可观察。
+Hook 只承载 Agent Loop 的稳定生命周期契约，不承载应用业务事件。配置加载、文件监听、任务队列、UI notification、workspace 事件等由应用自己的 event bus 处理。控制信号（`LoopExit` / `Handoff`）也不在 hook 范围内——它们由 `event.TurnEnd.Action` 承载，应用消费 `<-chan event.Output` 中的 `TurnEnd` 即可观察。
 
 ## 2. `hook.Hook` 全部 surface
 
@@ -40,15 +40,18 @@ type Hook interface {
     // (e.g. inject system text, append messages, narrow tool spec).
     BeforeModel(ctx context.Context, req *model.Request) error
 
-    // AfterModel runs after each model step completes (including errors).
-    // Mutate *resp in place; consume err by returning nil; or escalate by
-    // returning a different error.
+    // AfterModel runs after each successful model step. If provider streaming
+    // fails, it is called for observation with resp == nil and err set; the
+    // original provider error still terminates the turn.
     AfterModel(ctx context.Context, req *model.Request, resp *model.Response, err error) error
 
     // BeforeTool runs before each tool invocation.
     BeforeTool(ctx context.Context, call *ToolCall) error
 
-    // AfterTool runs after each tool invocation completes (including errors).
+    // AfterTool runs after each tool wave item completes (including policy
+    // denial or tool errors) and before ToolEnd is emitted / tool result is
+    // committed. Mutate result.Parts in place to rewrite the tool result seen
+    // by both event output and the next model step.
     AfterTool(ctx context.Context, call *ToolCall, result *tools.Result, err error) error
 
     // BeforeTurn runs once at the start of a turn, before any model step.
@@ -91,37 +94,36 @@ type Turn struct {
 }
 
 // TurnSummary aggregates the result of a turn for AfterTurn observers.
-// Mutate Parts / StopReason in AfterTurn to redact or normalize the final
-// output before it is committed to the session.
+// Current v1 treats AfterTurn as observation-only; mutations do not rewrite
+// already emitted events or committed session messages.
 type TurnSummary struct {
     Parts      []content.Part
     StopReason model.StopReason
     Usage      *model.Usage
 }
 
-// Abort sentinel: returning Abort(reason) from any callback triggers a
-// protocol-level turn abort. See §5.
-var ErrAbort = errors.New("hook abort")
+// ErrAbort is the sentinel error for hook-initiated abort.
+var ErrAbort = errors.New("hook: abort")
 
+// AbortError carries a reason for the abort.
 type AbortError struct {
     Reason string
-    Err    error
 }
 
-func (e *AbortError) Error() string { return "hook abort: " + e.Reason }
-func (e *AbortError) Unwrap() error { return e.Err }
+func (e *AbortError) Error() string { return "hook: abort: " + e.Reason }
+func (e *AbortError) Unwrap() error { return ErrAbort }
 
-func Abort(reason string) error { return &AbortError{Reason: reason, Err: ErrAbort} }
+func Abort(reason string) error { return &AbortError{Reason: reason} }
 ```
 
 字段约定：
 
 - `AgentName` / `Turn` 用于在事件流中关联一轮执行；当前会话**不**通过 carrier 字段携带，统一由 `session.FromContext(ctx)` 读取（与 framework 的 ctx 三准则一致），避免同一信息在 ctx 与 carrier 上重复。
-- `*model.Request` / `*model.Response` 使用 v1 `model.Provider` 协议；Stream 路径下 Loop 在 step 完成后用 `model.Collect` 把 chunk 序列汇总为 `*model.Response` 再触发 `AfterModel`。
+- `*model.Request` / `*model.Response` 使用 v1 `model.Provider` 协议；Stream 路径下 Loop 消费 chunk 序列、发出增量事件，并在 step 完成后汇总为 `*model.Response` 再触发 `AfterModel`。
 - `tools.Tool` 使用 v1 两方法接口；如需工具名调用 `call.Tool.Spec().Name`，carrier 不再单独保留 `ToolName` 字段。
 - `event.Input` 使用 v1 文本由 `event.NewPromptText` / `event.NewSteerText` 构造，具体类型为 `event.Prompt` / `event.Steer`。
 - `Parts` 直接使用 `content.Part`。
-- `Before/AfterModel` 即 model **step 边界**：一个 turn 可能包含多次 step（多轮 tool call），每个 step 对应一对 `BeforeModel` / `AfterModel`，与 `event.StepEnd` 一一对应。`BeforeTurn` / `AfterTurn` 才是 turn 边界。
+- `Before/AfterModel` 即 model **step 边界**：一个 turn 可能包含多次 step（多轮 tool call），每个 step 对应一对 `BeforeModel` / `AfterModel`。当前 v1 不输出 `event.StepEnd`，`BeforeTurn` / `AfterTurn` 才是 turn 边界。
 
 ## 3. 注册与组合
 
@@ -154,7 +156,7 @@ func (Metrics) AfterModel(ctx context.Context, req *model.Request, resp *model.R
 
 ### 4.2 改写
 
-`Before*` 直接改请求 / 工具入参，`After*` 直接改响应 / 工具结果 / turn summary。多个 hook 的修改按调用顺序合并，最后写入者覆盖（与 Go 约定一致；需要正交合并时，由 hook 自身实现追加而非整体替换）。
+`Before*` 直接改请求 / 工具入参，`AfterModel` 直接改响应，`AfterTool` 直接改工具结果。多个 hook 的修改按调用顺序合并，最后写入者覆盖（与 Go 约定一致；需要正交合并时，由 hook 自身实现追加而非整体替换）。`AfterTurn` 是 observation-only；修改 `TurnSummary` 不会回写已经发出的 `TurnEnd` 或 Session。
 
 ```go
 type Guardrail struct{ hook.Noop }
@@ -174,7 +176,7 @@ func (Guardrail) AfterTool(ctx context.Context, call *hook.ToolCall, result *too
 
 ### 4.3 拦截
 
-任意方法返回 `hook.Abort(reason)` 触发协议级 turn 中止。`Before*` 中止跳过对应调用；`After*` 中止不把结果反馈给后续步骤，turn 以 abort 收尾。`After*` 也可以"消费"上游 error（接收 err 后 `return nil`）或"升级"为别的 error。
+任意方法返回 `hook.Abort(reason)` 触发协议级 turn 中止。`Before*` 中止跳过对应调用；`AfterModel` 中止不再触发后续 tool wave 或下一 step；`AfterTool` 中止不把当前 tool result 反馈给模型，turn 以 abort 收尾。其它非 nil error 作为 fatal runtime error 进入输出流。
 
 ```go
 type Deny struct{ hook.Noop }
@@ -189,14 +191,14 @@ func (Deny) BeforeTool(ctx context.Context, call *hook.ToolCall) error {
 
 ## 5. Abort 与 error 传播
 
-每个方法的返回值落到统一规则：
+除 `AfterTurn`（observation-only，返回值始终忽略）以及 provider streaming 失败后用于观察的 `AfterModel(ctx, req, nil, err)`（返回值忽略，原始 provider error 保留）外，每个方法的返回值落到统一规则：
 
 | 返回值 | 行为 |
 |---|---|
 | `nil` | 同位置下一个 hook 继续；流程正常 |
-| `errors.Is(err, ErrAbort)` | 协议级中止：跳过同位置后续 hook，发送 `event.TurnEnd{StopReason: model.StopAbort, Err: err}` 与 `event.Done`，关闭输出流；`Run` 第二返回值仍为 `nil` |
-| 其它非 nil error | fatal：跳过同位置后续 hook，向输出流发送 `event.Error{Err: err}`，再发送 `event.TurnEnd{Err: err}` 与 `event.Done`，关闭输出流；`Run` 第二返回值仍为 `nil`（启动期错误才走第二返回值） |
-| `context.Canceled` / `DeadlineExceeded` | 优先于以上两类；按 Go 惯例向上层传播 ctx 取消，输出流以 `event.Error` + `event.Done` 收尾 |
+| `errors.Is(err, ErrAbort)` | 协议级中止：跳过同位置后续 hook，本 turn 输出 `event.TurnEnd{StopReason: event.StopAbort, Err: err}`；Run 可继续处理后续已排队输入 |
+| 其它非 nil error | fatal：跳过同位置后续 hook，本 turn 输出 `event.TurnEnd{Err: err}`，随后输出 `event.Error{Err: err}` 与 `event.Done`，关闭输出流；`Run` 第二返回值仍为 `nil`（启动期错误才走第二返回值） |
+| `context.Canceled` / `DeadlineExceeded` | 按 Go 惯例作为 runtime error 进入输出流，以 `event.Error` + `event.Done` 收尾 |
 
 各位置 abort 的具体效果：
 
@@ -205,15 +207,16 @@ func (Deny) BeforeTool(ctx context.Context, call *hook.ToolCall) error {
 | `BeforeTurn` | 跳过本 turn 的所有 model step / tool wave，直接进 `TurnEnd` |
 | `BeforeModel` | 跳过本 step 的 provider 调用（不发请求），结束当前 step；若已无后续 step → turn 终止 |
 | `AfterModel` | 不再触发后续 tool wave 或下一个 step，turn 提前结束 |
-| `BeforeTool` | 不执行该工具，向模型反馈 `content.ToolResult{IsError:true, Parts:[Text(reason)]}`，继续后续 step（用于 guardrail 反思） |
+| `BeforeTool` | 不执行当前 tool wave，turn 以 abort 收尾；若要给模型反馈可反思的工具拒绝结果，应使用 `policy.Policy` 的 `Deny` |
 | `AfterTool` | 不把当前 tool result 反馈给模型，turn 以 abort 收尾 |
-| `AfterTurn` | abort/error 仅记录到 `TurnEnd.Err`；无法回滚已发出事件 |
+| `AfterTurn` | 当前 v1 忽略返回错误；无法回滚已发出事件或已提交 Session 的消息 |
 
 ## 6. 并发与生命周期
 
 - Loop 保证同一生命周期方法的所有 hook 在单 goroutine 内顺序调用；指针入参（`*model.Request` 等）**仅在该方法返回前有效**，handler 不得保留到方法外（例如塞进异步队列）。
+- 默认并行 tool wave 只并发执行 `Tool.Handle`；`BeforeTool` 按 assistant 源顺序调用，`AfterTool` 在工具完成后回到 Agent Loop goroutine 串行调用。
 - Hook 不是 goroutine-safe：如果应用层在方法内部 fan-out，必须自己保证不并发触碰指针。
-- `ctx` cancellation 优先于 hook abort；Loop 在每次进入 hook 方法前检查 `ctx.Err()`。
+- hook 回调收到与 Agent Loop 相同的 `ctx`；需要执行 I/O 或后台工作时应主动遵守 `ctx.Done()`。
 
 ## 7. 应用事件总线边界
 
@@ -223,7 +226,7 @@ Hook 不是通用事件总线。下列事件不进入 `hook/`：
 - workspace、文件系统、配置刷新、账号状态。
 - 应用自定义任务、队列、channel、后台 job。
 - Memory 的业务抽取任务；v1 `memory.Memory` 暴露 `Recall` / `Remember` / `Forget` 三方法（全部 variadic option），应用可在 prompt section 或 turn 后处理里调用。
-- 控制信号 `LoopExit` / `Handoff`：消费 `<-chan event.Output` 时按 sealed 变体观察。
+- 控制信号 `LoopExit` / `Handoff`：消费 `<-chan event.Output` 时读取 `event.TurnEnd.Action`。
 
 应用如需事件系统，应在自身包内定义 bus，并可在 bus handler 中调用 AgentOS API。核心只保证本文档列出的六个生命周期方法的兼容性。
 
@@ -233,7 +236,7 @@ Hook 不是通用事件总线。下列事件不进入 `hook/`：
 
 早期草案是 sealed `hook.Event` + 8 类 event + 8 个 `On*` helper + 4 个 Mutator 细粒度 setter。问题：
 
-- **event 一加，helper 一加**：每新增一类 event（如 `LoopExit` / `Handoff`）必须配套加 helper，公开 surface 随 event 集合线性增长。
+- **event 一加，helper 一加**：每新增一类 event 都必须配套加 helper，公开 surface 随 event 集合线性增长。
 - **Pre/Post 二元拆分**：本质同一边界被切两半，重复 carrier 与 Mutator。
 - **Mutator 是显式能力对象**：请求 / 响应字段扩张时 Mutator 也要扩；并且 Loop 的"细粒度 setter + invariant 校验"在多数应用里并未真正用到。
 - **手感重**：看一次设计图要理解 `Hook` 接口、`HookFunc`、`Handler[E]`、8 个 `On*`、`Chain`、4 个 Mutator、abort sentinel 与传播矩阵共十几个概念。
@@ -243,7 +246,7 @@ Hook 不是通用事件总线。下列事件不进入 `hook/`：
 - 用一个**接口**覆盖全部生命周期，6 个方法描述六个固定边界。`hook.Noop` 提供全 no-op 默认实现，用户嵌入后只重写关心的方法 —— partial impl 的体验等价于"可选回调字段"，但获得了静态接口契约、`var _ hook.Hook = (*MyHook)(nil)` 的编译期断言以及更易识别的 Go 主流惯例（`http.Handler` / 各类 codec 都是接口 + 嵌入 base 的范式）。
 - 用**指针入参**表达改写，放弃 Mutator 的"字段级合并 + invariant 校验"。多 hook 的修改是顺序覆盖，需要正交合并由 hook 自身实现追加（这与 Go 标准库风格一致）。
 - 把"是否拦截"折叠到方法返回值上，复用 `Abort` 三件套与传播矩阵。
-- 控制信号（`LoopExit` / `Handoff`）从 hook 移除：它们不是"可拦截边界"，已有 `event.Output` 流的 sealed 变体提供观察通道。
+- 控制信号（`LoopExit` / `Handoff`）从 hook 移除：它们不是"可拦截边界"，已有 `TurnEnd.Action` 提供观察通道。
 
 ### 为什么用接口 + Noop 嵌入而不是结构体 + 函数字段
 
@@ -274,15 +277,14 @@ Hook 不是通用事件总线。下列事件不进入 `hook/`：
 
 ## 与红线对照
 
-- r22：单一 `Hook` 接口（6 个生命周期方法）+ 嵌入式 `hook.Noop` 取代旧的 sealed event union + 8 个 helper + Mutator 体系；abort 三件套与传播矩阵保留；控制信号从 hook 移除并改走 `event.Output`。
-- 根包边界：Run 位于根包 `Agent.Run(ctx, <-chan event.Input) (<-chan event.Output, error)`，根包保留 `Agent`、`NewAgent`、`Option`、`NewAgentTool`、默认 `llmAgent` 与 `WithModel` / `WithTools` / `WithSession` / `WithPolicy` / `WithHooks` / `WithCompact` / `WithPrompt` / `WithRequestBuilder` / `WithToolExecutor`；`WithHooks` 签名为 `WithHooks(...hook.Hook)`。
-- 相关协议：`event.Prompt` / `event.Steer`、`model.Provider` 三方法、独立 `model.TokenCounter`、`tools.Tool` 两方法（`Spec() ToolSpec` + `Handle(ctx, input)`，控制流通过 sentinel error 翻译为 `event.LoopExit` / `event.Handoff`）、`session.Session` 六方法 append-only（hook 通过 `session.FromContext(ctx)` 读取）、`compact.Compactor`、`memory.Memory`、`policy.Policy`、`prompt.Section` 函数类型、`NewContext` / `FromContext` 命名均按 v1 描述。
+- r22：单一 `Hook` 接口（6 个生命周期方法）+ 嵌入式 `hook.Noop` 取代旧的 sealed event union + 8 个 helper + Mutator 体系；abort 三件套与传播矩阵保留；控制信号从 hook 移除并改走 `TurnEnd.Action`。
+- 根包边界：Run 位于根包 `Agent.Run(ctx, <-chan event.Input) (<-chan event.Output, error)`，根包保留 `Agent`、`NewAgent`、`AgentOption`、`NewAgentTool`、默认 `llmAgent` 与 `WithModel` / `WithDescription` / `WithTools` / `WithToolsResolver` / `WithPolicy` / `WithHooks` / `WithCompact` / `WithPrompt`；`WithHooks` 签名为 `WithHooks(...hook.Hook)`。
+- 相关协议：`event.Prompt` / `event.Steer`、`model.Provider` 三方法、独立 `model.TokenCounter`、`tools.Tool` 两方法（`Spec() ToolSpec` + `Handle(ctx, input)`，控制流通过 sentinel error 翻译为 `TurnEnd.Action`）、`session.Session` 六方法 append-only（hook 通过 `session.FromContext(ctx)` 读取）、`compact.Compactor`、`memory.Memory`、`policy.Policy`、`prompt.Section` 函数类型、`NewContext` / `FromContext` 命名均按 v1 描述。
 
 ## 修订记录
 
 - 2026-05-07：初版"Observer / Interceptor 二元 + Mutator + sealed Event union"。
 - 2026-05-07（简化 v1）：合并为单一 `Hook` 接口；helper 收敛为 `Handler[E]` 泛型签名；Mutator 收紧为细粒度 setter；新增 abort/error 传播矩阵。
-- 2026-05-07（控制信号专用事件）：新增 `event.LoopExit` / `event.Handoff` Output 变体与同源 `hook.LoopExit` / `hook.Handoff`。
-- 2026-05-07（重设计 v2）：改为单一 `Hooks` 结构体 + 6 个可选回调字段（`BeforeModel` / `AfterModel` / `BeforeTool` / `AfterTool` / `BeforeTurn` / `AfterTurn`）；删除 sealed `hook.Event` union、`Hook` 接口、`HookFunc`、`Handler[E]`、8 个 `On*` helper、`Chain`、4 个 Mutator 类型与全部 setter；改写改为直接修改指针入参；控制信号 `LoopExit` / `Handoff` 从 hook 移除，由 `event.Output` 流承载；`WithHooks` 签名改为 `WithHooks(...hook.Hooks)`。
+- 2026-05-07（控制信号专用事件草案）：曾讨论独立 `event.LoopExit` / `event.Handoff` Output 变体，当前 v1 收敛为 `TurnEnd.Action`。
+- 2026-05-07（重设计 v2）：改为单一 `Hooks` 结构体 + 6 个可选回调字段（`BeforeModel` / `AfterModel` / `BeforeTool` / `AfterTool` / `BeforeTurn` / `AfterTurn`）；删除 sealed `hook.Event` union、`Hook` 接口、`HookFunc`、`Handler[E]`、8 个 `On*` helper、`Chain`、4 个 Mutator 类型与全部 setter；改写改为直接修改指针入参；控制信号 `LoopExit` / `Handoff` 从 hook 移除，由 `TurnEnd.Action` 承载；`WithHooks` 签名改为 `WithHooks(...hook.Hooks)`。
 - 2026-05-07（重设计 v3）：把 `hook.Hooks` 结构体改为 `hook.Hook` 接口（6 个生命周期方法 `BeforeModel` / `AfterModel` / `BeforeTool` / `AfterTool` / `BeforeTurn` / `AfterTurn`）+ 提供 `hook.Noop` 嵌入式默认实现以支持 partial impl。`WithHooks` 签名调整为 `WithHooks(...hook.Hook)`。语义保持不变（顺序串行调用、最后写入者覆盖、abort 三件套与传播矩阵保留），但引入静态接口契约 / 编译期断言 / 与 `http.Handler` 一致的 Go 风格。
-

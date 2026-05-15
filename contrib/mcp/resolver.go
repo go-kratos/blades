@@ -48,9 +48,9 @@ func (r *ToolsResolver) setTools(tools []tools.Tool) {
 	r.tools = slices.Clone(tools)
 }
 
-// Resolve implements the tools.Resolver interface.
+// List implements the tools.Resolver interface.
 // Returns all tools from all configured MCP servers using lazy loading.
-func (r *ToolsResolver) Resolve(ctx context.Context) ([]tools.Tool, error) {
+func (r *ToolsResolver) List(ctx context.Context) ([]tools.Tool, error) {
 	// Return cached tools if already loaded
 	if r.loaded.Load() {
 		return r.getTools(), nil
@@ -91,6 +91,20 @@ func (r *ToolsResolver) Resolve(ctx context.Context) ([]tools.Tool, error) {
 	r.setTools(allTools)
 	r.loaded.Store(true)
 	return r.getTools(), nil
+}
+
+// Resolve implements the tools.Resolver interface.
+func (r *ToolsResolver) Resolve(ctx context.Context, name string) (tools.Tool, error) {
+	tools, err := r.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, tool := range tools {
+		if tool.Spec().Name == name {
+			return tool, nil
+		}
+	}
+	return nil, fmt.Errorf("tool not found: %s", name)
 }
 
 // Close closes all client connections.

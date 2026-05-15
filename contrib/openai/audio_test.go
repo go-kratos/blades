@@ -5,14 +5,15 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
 )
 
 func TestNewAudioSetsModelName(t *testing.T) {
 	t.Parallel()
 
-	model := NewAudio("gpt-4o-mini-tts", AudioConfig{Voice: "alloy"})
-	if got, want := model.Name(), "gpt-4o-mini-tts"; got != want {
+	provider := NewAudio("gpt-4o-mini-tts", AudioConfig{Voice: "alloy"})
+	if got, want := provider.Name(), "gpt-4o-mini-tts"; got != want {
 		t.Fatalf("model name = %q, want %q", got, want)
 	}
 }
@@ -20,13 +21,13 @@ func TestNewAudioSetsModelName(t *testing.T) {
 func TestAudioGenerateValidateRequest(t *testing.T) {
 	t.Parallel()
 
-	model := &audioModel{
+	provider := &audioModel{
 		model: "gpt-4o-mini-tts",
 		config: AudioConfig{
 			Voice: "alloy",
 		},
 	}
-	_, err := model.Generate(context.Background(), nil)
+	_, err := provider.Generate(context.Background(), nil)
 	if !errors.Is(err, ErrAudioRequestNil) {
 		t.Fatalf("expected ErrAudioRequestNil, got %v", err)
 	}
@@ -35,13 +36,13 @@ func TestAudioGenerateValidateRequest(t *testing.T) {
 func TestAudioGenerateValidateModel(t *testing.T) {
 	t.Parallel()
 
-	model := &audioModel{
+	provider := &audioModel{
 		config: AudioConfig{
 			Voice: "alloy",
 		},
 	}
-	_, err := model.Generate(context.Background(), &blades.ModelRequest{
-		Messages: []*blades.Message{blades.UserMessage("hello")},
+	_, err := provider.Generate(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello"}}}},
 	})
 	if !errors.Is(err, ErrAudioModelRequired) {
 		t.Fatalf("expected ErrAudioModelRequired, got %v", err)
@@ -51,11 +52,11 @@ func TestAudioGenerateValidateModel(t *testing.T) {
 func TestAudioGenerateValidateVoice(t *testing.T) {
 	t.Parallel()
 
-	model := &audioModel{
+	provider := &audioModel{
 		model: "gpt-4o-mini-tts",
 	}
-	_, err := model.Generate(context.Background(), &blades.ModelRequest{
-		Messages: []*blades.Message{blades.UserMessage("hello")},
+	_, err := provider.Generate(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello"}}}},
 	})
 	if !errors.Is(err, ErrAudioVoiceRequired) {
 		t.Fatalf("expected ErrAudioVoiceRequired, got %v", err)

@@ -6,21 +6,22 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
 	openaisdk "github.com/openai/openai-go/v3"
 )
 
 func TestToChatCompletionParamsAssistantRole(t *testing.T) {
 	t.Parallel()
 
-	model := &chatModel{model: "gpt-test"}
-	req := &blades.ModelRequest{
-		Messages: []*blades.Message{
-			blades.UserMessage("hello"),
-			blades.AssistantMessage("world"),
+	provider := &chatModel{model: "gpt-test"}
+	req := &model.Request{
+		Messages: []*model.Message{
+			{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello"}}},
+			{Role: model.RoleAssistant, Parts: []content.Part{content.Text{Text: "world"}}},
 		},
 	}
-	params, err := model.toChatCompletionParams(false, req)
+	params, err := provider.toChatCompletionParams(false, req)
 	if err != nil {
 		t.Fatalf("toChatCompletionParams returned error: %v", err)
 	}
@@ -37,12 +38,51 @@ func TestToChatCompletionParamsAssistantRole(t *testing.T) {
 	}
 }
 
-func TestChoiceToResponseMarksToolPartsIncomplete(t *testing.T) {
+func TestToChatCompletionParamsParallelToolCalls(t *testing.T) {
 	t.Parallel()
 
-	response, err := choiceToResponse(context.Background(), openaisdk.ChatCompletionNewParams{}, &openaisdk.ChatCompletion{
+	provider := NewModel("gpt-test", WithParallelToolCalls(false)).(*chatModel)
+	params, err := provider.toChatCompletionParams(false, &model.Request{})
+	if err != nil {
+		t.Fatalf("toChatCompletionParams returned error: %v", err)
+	}
+
+	payload, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	if !bytes.Contains(payload, []byte(`"parallel_tool_calls":false`)) {
+		t.Fatalf("parallel_tool_calls missing from payload: %s", payload)
+	}
+}
+
+func TestToChatCompletionParamsParallelToolCallsRequestOverridesDefault(t *testing.T) {
+	t.Parallel()
+
+	provider := NewModel("gpt-test", WithParallelToolCalls(false)).(*chatModel)
+	params, err := provider.toChatCompletionParams(false, &model.Request{
+		Options: []model.Option{model.ParallelToolCalls{Enabled: true}},
+	})
+	if err != nil {
+		t.Fatalf("toChatCompletionParams returned error: %v", err)
+	}
+
+	payload, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	if !bytes.Contains(payload, []byte(`"parallel_tool_calls":true`)) {
+		t.Fatalf("parallel_tool_calls override missing from payload: %s", payload)
+	}
+}
+
+func TestChoiceToResponseReturnsToolUses(t *testing.T) {
+	t.Parallel()
+
+	response, err := choiceToResponse(&openaisdk.ChatCompletion{
 		Choices: []openaisdk.ChatCompletionChoice{
 			{
+				FinishReason: "tool_calls",
 				Message: openaisdk.ChatCompletionMessage{
 					ToolCalls: []openaisdk.ChatCompletionMessageToolCallUnion{
 						{
@@ -62,43 +102,62 @@ func TestChoiceToResponseMarksToolPartsIncomplete(t *testing.T) {
 		t.Fatalf("choiceToResponse returned error: %v", err)
 	}
 
-	toolPart, ok := response.Message.Parts[0].(blades.ToolPart)
-	if !ok {
-		t.Fatalf("part type = %T, want blades.ToolPart", response.Message.Parts[0])
+	if got, want := response.StopReason, model.StopToolUse; got != want {
+		t.Fatalf("stop reason = %q, want %q", got, want)
 	}
-	if got, want := toolPart.Completed, false; got != want {
-		t.Fatalf("tool completed = %t, want %t", got, want)
+	toolUse, ok := response.Message.Parts[0].(content.ToolUse)
+	if !ok {
+		t.Fatalf("part type = %T, want content.ToolUse", response.Message.Parts[0])
+	}
+	if got, want := toolUse.ID, "call_1"; got != want {
+		t.Fatalf("tool id = %q, want %q", got, want)
+	}
+	if got, want := toolUse.Name, "get_weather"; got != want {
+		t.Fatalf("tool name = %q, want %q", got, want)
 	}
 }
 
-func TestChunkChoiceToResponseMarksToolPartsIncomplete(t *testing.T) {
+func TestChunkChoiceToResponseReturnsToolUses(t *testing.T) {
 	t.Parallel()
 
-	response, err := chunkChoiceToResponse(context.Background(), []openaisdk.ChatCompletionChunkChoice{
-		{
-			Delta: openaisdk.ChatCompletionChunkChoiceDelta{
-				ToolCalls: []openaisdk.ChatCompletionChunkChoiceDeltaToolCall{
-					{
-						ID:   "call_1",
-						Type: "function",
-						Function: openaisdk.ChatCompletionChunkChoiceDeltaToolCallFunction{
-							Name:      "get_weather",
-							Arguments: `{"city":"Paris"}`,
+	chunk := chunkToModelChunk(openaisdk.ChatCompletionChunk{
+		Choices: []openaisdk.ChatCompletionChunkChoice{
+			{
+				FinishReason: "tool_calls",
+				Delta: openaisdk.ChatCompletionChunkChoiceDelta{
+					ToolCalls: []openaisdk.ChatCompletionChunkChoiceDeltaToolCall{
+						{
+							ID:   "call_1",
+							Type: "function",
+							Function: openaisdk.ChatCompletionChunkChoiceDeltaToolCallFunction{
+								Name:      "get_weather",
+								Arguments: `{"city":"Paris"}`,
+							},
 						},
 					},
 				},
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("chunkChoiceToResponse returned error: %v", err)
-	}
 
-	toolPart, ok := response.Message.Parts[0].(blades.ToolPart)
-	if !ok {
-		t.Fatalf("part type = %T, want blades.ToolPart", response.Message.Parts[0])
+	if got, want := chunk.StopReason, model.StopToolUse; got != want {
+		t.Fatalf("stop reason = %q, want %q", got, want)
 	}
-	if got, want := toolPart.Completed, false; got != want {
-		t.Fatalf("tool completed = %t, want %t", got, want)
+	toolUse, ok := chunk.Parts[0].(content.ToolUse)
+	if !ok {
+		t.Fatalf("part type = %T, want content.ToolUse", chunk.Parts[0])
+	}
+	if got, want := toolUse.Name, "get_weather"; got != want {
+		t.Fatalf("tool name = %q, want %q", got, want)
+	}
+}
+
+func TestGenerateRejectsNilRequest(t *testing.T) {
+	t.Parallel()
+
+	provider := &chatModel{model: "gpt-test"}
+	_, err := provider.Generate(context.Background(), nil)
+	if err == nil {
+		t.Fatal("Generate returned nil error")
 	}
 }

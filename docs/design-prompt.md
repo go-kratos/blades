@@ -125,7 +125,7 @@ req := &model.Request{
 - `prompt.System(text)` / `prompt.SystemSection(...)` 等工厂会生成被 system marker 标记的 part；普通 `prompt.Section` 默认产出非 system part。
 - `model.Request.System` 是单段 `string`，承载 provider-neutral 系统上下文；非系统 part 由 Loop 按规则（如注入到第一条 user message 之前）合入 `Messages`，避免 Section 直接依赖 provider adapter。
 
-应用层若需要替换 system 抽取规则，可通过 `WithRequestBuilder` 替换默认 RequestBuilder（参见 [design-event-agent-loop.md](design-event-agent-loop.md) §7）。
+当前 v1 的 system 抽取规则由 Agent Loop 请求构造阶段固定执行。应用层若需要完全不同的 system / message 组装规则，应实现自定义 `blades.Agent`；未来若开放局部替换点，应作为独立协议变更补充测试和文档。
 
 ## cache control
 

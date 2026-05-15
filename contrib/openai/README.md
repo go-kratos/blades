@@ -1,29 +1,78 @@
-# OpenAI Providers
+# OpenAI Provider
 
-This package offers helpers that adapt OpenAI APIs to the generic `blades.ModelProvider` interface.
+This package adapts OpenAI-compatible chat, image, and audio APIs to the Blades `model.Provider` protocol.
 
-- `NewChatProvider` wraps the chat completion endpoints for text and multimodal conversations.
-- `NewImageProvider` wraps the image generation endpoint (`/v1/images/generations`) and returns image bytes or URLs as `DataPart`/`FilePart` message contents.
-- `NewAudioProvider` wraps the text-to-speech endpoint (`/v1/audio/speech`) and returns synthesized audio as `DataPart` payloads.
+## Chat
 
 ```go
-provider := openai.NewImageProvider()
-req := &blades.ModelRequest{
-    Model: "gpt-image-1",
-    Messages: []*blades.Message{
-        blades.UserMessage("a watercolor painting of a cozy reading nook"),
+provider := openai.NewModel("gpt-5",
+    openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")),
+    openai.WithParallelToolCalls(true),
+)
+
+req := &model.Request{
+    System: "You are a concise assistant.",
+    Messages: []*model.Message{
+        {
+            Role:  model.RoleUser,
+            Parts: []content.Part{content.Text{Text: "What is the capital of France?"}},
+        },
     },
 }
-res, err := provider.Generate(ctx, req, blades.ImageSize("1024x1024"))
+
+resp, err := provider.Generate(ctx, req)
 ```
 
+Streaming uses the same request:
+
 ```go
-provider := openai.NewAudioProvider()
-req := &blades.ModelRequest{
-    Model: "gpt-4o-mini-tts",
-    Messages: []*blades.Message{
-        blades.UserMessage("Hello from Blades audio!"),
-    },
+for chunk, err := range provider.Stream(ctx, req) {
+    if err != nil {
+        return err
+    }
+    for _, part := range chunk.Parts {
+        if text, ok := part.(content.Text); ok {
+            fmt.Print(text.Text)
+        }
+    }
 }
-res, err := provider.Generate(ctx, req, blades.AudioVoice("alloy"), blades.AudioResponseFormat("mp3"))
+```
+
+`WithParallelToolCalls(false)` maps to OpenAI `parallel_tool_calls=false`. The Agent Loop does not read this option; it only executes the tool calls the model actually returns.
+
+## Image
+
+```go
+provider := openai.NewImage("gpt-image-1", openai.ImageConfig{
+    APIKey: os.Getenv("OPENAI_API_KEY"),
+    Size:   "1024x1024",
+})
+
+resp, err := provider.Generate(ctx, &model.Request{
+    Messages: []*model.Message{
+        {
+            Role:  model.RoleUser,
+            Parts: []content.Part{content.Text{Text: "a watercolor painting of a cozy reading nook"}},
+        },
+    },
+})
+```
+
+## Audio
+
+```go
+provider := openai.NewAudio("gpt-4o-mini-tts", openai.AudioConfig{
+    APIKey:         os.Getenv("OPENAI_API_KEY"),
+    Voice:          "alloy",
+    ResponseFormat: "mp3",
+})
+
+resp, err := provider.Generate(ctx, &model.Request{
+    Messages: []*model.Message{
+        {
+            Role:  model.RoleUser,
+            Parts: []content.Part{content.Text{Text: "Hello from Blades audio!"}},
+        },
+    },
+})
 ```

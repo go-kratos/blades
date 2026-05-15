@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"iter"
 	"strings"
 
-	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
@@ -35,7 +37,7 @@ type AudioConfig struct {
 	RequestOptions []option.RequestOption
 }
 
-// audioModel implements the blades.ModelProvider interface for audio generation.
+// audioModel implements the model.Provider interface for audio generation.
 type audioModel struct {
 	model  string
 	config AudioConfig
@@ -43,7 +45,7 @@ type audioModel struct {
 }
 
 // NewAudio creates a new instance of audioModel.
-func NewAudio(model string, config AudioConfig) blades.ModelProvider {
+func NewAudio(modelName string, config AudioConfig) model.Provider {
 	opts := config.RequestOptions
 	// Add base URL and API key if provided
 	if config.BaseURL != "" {
@@ -53,7 +55,7 @@ func NewAudio(model string, config AudioConfig) blades.ModelProvider {
 		opts = append(opts, option.WithAPIKey(config.APIKey))
 	}
 	return &audioModel{
-		model:  model,
+		model:  modelName,
 		config: config,
 		client: openai.NewClient(opts...),
 	}
@@ -64,14 +66,14 @@ func (m *audioModel) Name() string {
 	return m.model
 }
 
-func (m *audioModel) buildAudioParams(req *blades.ModelRequest) openai.AudioSpeechNewParams {
+func (m *audioModel) buildAudioParams(req *model.Request) openai.AudioSpeechNewParams {
 	params := openai.AudioSpeechNewParams{
 		Input: promptFromMessages(req.Messages),
 		Model: m.model,
 		Voice: openai.AudioSpeechNewParamsVoice(m.config.Voice),
 	}
-	if req.Instruction != nil {
-		params.Instructions = param.NewOpt(req.Instruction.Text())
+	if req.System != "" {
+		params.Instructions = param.NewOpt(req.System)
 	}
 	if m.config.ResponseFormat != "" {
 		params.ResponseFormat = openai.AudioSpeechNewParamsResponseFormat(m.config.ResponseFormat)
@@ -89,7 +91,7 @@ func (m *audioModel) buildAudioParams(req *blades.ModelRequest) openai.AudioSpee
 }
 
 // Generate generates audio from text input using the configured OpenAI model.
-func (m *audioModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+func (m *audioModel) Generate(ctx context.Context, req *model.Request) (*model.Response, error) {
 	if req == nil {
 		return nil, ErrAudioRequestNil
 	}
@@ -114,43 +116,45 @@ func (m *audioModel) Generate(ctx context.Context, req *blades.ModelRequest) (*b
 	}
 	name := "audio." + strings.ToLower(string(params.ResponseFormat))
 	mimeType := audioMimeType(params.ResponseFormat)
-	message := blades.NewAssistantMessage(blades.StatusCompleted)
-	message.Parts = append(message.Parts, blades.DataPart{
-		Name:     name,
+	message := &model.Message{Role: model.RoleAssistant}
+	message.Parts = append(message.Parts, content.DataPart{
+		Filename: name,
 		Bytes:    data,
-		MIMEType: mimeType,
+		MIME:     mimeType,
 	})
-	message.Metadata["content_type"] = resp.Header.Get("Content-Type")
-	message.Metadata["response_format"] = params.ResponseFormat
-	return &blades.ModelResponse{Message: message}, nil
+	return &model.Response{Message: message, StopReason: model.StopEnd}, nil
 }
 
-// NewStreaming wraps Generate with a single-yield stream for API compatibility.
-func (m *audioModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
-	return func(yield func(*blades.ModelResponse, error) bool) {
+// Stream wraps Generate with a single-yield stream for API compatibility.
+func (m *audioModel) Stream(ctx context.Context, req *model.Request) iter.Seq2[*model.Chunk, error] {
+	return func(yield func(*model.Chunk, error) bool) {
 		r, err := m.Generate(ctx, req)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		yield(r, nil)
+		var parts []content.Part
+		if r.Message != nil {
+			parts = r.Message.Parts
+		}
+		yield(&model.Chunk{Parts: parts, StopReason: r.StopReason, Usage: &r.Usage}, nil)
 	}
 }
 
-func audioMimeType(format openai.AudioSpeechNewParamsResponseFormat) blades.MIMEType {
+func audioMimeType(format openai.AudioSpeechNewParamsResponseFormat) string {
 	switch strings.ToLower(string(format)) {
 	case "mp3":
-		return blades.MIMEAudioMP3
+		return "audio/mpeg"
 	case "wav":
-		return blades.MIMEAudioWAV
+		return "audio/wav"
 	case "opus":
-		return blades.MIMEAudioOpus
+		return "audio/opus"
 	case "aac":
-		return blades.MIMEAudioAAC
+		return "audio/aac"
 	case "flac":
-		return blades.MIMEAudioFLAC
+		return "audio/flac"
 	case "pcm":
-		return blades.MIMEAudioPCM
+		return "audio/pcm"
 	}
-	return blades.MIMEAudioMP3
+	return "audio/mpeg"
 }

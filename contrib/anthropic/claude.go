@@ -2,12 +2,13 @@ package anthropic
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"iter"
 
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/go-kratos/blades"
+	anthropic "github.com/anthropics/anthropic-sdk-go"
+	sdkoption "github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
 )
 
 // Config holds configuration options for the Claude client.
@@ -20,13 +21,63 @@ type Config struct {
 	TopP            float64
 	Temperature     float64
 	StopSequences   []string
-	RequestOptions  []option.RequestOption
+	RequestOptions  []sdkoption.RequestOption
+	ModelOptions    []model.Option
 	Thinking        *anthropic.ThinkingConfigParamUnion
 	// CacheControl enables prompt caching. When true, an ephemeral
 	// cache_control breakpoint is added to the last content block of the last
 	// message, as well as the final system block and the last tool, on every
 	// request. Disabled by default.
 	CacheControl bool
+}
+
+// ModelOption configures a Claude model provider.
+type ModelOption func(*Config)
+
+// WithConfig applies a full Config value.
+func WithConfig(config Config) ModelOption {
+	return func(c *Config) {
+		*c = config
+	}
+}
+
+// WithBaseURL sets a custom API base URL.
+func WithBaseURL(baseURL string) ModelOption {
+	return func(c *Config) {
+		c.BaseURL = baseURL
+	}
+}
+
+// WithAPIKey sets the API key.
+func WithAPIKey(apiKey string) ModelOption {
+	return func(c *Config) {
+		c.APIKey = apiKey
+	}
+}
+
+// WithRequestOptions appends SDK request options.
+func WithRequestOptions(opts ...sdkoption.RequestOption) ModelOption {
+	return func(c *Config) {
+		c.RequestOptions = append(c.RequestOptions, opts...)
+	}
+}
+
+// WithParallelToolCalls configures whether the model may emit multiple tool calls in one response.
+func WithParallelToolCalls(enabled bool) ModelOption {
+	return func(c *Config) {
+		c.ModelOptions = model.MergeOptions(c.ModelOptions, []model.Option{
+			model.ParallelToolCalls{Enabled: enabled},
+		})
+	}
+}
+
+// NewModel creates a Claude provider from model options.
+func NewModel(modelName string, opts ...ModelOption) model.Provider {
+	var config Config
+	for _, opt := range opts {
+		opt(&config)
+	}
+	return newModel(modelName, config)
 }
 
 // Claude provides a unified interface for Claude API access.
@@ -36,18 +87,18 @@ type Claude struct {
 	client anthropic.Client
 }
 
-// NewModel creates a new Claude model provider with the given model name and configuration.
-func NewModel(model string, config Config) blades.ModelProvider {
-	// Apply BaseURL and APIKey if provided
-	opts := config.RequestOptions
+var _ model.Provider = (*Claude)(nil)
+
+func newModel(modelName string, config Config) model.Provider {
+	opts := append([]sdkoption.RequestOption(nil), config.RequestOptions...)
 	if config.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(config.BaseURL))
+		opts = append(opts, sdkoption.WithBaseURL(config.BaseURL))
 	}
 	if config.APIKey != "" {
-		opts = append(opts, option.WithAPIKey(config.APIKey))
+		opts = append(opts, sdkoption.WithAPIKey(config.APIKey))
 	}
 	return &Claude{
-		model:  model,
+		model:  modelName,
 		config: config,
 		client: anthropic.NewClient(opts...),
 	}
@@ -59,8 +110,7 @@ func (m *Claude) Name() string {
 }
 
 // Generate generates content using the Claude API.
-// Returns blades.ModelResponse instead of SDK-specific types.
-func (m *Claude) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+func (m *Claude) Generate(ctx context.Context, req *model.Request) (*model.Response, error) {
 	params, err := m.toClaudeParams(req)
 	if err != nil {
 		return nil, fmt.Errorf("converting request: %w", err)
@@ -69,12 +119,12 @@ func (m *Claude) Generate(ctx context.Context, req *blades.ModelRequest) (*blade
 	if err != nil {
 		return nil, fmt.Errorf("generating content: %w", err)
 	}
-	return convertClaudeToBlades(message, blades.StatusCompleted)
+	return convertClaudeToBlades(message)
 }
 
-// NewStreaming executes the request and returns a stream of assistant responses.
-func (m *Claude) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
-	return func(yield func(*blades.ModelResponse, error) bool) {
+// Stream executes the request and returns model chunks.
+func (m *Claude) Stream(ctx context.Context, req *model.Request) iter.Seq2[*model.Chunk, error] {
+	return func(yield func(*model.Chunk, error) bool) {
 		params, err := m.toClaudeParams(req)
 		if err != nil {
 			yield(nil, err)
@@ -89,13 +139,21 @@ func (m *Claude) NewStreaming(ctx context.Context, req *blades.ModelRequest) bla
 				yield(nil, err)
 				return
 			}
-			if ev, ok := event.AsAny().(anthropic.ContentBlockDeltaEvent); ok {
-				response, err := convertStreamDeltaToBlades(ev)
-				if err != nil {
-					yield(nil, err)
+			switch ev := event.AsAny().(type) {
+			case anthropic.ContentBlockDeltaEvent:
+				chunk := convertStreamDeltaToChunk(ev)
+				if len(chunk.Parts) > 0 && !yield(chunk, nil) {
 					return
 				}
-				if !yield(response, nil) {
+			case anthropic.MessageDeltaEvent:
+				chunk := &model.Chunk{
+					StopReason: mapClaudeStopReason(ev.Delta.StopReason),
+					Usage: &model.Usage{
+						InputTokens:  ev.Usage.InputTokens,
+						OutputTokens: ev.Usage.OutputTokens,
+					},
+				}
+				if !yield(chunk, nil) {
 					return
 				}
 			}
@@ -104,17 +162,20 @@ func (m *Claude) NewStreaming(ctx context.Context, req *blades.ModelRequest) bla
 			yield(nil, err)
 			return
 		}
-		finalResponse, err := convertClaudeToBlades(message, blades.StatusCompleted)
+		finalResponse, err := convertClaudeToBlades(message)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		yield(finalResponse, nil)
+		toolParts := toolUseParts(finalResponse.Message)
+		if len(toolParts) > 0 {
+			yield(&model.Chunk{Parts: toolParts, StopReason: finalResponse.StopReason}, nil)
+		}
 	}
 }
 
-// toClaudeParams converts Blades ModelRequest and ModelOptions to Claude MessageNewParams.
-func (m *Claude) toClaudeParams(req *blades.ModelRequest) (*anthropic.MessageNewParams, error) {
+// toClaudeParams converts Blades model requests and options to Claude MessageNewParams.
+func (m *Claude) toClaudeParams(req *model.Request) (*anthropic.MessageNewParams, error) {
 	params := &anthropic.MessageNewParams{
 		Model: anthropic.Model(m.model),
 	}
@@ -136,50 +197,61 @@ func (m *Claude) toClaudeParams(req *blades.ModelRequest) (*anthropic.MessageNew
 	if m.config.Thinking != nil {
 		params.Thinking = *m.config.Thinking
 	}
-	if req.Instruction != nil {
-		params.System = []anthropic.TextBlockParam{{Text: req.Instruction.Text()}}
+	if req != nil && req.System != "" {
+		params.System = []anthropic.TextBlockParam{{Text: req.System}}
 	}
-	for _, msg := range req.Messages {
-		switch msg.Role {
-		case blades.RoleSystem:
-			params.System = []anthropic.TextBlockParam{{Text: msg.Text()}}
-		case blades.RoleUser:
-			params.Messages = append(params.Messages, anthropic.NewUserMessage(convertPartsToContent(msg.Parts)...))
-		case blades.RoleAssistant:
-			params.Messages = append(params.Messages, anthropic.NewAssistantMessage(convertPartsToContent(msg.Parts)...))
-		case blades.RoleTool:
-			var (
-				toolResults      []anthropic.ContentBlockParamUnion
-				assistantContent []anthropic.ContentBlockParamUnion
-			)
-			for _, part := range msg.Parts {
-				switch v := any(part).(type) {
-				case blades.TextPart:
-					assistantContent = append(assistantContent, anthropic.NewTextBlock(v.Text))
-				case blades.ToolPart:
-					toolResults = append(toolResults, anthropic.NewToolResultBlock(v.ID, v.Response, false))
-					assistantContent = append(assistantContent, anthropic.NewToolUseBlock(v.ID, decodeToolRequest(v.Request), v.Name))
-				}
-			}
-			if len(assistantContent) > 0 {
-				params.Messages = append(params.Messages, anthropic.NewAssistantMessage(assistantContent...))
-			}
-			if len(toolResults) > 0 {
-				params.Messages = append(params.Messages, anthropic.NewUserMessage(toolResults...))
+	if req != nil {
+		for _, msg := range req.Messages {
+			switch msg.Role {
+			case model.RoleUser:
+				params.Messages = append(params.Messages, anthropic.NewUserMessage(convertPartsToContent(msg.Parts)...))
+			case model.RoleAssistant:
+				params.Messages = append(params.Messages, anthropic.NewAssistantMessage(convertPartsToContent(msg.Parts)...))
+			case model.RoleTool:
+				params.Messages = append(params.Messages, anthropic.NewUserMessage(convertPartsToContent(msg.Parts)...))
 			}
 		}
-	}
-	if len(req.Tools) > 0 {
-		tools, err := convertBladesToolsToClaude(req.Tools)
-		if err != nil {
-			return params, fmt.Errorf("converting tools: %w", err)
+		if len(req.Tools) > 0 {
+			tools, err := convertBladesToolsToClaude(req.Tools)
+			if err != nil {
+				return params, fmt.Errorf("converting tools: %w", err)
+			}
+			params.Tools = tools
 		}
-		params.Tools = tools
+		applyModelOptions(params, model.MergeOptions(m.config.ModelOptions, req.Options))
+	} else {
+		applyModelOptions(params, m.config.ModelOptions)
 	}
 	if m.config.CacheControl {
 		applyEphemeralCache(params)
 	}
 	return params, nil
+}
+
+func applyModelOptions(params *anthropic.MessageNewParams, opts []model.Option) {
+	for _, opt := range opts {
+		switch o := opt.(type) {
+		case model.ParallelToolCalls:
+			params.ToolChoice = anthropic.ToolChoiceUnionParam{
+				OfAuto: &anthropic.ToolChoiceAutoParam{
+					DisableParallelToolUse: anthropic.Bool(!o.Enabled),
+				},
+			}
+		case model.Sampling:
+			if o.Temperature != nil {
+				params.Temperature = anthropic.Float(*o.Temperature)
+			}
+			if o.TopP != nil {
+				params.TopP = anthropic.Float(*o.TopP)
+			}
+			if o.MaxTokens != nil {
+				params.MaxTokens = int64(*o.MaxTokens)
+			}
+			if len(o.Stop) > 0 {
+				params.StopSequences = o.Stop
+			}
+		}
+	}
 }
 
 // applyEphemeralCache stamps an ephemeral cache_control breakpoint on the last
@@ -203,10 +275,15 @@ func applyEphemeralCache(params *anthropic.MessageNewParams) {
 	}
 }
 
-func decodeToolRequest(request string) any {
-	var decoded any
-	if err := json.Unmarshal([]byte(request), &decoded); err == nil {
-		return decoded
+func toolUseParts(msg *model.Message) []content.Part {
+	if msg == nil {
+		return nil
 	}
-	return request
+	var parts []content.Part
+	for _, part := range msg.Parts {
+		if _, ok := part.(content.ToolUse); ok {
+			parts = append(parts, part)
+		}
+	}
+	return parts
 }

@@ -8,30 +8,35 @@ all: tidy build test
 
 # Run 'go mod tidy' in each Go module
 tidy:
-	@for dir in $(GO_MODULE_DIRS); do \
+	@set -e; for dir in $(GO_MODULE_DIRS); do \
 		echo "[TIDY] $$dir"; \
 		(cd $$dir && go mod tidy); \
 	done
 
 # Run 'go build' in each Go module
 build:
-	@for dir in $(GO_MODULE_DIRS); do \
+	@set -e; for dir in $(GO_MODULE_DIRS); do \
 		echo "[BUILD] $$dir"; \
 		(cd $$dir && go build ./...); \
 	done
 
 # Run 'go test' in each Go module
 test:
-	@for dir in $(GO_MODULE_DIRS); do \
+	@set -e; for dir in $(GO_MODULE_DIRS); do \
 		echo "[TEST] $$dir"; \
 		(cd $$dir && go test -race ./...); \
 	done
 
 # Run 'go run' for example programs 
 examples:
-	(cd examples && go run ./prompt-basic/main.go)
-	(cd examples && go run ./prompt-invocation/main.go)
-	(cd examples && go run ./prompt-instructions/main.go)
-	(cd examples && go run ./streaming/main.go)
-	(cd examples && go run ./tools-func/main.go)
+	@set -e; \
+	if [ ! -d examples ]; then \
+		echo "[EXAMPLES] examples directory not present"; \
+		exit 0; \
+	fi; \
+	(cd examples && go run ./prompt-basic/main.go); \
+	(cd examples && go run ./prompt-invocation/main.go); \
+	(cd examples && go run ./prompt-instructions/main.go); \
+	(cd examples && go run ./streaming/main.go); \
+	(cd examples && go run ./tools-func/main.go); \
 	(cd examples && go run ./tools-streaming/main.go)

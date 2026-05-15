@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"iter"
 
-	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
@@ -38,7 +40,7 @@ type imageModel struct {
 }
 
 // NewImage creates a new instance of imageModel.
-func NewImage(model string, config ImageConfig) blades.ModelProvider {
+func NewImage(modelName string, config ImageConfig) model.Provider {
 	opts := config.RequestOptions
 	// Set base URL and API key if provided
 	if config.BaseURL != "" {
@@ -48,7 +50,7 @@ func NewImage(model string, config ImageConfig) blades.ModelProvider {
 		opts = append(opts, option.WithAPIKey(config.APIKey))
 	}
 	return &imageModel{
-		model:  model,
+		model:  modelName,
 		config: config,
 		client: openai.NewClient(opts...),
 	}
@@ -60,7 +62,7 @@ func (m *imageModel) Name() string {
 }
 
 // Generate generates images using the configured OpenAI model.
-func (m *imageModel) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+func (m *imageModel) Generate(ctx context.Context, req *model.Request) (*model.Response, error) {
 	params, err := m.buildGenerateParams(req)
 	if err != nil {
 		return nil, err
@@ -72,19 +74,23 @@ func (m *imageModel) Generate(ctx context.Context, req *blades.ModelRequest) (*b
 	return toImageResponse(res)
 }
 
-// NewStreaming wraps Generate with a single-yield stream for API compatibility.
-func (m *imageModel) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
-	return func(yield func(*blades.ModelResponse, error) bool) {
+// Stream wraps Generate with a single-yield stream for API compatibility.
+func (m *imageModel) Stream(ctx context.Context, req *model.Request) iter.Seq2[*model.Chunk, error] {
+	return func(yield func(*model.Chunk, error) bool) {
 		message, err := m.Generate(ctx, req)
 		if err != nil {
 			yield(nil, err)
 			return
 		}
-		yield(message, nil)
+		var parts []content.Part
+		if message.Message != nil {
+			parts = message.Message.Parts
+		}
+		yield(&model.Chunk{Parts: parts, StopReason: message.StopReason, Usage: &message.Usage}, nil)
 	}
 }
 
-func (m *imageModel) buildGenerateParams(req *blades.ModelRequest) (openai.ImageGenerateParams, error) {
+func (m *imageModel) buildGenerateParams(req *model.Request) (openai.ImageGenerateParams, error) {
 	params := openai.ImageGenerateParams{
 		Prompt: promptFromMessages(req.Messages),
 		Model:  openai.ImageModel(m.model),
@@ -128,13 +134,8 @@ func (m *imageModel) buildGenerateParams(req *blades.ModelRequest) (openai.Image
 	return params, nil
 }
 
-func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) {
-	message := blades.NewAssistantMessage(blades.StatusCompleted)
-	message.Metadata["size"] = res.Size
-	message.Metadata["quality"] = res.Quality
-	message.Metadata["background"] = res.Background
-	message.Metadata["output_format"] = res.OutputFormat
-	message.Metadata["created"] = res.Created
+func toImageResponse(res *openai.ImagesResponse) (*model.Response, error) {
+	message := &model.Message{Role: model.RoleAssistant}
 	mimeType := imageMimeType(res.OutputFormat)
 	for i, img := range res.Data {
 		name := fmt.Sprintf("image-%d", i+1)
@@ -143,34 +144,30 @@ func toImageResponse(res *openai.ImagesResponse) (*blades.ModelResponse, error) 
 			if err != nil {
 				return nil, fmt.Errorf("openai/image: decode response: %w", err)
 			}
-			message.Parts = append(message.Parts, blades.DataPart{
-				Name:     name,
+			message.Parts = append(message.Parts, content.DataPart{
+				Filename: name,
 				Bytes:    data,
-				MIMEType: mimeType,
+				MIME:     mimeType,
 			})
 		}
 		if img.URL != "" {
-			message.Parts = append(message.Parts, blades.FilePart{
-				Name:     name,
+			message.Parts = append(message.Parts, content.FilePart{
+				Filename: name,
 				URI:      img.URL,
-				MIMEType: mimeType,
+				MIME:     mimeType,
 			})
 		}
-		if img.RevisedPrompt != "" {
-			key := fmt.Sprintf("%s_revised_prompt_%d", name, i+1)
-			message.Metadata[key] = img.RevisedPrompt
-		}
 	}
-	return &blades.ModelResponse{Message: message}, nil
+	return &model.Response{Message: message, StopReason: model.StopEnd}, nil
 }
 
-func imageMimeType(format openai.ImagesResponseOutputFormat) blades.MIMEType {
+func imageMimeType(format openai.ImagesResponseOutputFormat) string {
 	switch format {
 	case openai.ImagesResponseOutputFormatJPEG:
-		return blades.MIMEImageJPEG
+		return "image/jpeg"
 	case openai.ImagesResponseOutputFormatWebP:
-		return blades.MIMEImageWEBP
+		return "image/webp"
 	default:
-		return blades.MIMEImagePNG
+		return "image/png"
 	}
 }

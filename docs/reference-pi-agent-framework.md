@@ -255,9 +255,6 @@ interface AgentLoopConfig extends SimpleStreamOptions {
   // 后续消息（Agent 停止后追加）
   getFollowUpMessages?: () => Promise<AgentMessage[]>
 
-  // 工具执行模式，默认 "parallel"
-  toolExecution?: "sequential" | "parallel"
-
   // 工具执行前后 Hook
   beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal)
     => Promise<BeforeToolCallResult | undefined>
@@ -379,15 +376,14 @@ prepareArguments()     ← 参数预处理（兼容性 shim）
   → emit events        ← 发射 tool_execution_end + tool result message
 ```
 
-#### 并行/串行分区
+#### 并行工具调用
 
-默认 `toolExecution: "parallel"`。执行流程：
+执行流程：
 
 1. 所有工具调用**串行预处理**（prepareArguments + beforeToolCall）
-2. 标记为 `parallel` 的工具**并发执行**
-3. 标记为 `sequential` 的工具**串行执行**
-4. `tool_execution_end` 按完成顺序发射
-5. tool result message 按 assistant 消息中的原始顺序发射
+2. 同一 assistant message 中的工具调用**并发执行**
+3. `tool_execution_end` 按完成顺序发射
+4. tool result message 按 assistant 消息中的原始顺序发射
 
 `terminate` 提示：只有当批次中**所有**工具结果都设置 `terminate: true` 时，Agent 才会提前停止。
 

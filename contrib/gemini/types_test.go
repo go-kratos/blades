@@ -4,17 +4,18 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
 	"google.golang.org/genai"
 )
 
 func TestConvertMessageToGenAI_AssistantRole(t *testing.T) {
 	t.Parallel()
 
-	_, contents, err := convertMessageToGenAI(&blades.ModelRequest{
-		Messages: []*blades.Message{
-			blades.UserMessage("hello"),
-			blades.AssistantMessage("world"),
+	_, contents, err := convertMessageToGenAI(&model.Request{
+		Messages: []*model.Message{
+			{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello"}}},
+			{Role: model.RoleAssistant, Parts: []content.Part{content.Text{Text: "world"}}},
 		},
 	})
 	if err != nil {
@@ -52,20 +53,17 @@ func TestConvertGenAIToBlades_FunctionCallMappedToToolPart(t *testing.T) {
 		},
 	}
 
-	converted, err := convertGenAIToBlades(resp, blades.StatusCompleted)
+	converted, err := convertGenAIToBlades(resp)
 	if err != nil {
 		t.Fatalf("convertGenAIToBlades returned error: %v", err)
-	}
-	if got, want := converted.Message.Role, blades.RoleTool; got != want {
-		t.Fatalf("message role = %q, want %q", got, want)
 	}
 	if got, want := len(converted.Message.Parts), 1; got != want {
 		t.Fatalf("parts len = %d, want %d", got, want)
 	}
 
-	toolPart, ok := converted.Message.Parts[0].(blades.ToolPart)
+	toolPart, ok := converted.Message.Parts[0].(content.ToolUse)
 	if !ok {
-		t.Fatalf("part type = %T, want blades.ToolPart", converted.Message.Parts[0])
+		t.Fatalf("part type = %T, want content.ToolUse", converted.Message.Parts[0])
 	}
 	if got, want := toolPart.ID, "call_1"; got != want {
 		t.Fatalf("tool id = %q, want %q", got, want)
@@ -73,12 +71,8 @@ func TestConvertGenAIToBlades_FunctionCallMappedToToolPart(t *testing.T) {
 	if got, want := toolPart.Name, "get_weather"; got != want {
 		t.Fatalf("tool name = %q, want %q", got, want)
 	}
-	if got, want := toolPart.Completed, false; got != want {
-		t.Fatalf("tool completed = %t, want %t", got, want)
-	}
-
 	var args map[string]any
-	if err := json.Unmarshal([]byte(toolPart.Request), &args); err != nil {
+	if err := json.Unmarshal(toolPart.Input, &args); err != nil {
 		t.Fatalf("unmarshal tool request: %v", err)
 	}
 	if got, want := args["city"], "Paris"; got != want {
@@ -111,29 +105,23 @@ func TestConvertGenAIToBlades_MixedTextAndFunctionCallUsesToolRole(t *testing.T)
 		},
 	}
 
-	converted, err := convertGenAIToBlades(resp, blades.StatusCompleted)
+	converted, err := convertGenAIToBlades(resp)
 	if err != nil {
 		t.Fatalf("convertGenAIToBlades returned error: %v", err)
-	}
-	if got, want := converted.Message.Role, blades.RoleTool; got != want {
-		t.Fatalf("message role = %q, want %q", got, want)
 	}
 	if got, want := len(converted.Message.Parts), 2; got != want {
 		t.Fatalf("parts len = %d, want %d", got, want)
 	}
 
-	textPart, ok := converted.Message.Parts[0].(blades.TextPart)
+	textPart, ok := converted.Message.Parts[0].(content.Text)
 	if !ok {
-		t.Fatalf("first part type = %T, want blades.TextPart", converted.Message.Parts[0])
+		t.Fatalf("first part type = %T, want content.Text", converted.Message.Parts[0])
 	}
 	if got, want := textPart.Text, "Let me check that."; got != want {
 		t.Fatalf("text part = %q, want %q", got, want)
 	}
-	toolPart, ok := converted.Message.Parts[1].(blades.ToolPart)
+	_, ok = converted.Message.Parts[1].(content.ToolUse)
 	if !ok {
-		t.Fatalf("second part type = %T, want blades.ToolPart", converted.Message.Parts[1])
-	}
-	if got, want := toolPart.Completed, false; got != want {
-		t.Fatalf("tool completed = %t, want %t", got, want)
+		t.Fatalf("second part type = %T, want content.ToolUse", converted.Message.Parts[1])
 	}
 }

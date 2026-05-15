@@ -4,65 +4,76 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/tools"
 	"google.golang.org/genai"
 )
 
-func convertMessageToGenAI(req *blades.ModelRequest) (*genai.Content, []*genai.Content, error) {
+func convertMessageToGenAI(req *model.Request) (*genai.Content, []*genai.Content, error) {
+	if req == nil {
+		return nil, nil, nil
+	}
 	var (
 		system   *genai.Content
 		contents []*genai.Content
 	)
-	if req.Instruction != nil {
-		system = &genai.Content{Parts: convertMessagePartsToGenAI(req.Instruction.Parts)}
+	if req.System != "" {
+		system = &genai.Content{Parts: []*genai.Part{genai.NewPartFromText(req.System)}}
 	}
 	for _, msg := range req.Messages {
+		if msg == nil {
+			continue
+		}
 		switch msg.Role {
-		case blades.RoleSystem:
-			system = &genai.Content{Parts: convertMessagePartsToGenAI(msg.Parts)}
-		case blades.RoleUser:
+		case model.RoleUser:
 			contents = append(contents, &genai.Content{Role: genai.RoleUser, Parts: convertMessagePartsToGenAI(msg.Parts)})
-		case blades.RoleAssistant:
+		case model.RoleAssistant:
 			contents = append(contents, &genai.Content{Role: genai.RoleModel, Parts: convertMessagePartsToGenAI(msg.Parts)})
-		case blades.RoleTool:
-			var parts []*genai.Part
-			for _, part := range msg.Parts {
-				switch v := any(part).(type) {
-				case blades.ToolPart:
-					response := map[string]any{}
-					if err := json.Unmarshal([]byte(v.Response), &response); err != nil {
-						response["output"] = v.Response
-					}
-					parts = append(parts, genai.NewPartFromFunctionResponse(v.Name, response))
-				}
+		case model.RoleTool:
+			parts := convertToolResultsToGenAI(msg.Parts)
+			if len(parts) > 0 {
+				contents = append(contents, &genai.Content{Role: genai.RoleUser, Parts: parts})
 			}
-			contents = append(contents, &genai.Content{Role: genai.RoleUser, Parts: parts})
 		}
 	}
 	return system, contents, nil
 }
 
-func convertMessagePartsToGenAI(parts []blades.Part) []*genai.Part {
+func convertMessagePartsToGenAI(parts []content.Part) []*genai.Part {
 	res := make([]*genai.Part, 0, len(parts))
 	for _, part := range parts {
 		switch v := part.(type) {
-		case blades.TextPart:
-			res = append(res, &genai.Part{Text: v.Text})
-		case blades.DataPart:
+		case content.Text:
+			res = append(res, genai.NewPartFromText(v.Text))
+		case content.Thinking:
 			res = append(res, &genai.Part{
-				InlineData: &genai.Blob{
-					Data:        v.Bytes,
-					DisplayName: v.Name,
-					MIMEType:    string(v.MIMEType),
-				},
+				Text:             v.Text,
+				Thought:          true,
+				ThoughtSignature: v.Signature,
 			})
-		case blades.FilePart:
+		case content.DataPart:
+			res = append(res, genai.NewPartFromBytes(v.Bytes, v.MIME))
+		case content.FilePart:
 			res = append(res, &genai.Part{
 				FileData: &genai.FileData{
 					FileURI:     v.URI,
-					DisplayName: v.Name,
-					MIMEType:    string(v.MIMEType),
+					DisplayName: v.Filename,
+					MIMEType:    v.MIME,
+				},
+			})
+		case content.ToolUse:
+			args := map[string]any{}
+			if len(v.Input) > 0 {
+				if err := json.Unmarshal(v.Input, &args); err != nil {
+					args = map[string]any{"input": string(v.Input)}
+				}
+			}
+			res = append(res, &genai.Part{
+				FunctionCall: &genai.FunctionCall{
+					ID:   v.ID,
+					Name: v.Name,
+					Args: args,
 				},
 			})
 		}
@@ -70,37 +81,83 @@ func convertMessagePartsToGenAI(parts []blades.Part) []*genai.Part {
 	return res
 }
 
-func convertBladesToolsToGenAI(tools []tools.Tool) ([]*genai.Tool, error) {
-	genaiTools := make([]*genai.Tool, 0, len(tools))
-	for _, tool := range tools {
-		genaiTool, err := convertBladesToolToGenAI(tool)
-		if err != nil {
-			return nil, fmt.Errorf("converting tool %s: %w", tool.Name(), err)
+func convertToolResultsToGenAI(parts []content.Part) []*genai.Part {
+	res := make([]*genai.Part, 0, len(parts))
+	for _, part := range parts {
+		result, ok := part.(content.ToolResult)
+		if !ok {
+			continue
 		}
-		if genaiTool != nil {
-			genaiTools = append(genaiTools, genaiTool)
+		response := map[string]any{}
+		text := textFromParts(result.Parts)
+		if text != "" {
+			if err := json.Unmarshal([]byte(text), &response); err != nil {
+				response["output"] = text
+			}
 		}
+		if result.IsError {
+			response["error"] = text
+		}
+		res = append(res, &genai.Part{
+			FunctionResponse: &genai.FunctionResponse{
+				ID:       result.ID,
+				Name:     result.Name,
+				Response: response,
+			},
+		})
+	}
+	return res
+}
+
+func convertBladesToolsToGenAI(toolSpecs []tools.ToolSpec) ([]*genai.Tool, error) {
+	genaiTools := make([]*genai.Tool, 0, len(toolSpecs))
+	for _, spec := range toolSpecs {
+		genaiTool := &genai.Tool{
+			FunctionDeclarations: []*genai.FunctionDeclaration{
+				{
+					Name:                 spec.Name,
+					Description:          spec.Description,
+					ParametersJsonSchema: spec.InputSchema,
+					ResponseJsonSchema:   spec.OutputSchema,
+				},
+			},
+		}
+		genaiTools = append(genaiTools, genaiTool)
 	}
 	return genaiTools, nil
 }
 
-func convertBladesToolToGenAI(tool tools.Tool) (*genai.Tool, error) {
-	return &genai.Tool{
-		FunctionDeclarations: []*genai.FunctionDeclaration{
-			&genai.FunctionDeclaration{
-				Name:                 tool.Name(),
-				Description:          tool.Description(),
-				ParametersJsonSchema: tool.InputSchema(),
-				ResponseJsonSchema:   tool.OutputSchema(),
-			},
-		},
+func convertGenAIToBlades(resp *genai.GenerateContentResponse) (*model.Response, error) {
+	chunk, err := convertGenAIToChunk(resp)
+	if err != nil {
+		return nil, err
+	}
+	usage := model.Usage{}
+	if chunk.Usage != nil {
+		usage = *chunk.Usage
+	}
+	return &model.Response{
+		Message:    &model.Message{Role: model.RoleAssistant, Parts: chunk.Parts},
+		StopReason: chunk.StopReason,
+		Usage:      usage,
 	}, nil
 }
 
-func convertGenAIToBlades(resp *genai.GenerateContentResponse, status blades.Status) (*blades.ModelResponse, error) {
-	message := blades.NewAssistantMessage(status)
-	hasToolCall := false
+func convertGenAIToChunk(resp *genai.GenerateContentResponse) (*model.Chunk, error) {
+	if resp == nil {
+		return &model.Chunk{}, nil
+	}
+	var (
+		parts      []content.Part
+		stopReason model.StopReason
+	)
 	for _, candidate := range resp.Candidates {
+		if candidate == nil {
+			continue
+		}
+		if candidate.FinishReason != "" {
+			stopReason = mapGeminiStopReason(candidate.FinishReason)
+		}
 		if candidate.Content == nil {
 			continue
 		}
@@ -109,44 +166,98 @@ func convertGenAIToBlades(resp *genai.GenerateContentResponse, status blades.Sta
 			if err != nil {
 				return nil, err
 			}
-			message.Parts = append(message.Parts, bladesPart)
-			if _, ok := bladesPart.(blades.ToolPart); ok {
-				hasToolCall = true
+			if bladesPart != nil {
+				parts = append(parts, bladesPart)
 			}
 		}
 	}
-	if hasToolCall {
-		message.Role = blades.RoleTool
+	chunk := &model.Chunk{Parts: parts, StopReason: stopReason}
+	if resp.UsageMetadata != nil {
+		chunk.Usage = &model.Usage{
+			InputTokens:  int64(resp.UsageMetadata.PromptTokenCount),
+			OutputTokens: int64(resp.UsageMetadata.CandidatesTokenCount),
+		}
 	}
-	return &blades.ModelResponse{Message: message}, nil
+	if hasToolUse(parts) {
+		chunk.StopReason = model.StopToolUse
+	}
+	return chunk, nil
 }
 
-// convertGenAIPartToBlades converts a GenAI Part to Blades Part
-func convertGenAIPartToBlades(part *genai.Part) (blades.Part, error) {
+// convertGenAIPartToBlades converts a GenAI Part to a shared Blades content Part.
+func convertGenAIPartToBlades(part *genai.Part) (content.Part, error) {
+	if part == nil {
+		return nil, nil
+	}
 	if part.FunctionCall != nil {
-		request := "{}"
+		input := json.RawMessage("{}")
 		if len(part.FunctionCall.Args) > 0 {
 			args, err := json.Marshal(part.FunctionCall.Args)
 			if err != nil {
 				return nil, fmt.Errorf("marshal function call args: %w", err)
 			}
-			request = string(args)
+			input = args
 		}
-		return blades.NewToolPart(part.FunctionCall.ID, part.FunctionCall.Name, request), nil
+		return content.ToolUse{
+			ID:    part.FunctionCall.ID,
+			Name:  part.FunctionCall.Name,
+			Input: input,
+		}, nil
 	}
 	if part.FileData != nil {
-		return blades.FilePart{
+		return content.FilePart{
 			URI:      part.FileData.FileURI,
-			Name:     part.FileData.DisplayName,
-			MIMEType: blades.MIMEType(part.FileData.MIMEType),
+			Filename: part.FileData.DisplayName,
+			MIME:     part.FileData.MIMEType,
 		}, nil
 	}
 	if part.InlineData != nil {
-		return blades.DataPart{
+		return content.DataPart{
 			Bytes:    part.InlineData.Data,
-			Name:     part.InlineData.DisplayName,
-			MIMEType: blades.MIMEType(part.InlineData.MIMEType),
+			Filename: part.InlineData.DisplayName,
+			MIME:     part.InlineData.MIMEType,
 		}, nil
 	}
-	return blades.TextPart{Text: part.Text}, nil
+	if part.Thought {
+		return content.Thinking{Text: part.Text, Signature: part.ThoughtSignature}, nil
+	}
+	if part.Text == "" {
+		return nil, nil
+	}
+	return content.Text{Text: part.Text}, nil
+}
+
+func mapGeminiStopReason(reason genai.FinishReason) model.StopReason {
+	switch reason {
+	case genai.FinishReasonStop:
+		return model.StopEnd
+	case genai.FinishReasonMaxTokens:
+		return model.StopMaxTokens
+	case genai.FinishReasonSafety, genai.FinishReasonProhibitedContent, genai.FinishReasonImageSafety:
+		return model.StopSafety
+	default:
+		return ""
+	}
+}
+
+func hasToolUse(parts []content.Part) bool {
+	for _, part := range parts {
+		if _, ok := part.(content.ToolUse); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func textFromParts(parts []content.Part) string {
+	var text string
+	for _, part := range parts {
+		if t, ok := part.(content.Text); ok {
+			if text != "" {
+				text += "\n"
+			}
+			text += t.Text
+		}
+	}
+	return text
 }

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -9,9 +10,24 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+type toolHandler func(context.Context, json.RawMessage) (*tools.Result, error)
+
+type remoteTool struct {
+	spec   tools.ToolSpec
+	handle toolHandler
+}
+
+func (t remoteTool) Spec() tools.ToolSpec {
+	return t.spec
+}
+
+func (t remoteTool) Handle(ctx context.Context, input json.RawMessage) (*tools.Result, error) {
+	return t.handle(ctx, input)
+}
+
 // toBladesTool converts an MCP tool to a Blades tool.
 // This method is used by Provider to convert tools without creating separate Adapter instances.
-func toBladesTool(mcpTool *mcp.Tool, handler tools.HandleFunc) (tools.Tool, error) {
+func toBladesTool(mcpTool *mcp.Tool, handler toolHandler) (tools.Tool, error) {
 	// Convert the input schema
 	inputSchema, err := convertSchema(mcpTool.InputSchema)
 	if err != nil {
@@ -25,13 +41,15 @@ func toBladesTool(mcpTool *mcp.Tool, handler tools.HandleFunc) (tools.Tool, erro
 			return nil, fmt.Errorf("failed to convert output schema: %w", err)
 		}
 	}
-	return tools.NewTool(
-		mcpTool.Name,
-		mcpTool.Description,
-		handler,
-		tools.WithInputSchema(inputSchema),
-		tools.WithOutputSchema(outputSchema),
-	), nil
+	return remoteTool{
+		spec: tools.ToolSpec{
+			Name:         mcpTool.Name,
+			Description:  mcpTool.Description,
+			InputSchema:  inputSchema,
+			OutputSchema: outputSchema,
+		},
+		handle: handler,
+	}, nil
 }
 
 // convertSchema converts an MCP schema to a Blades jsonschema.Schema.

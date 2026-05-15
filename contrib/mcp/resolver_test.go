@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/go-kratos/blades/tools"
@@ -12,11 +13,18 @@ type mockTool struct {
 	name string
 }
 
-func (t mockTool) Name() string                                   { return t.name }
-func (t mockTool) Description() string                            { return "mock" }
-func (t mockTool) InputSchema() *jsonschema.Schema                { return nil }
-func (t mockTool) OutputSchema() *jsonschema.Schema               { return nil }
-func (t mockTool) Handle(context.Context, string) (string, error) { return "", nil }
+func (t mockTool) Spec() tools.ToolSpec {
+	return tools.ToolSpec{
+		Name:         t.name,
+		Description:  "mock",
+		InputSchema:  &jsonschema.Schema{Type: "object"},
+		OutputSchema: nil,
+	}
+}
+
+func (t mockTool) Handle(context.Context, json.RawMessage) (*tools.Result, error) {
+	return nil, nil
+}
 
 var _ tools.Tool = mockTool{}
 
@@ -37,7 +45,7 @@ func TestToolsResolverGetToolsReturnsCopy(t *testing.T) {
 	if got, want := len(again), 1; got != want {
 		t.Fatalf("resolver tools len = %d, want %d", got, want)
 	}
-	if got, want := again[0].Name(), "origin"; got != want {
+	if got, want := again[0].Spec().Name, "origin"; got != want {
 		t.Fatalf("resolver first tool = %q, want %q", got, want)
 	}
 }

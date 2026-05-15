@@ -53,6 +53,14 @@ type Sampling struct {
 
 func (Sampling) option() {}
 
+// ParallelToolCalls asks providers to enable or disable model-emitted parallel tool calls.
+// Agent loops do not inspect this option; they execute the tool wave returned by the model.
+type ParallelToolCalls struct {
+	Enabled bool
+}
+
+func (ParallelToolCalls) option() {}
+
 // MergeOptions merges request-level options over defaults.
 // Request options take precedence by type.
 func MergeOptions(defaults, request []Option) []Option {
@@ -79,15 +87,17 @@ func MergeOptions(defaults, request []Option) []Option {
 }
 
 func optionKey(o Option) string {
-	switch o.(type) {
+	switch v := o.(type) {
 	case CacheHint:
-		return "cache_hint"
+		return "cache_hint:" + string(v.Scope)
 	case ReasoningEffort:
 		return "reasoning_effort"
 	case ResponseFormat:
 		return "response_format"
 	case Sampling:
 		return "sampling"
+	case ParallelToolCalls:
+		return "parallel_tool_calls"
 	default:
 		return "unknown"
 	}

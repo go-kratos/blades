@@ -17,7 +17,7 @@ tags: [agentos, policy, mode, safety]
 
 - **聚焦工具裁决**：v1 Policy 只回答一个问题——"这次工具调用是否允许执行，是否需要改写或人工审批"。其它边界（模型请求改写、模型预算、限流）由 hook 与 middleware 承接，不进入 `policy/`。
 - **零抽象税**：不引入 sealed union 或多变体 Request。`Policy.Check` 直接接受 `ToolRequest`，这是 v1 唯一的决策入口。
-- **直传完整工具对象**：消除 Loop 与 Policy 之间的元数据映射样板，Policy 实现可直接读取 `tools.ReadOnlyTool` / `tools.DestructiveTool` 等可选能力。
+- **直传完整工具对象**：消除 Loop 与 Policy 之间的元数据映射样板，Policy 实现可直接读取 `Tool.Spec()`，也可以识别应用自定义的能力接口。
 - **Fail-closed**：错误（远端不可达、解析失败等）一律按 Deny 处理。
 - **核心只提供决策原语**：Plan / Accept / Auto 等交互模式不进 core，由应用层基于 Policy + prompt section + UI + 事件流组合。
 
@@ -34,7 +34,7 @@ type Policy interface {
 }
 
 type ToolRequest struct {
-    Tool  tools.Tool       // 直接持有工具，Policy 可读取 ReadOnlyTool / DestructiveTool 等可选能力
+    Tool  tools.Tool       // 直接持有工具，Policy 可读取 Spec 或应用自定义能力接口
     Input json.RawMessage  // 模型生成的参数；Policy 可解析以做细粒度裁决（路径、动作、目标主机等）
 }
 
@@ -59,12 +59,12 @@ type Decision struct {
 
 - `Allow`：调用点继续执行原 `ToolRequest`。
 - `Deny`：调用点中止本次工具调用，把 `Reason` 转为可观测错误或事件。
-- `Ask`：调用点中止本次工具调用，发起人工审批；应用确认后用同一或修改后的请求重新进入 Loop。`Ask` 让 Accept 模式不必把审批伪装成 `Modify`。
+- `Ask`：调用点中止本次工具调用。当前默认 `llmAgent` 不内置审批 UI，因此按 fail-closed 处理为 error tool result；需要人工审批的应用应在外层消费事件 / hook 审计后重新提交确认过的输入。`Ask` 让 Accept 模式不必把审批伪装成 `Modify`。
 - `Modify`：调用点应使用 `Modified` 继续；如果调用点不支持改写涉及的字段，必须按 `Deny` 处理（见"调用点契约"）。
 
 错误：`Check` 返回 `error` 表示评估自身失败（远端服务异常、配置错误等）。Loop 必须按 fail-closed 处理：等价 `Deny`，并把 error 转事件以便观察。
 
-`Decision.Metadata` 由 Policy 实现填充（如命中规则名、预算余量、限流剩余配额），由 hook 取出写入审计；core 不规定字段名。
+`Decision.Metadata` 由 Policy 实现填充（如命中规则名、预算余量、限流剩余配额），供包装器或应用自定义审计层读取；core 不规定字段名。
 
 ## ToolRequest 调用点契约
 
@@ -82,8 +82,9 @@ type Decision struct {
 ```go
 func fsPolicy(allowedRoots []string) policy.Policy {
     return policy.PolicyFunc(func(ctx context.Context, req policy.ToolRequest) (policy.Decision, error) {
-        // 粗粒度：只读工具直接放行
-        if ro, ok := req.Tool.(tools.ReadOnlyTool); ok && ro.ReadOnly() {
+        // 粗粒度：按工具名或应用自定义能力接口直接放行
+        switch req.Tool.Spec().Name {
+        case "ls", "find", "grep", "read":
             return policy.Decision{Action: policy.Allow}, nil
         }
         // 细粒度：解析 Input 拿到路径/动作
@@ -102,7 +103,7 @@ func fsPolicy(allowedRoots []string) policy.Policy {
 }
 ```
 
-要点：能力标注做粗筛，Input 解析做细筛；两层在同一个 `ToolRequest` 边界完成。
+要点：工具规格或应用自定义能力做粗筛，Input 解析做细筛；两层在同一个 `ToolRequest` 边界完成。
 
 ## 内置工厂函数
 
@@ -150,7 +151,7 @@ key 抽取通常基于 `session.FromContext` / `agent.FromContext` 等 ctx helpe
 
 ## 并发与幂等契约
 
-- `Policy.Check` 必须并发安全：默认 `llmAgent` 的 Tool Wave 会并行调用工具，每个工具一次 Policy。
+- `Policy.Check` 必须并发安全：只要模型在同一 assistant message 中返回多个 tool use，默认 `llmAgent` 的 Tool Wave 就会并发执行；不应依赖 Policy 的串行副作用。
 - 实现应避免长阻塞，遵守 `ctx` 取消；超时返回 error，由 Loop 兜底为 Deny。
 - `Modify` 应当是语义改写而不是带副作用的动作（不要在 `Check` 内写库、修改 session）。审计/计数等副作用可以做，但要保证幂等或允许重复（Chain 可能重复评估上游修改后的请求）。
 - 有状态 Policy（Budget/RateLimit）记账应在 `Allow` 路径下进行；`Deny/Ask/error` 不应消耗配额。
@@ -159,8 +160,8 @@ key 抽取通常基于 `session.FromContext` / `agent.FromContext` 等 ctx helpe
 
 core 不内置审计存储；可观测性走两条通路：
 
-1. **Hook**：`Hook.BeforeTool / Hook.AfterTool` 在 Policy 调用前后观察 `Decision`，把 `Action / Reason / Metadata` 写入应用日志或 trace（参考 `design-hook-extension.md`）。
-2. **Event**：`Deny / Ask` 通过 `event.Prompt` 或应用自定义 channel 回流到外部界面，应用决定是否重试、走人工审批或终止 Run。
+1. **Hook**：`Hook.BeforeTool / Hook.AfterTool` 可观察工具调用输入和最终规范化结果；如果需要记录完整 `Decision`，应把审计放在 Policy 包装器内部。
+2. **Event**：`Deny / Ask / Policy error` 在默认 `llmAgent` 中表现为 `event.ToolEnd{IsError: true}` 和后续 tool-result message；应用决定是否重试、走人工审批或终止 Run。
 
 `Decision.Metadata` 是 Policy 实现与审计层之间的可选 payload 通道（命中规则、预算余量、限流剩余配额、远端 trace id 等）；core 不规定字段名，避免锁死实现。
 
@@ -174,17 +175,19 @@ Run
     └── Step
         ├── Hook.BeforeModel     ← 模型请求改写在此发生（注入 system、裁剪 tools、调整 sampling）
         ├── model.Generate / Stream
-        └── Tool Wave (并行)
+        └── Tool Wave (默认并行，可配置顺序)
             ├── Hook.BeforeTool
+            ├── event.ToolStart
             ├── policy.Check(ToolRequest{Tool, Input}) ← v1 唯一 Policy 边界
             ├── tool.Handle
-            └── Hook.AfterTool
+            ├── Hook.AfterTool
+            └── event.ToolEnd
 ```
 
 ### 与 tools
 
-- `tools.ToolFilter`（见 `design-tool-system.md`）决定 **哪些工具暴露给模型**（spec 裁剪，影响请求体）；`policy/` 决定 **运行时是否允许执行**。组合方式：先 Filter（构造请求时裁剪），再 Policy（执行前裁决）。
-- Policy 实现读取 `tools.ReadOnlyTool / DestructiveTool` 做粗粒度分流，再解析 `ToolRequest.Input` 做细粒度裁决。
+- `tools.ToolFilter`（见 `design-tool-system.md`）可由应用或 resolver 包装器用于决定 **哪些工具暴露给模型**（spec 裁剪，影响请求体）；`policy/` 决定 **运行时是否允许执行**。组合方式：先在注入 / resolver 层裁剪工具集合，再由默认 tool wave 在执行前调用 Policy。
+- Policy 实现读取 `Tool.Spec()` 或应用自定义能力接口做粗粒度分流，再解析 `ToolRequest.Input` 做细粒度裁决。
 - 副作用全部走 tool：v1 不引入资源边界 Policy；非 tool 路径的副作用（应用级 scheduler、background workflow 等）属于应用层，不进 core。
 
 ### 与 hook（替代模型边界 Policy）
@@ -200,7 +203,7 @@ Run
 
 ### 与 event
 
-- `Deny / Ask` 不直接产出事件；由调用点（Loop 或应用）将其转为 `event.Prompt`、`event.Steer` 或应用 channel。
+- `Deny / Ask / Policy error` 不新增专用事件类型；默认 Loop 将它们转为 error tool result，并通过 `event.ToolEnd{IsError: true}` 暴露。
 - 这样保持 `policy/` 不依赖 `event/` 的具体回流路径，只暴露决策结构。
 
 ### 与 prompt
@@ -279,7 +282,7 @@ core 不内置 Plan、Accept、Auto 模式。应用通过组合实现：
 
 ## 设计决策
 
-1. **v1 Policy 仅工具裁决**：唯一边界是 `ToolRequest`，不引入 `Request` sealed union 与 `ModelRequest`，模型侧改写交给 hook，模型预算/限流交给 middleware。带来的好处：核心类型最小，工具是模型唯一的副作用接触面，能力标注 + Input 解析已足够。
+1. **v1 Policy 仅工具裁决**：唯一边界是 `ToolRequest`，不引入模型请求/资源请求等 sealed union，模型侧改写交给 hook，模型预算/限流交给 middleware。带来的好处：核心类型最小，工具是模型唯一的副作用接触面，能力标注 + Input 解析已足够。
 2. **单一 Check 接口**：所有工具决策点都用同一形态，Loop 集成简单。
 3. **直接持有工具对象**：`ToolRequest` 直传 `tools.Tool`，Policy 不需要二次查表，可直接读取可选能力接口。
 4. **Tool 是副作用的唯一边界**：文件、网络、命令执行等资源裁决统一在 `ToolRequest` 内完成（能力标注 + Input 解析），保持核心类型最小、避免工具实现反向感知 policy。

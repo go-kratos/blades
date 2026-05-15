@@ -28,7 +28,7 @@ tags: [agentos, model, provider, protocol]
 - `Response` 拆分为两个类型：**`Response`（同步终态）** 与 **`Chunk`（流式增量帧）**，避免一种类型承担两种语义。
 - `Message` 收敛为 **protocol-only**（仅 `Role` + `Parts`），`Status` / `FinishReason` / `TokenUsage` 等运行时字段移到 `Response`/`Chunk` 上。
 - `Chunk` 复用 `content.Part`：流式增量直接是 `[]content.Part`，不引入独立的 *Delta* 变体。
-- `Request.System` 简化为 `string`（不再用 `[]*SystemBlock`）；引入 `Request.Options` sealed Option 列表承载 cache / reasoning / response_format / sampling 等 provider hints，adapter 选择性应用。
+- `Request.System` 简化为 `string`（不再用 `[]*SystemBlock`）；引入 `Request.Options` sealed Option 列表承载 cache / reasoning / response_format / sampling / parallel tool calls 等 provider hints，adapter 选择性应用。
 
 ## 2. 设计目标与原则
 
@@ -107,18 +107,18 @@ type Request struct {
 
 ### 4.1 Options：provider hints 设计
 
-设计动机：cache control / reasoning effort / response format / 采样参数等能力在各 provider 间差异巨大，多数模型并不支持。把它们放进 `Request` 顶层字段会污染协议；放进 adapter 又无法在请求级覆盖。`Options` 用 sealed union + 默认值机制兼顾这两点。
+设计动机：cache control / reasoning effort / response format / 采样参数 / 是否允许模型返回并行工具调用等能力在各 provider 间差异巨大，多数模型并不支持。把它们放进 `Request` 顶层字段会污染协议；放进 adapter 又无法在请求级覆盖。`Options` 用 sealed union + 默认值机制兼顾这两点。
 
 ```go
 // Option is a sealed provider hint. Adapters apply known variants and
 // silently ignore the rest, so adding a new Option is non-breaking.
-type Option interface { isOption() }
+type Option interface { option() }
 
 // CacheHint requests provider-side prompt caching where supported
 // (e.g. Anthropic prompt caching, OpenAI cached input). Scope=System
-// caches the system block; Scope=Tools caches tool schemas.
+// caches the system block; Scope=Tool caches tool schemas.
 type CacheHint struct {
-    Scope CacheScope    // System | Tools | LastUserMessage
+    Scope CacheScope    // System | Message | Tool
     TTL   time.Duration // 0 = provider default
 }
 
@@ -143,22 +143,27 @@ type Sampling struct {
     Stop        []string
 }
 
-func (CacheHint) isOption()       {}
-func (ReasoningEffort) isOption() {}
-func (ResponseFormat) isOption()  {}
-func (Sampling) isOption()        {}
+// ParallelToolCalls asks providers to enable or disable model-emitted
+// parallel tool calls. Agent Loop 不读取它；Loop 只执行模型实际返回的 tool wave。
+type ParallelToolCalls struct {
+    Enabled bool
+}
+
+func (CacheHint) option()          {}
+func (ReasoningEffort) option()    {}
+func (ResponseFormat) option()     {}
+func (Sampling) option()           {}
+func (ParallelToolCalls) option()  {}
 ```
 
 **默认值与覆盖优先级**：
 
-adapter 构造采用 **Functional Options（`WithXxx`）** 风格表达默认值，由各 contrib provider 自行定义；`model/` 协议层不暴露这些 helper。请求级 `Request.Options` 覆盖 adapter 默认值。
+adapter 构造采用 **Functional Options（`WithXxx`）** 风格表达默认值，由各 contrib provider 自行定义；`model/` 协议层不暴露这些 helper，根包 Agent 不承载模型默认值配置。请求级 `Request.Options` 覆盖 adapter 默认值。
 
 ```go
-// adapter 级默认值：通过 WithXxx 设置
+// adapter 级默认值：通过 provider 构造 options 设置
 m := openai.NewModel("gpt-4o",
-    openai.WithTemperature(0.7),
-    openai.WithMaxTokens(2048),
-    openai.WithReasoningEffort("medium"),
+    openai.WithParallelToolCalls(false),
 )
 
 // 请求级 hint：覆盖 adapter 默认值
@@ -166,7 +171,7 @@ req := &model.Request{
     System: "you are a helpful assistant",
     Options: []model.Option{
         model.CacheHint{Scope: model.CacheScopeSystem, TTL: 5 * time.Minute},
-        model.Sampling{Temperature: ptr(0.2)}, // 覆盖 adapter 默认 0.7
+        model.ParallelToolCalls{Enabled: true}, // 覆盖 adapter 默认 false
     },
 }
 ```
@@ -178,6 +183,7 @@ req := &model.Request{
 - `Sampling` 等多字段 Option **整体替换**，不做字段级 patch（避免歧义）。
 - `CacheHint` 在不同 `Scope` 下被视为不同 key，可叠加。
 - 不识别的 Option 由 adapter 静默忽略，便于跨 provider 共享同一份 `Request`。
+- `ParallelToolCalls` 是 provider hint：OpenAI 映射为 `parallel_tool_calls`，Claude 映射为 `tool_choice.auto.disable_parallel_tool_use = !Enabled`。Agent Loop 不读取该选项，也不提供手动工具执行模式；它只按模型实际返回的同一 assistant message tool wave 执行。
 
 > 协议层只规定 `Request.Options` 的 sealed union 与上述优先级语义；adapter 构造时的 `WithXxx` 命名、粒度、是否暴露成 `Config` 结构体均由各 contrib provider 决定。
 
@@ -274,7 +280,7 @@ const (
   - 业务态（author、invocationId、metadata）归 `event/` 与上层 session；
   - compact 与 session 重放只需要 protocol-only 的 Message。
 - Message 历史只保存 provider 可重放的协议内容。Loop / session / compact 必须维护 provider message invariant，避免生成无法被 adapter 发送的历史。
-- **运行时控制流信号不入 Message**：工具触发的 `ErrLoopExit` / `ErrHandoff` 等 sentinel 由 ToolExecutor 翻译为专用 sealed Output 变体 `event.LoopExit` / `event.Handoff`（参见 [design-event-agent-loop.md](design-event-agent-loop.md) §4.2 与 [design-tool-system.md](design-tool-system.md) §6），不污染协议层 `Message`。
+- **运行时控制流信号不入 Message**：工具触发的 `ErrLoopExit` / `ErrHandoff` 等 sentinel 由默认 tool wave 翻译为 `event.TurnEnd.Action` 上的 `event.LoopExit` / `event.Handoff`（参见 [design-event-agent-loop.md](design-event-agent-loop.md) §4.2 与 [design-tool-system.md](design-tool-system.md) §6），不污染协议层 `Message`。
 
 ## 7. Part
 

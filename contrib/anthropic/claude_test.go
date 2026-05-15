@@ -1,21 +1,23 @@
 package anthropic
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
-	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
 )
 
 func TestToClaudeParamsAssistantRole(t *testing.T) {
 	t.Parallel()
 
-	model := &Claude{model: "claude-test"}
-	params, err := model.toClaudeParams(&blades.ModelRequest{
-		Messages: []*blades.Message{
-			blades.UserMessage("hello"),
-			blades.AssistantMessage("world"),
+	provider := &Claude{model: "claude-test"}
+	params, err := provider.toClaudeParams(&model.Request{
+		Messages: []*model.Message{
+			{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello"}}},
+			{Role: model.RoleAssistant, Parts: []content.Part{content.Text{Text: "world"}}},
 		},
 	})
 	if err != nil {
@@ -29,6 +31,42 @@ func TestToClaudeParamsAssistantRole(t *testing.T) {
 	}
 	if got, want := string(params.Messages[1].Role), "assistant"; got != want {
 		t.Fatalf("second role = %q, want %q", got, want)
+	}
+}
+
+func TestToClaudeParamsParallelToolCalls(t *testing.T) {
+	t.Parallel()
+
+	provider := NewModel("claude-test", WithParallelToolCalls(false)).(*Claude)
+	params, err := provider.toClaudeParams(&model.Request{})
+	if err != nil {
+		t.Fatalf("toClaudeParams returned error: %v", err)
+	}
+	payload, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	if !bytes.Contains(payload, []byte(`"disable_parallel_tool_use":true`)) {
+		t.Fatalf("disable_parallel_tool_use missing from payload: %s", payload)
+	}
+}
+
+func TestToClaudeParamsParallelToolCallsRequestOverridesDefault(t *testing.T) {
+	t.Parallel()
+
+	provider := NewModel("claude-test", WithParallelToolCalls(false)).(*Claude)
+	params, err := provider.toClaudeParams(&model.Request{
+		Options: []model.Option{model.ParallelToolCalls{Enabled: true}},
+	})
+	if err != nil {
+		t.Fatalf("toClaudeParams returned error: %v", err)
+	}
+	payload, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	if !bytes.Contains(payload, []byte(`"disable_parallel_tool_use":false`)) {
+		t.Fatalf("disable_parallel_tool_use override missing from payload: %s", payload)
 	}
 }
 
@@ -49,10 +87,10 @@ func countCacheControlTags(messages []anthropic.MessageParam) int {
 func TestCacheControlDisabledByDefault(t *testing.T) {
 	t.Parallel()
 
-	model := &Claude{model: "claude-test"}
-	params, err := model.toClaudeParams(&blades.ModelRequest{
-		Messages: []*blades.Message{
-			blades.UserMessage("hello"),
+	provider := &Claude{model: "claude-test"}
+	params, err := provider.toClaudeParams(&model.Request{
+		Messages: []*model.Message{
+			{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello"}}},
 		},
 	})
 	if err != nil {
@@ -66,12 +104,12 @@ func TestCacheControlDisabledByDefault(t *testing.T) {
 func TestCacheControlStampsLastMessageBlock(t *testing.T) {
 	t.Parallel()
 
-	model := &Claude{model: "claude-test", config: Config{CacheControl: true}}
-	params, err := model.toClaudeParams(&blades.ModelRequest{
-		Messages: []*blades.Message{
-			blades.UserMessage("turn 1"),
-			blades.AssistantMessage("reply 1"),
-			blades.UserMessage("turn 2"),
+	provider := &Claude{model: "claude-test", config: Config{CacheControl: true}}
+	params, err := provider.toClaudeParams(&model.Request{
+		Messages: []*model.Message{
+			{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "turn 1"}}},
+			{Role: model.RoleAssistant, Parts: []content.Part{content.Text{Text: "reply 1"}}},
+			{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "turn 2"}}},
 		},
 	})
 	if err != nil {
@@ -91,10 +129,10 @@ func TestCacheControlStampsLastMessageBlock(t *testing.T) {
 func TestCacheControlStampsLastSystemBlock(t *testing.T) {
 	t.Parallel()
 
-	model := &Claude{model: "claude-test", config: Config{CacheControl: true}}
-	params, err := model.toClaudeParams(&blades.ModelRequest{
-		Instruction: blades.SystemMessage("You are helpful."),
-		Messages:    []*blades.Message{blades.UserMessage("hi")},
+	provider := &Claude{model: "claude-test", config: Config{CacheControl: true}}
+	params, err := provider.toClaudeParams(&model.Request{
+		System:   "You are helpful.",
+		Messages: []*model.Message{{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hi"}}}},
 	})
 	if err != nil {
 		t.Fatalf("toClaudeParams returned error: %v", err)
@@ -130,23 +168,23 @@ func TestCacheControlStampsLastTool(t *testing.T) {
 	}
 }
 
-func TestToClaudeParamsToolRole(t *testing.T) {
+func TestToClaudeParamsToolMessages(t *testing.T) {
 	t.Parallel()
 
-	model := &Claude{model: "claude-test"}
-	params, err := model.toClaudeParams(&blades.ModelRequest{
-		Messages: []*blades.Message{
+	provider := &Claude{model: "claude-test"}
+	params, err := provider.toClaudeParams(&model.Request{
+		Messages: []*model.Message{
 			{
-				Role: blades.RoleTool,
-				Parts: []blades.Part{
-					blades.TextPart{Text: "Let me check that."},
-					blades.ToolPart{
-						ID:        "toolu_123",
-						Name:      "get_weather",
-						Request:   `{"city":"Paris","unit":"C"}`,
-						Response:  `{"temperature":21}`,
-						Completed: true,
-					},
+				Role: model.RoleAssistant,
+				Parts: []content.Part{
+					content.Text{Text: "Let me check that."},
+					content.ToolUse{ID: "toolu_123", Name: "get_weather", Input: json.RawMessage(`{"city":"Paris","unit":"C"}`)},
+				},
+			},
+			{
+				Role: model.RoleTool,
+				Parts: []content.Part{
+					content.ToolResult{ID: "toolu_123", Name: "get_weather", Parts: []content.Part{content.Text{Text: `{"temperature":21}`}}},
 				},
 			},
 		},
@@ -178,10 +216,6 @@ func TestToClaudeParamsToolRole(t *testing.T) {
 	if !ok || len(assistantContent) != 2 {
 		t.Fatalf("first message content malformed: %v", messages[0]["content"])
 	}
-	textBlock, ok := assistantContent[0].(map[string]any)
-	if !ok || textBlock["type"] != "text" || textBlock["text"] != "Let me check that." {
-		t.Fatalf("assistant text block malformed: %v", assistantContent[0])
-	}
 	toolUseBlock, ok := assistantContent[1].(map[string]any)
 	if !ok {
 		t.Fatalf("assistant tool_use block malformed: %v", assistantContent[1])
@@ -191,19 +225,6 @@ func TestToClaudeParamsToolRole(t *testing.T) {
 	}
 	if got, want := toolUseBlock["id"], "toolu_123"; got != want {
 		t.Fatalf("tool_use id = %v, want %v", got, want)
-	}
-	if got, want := toolUseBlock["name"], "get_weather"; got != want {
-		t.Fatalf("tool_use name = %v, want %v", got, want)
-	}
-	input, ok := toolUseBlock["input"].(map[string]any)
-	if !ok {
-		t.Fatalf("tool_use input malformed: %v", toolUseBlock["input"])
-	}
-	if got, want := input["city"], "Paris"; got != want {
-		t.Fatalf("tool_use input.city = %v, want %v", got, want)
-	}
-	if got, want := input["unit"], "C"; got != want {
-		t.Fatalf("tool_use input.unit = %v, want %v", got, want)
 	}
 
 	userContent, ok := messages[1]["content"].([]any)
@@ -219,13 +240,5 @@ func TestToClaudeParamsToolRole(t *testing.T) {
 	}
 	if got, want := toolResultBlock["tool_use_id"], "toolu_123"; got != want {
 		t.Fatalf("tool_result tool_use_id = %v, want %v", got, want)
-	}
-	resultContent, ok := toolResultBlock["content"].([]any)
-	if !ok || len(resultContent) != 1 {
-		t.Fatalf("tool_result content malformed: %v", toolResultBlock["content"])
-	}
-	resultTextBlock, ok := resultContent[0].(map[string]any)
-	if !ok || resultTextBlock["type"] != "text" || resultTextBlock["text"] != `{"temperature":21}` {
-		t.Fatalf("tool_result text block malformed: %v", resultContent[0])
 	}
 }

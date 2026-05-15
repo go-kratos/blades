@@ -23,15 +23,18 @@ type Hook interface {
 // Noop is an embeddable default implementation of Hook.
 type Noop struct{}
 
-func (Noop) BeforeModel(_ context.Context, _ *model.Request) error                          { return nil }
-func (Noop) AfterModel(_ context.Context, _ *model.Request, _ *model.Response, _ error) error { return nil }
-func (Noop) BeforeTool(_ context.Context, _ *ToolCall) error                                  { return nil }
-func (Noop) AfterTool(_ context.Context, _ *ToolCall, _ *tools.Result, _ error) error         { return nil }
-func (Noop) BeforeTurn(_ context.Context, _ *Turn) error                                      { return nil }
-func (Noop) AfterTurn(_ context.Context, _ *Turn, _ *TurnSummary, _ error) error              { return nil }
+func (Noop) BeforeModel(_ context.Context, _ *model.Request) error { return nil }
+func (Noop) AfterModel(_ context.Context, _ *model.Request, _ *model.Response, _ error) error {
+	return nil
+}
+func (Noop) BeforeTool(_ context.Context, _ *ToolCall) error                          { return nil }
+func (Noop) AfterTool(_ context.Context, _ *ToolCall, _ *tools.Result, _ error) error { return nil }
+func (Noop) BeforeTurn(_ context.Context, _ *Turn) error                              { return nil }
+func (Noop) AfterTurn(_ context.Context, _ *Turn, _ *TurnSummary, _ error) error      { return nil }
 
 // ToolCall carries context for BeforeTool/AfterTool hooks.
 type ToolCall struct {
+	ID        string
 	AgentName string
 	Turn      int
 	Tool      tools.Tool

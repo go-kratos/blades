@@ -18,8 +18,6 @@ func ChunkToOutputs(chunk *model.Chunk) []event.Output {
 			outputs = append(outputs, event.TextDelta{Text: v.Text})
 		case content.Thinking:
 			outputs = append(outputs, event.ThinkingDelta{Text: v.Text, Signature: v.Signature})
-		case content.ToolUse:
-			outputs = append(outputs, event.ToolStart{ID: v.ID, Name: v.Name, Input: v.Input})
 		}
 	}
 	return outputs

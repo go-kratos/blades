@@ -5,10 +5,11 @@ import (
 	"testing"
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
-	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
 )
 
-func TestConvertClaudeToBladesToolUseRole(t *testing.T) {
+func TestConvertClaudeToBladesToolUse(t *testing.T) {
 	t.Parallel()
 
 	message := decodeAnthropicMessage(t, `{
@@ -32,32 +33,32 @@ func TestConvertClaudeToBladesToolUseRole(t *testing.T) {
 		}
 	}`)
 
-	response, err := convertClaudeToBlades(message, blades.StatusCompleted)
+	response, err := convertClaudeToBlades(message)
 	if err != nil {
 		t.Fatalf("convertClaudeToBlades returned error: %v", err)
 	}
-	if got, want := response.Message.Role, blades.RoleTool; got != want {
+	if got, want := response.Message.Role, model.RoleAssistant; got != want {
 		t.Fatalf("message role = %q, want %q", got, want)
+	}
+	if got, want := response.StopReason, model.StopToolUse; got != want {
+		t.Fatalf("stop reason = %q, want %q", got, want)
 	}
 	if got, want := len(response.Message.Parts), 1; got != want {
 		t.Fatalf("parts len = %d, want %d", got, want)
 	}
 
-	toolPart, ok := response.Message.Parts[0].(blades.ToolPart)
+	toolUse, ok := response.Message.Parts[0].(content.ToolUse)
 	if !ok {
-		t.Fatalf("part type = %T, want blades.ToolPart", response.Message.Parts[0])
+		t.Fatalf("part type = %T, want content.ToolUse", response.Message.Parts[0])
 	}
-	if got, want := toolPart.ID, "toolu_1"; got != want {
+	if got, want := toolUse.ID, "toolu_1"; got != want {
 		t.Fatalf("tool id = %q, want %q", got, want)
 	}
-	if got, want := toolPart.Name, "get_weather"; got != want {
+	if got, want := toolUse.Name, "get_weather"; got != want {
 		t.Fatalf("tool name = %q, want %q", got, want)
 	}
-	if got, want := toolPart.Completed, false; got != want {
-		t.Fatalf("tool completed = %t, want %t", got, want)
-	}
 	var request map[string]any
-	if err := json.Unmarshal([]byte(toolPart.Request), &request); err != nil {
+	if err := json.Unmarshal(toolUse.Input, &request); err != nil {
 		t.Fatalf("unmarshal tool request: %v", err)
 	}
 	if got, want := request["city"], "Paris"; got != want {
@@ -90,33 +91,30 @@ func TestConvertClaudeToBladesTextAndToolUse(t *testing.T) {
 		}
 	}`)
 
-	response, err := convertClaudeToBlades(message, blades.StatusCompleted)
+	response, err := convertClaudeToBlades(message)
 	if err != nil {
 		t.Fatalf("convertClaudeToBlades returned error: %v", err)
 	}
-	if got, want := response.Message.Role, blades.RoleTool; got != want {
+	if got, want := response.Message.Role, model.RoleAssistant; got != want {
 		t.Fatalf("message role = %q, want %q", got, want)
 	}
 	if got, want := len(response.Message.Parts), 2; got != want {
 		t.Fatalf("parts len = %d, want %d", got, want)
 	}
 
-	textPart, ok := response.Message.Parts[0].(blades.TextPart)
+	textPart, ok := response.Message.Parts[0].(content.Text)
 	if !ok {
-		t.Fatalf("first part type = %T, want blades.TextPart", response.Message.Parts[0])
+		t.Fatalf("first part type = %T, want content.Text", response.Message.Parts[0])
 	}
 	if got, want := textPart.Text, "Checking weather"; got != want {
 		t.Fatalf("first part text = %q, want %q", got, want)
 	}
-	toolPart, ok := response.Message.Parts[1].(blades.ToolPart)
+	toolUse, ok := response.Message.Parts[1].(content.ToolUse)
 	if !ok {
-		t.Fatalf("second part type = %T, want blades.ToolPart", response.Message.Parts[1])
+		t.Fatalf("second part type = %T, want content.ToolUse", response.Message.Parts[1])
 	}
-	if got, want := toolPart.ID, "toolu_2"; got != want {
+	if got, want := toolUse.ID, "toolu_2"; got != want {
 		t.Fatalf("tool id = %q, want %q", got, want)
-	}
-	if got, want := toolPart.Completed, false; got != want {
-		t.Fatalf("tool completed = %t, want %t", got, want)
 	}
 }
 

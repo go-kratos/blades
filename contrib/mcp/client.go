@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -40,7 +39,7 @@ func NewClient(config ClientConfig) (*Client, error) {
 	}
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    config.Name,
-		Version: blades.Version,
+		Version: "dev",
 	}, nil)
 	c := &Client{
 		config: config,
@@ -145,8 +144,8 @@ func (c *Client) ListTools(ctx context.Context) ([]*mcp.Tool, error) {
 	return result.Tools, nil
 }
 
-// Resolve implements the tools.Resolver interface.
-func (c *Client) Resolve(ctx context.Context) ([]tools.Tool, error) {
+// List implements the tools.Resolver interface.
+func (c *Client) List(ctx context.Context) ([]tools.Tool, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.Timeout)
 	defer cancel()
 	mcpTools, err := c.ListTools(ctx)
@@ -165,22 +164,38 @@ func (c *Client) Resolve(ctx context.Context) ([]tools.Tool, error) {
 	return res, nil
 }
 
+// Resolve implements the tools.Resolver interface.
+func (c *Client) Resolve(ctx context.Context, name string) (tools.Tool, error) {
+	tools, err := c.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, tool := range tools {
+		if tool.Spec().Name == name {
+			return tool, nil
+		}
+	}
+	return nil, fmt.Errorf("mcp [%s] tool not found: %s", c.config.Name, name)
+}
+
 // handler returns a tool handler that calls the MCP tool.
-func (c *Client) handler(name string) tools.HandleFunc {
-	return func(ctx context.Context, input string) (string, error) {
+func (c *Client) handler(name string) toolHandler {
+	return func(ctx context.Context, input json.RawMessage) (*tools.Result, error) {
 		var arguments map[string]any
-		if err := json.Unmarshal([]byte(input), &arguments); err != nil {
-			return "", fmt.Errorf("invalid input JSON: %w", err)
+		if len(input) > 0 {
+			if err := json.Unmarshal(input, &arguments); err != nil {
+				return nil, fmt.Errorf("invalid input JSON: %w", err)
+			}
 		}
 		result, err := c.CallTool(ctx, name, arguments)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		output, err := formatToolResult(result)
 		if err != nil {
-			return "", fmt.Errorf("failed to format tool result: %w", err)
+			return nil, fmt.Errorf("failed to format tool result: %w", err)
 		}
-		return output, nil
+		return tools.TextResult(output), nil
 	}
 }
 

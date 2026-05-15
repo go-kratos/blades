@@ -3,121 +3,247 @@ package otel
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.34.0"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/hook"
+	"github.com/go-kratos/blades/model"
+	"github.com/go-kratos/blades/tools"
 )
 
-const (
-	traceScope = "blades"
-)
+const traceScope = "blades"
 
-// TraceOption defines options for tracing middleware
-type TraceOption func(*tracing)
+// TraceOption configures tracing hooks.
+type TraceOption func(*TracingHook)
 
-// tracing holds configuration for the agent tracing middleware
-type tracing struct {
-	system string // e.g., "openai", "claude", "gemini"
+// TracingHook records agent loop lifecycle spans.
+type TracingHook struct {
+	hook.Noop
+
+	system string
 	tracer trace.Tracer
-	next   blades.Handler
+
+	mu     sync.Mutex
+	turns  map[turnKey]trace.Span
+	models map[*model.Request]trace.Span
+	tools  map[toolKey]trace.Span
 }
 
-// WithSystem sets the AI system name for tracing, e.g., "openai", "claude", "gemini"
+type turnKey struct {
+	agent string
+	turn  int
+}
+
+type toolKey struct {
+	agent string
+	turn  int
+	id    string
+	name  string
+}
+
+// WithSystem sets the AI system name for tracing, e.g. "openai", "claude", "gemini".
 func WithSystem(system string) TraceOption {
-	return func(t *tracing) {
+	return func(t *TracingHook) {
 		t.system = system
 	}
 }
 
-// WithTracerProvider sets a custom TracerProvider for the tracing middleware
-func WithTracerProvider(tr trace.TracerProvider) TraceOption {
-	return func(t *tracing) {
-		t.tracer = tr.Tracer(traceScope)
+// WithTracerProvider sets a custom TracerProvider for tracing.
+func WithTracerProvider(provider trace.TracerProvider) TraceOption {
+	return func(t *TracingHook) {
+		t.tracer = provider.Tracer(traceScope)
 	}
 }
 
-// Tracing returns a middleware that adds OpenTelemetry tracing to agent invocations
-func Tracing(opts ...TraceOption) blades.Middleware {
-	t := &tracing{
+// Tracing returns a lifecycle hook that records OpenTelemetry spans.
+func Tracing(opts ...TraceOption) hook.Hook {
+	return NewTracingHook(opts...)
+}
+
+// NewTracingHook constructs a tracing hook.
+func NewTracingHook(opts ...TraceOption) *TracingHook {
+	t := &TracingHook{
 		system: "_OTHER",
 		tracer: otel.GetTracerProvider().Tracer(traceScope),
+		turns:  make(map[turnKey]trace.Span),
+		models: make(map[*model.Request]trace.Span),
+		tools:  make(map[toolKey]trace.Span),
 	}
-	for _, o := range opts {
-		o(t)
+	for _, opt := range opts {
+		opt(t)
 	}
-	return func(next blades.Handler) blades.Handler {
-		t.next = next
-		return t
-	}
+	return t
 }
 
-func (t *tracing) Start(ctx context.Context, agent blades.AgentContext, invocation *blades.Invocation) (context.Context, trace.Span) {
-	var (
-		sessionID string
-	)
-	if invocation.Session != nil {
-		sessionID = invocation.Session.ID()
+func (t *TracingHook) BeforeTurn(ctx context.Context, turn *hook.Turn) error {
+	if turn == nil {
+		return nil
 	}
-	ctx, span := t.tracer.Start(ctx, fmt.Sprintf("invoke_agent %s", agent.Name()))
+	_, span := t.tracer.Start(ctx, fmt.Sprintf("invoke_agent %s", turn.AgentName))
 	span.SetAttributes(
 		semconv.GenAIOperationNameInvokeAgent,
 		semconv.GenAISystemKey.String(t.system),
-		semconv.GenAIAgentName(agent.Name()),
-		semconv.GenAIAgentDescription(agent.Description()),
-		semconv.GenAIRequestModel(invocation.Model),
-		semconv.GenAIConversationID(sessionID),
+		semconv.GenAIAgentName(turn.AgentName),
+		attribute.Int("blades.turn", turn.Turn),
 	)
-	return ctx, span
+	t.mu.Lock()
+	t.turns[turnKey{agent: turn.AgentName, turn: turn.Turn}] = span
+	t.mu.Unlock()
+	return nil
 }
 
-// Handle processes the prompt in a streaming manner and adds OpenTelemetry tracing to the invocation before passing it to the next agent.
-func (t *tracing) Handle(ctx context.Context, invocation *blades.Invocation) blades.Generator[*blades.Message, error] {
-	agent, ok := blades.FromAgentContext(ctx)
-	if !ok {
-		return t.next.Handle(ctx, invocation)
+func (t *TracingHook) AfterTurn(_ context.Context, turn *hook.Turn, summary *hook.TurnSummary, err error) error {
+	if turn == nil {
+		return nil
 	}
-	return func(yield func(*blades.Message, error) bool) {
-		var (
-			err     error
-			message *blades.Message
-		)
-		ctx, span := t.Start(ctx, agent, invocation)
-		streaming := t.next.Handle(ctx, invocation)
-		for message, err = range streaming {
-			if err != nil {
-				yield(nil, err)
-				break
-			}
-			if !yield(message, nil) {
-				break
-			}
-		}
-		t.End(span, message, err)
+	span := t.takeTurn(turnKey{agent: turn.AgentName, turn: turn.Turn})
+	if span == nil {
+		return nil
 	}
-}
-
-func (t *tracing) End(span trace.Span, msg *blades.Message, err error) {
 	defer span.End()
+	recordSpanResult(span, err)
+	if summary == nil {
+		return nil
+	}
+	if summary.StopReason != "" {
+		span.SetAttributes(semconv.GenAIResponseFinishReasons(string(summary.StopReason)))
+	}
+	if summary.Usage != nil {
+		setUsage(span, summary.Usage)
+	}
+	return nil
+}
+
+func (t *TracingHook) BeforeModel(ctx context.Context, req *model.Request) error {
+	if req == nil {
+		return nil
+	}
+	_, span := t.tracer.Start(ctx, "generate_content")
+	span.SetAttributes(
+		semconv.GenAIOperationNameGenerateContent,
+		semconv.GenAISystemKey.String(t.system),
+	)
+	if req.Model != "" {
+		span.SetAttributes(semconv.GenAIRequestModel(req.Model))
+	}
+	t.mu.Lock()
+	t.models[req] = span
+	t.mu.Unlock()
+	return nil
+}
+
+func (t *TracingHook) AfterModel(_ context.Context, req *model.Request, resp *model.Response, err error) error {
+	if req == nil {
+		return nil
+	}
+	span := t.takeModel(req)
+	if span == nil {
+		return nil
+	}
+	defer span.End()
+	recordSpanResult(span, err)
+	if resp == nil {
+		return nil
+	}
+	if resp.StopReason != "" {
+		span.SetAttributes(semconv.GenAIResponseFinishReasons(string(resp.StopReason)))
+	}
+	setUsage(span, &resp.Usage)
+	return nil
+}
+
+func (t *TracingHook) BeforeTool(ctx context.Context, call *hook.ToolCall) error {
+	if call == nil {
+		return nil
+	}
+	name, description := toolAttrs(call.Tool)
+	_, span := t.tracer.Start(ctx, fmt.Sprintf("execute_tool %s", name))
+	span.SetAttributes(
+		semconv.GenAIOperationNameExecuteTool,
+		semconv.GenAISystemKey.String(t.system),
+		semconv.GenAIToolName(name),
+		attribute.Int("blades.turn", call.Turn),
+	)
+	if call.ID != "" {
+		span.SetAttributes(semconv.GenAIToolCallID(call.ID))
+	}
+	if description != "" {
+		span.SetAttributes(semconv.GenAIToolDescription(description))
+	}
+	t.mu.Lock()
+	t.tools[toolKey{agent: call.AgentName, turn: call.Turn, id: call.ID, name: name}] = span
+	t.mu.Unlock()
+	return nil
+}
+
+func (t *TracingHook) AfterTool(_ context.Context, call *hook.ToolCall, _ *tools.Result, err error) error {
+	if call == nil {
+		return nil
+	}
+	name, _ := toolAttrs(call.Tool)
+	span := t.takeTool(toolKey{agent: call.AgentName, turn: call.Turn, id: call.ID, name: name})
+	if span == nil {
+		return nil
+	}
+	defer span.End()
+	recordSpanResult(span, err)
+	return nil
+}
+
+func (t *TracingHook) takeTurn(key turnKey) trace.Span {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	span := t.turns[key]
+	delete(t.turns, key)
+	return span
+}
+
+func (t *TracingHook) takeModel(req *model.Request) trace.Span {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	span := t.models[req]
+	delete(t.models, req)
+	return span
+}
+
+func (t *TracingHook) takeTool(key toolKey) trace.Span {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	span := t.tools[key]
+	delete(t.tools, key)
+	return span
+}
+
+func toolAttrs(tool tools.Tool) (string, string) {
+	if tool == nil {
+		return "", ""
+	}
+	spec := tool.Spec()
+	return spec.Name, spec.Description
+}
+
+func recordSpanResult(span trace.Span, err error) {
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-	} else {
-		span.SetStatus(codes.Ok, codes.Ok.String())
-	}
-	if msg == nil {
 		return
 	}
-	if msg.FinishReason != "" {
-		span.SetAttributes(semconv.GenAIResponseFinishReasons(msg.FinishReason))
+	span.SetStatus(codes.Ok, codes.Ok.String())
+}
+
+func setUsage(span trace.Span, usage *model.Usage) {
+	if usage == nil {
+		return
 	}
-	if msg.TokenUsage.InputTokens > 0 {
-		span.SetAttributes(semconv.GenAIUsageInputTokens(int(msg.TokenUsage.InputTokens)))
+	if usage.InputTokens > 0 {
+		span.SetAttributes(semconv.GenAIUsageInputTokens(int(usage.InputTokens)))
 	}
-	if msg.TokenUsage.OutputTokens > 0 {
-		span.SetAttributes(semconv.GenAIUsageOutputTokens(int(msg.TokenUsage.OutputTokens)))
+	if usage.OutputTokens > 0 {
+		span.SetAttributes(semconv.GenAIUsageOutputTokens(int(usage.OutputTokens)))
 	}
 }

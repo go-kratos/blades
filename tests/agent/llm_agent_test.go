@@ -3,15 +3,20 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-kratos/blades"
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/event"
+	"github.com/go-kratos/blades/hook"
 	"github.com/go-kratos/blades/model"
+	"github.com/go-kratos/blades/policy"
 	"github.com/go-kratos/blades/session"
 	"github.com/go-kratos/blades/tests/dummyprovider"
 	"github.com/go-kratos/blades/tests/testtools"
+	"github.com/go-kratos/blades/tools"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -33,7 +38,7 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	)
 	assert.NoError(t, err)
 
-	sess := session.NewSession()
+	sess := newRecordingSession()
 	ctx, cancel := context.WithCancel(session.NewContext(context.Background(), sess))
 	defer cancel()
 	inputs := make(chan event.Input, 1)
@@ -48,6 +53,7 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	assert.Equal(t, "calculate", toolEnd.Name)
 	assert.False(t, toolEnd.IsError)
 	assert.Equal(t, "123 * 456 = 56088", textFromParts(toolEnd.Parts))
+	assert.Equal(t, 1, countToolStarts(outputs, "calc-1"))
 
 	turnEnd, ok := lastTurnEnd(outputs)
 	assert.True(t, ok)
@@ -64,6 +70,390 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 		assert.Equal(t, model.RoleAssistant, messages[3].Role)
 		assert.Equal(t, "123 * 456 = 56088", toolResultText(messages[2].Parts))
 		assert.Equal(t, "The result is 56088.", textFromParts(messages[3].Parts))
+	}
+
+	calls := sess.AppendCalls()
+	if assert.Len(t, calls, 3) {
+		assert.Len(t, calls[0], 1)
+		assert.Len(t, calls[1], 2)
+		assert.Len(t, calls[2], 1)
+		assert.Equal(t, model.RoleAssistant, calls[1][0].Role)
+		assert.Equal(t, model.RoleTool, calls[1][1].Role)
+	}
+}
+
+func TestLLMAgentBeforeToolCanRewriteInput(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.ToolUse("calc-1", "calculate", json.RawMessage(`{"expression":"1 + 1"}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+		dummyprovider.TextResponse("done"),
+	)
+	rewrite := &rewriteToolInputHook{}
+	agent, err := blades.NewAgent(
+		"calculator",
+		blades.WithModel(provider),
+		blades.WithTools(testtools.NewCalculateTool()),
+		blades.WithHooks(rewrite),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("calculate")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+
+	toolEnd, ok := findToolEnd(outputs, "calc-1")
+	assert.True(t, ok)
+	assert.Equal(t, "2 + 3 = 5", textFromParts(toolEnd.Parts))
+	assert.Equal(t, "calculate", rewrite.toolName)
+}
+
+func TestLLMAgentAfterToolCanRewriteResult(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.ToolUse("calc-1", "calculate", json.RawMessage(`{"expression":"1 + 1"}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+		dummyprovider.TextResponse("done"),
+	)
+	rewrite := &rewriteToolResultHook{}
+	agent, err := blades.NewAgent(
+		"calculator",
+		blades.WithModel(provider),
+		blades.WithTools(testtools.NewCalculateTool()),
+		blades.WithHooks(rewrite),
+	)
+	assert.NoError(t, err)
+
+	sess := session.NewSession()
+	ctx := session.NewContext(context.Background(), sess)
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("calculate")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
+	assert.NoError(t, err)
+	assert.NoError(t, rewrite.err)
+
+	toolEnd, ok := findToolEnd(outputs, "calc-1")
+	assert.True(t, ok)
+	assert.Equal(t, "redacted", textFromParts(toolEnd.Parts))
+
+	messages, err := sess.Messages(ctx)
+	assert.NoError(t, err)
+	if assert.Len(t, messages, 4) {
+		assert.Equal(t, "redacted", toolResultText(messages[2].Parts))
+	}
+}
+
+func TestLLMAgentPolicyAskDoesNotExecuteTool(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.ToolUse("tool-1", "count", json.RawMessage(`{}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+		dummyprovider.TextResponse("done"),
+	)
+	tool := &recordingTool{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(tool),
+		blades.WithPolicy(policy.PolicyFunc(func(context.Context, policy.ToolRequest) (policy.Decision, error) {
+			return policy.Decision{Action: policy.Ask, Reason: "approval required"}, nil
+		})),
+	)
+	assert.NoError(t, err)
+
+	sess := session.NewSession()
+	ctx := session.NewContext(context.Background(), sess)
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("run")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, tool.Calls())
+
+	toolEnd, ok := findToolEnd(outputs, "tool-1")
+	assert.True(t, ok)
+	assert.True(t, toolEnd.IsError)
+	assert.Equal(t, "approval required", textFromParts(toolEnd.Parts))
+
+	messages, err := sess.Messages(ctx)
+	assert.NoError(t, err)
+	if assert.Len(t, messages, 4) {
+		assert.Equal(t, "approval required", toolResultText(messages[2].Parts))
+	}
+}
+
+func TestLLMAgentExecutesToolBatchConcurrently(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.ToolUse("slow-1", "slow", json.RawMessage(`{}`)),
+				dummyprovider.ToolUse("slow-2", "slow", json.RawMessage(`{}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+		dummyprovider.TextResponse("done"),
+	)
+	tool := &concurrencyTool{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(tool),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("run")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, tool.Calls())
+	assert.Greater(t, tool.MaxActive(), 1)
+	lifecycle := toolLifecycle(outputs)
+	if assert.GreaterOrEqual(t, len(lifecycle), 4) {
+		assert.Equal(t, []string{
+			"start:slow-1",
+			"start:slow-2",
+		}, lifecycle[:2])
+		assert.Contains(t, lifecycle[2:], "end:slow-1")
+		assert.Contains(t, lifecycle[2:], "end:slow-2")
+	}
+}
+
+func TestLLMAgentParallelToolStartsBeforeAnyEnd(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.ToolUse("slow-1", "slow", json.RawMessage(`{}`)),
+				dummyprovider.ToolUse("slow-2", "slow", json.RawMessage(`{}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+		dummyprovider.TextResponse("done"),
+	)
+	tool := &concurrencyTool{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(tool),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("run")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, tool.Calls())
+	assert.Greater(t, tool.MaxActive(), 1)
+	lifecycle := toolLifecycle(outputs)
+	if assert.GreaterOrEqual(t, len(lifecycle), 4) {
+		assert.Equal(t, []string{
+			"start:slow-1",
+			"start:slow-2",
+		}, lifecycle[:2])
+	}
+}
+
+func TestLLMAgentParallelToolEndsInCompletionOrder(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.ToolUse("slow", "delay", json.RawMessage(`{}`)),
+				dummyprovider.ToolUse("fast", "delay", json.RawMessage(`{}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+		dummyprovider.TextResponse("done"),
+	)
+	tool := &delayedTool{delays: map[string]time.Duration{"slow": 50 * time.Millisecond}}
+	sess := session.NewSession()
+	ctx := session.NewContext(context.Background(), sess)
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(tool),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("run")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
+	assert.NoError(t, err)
+	assert.Equal(t, []string{
+		"start:slow",
+		"start:fast",
+		"end:fast",
+		"end:slow",
+	}, toolLifecycle(outputs))
+
+	messages, err := sess.Messages(ctx)
+	assert.NoError(t, err)
+	if assert.Len(t, messages, 4) {
+		assert.Equal(t, []string{"slow", "fast"}, toolResultTexts(messages[2].Parts))
+	}
+}
+
+func TestLLMAgentToolActionUsesSourceOrder(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.ToolUse("exit-1", "exit", json.RawMessage(`{}`)),
+				dummyprovider.ToolUse("handoff-1", "handoff", json.RawMessage(`{}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+	)
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(
+			actionTool{name: "exit", err: &tools.ErrLoopExit{Escalate: true}},
+			actionTool{name: "handoff", err: &tools.ErrHandoff{Agent: "next"}},
+		),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("run")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.Equal(t, event.LoopExit{Escalate: true}, turnEnd.Action)
+}
+
+func TestLLMAgentClosedInputDoesNotAbortActiveTurn(t *testing.T) {
+	provider := dummyprovider.NewProvider(dummyprovider.TextResponse("done"))
+	agent, err := blades.NewAgent("assistant", blades.WithModel(provider))
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("start")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.Equal(t, event.StopEnd, turnEnd.StopReason)
+	assert.Equal(t, "done", textFromParts(turnEnd.Parts))
+}
+
+func TestLLMAgentQueuesPromptArrivingDuringActiveTurn(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.TextResponse("first"),
+		dummyprovider.TextResponse("second"),
+	)
+	agent, err := blades.NewAgent("assistant", blades.WithModel(provider))
+	assert.NoError(t, err)
+
+	sess := session.NewSession()
+	ctx := session.NewContext(context.Background(), sess)
+	inputs := make(chan event.Input, 2)
+	inputs <- event.NewPromptText("one")
+	inputs <- event.NewPromptText("two")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
+	assert.NoError(t, err)
+
+	turns := turnEnds(outputs)
+	if assert.Len(t, turns, 2) {
+		assert.Equal(t, "first", textFromParts(turns[0].Parts))
+		assert.Equal(t, "second", textFromParts(turns[1].Parts))
+	}
+	assert.Equal(t, 2, provider.CallCount())
+
+	messages, err := sess.Messages(ctx)
+	assert.NoError(t, err)
+	if assert.Len(t, messages, 4) {
+		assert.Equal(t, "one", textFromParts(messages[0].Parts))
+		assert.Equal(t, "first", textFromParts(messages[1].Parts))
+		assert.Equal(t, "two", textFromParts(messages[2].Parts))
+		assert.Equal(t, "second", textFromParts(messages[3].Parts))
+	}
+}
+
+func TestLLMAgentSteerContinuesCurrentTurn(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.TextResponse("draft"),
+		dummyprovider.TextResponse("final"),
+	)
+	agent, err := blades.NewAgent("assistant", blades.WithModel(provider))
+	assert.NoError(t, err)
+
+	sess := session.NewSession()
+	ctx := session.NewContext(context.Background(), sess)
+	inputs := make(chan event.Input, 2)
+	inputs <- event.NewPromptText("start")
+	inputs <- event.NewSteerText("revise")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
+	assert.NoError(t, err)
+
+	turns := turnEnds(outputs)
+	if assert.Len(t, turns, 1) {
+		assert.Equal(t, event.StopEnd, turns[0].StopReason)
+		assert.Equal(t, "final", textFromParts(turns[0].Parts))
+	}
+	assert.Equal(t, 2, provider.CallCount())
+
+	messages, err := sess.Messages(ctx)
+	assert.NoError(t, err)
+	if assert.Len(t, messages, 4) {
+		assert.Equal(t, "start", textFromParts(messages[0].Parts))
+		assert.Equal(t, "draft", textFromParts(messages[1].Parts))
+		assert.Equal(t, "revise", textFromParts(messages[2].Parts))
+		assert.Equal(t, "final", textFromParts(messages[3].Parts))
+	}
+}
+
+func TestLLMAgentAbortOnlyEndsCurrentTurn(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.TextResponse("first"),
+		dummyprovider.TextResponse("second"),
+	)
+	agent, err := blades.NewAgent("assistant", blades.WithModel(provider))
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 3)
+	inputs <- event.NewPromptText("one")
+	inputs <- event.NewPromptText("two")
+	inputs <- event.Abort{Reason: "stop current"}
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+
+	turns := turnEnds(outputs)
+	if assert.Len(t, turns, 2) {
+		assert.Equal(t, event.StopAbort, turns[0].StopReason)
+		assert.Equal(t, "first", textFromParts(turns[0].Parts))
+		assert.Equal(t, event.StopEnd, turns[1].StopReason)
+		assert.Equal(t, "second", textFromParts(turns[1].Parts))
 	}
 }
 
@@ -83,6 +473,30 @@ func collectAgentOutputs(ctx context.Context, agent blades.Agent, inputs <-chan 
 	return collected, nil
 }
 
+func collectAllAgentOutputs(ctx context.Context, agent blades.Agent, inputs <-chan event.Input) ([]event.Output, error) {
+	outputs, err := agent.Run(ctx, inputs)
+	if err != nil {
+		return nil, err
+	}
+
+	var collected []event.Output
+	for output := range outputs {
+		collected = append(collected, output)
+	}
+	return collected, nil
+}
+
+func countToolStarts(outputs []event.Output, id string) int {
+	var count int
+	for _, output := range outputs {
+		toolStart, ok := output.(event.ToolStart)
+		if ok && toolStart.ID == id {
+			count++
+		}
+	}
+	return count
+}
+
 func findToolEnd(outputs []event.Output, id string) (event.ToolEnd, bool) {
 	for _, output := range outputs {
 		toolEnd, ok := output.(event.ToolEnd)
@@ -91,6 +505,19 @@ func findToolEnd(outputs []event.Output, id string) (event.ToolEnd, bool) {
 		}
 	}
 	return event.ToolEnd{}, false
+}
+
+func toolLifecycle(outputs []event.Output) []string {
+	var lifecycle []string
+	for _, output := range outputs {
+		switch v := output.(type) {
+		case event.ToolStart:
+			lifecycle = append(lifecycle, "start:"+v.ID)
+		case event.ToolEnd:
+			lifecycle = append(lifecycle, "end:"+v.ID)
+		}
+	}
+	return lifecycle
 }
 
 func lastTurnEnd(outputs []event.Output) (event.TurnEnd, bool) {
@@ -104,6 +531,17 @@ func lastTurnEnd(outputs []event.Output) (event.TurnEnd, bool) {
 		}
 	}
 	return turnEnd, found
+}
+
+func turnEnds(outputs []event.Output) []event.TurnEnd {
+	var turns []event.TurnEnd
+	for _, output := range outputs {
+		turnEnd, ok := output.(event.TurnEnd)
+		if ok {
+			turns = append(turns, turnEnd)
+		}
+	}
+	return turns
 }
 
 func textFromParts(parts []content.Part) string {
@@ -124,4 +562,198 @@ func toolResultText(parts []content.Part) string {
 		}
 	}
 	return ""
+}
+
+func toolResultTexts(parts []content.Part) []string {
+	var texts []string
+	for _, part := range parts {
+		toolResult, ok := part.(content.ToolResult)
+		if ok {
+			texts = append(texts, textFromParts(toolResult.Parts))
+		}
+	}
+	return texts
+}
+
+type rewriteToolInputHook struct {
+	hook.Noop
+	toolName string
+}
+
+func (h *rewriteToolInputHook) BeforeTool(_ context.Context, call *hook.ToolCall) error {
+	if call.Tool != nil {
+		h.toolName = call.Tool.Spec().Name
+	}
+	call.Input = json.RawMessage(`{"expression":"2 + 3"}`)
+	return nil
+}
+
+type rewriteToolResultHook struct {
+	hook.Noop
+	err error
+}
+
+func (h *rewriteToolResultHook) AfterTool(_ context.Context, _ *hook.ToolCall, result *tools.Result, err error) error {
+	h.err = err
+	result.Parts = []content.Part{content.Text{Text: "redacted"}}
+	return nil
+}
+
+type recordingTool struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (t *recordingTool) Spec() tools.ToolSpec {
+	return tools.ToolSpec{Name: "count", Description: "Count invocations"}
+}
+
+func (t *recordingTool) Handle(context.Context, json.RawMessage) (*tools.Result, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.calls++
+	return tools.TextResult("executed"), nil
+}
+
+func (t *recordingTool) Calls() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.calls
+}
+
+type concurrencyTool struct {
+	mu        sync.Mutex
+	calls     int
+	active    int
+	maxActive int
+}
+
+func (t *concurrencyTool) Spec() tools.ToolSpec {
+	return tools.ToolSpec{Name: "slow", Description: "Slow tool"}
+}
+
+func (t *concurrencyTool) Handle(context.Context, json.RawMessage) (*tools.Result, error) {
+	t.mu.Lock()
+	t.calls++
+	t.active++
+	if t.active > t.maxActive {
+		t.maxActive = t.active
+	}
+	t.mu.Unlock()
+
+	time.Sleep(10 * time.Millisecond)
+
+	t.mu.Lock()
+	t.active--
+	t.mu.Unlock()
+
+	return tools.TextResult("ok"), nil
+}
+
+func (t *concurrencyTool) Calls() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.calls
+}
+
+func (t *concurrencyTool) MaxActive() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.maxActive
+}
+
+type delayedTool struct {
+	delays map[string]time.Duration
+}
+
+func (t *delayedTool) Spec() tools.ToolSpec {
+	return tools.ToolSpec{Name: "delay", Description: "Delay by tool call ID"}
+}
+
+func (t *delayedTool) Handle(ctx context.Context, _ json.RawMessage) (*tools.Result, error) {
+	tc, ok := tools.FromContext(ctx)
+	if !ok {
+		return tools.TextResult("missing tool context"), nil
+	}
+	if delay := t.delays[tc.ID()]; delay > 0 {
+		time.Sleep(delay)
+	}
+	return tools.TextResult(tc.ID()), nil
+}
+
+type actionTool struct {
+	name string
+	err  error
+}
+
+func (t actionTool) Spec() tools.ToolSpec {
+	return tools.ToolSpec{Name: t.name, Description: t.name}
+}
+
+func (t actionTool) Handle(context.Context, json.RawMessage) (*tools.Result, error) {
+	return nil, t.err
+}
+
+type recordingSession struct {
+	mu       sync.Mutex
+	messages []*model.Message
+	calls    [][]*model.Message
+	state    map[string]any
+}
+
+func newRecordingSession() *recordingSession {
+	return &recordingSession{state: make(map[string]any)}
+}
+
+func (s *recordingSession) ID() string {
+	return "recording"
+}
+
+func (s *recordingSession) Metadata() map[string]any {
+	return map[string]any{}
+}
+
+func (s *recordingSession) State() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make(map[string]any, len(s.state))
+	for k, v := range s.state {
+		cp[k] = v
+	}
+	return cp
+}
+
+func (s *recordingSession) SetState(key string, value any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state[key] = value
+}
+
+func (s *recordingSession) Append(_ context.Context, msgs ...*model.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messages = append(s.messages, msgs...)
+	call := make([]*model.Message, len(msgs))
+	copy(call, msgs)
+	s.calls = append(s.calls, call)
+	return nil
+}
+
+func (s *recordingSession) Messages(_ context.Context) ([]*model.Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make([]*model.Message, len(s.messages))
+	copy(cp, s.messages)
+	return cp, nil
+}
+
+func (s *recordingSession) AppendCalls() [][]*model.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make([][]*model.Message, len(s.calls))
+	for i, call := range s.calls {
+		cp[i] = make([]*model.Message, len(call))
+		copy(cp[i], call)
+	}
+	return cp
 }

@@ -4,82 +4,125 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/go-kratos/blades"
+	anthropic "github.com/anthropics/anthropic-sdk-go"
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/tools"
 )
 
-// convertPartsToContent converts Blades Parts to Claude ContentBlockParamUnion.
-func convertPartsToContent(parts []blades.Part) []anthropic.ContentBlockParamUnion {
-	var content []anthropic.ContentBlockParamUnion
+// convertPartsToContent converts Blades parts to Claude ContentBlockParamUnion.
+func convertPartsToContent(parts []content.Part) []anthropic.ContentBlockParamUnion {
+	var out []anthropic.ContentBlockParamUnion
 	for _, part := range parts {
 		switch p := part.(type) {
-		case blades.TextPart:
-			content = append(content, anthropic.NewTextBlock(p.Text))
+		case content.Text:
+			out = append(out, anthropic.NewTextBlock(p.Text))
+		case content.Thinking:
+			out = append(out, anthropic.NewThinkingBlock(string(p.Signature), p.Text))
+		case content.ToolUse:
+			out = append(out, anthropic.NewToolUseBlock(p.ID, decodeToolInput(p.Input), p.Name))
+		case content.ToolResult:
+			out = append(out, anthropic.NewToolResultBlock(p.ID, textFromParts(p.Parts), p.IsError))
 		}
 	}
-	return content
+	return out
 }
 
-// convertBladesToolsToClaude converts Blades Tools to Claude ToolParams.
-func convertBladesToolsToClaude(tools []tools.Tool) ([]anthropic.ToolUnionParam, error) {
+// convertBladesToolsToClaude converts Blades tool specs to Claude ToolParams.
+func convertBladesToolsToClaude(toolSpecs []tools.ToolSpec) ([]anthropic.ToolUnionParam, error) {
 	var claudeTools []anthropic.ToolUnionParam
-	for _, tool := range tools {
+	for _, spec := range toolSpecs {
 		var inputSchema anthropic.ToolInputSchemaParam
-		schemaBytes, err := json.Marshal(tool.InputSchema())
-		if err != nil {
-			return nil, fmt.Errorf("marshaling tool schema: %w", err)
-		}
-		if err := json.Unmarshal(schemaBytes, &inputSchema); err != nil {
-			return nil, fmt.Errorf("unmarshaling tool schema: %w", err)
+		if spec.InputSchema != nil {
+			schemaBytes, err := json.Marshal(spec.InputSchema)
+			if err != nil {
+				return nil, fmt.Errorf("marshaling tool schema: %w", err)
+			}
+			if err := json.Unmarshal(schemaBytes, &inputSchema); err != nil {
+				return nil, fmt.Errorf("unmarshaling tool schema: %w", err)
+			}
 		}
 		toolParam := anthropic.ToolParam{
-			Name:        tool.Name(),
+			Name:        spec.Name,
 			InputSchema: inputSchema,
 		}
-		if tool.Description() != "" {
-			toolParam.Description = anthropic.String(tool.Description())
+		if spec.Description != "" {
+			toolParam.Description = anthropic.String(spec.Description)
 		}
-		claudeTools = append(claudeTools, anthropic.ToolUnionParam{
-			OfTool: &toolParam,
-		})
+		claudeTools = append(claudeTools, anthropic.ToolUnionParam{OfTool: &toolParam})
 	}
 	return claudeTools, nil
 }
 
-// convertClaudeToBlades converts a Claude Message to Blades ModelResponse.
-func convertClaudeToBlades(message *anthropic.Message, status blades.Status) (*blades.ModelResponse, error) {
-	msg := blades.NewAssistantMessage(status)
-	hasToolUse := false
+// convertClaudeToBlades converts a Claude Message to Blades model.Response.
+func convertClaudeToBlades(message *anthropic.Message) (*model.Response, error) {
+	resp := &model.Response{
+		Message: &model.Message{Role: model.RoleAssistant},
+		Usage: model.Usage{
+			InputTokens:  message.Usage.InputTokens,
+			OutputTokens: message.Usage.OutputTokens,
+		},
+		StopReason: mapClaudeStopReason(message.StopReason),
+	}
 	for _, block := range message.Content {
 		switch b := block.AsAny().(type) {
 		case anthropic.TextBlock:
-			msg.Parts = append(msg.Parts, blades.TextPart{Text: b.Text})
+			resp.Message.Parts = append(resp.Message.Parts, content.Text{Text: b.Text})
+		case anthropic.ThinkingBlock:
+			resp.Message.Parts = append(resp.Message.Parts, content.Thinking{Text: b.Thinking, Signature: []byte(b.Signature)})
 		case anthropic.ToolUseBlock:
-			hasToolUse = true
-			input, err := json.Marshal(b.Input)
-			if err != nil {
-				return nil, err
-			}
-			msg.Parts = append(msg.Parts, blades.NewToolPart(b.ID, b.Name, string(input)))
+			resp.Message.Parts = append(resp.Message.Parts, content.ToolUse{
+				ID:    b.ID,
+				Name:  b.Name,
+				Input: json.RawMessage(b.Input),
+			})
 		}
 	}
-	if hasToolUse {
-		msg.Role = blades.RoleTool
+	if resp.StopReason == "" {
+		resp.StopReason = model.StopEnd
 	}
-	return &blades.ModelResponse{
-		Message: msg,
-	}, nil
+	return resp, nil
 }
 
-// convertStreamDeltaToBlades converts a Claude ContentBlockDeltaEvent to Blades ModelResponse.
-func convertStreamDeltaToBlades(event anthropic.ContentBlockDeltaEvent) (*blades.ModelResponse, error) {
-	message := blades.NewAssistantMessage(blades.StatusIncomplete)
+// convertStreamDeltaToChunk converts a Claude ContentBlockDeltaEvent to a model chunk.
+func convertStreamDeltaToChunk(event anthropic.ContentBlockDeltaEvent) *model.Chunk {
+	chunk := &model.Chunk{}
 	switch delta := event.Delta.AsAny().(type) {
 	case anthropic.TextDelta:
-		message.Parts = append(message.Parts, blades.TextPart{Text: delta.Text})
+		chunk.Parts = append(chunk.Parts, content.Text{Text: delta.Text})
+	case anthropic.ThinkingDelta:
+		chunk.Parts = append(chunk.Parts, content.Thinking{Text: delta.Thinking})
 	}
-	return &blades.ModelResponse{
-		Message: message,
-	}, nil
+	return chunk
+}
+
+func mapClaudeStopReason(reason anthropic.StopReason) model.StopReason {
+	switch reason {
+	case anthropic.StopReasonToolUse:
+		return model.StopToolUse
+	case anthropic.StopReasonMaxTokens:
+		return model.StopMaxTokens
+	case anthropic.StopReasonRefusal:
+		return model.StopSafety
+	default:
+		return model.StopEnd
+	}
+}
+
+func decodeToolInput(input json.RawMessage) any {
+	var decoded any
+	if err := json.Unmarshal(input, &decoded); err == nil {
+		return decoded
+	}
+	return string(input)
+}
+
+func textFromParts(parts []content.Part) string {
+	var text string
+	for _, part := range parts {
+		if textPart, ok := part.(content.Text); ok {
+			text += textPart.Text
+		}
+	}
+	return text
 }

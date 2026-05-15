@@ -3,8 +3,9 @@ package gemini
 import (
 	"context"
 	"fmt"
+	"iter"
 
-	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/model"
 	"google.golang.org/genai"
 )
 
@@ -20,6 +21,41 @@ type Config struct {
 	FrequencyPenalty float32
 	StopSequences    []string
 	ThinkingConfig   *genai.ThinkingConfig
+	ModelOptions     []model.Option
+}
+
+// ModelOption configures a Gemini model provider.
+type ModelOption func(*Config)
+
+// WithConfig applies a full Config value.
+func WithConfig(config Config) ModelOption {
+	return func(c *Config) {
+		*c = config
+	}
+}
+
+// WithClientConfig applies the GenAI SDK client configuration.
+func WithClientConfig(config genai.ClientConfig) ModelOption {
+	return func(c *Config) {
+		c.ClientConfig = config
+	}
+}
+
+// NewModel creates a Gemini model provider.
+func NewModel(ctx context.Context, modelName string, opts ...ModelOption) (model.Provider, error) {
+	var config Config
+	for _, opt := range opts {
+		opt(&config)
+	}
+	client, err := genai.NewClient(ctx, &config.ClientConfig)
+	if err != nil {
+		return nil, err
+	}
+	return &Gemini{
+		model:  modelName,
+		config: config,
+		client: client,
+	}, nil
 }
 
 // Gemini provides a unified interface for Gemini API access.
@@ -29,25 +65,15 @@ type Gemini struct {
 	client *genai.Client
 }
 
-// NewModel creates a new Gemini model provider.
-func NewModel(ctx context.Context, model string, config Config) (blades.ModelProvider, error) {
-	client, err := genai.NewClient(ctx, &config.ClientConfig)
-	if err != nil {
-		return nil, err
-	}
-	return &Gemini{
-		model:  model,
-		config: config,
-		client: client,
-	}, nil
-}
+var _ model.Provider = (*Gemini)(nil)
 
 // Name returns the name of the model.
 func (m *Gemini) Name() string {
 	return m.model
 }
 
-func (m *Gemini) Generate(ctx context.Context, req *blades.ModelRequest) (*blades.ModelResponse, error) {
+// Generate executes a non-streaming generation request.
+func (m *Gemini) Generate(ctx context.Context, req *model.Request) (*model.Response, error) {
 	system, contents, err := convertMessageToGenAI(req)
 	if err != nil {
 		return nil, err
@@ -61,10 +87,44 @@ func (m *Gemini) Generate(ctx context.Context, req *blades.ModelRequest) (*blade
 	if err != nil {
 		return nil, err
 	}
-	return convertGenAIToBlades(resp, blades.StatusCompleted)
+	return convertGenAIToBlades(resp)
 }
 
-func (m *Gemini) toGenerateConfig(req *blades.ModelRequest) (*genai.GenerateContentConfig, error) {
+// Stream executes a streaming generation request.
+func (m *Gemini) Stream(ctx context.Context, req *model.Request) iter.Seq2[*model.Chunk, error] {
+	return func(yield func(*model.Chunk, error) bool) {
+		system, contents, err := convertMessageToGenAI(req)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		config, err := m.toGenerateConfig(req)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		config.SystemInstruction = system
+		for resp, err := range m.client.Models.GenerateContentStream(ctx, m.model, contents, config) {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			chunk, err := convertGenAIToChunk(resp)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			if len(chunk.Parts) == 0 && chunk.StopReason == "" && chunk.Usage == nil {
+				continue
+			}
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+	}
+}
+
+func (m *Gemini) toGenerateConfig(req *model.Request) (*genai.GenerateContentConfig, error) {
 	var config genai.GenerateContentConfig
 	if m.config.Temperature > 0 {
 		config.Temperature = &m.config.Temperature
@@ -93,74 +153,39 @@ func (m *Gemini) toGenerateConfig(req *blades.ModelRequest) (*genai.GenerateCont
 	if m.config.ThinkingConfig != nil {
 		config.ThinkingConfig = m.config.ThinkingConfig
 	}
-	if len(req.Tools) > 0 {
+	if req != nil && len(req.Tools) > 0 {
 		tools, err := convertBladesToolsToGenAI(req.Tools)
 		if err != nil {
 			return nil, fmt.Errorf("converting tools: %w", err)
 		}
 		config.Tools = tools
 	}
+	if req != nil {
+		applyModelOptions(&config, model.MergeOptions(m.config.ModelOptions, req.Options))
+	} else {
+		applyModelOptions(&config, m.config.ModelOptions)
+	}
 	return &config, nil
 }
 
-// NewStreaming is an alias for GenerateStream to implement the ModelProvider interface.
-func (m *Gemini) NewStreaming(ctx context.Context, req *blades.ModelRequest) blades.Generator[*blades.ModelResponse, error] {
-	return func(yield func(*blades.ModelResponse, error) bool) {
-		system, contents, err := convertMessageToGenAI(req)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		config, err := m.toGenerateConfig(req)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		config.SystemInstruction = system
-		streaming := m.client.Models.GenerateContentStream(ctx, m.model, contents, config)
-		var accumulatedResponse *genai.GenerateContentResponse
-		for chunk, err := range streaming {
-			if err != nil {
-				yield(nil, err)
-				return
+func applyModelOptions(config *genai.GenerateContentConfig, opts []model.Option) {
+	for _, opt := range opts {
+		switch o := opt.(type) {
+		case model.Sampling:
+			if o.Temperature != nil {
+				v := float32(*o.Temperature)
+				config.Temperature = &v
 			}
-			response, err := convertGenAIToBlades(chunk, blades.StatusIncomplete)
-			if err != nil {
-				yield(nil, err)
-				return
+			if o.TopP != nil {
+				v := float32(*o.TopP)
+				config.TopP = &v
 			}
-			if !yield(response, nil) {
-				return
+			if o.MaxTokens != nil {
+				config.MaxOutputTokens = int32(*o.MaxTokens)
 			}
-			// Accumulate chunks
-			if accumulatedResponse == nil {
-				accumulatedResponse = chunk
-			} else {
-				if len(chunk.Candidates) > 0 && len(accumulatedResponse.Candidates) > 0 {
-					candidate := accumulatedResponse.Candidates[0]
-					chunkCandidate := chunk.Candidates[0]
-					// Append parts from chunk to accumulated candidate
-					if chunkCandidate.Content != nil {
-						if candidate.Content == nil {
-							candidate.Content = &genai.Content{Parts: []*genai.Part{}}
-						}
-						candidate.Content.Parts = append(candidate.Content.Parts, chunkCandidate.Content.Parts...)
-					}
-					// Update finish reason if present
-					if chunkCandidate.FinishReason != "" {
-						candidate.FinishReason = chunkCandidate.FinishReason
-					}
-				}
+			if len(o.Stop) > 0 {
+				config.StopSequences = o.Stop
 			}
-		}
-		// After streaming is complete, check for tool calls in accumulated response
-		if accumulatedResponse != nil {
-			finalResponse, err := convertGenAIToBlades(accumulatedResponse, blades.StatusCompleted)
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			yield(finalResponse, nil)
 		}
 	}
 }
