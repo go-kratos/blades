@@ -40,13 +40,6 @@ type stepBoundaryInputs struct {
 	aborted  bool
 }
 
-type turnState struct {
-	parts      []content.Part
-	stopReason event.StopReason
-	usage      event.Usage
-	action     event.Action
-}
-
 type stepBoundaryResult struct {
 	hasSteering bool
 	aborted     bool
@@ -190,31 +183,6 @@ func (l *agentLoop) runTurn(in event.Input) error {
 
 	l.endTurn(turn, state, nil)
 	return nil
-}
-
-func newTurnState() turnState {
-	return turnState{stopReason: event.StopEnd}
-}
-
-func (s *turnState) recordResponse(resp *model.Response) {
-	s.usage.InputTokens += resp.Usage.InputTokens
-	s.usage.OutputTokens += resp.Usage.OutputTokens
-	if resp.Message != nil {
-		s.parts = resp.Message.Parts
-	}
-}
-
-func (s *turnState) abort() {
-	s.stopReason = event.StopAbort
-}
-
-func (s *turnState) finish(reason model.StopReason) {
-	s.stopReason = outputStopReason(reason)
-}
-
-func (s *turnState) stopForAction(action event.Action) {
-	s.stopReason = event.StopToolUse
-	s.action = action
 }
 
 func abortAsNil(err error) error {
@@ -540,11 +508,4 @@ func inputToMessage(in event.Input) (*model.Message, bool) {
 	default:
 		return nil, false
 	}
-}
-
-func outputStopReason(reason model.StopReason) event.StopReason {
-	if reason == "" {
-		return event.StopEnd
-	}
-	return event.StopReason(reason)
 }
