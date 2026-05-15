@@ -290,10 +290,8 @@ blades/
 │   └── builtin.go              Chain / AllowAll / DenyAll / Budget / RateLimit / SafetyCheck
 │
 ├── memory/
-│   ├── memory.go               Memory 接口（Recall + Remember + Forget）+ Entry
-│   ├── store.go                Store 接口（Put / Search / Delete）+ Query
-│   ├── options.go              RecallOption / RememberOption / ForgetOption
-│   └── inmemory.go             InMemoryStore 实现
+│   ├── memory.go               Memory 接口（Recall + Remember + Forget）+ Entry + Query
+│   └── inmemory.go             in-memory Memory 实现
 │
 ├── internal/
 │   └── convert/                Event ↔ Message 唯一私有转换（PromptToMessage / SteerToMessage / ToolResultToMessage / ChunkToOutputs / ResponseToTurnEnd）
@@ -416,7 +414,7 @@ contrib/*   -> model/ 或 tools/
 | `policy` | `Policy`(Check 单方法), `Decision`, `Action`(Allow/Deny/Ask/Modify), `ToolRequest`, `Chain`/`AllowAll`/`DenyAll`/`Budget`/`RateLimit`/`SafetyCheck` | `policy.Policy` |
 | `hook` | `Hook`（6 方法），`Noop`，carrier `ToolCall`/`Turn`/`TurnSummary`，`Abort`/`ErrAbort`/`AbortError`/`IsAbort` | `hook.Hook` |
 | `compact` | `Compactor`(单方法接口), `Chain`, `NewWindow`, `NewToolResultBudget`, `NewSummarize`, `TokenCounter`, `WithHint`/`HintShrink`/`GetHint` | `compact.Compactor` |
-| `memory` | `Memory`(Recall+Remember+Forget), `Entry`, `Store`(Put/Search/Delete), options | `memory.Memory` |
+| `memory` | `Memory`(Recall+Remember+Forget), `Entry`, `Query`, `NewInMemory` | `memory.Memory` |
 
 ## 模块详细设计
 
@@ -503,11 +501,11 @@ v1 核心保留五个组合原语 + 一个 Agent→Tool 适配器：
 - **增量压缩**：Session append-only ⇒ 消息下标稳定 ⇒ Compactor 仅需在 `Session.State()` 中维护单调递增的 `offset` 即可区分"已压缩区"与"未压缩区"，每次只对 `msgs[offset:]` 中新增的部分做工作，不会重复对已折叠的历史调用摘要 LLM。详见 [design-compact.md](design-compact.md) §增量压缩契约、[design-session.md](design-session.md) §为什么 append-only 是增量压缩的前提。
 - **迭代压缩 + Hint 重试两层兜底**：单次 `Compact` 调用内部循环折叠批次直到 ① 满足预算 ② `offset` 抵达 `len(msgs) - KeepRecent` 无可压区 ③ 触发安全阀（Step 内）；provider 真实仍报 context-too-long 时由 Loop 透传 `HintShrink` 重试 1 次（Step 间），仍未严格下降则 fail-fast `event.Error`。两层正交不互相替代。详见 [design-compact.md](design-compact.md) §迭代压缩契约、[design-event-agent-loop.md](design-event-agent-loop.md) §上下文超长的两层兜底。
 
-`buildRequest` 是 Session / Prompt / Compact 与 `*model.Request` 之间的装配逻辑，位于 `agent_loop.go`，按有序 pipeline 装配——**先 compact 再 prompt**：`snapshot ← session.Messages(ctx)`；`view ← compactor.Compact(ctx, snapshot)`；`systemParts ← prompt.Builder.Build(ctx)`（memory 召回在此发生）；最终 `*model.Request{System: systemTextFrom(systemParts), Messages: view, Tools, Options}`。Compactor 仅看 messages、prompt builder 仅看 system，二者互不感知。
+`buildRequest` 是 Session / Prompt / Compact 与 `*model.Request` 之间的装配逻辑，位于 `agent_loop.go`，按有序 pipeline 装配——**先 compact 再 prompt**：`snapshot ← session.Messages(ctx)`；`view ← compactor.Compact(ctx, snapshot)`；`systemParts ← prompt.Builder.Build(ctx)`（memory 召回在此发生）；最终 `*model.Request{System: prompt.JoinText(systemParts), Messages: view, Tools, Options}`。Compactor 仅看 messages、prompt builder 仅看 system，二者互不感知。
 
-`memory/` 提供 `Memory` 接口（`Recall + Remember + Forget` 三方法，全部使用 variadic option），不在根 Agent 内置。应用层在 prompt builder 中调用 `memory.Recall` 注入相关记忆，在 turn 结束后调用 `memory.Remember` 抽取写入，并在用户撤回 / TTL 过期 / 人工纠错时调用 `memory.Forget` 删除条目（必须显式 IDs 或 Filter，禁止无参全清）。Memory 不进根 Agent 配置；保持根包极简。
+`memory/` 提供 `Memory` 接口（`Recall + Remember + Forget` 三方法，围绕 `Entry` / `Query` 结构体），不在根 Agent 内置。应用层在 prompt builder 中调用 `memory.Recall` 注入相关记忆，在 turn 结束后调用 `memory.Remember` 写入已归一化的单条 Entry，并在用户撤回 / TTL 过期 / 人工纠错时通过 `memory.Forget(ctx, entry)` 删除条目（按 Entry.ID，空 ID 报错）。Memory 不进根 Agent 配置；保持根包极简。
 
-**Memory 与 Compact 解耦**：Memory 召回结果通过 `prompt.Memory` section 进入 `Request.System`，与 Compactor 作用的 `Request.Messages` **完全正交**——Compactor 不会再次裁剪 memory 段；memory 体量控制（`WithLimit`、section 内 token 估算）由 memory 实现与应用层负责，core 不做兜底。建议应用层把 provider 上下文上限三段分摊：`SystemBudget`（含 memory）/ `MessagesBudget`（compact 的 `MaxTokens`）/ `ResponseReserve`，分别注入 prompt 与 compact 配置。详见 [design-memory.md](design-memory.md) §与 Compact 的边界、[design-compact.md](design-compact.md) §与 Memory 的关系。
+**Memory 与 Compact 解耦**：Memory 召回结果通过 `prompt.Memory` section 进入 `Request.System`，与 Compactor 作用的 `Request.Messages` **完全正交**——Compactor 不会再次裁剪 memory 段；memory 体量控制（`Query.Limit`、section 内 token 估算）由 memory 实现与应用层负责，core 不做兜底。建议应用层把 provider 上下文上限三段分摊：`SystemBudget`（含 memory）/ `MessagesBudget`（compact 的 `MaxTokens`）/ `ResponseReserve`，分别注入 prompt 与 compact 配置。详见 [design-memory.md](design-memory.md) §与 Compact 的边界、[design-compact.md](design-compact.md) §与 Memory 的关系。
 
 ## 子文档职责
 
@@ -524,7 +522,7 @@ v1 核心保留五个组合原语 + 一个 Agent→Tool 适配器：
 | [design-session.md](design-session.md) | Session 接口（6 方法 append-only）、Context helper（NewContext/FromContext/Ensure）、view-only compaction 边界 |
 | [design-policy-mode.md](design-policy-mode.md) | policy core（v1 单边界 ToolRequest，单向依赖 tools/）与应用交互模式边界 |
 | [design-agent-orchestration.md](design-agent-orchestration.md) | `flow/` 组合、Agent-as-Tool 和多 Agent 边界 |
-| [design-memory.md](design-memory.md) | `memory.Memory` 接口（Recall+Remember+Forget，全部 variadic option）、`Entry` 数据载体、应用层注入策略与异步抽取/遗忘边界 |
+| [design-memory.md](design-memory.md) | `memory.Memory` 接口（Recall+Remember+Forget）、`Entry` / `Query` 数据载体、应用层注入策略与异步抽取/遗忘边界 |
 
 ## 实现状态
 
@@ -537,7 +535,7 @@ v1 核心保留五个组合原语 + 一个 Agent→Tool 适配器：
 - [x] `session/` — Session 6 方法接口 + in-memory 实现 + context helpers
 - [x] `compact/` — Compactor + Window/Summary/Budget/Chain
 - [x] `prompt/` — Builder + Section + Static/Dynamic/System/Memory
-- [x] `memory/` — Memory 接口 + Store + InMemoryStore
+- [x] `memory/` — Memory 接口 + NewInMemory
 - [x] `policy/` — Policy + Chain/AllowAll/DenyAll/Budget/RateLimit/SafetyCheck
 - [x] `hook/` — Hook 6 方法 + Noop + Abort/ErrAbort
 - [x] `middleware/` — InputMiddleware / OutputMiddleware

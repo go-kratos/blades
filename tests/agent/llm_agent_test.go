@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-kratos/blades/hook"
 	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/policy"
+	"github.com/go-kratos/blades/prompt"
 	"github.com/go-kratos/blades/session"
 	"github.com/go-kratos/blades/tests/dummyprovider"
 	"github.com/go-kratos/blades/tests/testtools"
@@ -80,6 +82,36 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 		assert.Equal(t, model.RoleAssistant, calls[1][0].Role)
 		assert.Equal(t, model.RoleTool, calls[1][1].Role)
 	}
+}
+
+func TestLLMAgentPromptBuilderCanReadLoopSessionFromContext(t *testing.T) {
+	provider := dummyprovider.NewProvider(dummyprovider.TextResponse("ok"))
+	capture := &requestCaptureHook{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithHooks(capture),
+		blades.WithPrompt(prompt.New(prompt.Dynamic(func(ctx context.Context) ([]content.Part, error) {
+			sess, ok := session.FromContext(ctx)
+			if !ok {
+				return nil, fmt.Errorf("session missing from context")
+			}
+			msgs, err := sess.Messages(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return []content.Part{content.Text{Text: fmt.Sprintf("messages:%d", len(msgs))}}, nil
+		}))),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("hello")
+	close(inputs)
+
+	_, err = collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+	assert.Equal(t, "messages:1", capture.System())
 }
 
 func TestLLMAgentBeforeToolCanRewriteInput(t *testing.T) {
@@ -726,6 +758,25 @@ func (h *rewriteToolResultHook) AfterTool(_ context.Context, _ *hook.ToolCall, r
 	h.err = err
 	result.Parts = []content.Part{content.Text{Text: "redacted"}}
 	return nil
+}
+
+type requestCaptureHook struct {
+	hook.Noop
+	mu     sync.Mutex
+	system string
+}
+
+func (h *requestCaptureHook) BeforeModel(_ context.Context, req *model.Request) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.system = req.System
+	return nil
+}
+
+func (h *requestCaptureHook) System() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.system
 }
 
 type recordingTool struct {

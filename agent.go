@@ -56,13 +56,15 @@ func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan ev
 	if err != nil {
 		return nil, err
 	}
+	sess := session.Ensure(ctx)
+	ctx = session.NewContext(ctx, sess)
 	output := make(chan event.Output, outputBufferSize)
 	l := &agentLoop{
 		agent:    a,
 		ctx:      ctx,
 		output:   output,
 		allTools: allTools,
-		sess:     session.Ensure(ctx),
+		sess:     sess,
 		inputs:   newInputQueue(ctx, input),
 	}
 	go l.run()

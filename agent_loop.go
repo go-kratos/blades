@@ -315,7 +315,10 @@ func (l *agentLoop) buildRequest() (*model.Request, error) {
 		if err != nil {
 			return nil, err
 		}
-		system = prompt.SystemText(parts)
+		system, err = prompt.JoinText(parts)
+		if err != nil {
+			return nil, err
+		}
 	}
 	toolSpecs := make([]tools.ToolSpec, 0, len(l.allTools))
 	for _, t := range l.allTools {

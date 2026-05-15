@@ -2,6 +2,8 @@ package prompt
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/go-kratos/blades/content"
 )
@@ -16,7 +18,9 @@ type Section func(ctx context.Context) ([]content.Part, error)
 
 // New creates a Builder from ordered sections.
 func New(sections ...Section) Builder {
-	return &builder{sections: sections}
+	cp := make([]Section, len(sections))
+	copy(cp, sections)
+	return &builder{sections: cp}
 }
 
 type builder struct {
@@ -37,16 +41,21 @@ func (b *builder) Build(ctx context.Context) ([]content.Part, error) {
 	return parts, nil
 }
 
-// SystemText extracts text from parts and joins them as a single system string.
-func SystemText(parts []content.Part) string {
-	var text string
+// JoinText extracts text from parts and joins them as a single system string.
+func JoinText(parts []content.Part) (string, error) {
+	var b strings.Builder
 	for _, p := range parts {
-		if t, ok := p.(content.Text); ok {
-			if text != "" {
-				text += "\n\n"
-			}
-			text += t.Text
+		t, ok := p.(content.Text)
+		if !ok {
+			return "", fmt.Errorf("prompt: unsupported system prompt part %T", p)
 		}
+		if t.Text == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(t.Text)
 	}
-	return text
+	return b.String(), nil
 }

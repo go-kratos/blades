@@ -244,7 +244,7 @@ Memory（`memory.Memory`，参见 [design-memory.md](design-memory.md)）和 Com
   }
   ```
   Compactor 不读 `system`，prompt builder 也不读 `view`；二者在 Agent Loop 的请求构造阶段汇合，但不互相依赖。
-- **Compactor 不会再次裁剪 Memory**：召回结果在 system 段中保留原样，不进入 Compact 输入；意味着 memory section 自身的体量控制（`memory.WithLimit`、应用层在 section 内做 token 估算）必须由 memory / 应用层负责，不会因 compact 兜底而被掩盖。
+- **Compactor 不会再次裁剪 Memory**：召回结果在 system 段中保留原样，不进入 Compact 输入；意味着 memory section 自身的体量控制（`memory.Query.Limit`、应用层在 section 内做 token 估算）必须由 memory / 应用层负责，不会因 compact 兜底而被掩盖。
 - **预算分摊建议**：Provider 的上下文上限 = `SystemBudget` + `MessagesBudget` + `ResponseReserve`。
   - `SystemBudget` 涵盖系统指令 + memory 召回 + 其他静态 prompt 段；超限由 prompt 层自己处理。
   - `MessagesBudget` 是 Compactor 的 `MaxTokens` 实际配额，仅计 `view` 内的消息体量。

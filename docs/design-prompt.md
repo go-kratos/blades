@@ -14,7 +14,7 @@ tags: [agentos, prompt, context, system]
 
 `prompt/` 负责把静态说明、动态上下文、系统文本和 memory recall 结果构造成有序 `content.Part`。v1 只保留两个核心抽象：`Builder` 与函数类型 `Section`。
 
-Prompt 包不直接表示产品模式、工具排序或 provider 细节。Agent Loop 负责把 Builder 输出拆分到 `model.Request{System, Messages, Tools}`，并保证 `model.Request` 不包含 stream 开关。
+Prompt 包不直接表示产品模式、工具排序或 provider 细节。Agent Loop 负责把 Builder 输出严格渲染为 `model.Request.System`，并保证 `model.Request` 不包含 stream 开关。
 
 ## Builder 接口
 
@@ -49,15 +49,15 @@ func Dynamic(fn func(context.Context) ([]content.Part, error)) Section
 
 func System(text string) Section
 
-func Memory(mem memory.Memory, query func(context.Context) (string, error), opts ...memory.RecallOption) Section
+func Memory(mem memory.Memory, query func(context.Context) (memory.Query, error)) Section
 ```
 
 语义：
 
 - `Static` 返回固定 part 序列。
 - `Dynamic` 在每次构建时执行函数，适合环境、时间、session 摘要和应用层状态。
-- `System` 标记系统说明文本；Builder 输出时仍表现为 part，Agent Loop 在请求组装阶段提取到 `model.Request.System`。
-- `Memory` 调用 `memory.Memory.Recall(ctx, query, opts...)`，把召回结果作为 Section 输出。`opts` 透传给 Memory 实现，常用形态包括 `memory.WithLimit(n)`、`memory.WithFilter(...)`。
+- `System` 返回系统说明文本 part；Agent Loop 在请求组装阶段渲染到 `model.Request.System`。
+- `Memory` 调用 `memory.Memory.Recall(ctx, query)`，把召回到的 entries 渲染为一段系统文本。
 
 示例：
 
@@ -70,14 +70,13 @@ b := prompt.New(
         if !ok {
             return nil, nil
         }
-        return []content.Part{content.Text("Session: " + s.ID())}, nil
+        return []content.Part{content.Text{Text: "Session: " + s.ID()}}, nil
     }),
     prompt.Memory(
         mem,
-        func(ctx context.Context) (string, error) {
-            return "current task", nil
+        func(ctx context.Context) (memory.Query, error) {
+            return memory.Query{Text: "current task", Limit: 8}, nil
         },
-        memory.WithLimit(8),
     ),
 )
 
@@ -103,16 +102,20 @@ func New(sections ...Section) Builder
 
 ## System section 到 model.Request.System
 
-Agent Loop 是 prompt 输出进入模型请求的边界。Builder 输出的 `[]content.Part` 与 `model.Request.System: string` 的结构差异，统一由 Loop 通过一个 helper 处理：
+Agent Loop 是 prompt 输出进入模型请求的边界。Builder 输出的 `[]content.Part` 与 `model.Request.System: string` 的结构差异，统一由 Loop 通过 `prompt.JoinText` 处理：
 
 ```go
 parts, err := builder.Build(ctx)
 if err != nil {
     return err
 }
+system, err := prompt.JoinText(parts)
+if err != nil {
+    return err
+}
 
 req := &model.Request{
-    System:   systemTextFrom(parts), // 抽取所有 system 文本 part 并拼接
+    System:   system,
     Messages: messages,
     Tools:    toolSpecs,
 }
@@ -120,12 +123,12 @@ req := &model.Request{
 
 契约：
 
-- Builder 不区分 system / user：所有 Section 通过 `[]content.Part` 输出，必要时通过私有的 system marker part（`internal/promptmark`）标记某些 part 属于"系统说明"。
-- `systemTextFrom(parts)` 仅抽取并拼接被标记为 system 的纯文本 part，其余 part 留给 Loop 决定挂在 `Messages` 上的位置。
-- `prompt.System(text)` / `prompt.SystemSection(...)` 等工厂会生成被 system marker 标记的 part；普通 `prompt.Section` 默认产出非 system part。
-- `model.Request.System` 是单段 `string`，承载 provider-neutral 系统上下文；非系统 part 由 Loop 按规则（如注入到第一条 user message 之前）合入 `Messages`，避免 Section 直接依赖 provider adapter。
+- Builder 的全部输出都属于 system prompt。
+- `prompt.JoinText(parts)` 按顺序拼接 `content.Text`，空文本跳过。
+- 非文本 part 在 system prompt 中返回明确错误，不再静默丢弃。
+- `model.Request.System` 是单段 `string`，承载 provider-neutral 系统上下文；prompt 包不负责注入 messages，避免 Section 直接依赖 provider adapter。
 
-当前 v1 的 system 抽取规则由 Agent Loop 请求构造阶段固定执行。应用层若需要完全不同的 system / message 组装规则，应实现自定义 `blades.Agent`；未来若开放局部替换点，应作为独立协议变更补充测试和文档。
+当前 v1 的 system 渲染规则由 Agent Loop 请求构造阶段固定执行。应用层若需要完全不同的 system / message 组装规则，应实现自定义 `blades.Agent`；未来若开放局部替换点，应作为独立协议变更补充测试和文档。
 
 ## cache control
 
@@ -147,5 +150,5 @@ Cache control 不进入 `model.Request` 顶层字段；走 `model.Request.Option
 ## 与红线对照
 
 - r24：`Builder.Build(ctx) ([]content.Part, error)` 与 `Section func(ctx) ([]content.Part, error)`。
-- r21：Memory 通过 `prompt.Memory(mem, query, ...memory.RecallOption)` 注入 recall 结果，不进入 root Agent 配置。Memory 接口本身固定为 Recall+Remember+Forget 三方法，详见 [design-memory.md](design-memory.md)。
+- r21：Memory 通过 `prompt.Memory(mem, query)` 注入 recall 结果，不进入 root Agent 配置。Memory 接口本身固定为 Recall+Remember+Forget 三方法，详见 [design-memory.md](design-memory.md)。
 - r1-r3：遵守 `content.Part` sealed marker、`model.Message` 与 `model.Request` v1 协议形态。
