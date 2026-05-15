@@ -2,6 +2,7 @@ package blades
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/event"
@@ -84,8 +85,8 @@ func newInputQueue(ctx context.Context, input <-chan event.Input) *inputQueue {
 
 func (q *inputQueue) nextTurnStart() (event.Input, bool, error) {
 	for {
-		if in, ok := q.popFollowUp(); ok {
-			return in, true, nil
+		if prompt, ok := q.popFollowUp(); ok {
+			return prompt, true, nil
 		}
 		if q.closed {
 			return nil, false, nil
@@ -99,10 +100,10 @@ func (q *inputQueue) nextTurnStart() (event.Input, bool, error) {
 				q.closed = true
 				return nil, false, nil
 			}
-			if startsTurnWhenIdle(in) {
+			switch in.(type) {
+			case event.Prompt, event.Steer:
 				return in, true, nil
-			}
-			if _, ok := in.(event.Abort); ok {
+			case event.Abort:
 				return nil, false, nil
 			}
 		}
@@ -139,22 +140,13 @@ func (q *inputQueue) drainStepBoundaryInputs() (stepBoundaryInputs, error) {
 	}
 }
 
-func (q *inputQueue) popFollowUp() (event.Input, bool) {
+func (q *inputQueue) popFollowUp() (event.Prompt, bool) {
 	if len(q.followUps) == 0 {
-		return nil, false
+		return event.Prompt{}, false
 	}
 	in := q.followUps[0]
 	q.followUps = q.followUps[1:]
 	return in, true
-}
-
-func startsTurnWhenIdle(in event.Input) bool {
-	switch in.(type) {
-	case event.Prompt, event.Steer:
-		return true
-	default:
-		return false
-	}
 }
 
 func (l *agentLoop) runTurn(in event.Input) error {
@@ -170,7 +162,10 @@ func (l *agentLoop) runTurn(in event.Input) error {
 
 	msg, ok := inputToMessage(turn.Input)
 	if !ok {
-		return nil
+		err := fmt.Errorf("agent loop: unsupported turn input %T", turn.Input)
+		state.abort()
+		l.endTurn(turn, state, err)
+		return err
 	}
 	if err := l.sess.Append(l.ctx, msg); err != nil {
 		state.abort()
@@ -202,9 +197,6 @@ func newTurnState() turnState {
 }
 
 func (s *turnState) recordResponse(resp *model.Response) {
-	if resp == nil {
-		return
-	}
 	s.usage.InputTokens += resp.Usage.InputTokens
 	s.usage.OutputTokens += resp.Usage.OutputTokens
 	if resp.Message != nil {
@@ -239,22 +231,15 @@ func (l *agentLoop) runTurnStep(state *turnState) (bool, error) {
 	}
 	state.recordResponse(resp)
 
-	var assistantMsg *model.Message
-	var stopReason model.StopReason
-	if resp != nil {
-		assistantMsg = resp.Message
-		stopReason = resp.StopReason
-	}
-
-	toolUses := execute.ExtractToolUses(assistantMsg)
+	toolUses := execute.ExtractToolUses(resp.Message)
 	if len(toolUses) > 0 {
-		return l.handleToolStep(state, assistantMsg, toolUses)
+		return l.handleToolStep(state, resp.Message, toolUses)
 	}
 
-	if err := l.commitStep(assistantMsg, nil); err != nil {
+	if err := l.commitStep(resp.Message, nil); err != nil {
 		return false, err
 	}
-	state.finish(stopReason)
+	state.finish(resp.StopReason)
 	return l.continueAfterModelStep(state)
 }
 
@@ -490,8 +475,15 @@ func (l *agentLoop) runToolCalls(runtime execute.Runtime, calls []content.ToolUs
 
 func (l *agentLoop) finalizeToolResult(runtime execute.Runtime, call content.ToolUse, execResult execute.Result) (execute.Result, error) {
 	result := &tools.Result{Parts: execResult.Parts}
+	hookCall := &hook.ToolCall{
+		ID:        call.ID,
+		AgentName: l.agent.name,
+		Turn:      l.turnNum,
+		Tool:      runtime.Tool(call.Name),
+		Input:     call.Input,
+	}
 	for _, h := range l.agent.hooks {
-		if err := h.AfterTool(l.ctx, &hook.ToolCall{ID: call.ID, AgentName: l.agent.name, Turn: l.turnNum, Tool: runtime.Tool(call.Name), Input: call.Input}, result, execResult.Err); err != nil {
+		if err := h.AfterTool(l.ctx, hookCall, result, execResult.Err); err != nil {
 			return execute.Result{}, err
 		}
 	}
