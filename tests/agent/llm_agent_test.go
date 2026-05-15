@@ -431,6 +431,113 @@ func TestLLMAgentSteerContinuesCurrentTurn(t *testing.T) {
 	}
 }
 
+func TestLLMAgentSteerDuringToolWaveContinuesCurrentTurn(t *testing.T) {
+	releaseTool := make(chan struct{})
+	provider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.ToolUse("block-1", "block", json.RawMessage(`{}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+		dummyprovider.TextResponse("final"),
+	)
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(blockingTool{name: "block", release: releaseTool}),
+	)
+	assert.NoError(t, err)
+
+	sess := session.NewSession()
+	ctx, cancel := context.WithTimeout(session.NewContext(context.Background(), sess), time.Second)
+	defer cancel()
+	inputs := make(chan event.Input, 2)
+	inputs <- event.NewPromptText("start")
+
+	outputs, err := collectAllAgentOutputsWithToolStartInput(ctx, agent, inputs, "block-1", event.NewSteerText("revise"), func() {
+		close(releaseTool)
+	})
+	assert.NoError(t, err)
+
+	turns := turnEnds(outputs)
+	if assert.Len(t, turns, 1) {
+		assert.Equal(t, event.StopEnd, turns[0].StopReason)
+		assert.Equal(t, "final", textFromParts(turns[0].Parts))
+	}
+	assert.Equal(t, 2, provider.CallCount())
+
+	messages, err := sess.Messages(ctx)
+	assert.NoError(t, err)
+	if assert.Len(t, messages, 5) {
+		assert.Equal(t, model.RoleUser, messages[0].Role)
+		assert.Equal(t, model.RoleAssistant, messages[1].Role)
+		assert.Equal(t, model.RoleTool, messages[2].Role)
+		assert.Equal(t, model.RoleUser, messages[3].Role)
+		assert.Equal(t, model.RoleAssistant, messages[4].Role)
+		assert.Equal(t, "start", textFromParts(messages[0].Parts))
+		assert.Equal(t, "released", toolResultText(messages[2].Parts))
+		assert.Equal(t, "revise", textFromParts(messages[3].Parts))
+		assert.Equal(t, "final", textFromParts(messages[4].Parts))
+	}
+}
+
+func TestLLMAgentPromptDuringToolWaveStartsNextTurn(t *testing.T) {
+	releaseTool := make(chan struct{})
+	provider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.ToolUse("block-1", "block", json.RawMessage(`{}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+		dummyprovider.TextResponse("first final"),
+		dummyprovider.TextResponse("second final"),
+	)
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(blockingTool{name: "block", release: releaseTool}),
+	)
+	assert.NoError(t, err)
+
+	sess := session.NewSession()
+	ctx, cancel := context.WithTimeout(session.NewContext(context.Background(), sess), time.Second)
+	defer cancel()
+	inputs := make(chan event.Input, 2)
+	inputs <- event.NewPromptText("start")
+
+	outputs, err := collectAllAgentOutputsWithToolStartInput(ctx, agent, inputs, "block-1", event.NewPromptText("next"), func() {
+		close(releaseTool)
+	})
+	assert.NoError(t, err)
+
+	turns := turnEnds(outputs)
+	if assert.Len(t, turns, 2) {
+		assert.Equal(t, event.StopEnd, turns[0].StopReason)
+		assert.Equal(t, "first final", textFromParts(turns[0].Parts))
+		assert.Equal(t, event.StopEnd, turns[1].StopReason)
+		assert.Equal(t, "second final", textFromParts(turns[1].Parts))
+	}
+	assert.Equal(t, 3, provider.CallCount())
+
+	messages, err := sess.Messages(ctx)
+	assert.NoError(t, err)
+	if assert.Len(t, messages, 6) {
+		assert.Equal(t, model.RoleUser, messages[0].Role)
+		assert.Equal(t, model.RoleAssistant, messages[1].Role)
+		assert.Equal(t, model.RoleTool, messages[2].Role)
+		assert.Equal(t, model.RoleAssistant, messages[3].Role)
+		assert.Equal(t, model.RoleUser, messages[4].Role)
+		assert.Equal(t, model.RoleAssistant, messages[5].Role)
+		assert.Equal(t, "start", textFromParts(messages[0].Parts))
+		assert.Equal(t, "released", toolResultText(messages[2].Parts))
+		assert.Equal(t, "first final", textFromParts(messages[3].Parts))
+		assert.Equal(t, "next", textFromParts(messages[4].Parts))
+		assert.Equal(t, "second final", textFromParts(messages[5].Parts))
+	}
+}
+
 func TestLLMAgentAbortOnlyEndsCurrentTurn(t *testing.T) {
 	provider := dummyprovider.NewProvider(
 		dummyprovider.TextResponse("first"),
@@ -482,6 +589,28 @@ func collectAllAgentOutputs(ctx context.Context, agent blades.Agent, inputs <-ch
 	var collected []event.Output
 	for output := range outputs {
 		collected = append(collected, output)
+	}
+	return collected, nil
+}
+
+func collectAllAgentOutputsWithToolStartInput(ctx context.Context, agent blades.Agent, inputs chan event.Input, toolID string, in event.Input, release func()) ([]event.Output, error) {
+	outputs, err := agent.Run(ctx, inputs)
+	if err != nil {
+		return nil, err
+	}
+
+	var collected []event.Output
+	sent := false
+	for output := range outputs {
+		collected = append(collected, output)
+		toolStart, ok := output.(event.ToolStart)
+		if !ok || toolStart.ID != toolID || sent {
+			continue
+		}
+		inputs <- in
+		close(inputs)
+		release()
+		sent = true
 	}
 	return collected, nil
 }
@@ -679,6 +808,24 @@ func (t *delayedTool) Handle(ctx context.Context, _ json.RawMessage) (*tools.Res
 		time.Sleep(delay)
 	}
 	return tools.TextResult(tc.ID()), nil
+}
+
+type blockingTool struct {
+	name    string
+	release <-chan struct{}
+}
+
+func (t blockingTool) Spec() tools.ToolSpec {
+	return tools.ToolSpec{Name: t.name, Description: "Block until released"}
+}
+
+func (t blockingTool) Handle(ctx context.Context, _ json.RawMessage) (*tools.Result, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-t.release:
+		return tools.TextResult("released"), nil
+	}
 }
 
 type actionTool struct {

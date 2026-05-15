@@ -115,7 +115,7 @@ func NewSteerText(s string) Steer {
 输入语义固定如下：
 
 - `Prompt`：发起一个新 turn。若当前 turn 正在运行，v1 中排队等待，不并发执行。
-- `Steer`：若当前 turn 正在运行，注入当前 turn 的 pending user message，在下一次 model step 构建 request 时生效；不打断正在 streaming 的 provider 调用。若 Run 正处于 idle wait，`Steer` 与 `Prompt` 一样开启一个新 turn。
+- `Steer`：若当前 turn 正在运行，作为 current-turn steering 在下一个 step 边界消费，追加为当前 turn 的 user message，并在下一次 model step 构建 request 时生效；不打断正在 streaming 的 provider 调用，也不打断正在执行的 tool wave。若 Run 正处于 idle wait，`Steer` 与 `Prompt` 一样开启一个新 turn。
 - `Abort`：若当前 turn 正在运行，结束当前 turn，并携带人类可读原因；若 Run 正处于 idle wait，结束整个 Run。
 - `Pause` / `Resume`：当前 v1 保留为输入类型但默认 `llmAgent` 暂不实现暂停语义。
 
@@ -266,8 +266,8 @@ type Agent interface {
 5. 触发 `Hook.AfterModel`。
 6. 若存在 tool use，先按 assistant 源顺序触发 `Hook.BeforeTool` 完成输入改写；随后同一 assistant message 中的 tool wave 并发执行，并由 Agent Loop 在每次调用真正调度 / 完成时发出 `ToolStart` / `ToolEnd`；识别 `ErrLoopExit` / `ErrHandoff` sentinel，并记录到 `TurnEnd.Action`。是否允许模型一次返回多个 tool use 由 provider 选项控制。
 7. 将本 step 的 `assistant` 消息与本轮 tool wave 的 `tool` 结果消息合并为一个语义组，调用一次 `Session.Append(ctx, assistantMsg, toolMsg)`。
-8. 在 step 边界非阻塞消费 input：`agent_loop.go` 的 input queue helper 先分类事件；turn commit 路径再把 `Steer` 追加为当前 turn 的 user message 并进入下一 step；`Prompt` 缓存为下一 turn；`Abort` 结束当前 turn；input channel close 不 abort 当前 turn。
-9. 若没有 tool use 且没有 pending steer，或收到 abort/error/tool action，输出 `TurnEnd`，触发 `Hook.AfterTurn`。`LoopExit` / `Handoff` 不进 `Session`（Session 只承载 `model.Message`）。
+8. 在 model step 或 tool wave 完成后的边界非阻塞消费 input：`agent_loop.go` 的 input queue helper 先分类事件；turn commit 路径再把 `Steer` 追加为当前 turn 的 user message 并进入下一 step；`Prompt` 缓存为下一 turn 的 follow-up；`Abort` 结束当前 turn；input channel close 不 abort 当前 turn。
+9. 若没有 tool use 且没有 step-boundary steering，或收到 abort/error/tool action，输出 `TurnEnd`，触发 `Hook.AfterTurn`。`LoopExit` / `Handoff` 不进 `Session`（Session 只承载 `model.Message`）。
 
 Hook 回调位置固定为六个生命周期边界：`BeforeModel` / `AfterModel`（每个 model step 前后）、`BeforeTool` / `AfterTool`（每个工具调用前后）、`BeforeTurn` / `AfterTurn`（每个 turn 前后）。详见 `design-hook-extension.md`。
 
@@ -303,10 +303,10 @@ Session 历史只追加 protocol-only 的 `model.Message`，并以"语义组"为
 
 1. **turn 起始**：append 起始 `Prompt` 或 idle `Steer` 转换出的 user message（一次 `Append(ctx, userMsg)`）。
 2. **每个 model step + tool wave 完成后**：将本 step 的 `assistant` 消息与同 step 的 `tool` 结果消息作为一组，调用一次 `Append(ctx, assistantMsg, toolMsg)`。该组写入是 step 级原子单元，避免崩溃留下"有 tool_call 但无 tool_result"的半截历史。
-3. **step 边界 steering**：active turn 中收到的 `Steer` append 为 user message，并触发同一 turn 的下一次 model step；active turn 中收到的 `Prompt` 只排队到下一 turn。
+3. **step / tool-wave 边界输入**：active turn 中收到的 `Steer` append 为 user message，并触发同一 turn 的下一次 model step；active turn 中收到的 `Prompt` 只排队为下一 turn 的 follow-up。
 4. final assistant message 完成且无新工具调用后输出 `TurnEnd`。
 
-输入队列本身不写 Session。`nextFollowUp` / `drainDuringTurn` 只把 channel 事件分类为"开启 turn"、"当前 turn steering"、"下一 turn prompt"或"abort"；所有 `model.Message` 创建、hook 执行和 `Session.Append` 都集中在 `agent_loop.go` 的 turn / step commit 路径。这样不会出现 queue helper 持有 `session.Session`、又悄悄改变 transcript 的隐式副作用。
+输入队列本身不写 Session。`nextTurnStart` / `drainStepBoundaryInputs` 只把 channel 事件分类为"开启 turn"、"current-turn steering"、"follow-up prompt"或"abort"；所有 `model.Message` 创建、hook 执行和 `Session.Append` 都集中在 `agent_loop.go` 的 turn / step commit 路径。这样不会出现 queue helper 持有 `session.Session`、又悄悄改变 transcript 的隐式副作用。
 
 **不写回 Session 的内容**：compact view、summary、被截断的 tool result 视图、以及 `event.LoopExit` / `event.Handoff` 等运行时控制信号。控制信号只出现在 `TurnEnd.Action`。Compactor 的 rolling state 通过 `session.State()` 的私有 key（保留前缀 `__compact_*__`，参见 [design-session.md](design-session.md) §State 键命名空间）持久化，与协议历史正交，不会出现在 `Session.Messages()` 中。
 

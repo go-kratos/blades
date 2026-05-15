@@ -63,7 +63,7 @@ func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan ev
 		output:   output,
 		allTools: allTools,
 		sess:     session.Ensure(ctx),
-		inputs:   newLoopInput(ctx, input),
+		inputs:   newInputQueue(ctx, input),
 	}
 	go l.run()
 	return output, nil
