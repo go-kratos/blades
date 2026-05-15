@@ -309,16 +309,20 @@ func (l *agentLoop) buildRequest() (*model.Request, error) {
 			return nil, err
 		}
 	}
-	var system string
-	if l.agent.promptBuilder != nil {
-		parts, err := l.agent.promptBuilder.Build(l.ctx)
+	var systemParts []content.Part
+	for _, builder := range l.agent.promptBuilders {
+		if builder == nil {
+			continue
+		}
+		parts, err := builder.Build(l.ctx)
 		if err != nil {
 			return nil, err
 		}
-		system, err = prompt.JoinText(parts)
-		if err != nil {
-			return nil, err
-		}
+		systemParts = append(systemParts, parts...)
+	}
+	system, err := prompt.JoinText(systemParts)
+	if err != nil {
+		return nil, err
 	}
 	toolSpecs := make([]tools.ToolSpec, 0, len(l.allTools))
 	for _, t := range l.allTools {

@@ -89,7 +89,7 @@ memSection := prompt.Memory(
 )
 
 builder := prompt.New(
-    prompt.System("Follow project instructions."),
+    prompt.Text("Follow project instructions."),
     memSection,
 )
 ```

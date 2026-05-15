@@ -40,14 +40,14 @@ type Section func(ctx context.Context) ([]content.Part, error)
 
 Section 必须返回 `[]content.Part`。`content.Part` 是 sealed marker，仅由 content 包定义公共叶子，如 Text、Blob、Thinking。
 
+`Section` 自身实现 `Builder`，单段 prompt 可以直接传给 `WithPrompt`，多段 prompt 再用 `prompt.New(...)` 组合。
+
 ## 内置工厂
 
 ```go
 func Static(parts ...content.Part) Section
 
-func Dynamic(fn func(context.Context) ([]content.Part, error)) Section
-
-func System(text string) Section
+func Text(text string) Section
 
 func Memory(mem memory.Memory, query func(context.Context) (memory.Query, error)) Section
 ```
@@ -55,17 +55,17 @@ func Memory(mem memory.Memory, query func(context.Context) (memory.Query, error)
 语义：
 
 - `Static` 返回固定 part 序列。
-- `Dynamic` 在每次构建时执行函数，适合环境、时间、session 摘要和应用层状态。
-- `System` 返回系统说明文本 part；Agent Loop 在请求组装阶段渲染到 `model.Request.System`。
+- `Text` 返回固定文本 part；Agent Loop 在请求组装阶段渲染到 `model.Request.System`。
+- 动态 section 直接使用 `prompt.Section(func(ctx context.Context) ([]content.Part, error) { ... })`，或在 `prompt.New` 中传入同签名函数字面量。
 - `Memory` 调用 `memory.Memory.Recall(ctx, query)`，把召回到的 entries 渲染为一段系统文本。
 
 示例：
 
 ```go
 b := prompt.New(
-    prompt.System("You are a concise coding assistant."),
+    prompt.Text("You are a concise coding assistant."),
     prompt.Static(content.Text("Project: blades")),
-    prompt.Dynamic(func(ctx context.Context) ([]content.Part, error) {
+    prompt.Section(func(ctx context.Context) ([]content.Part, error) {
         s, ok := session.FromContext(ctx)
         if !ok {
             return nil, nil
@@ -143,7 +143,7 @@ Cache control 不进入 `model.Request` 顶层字段；走 `model.Request.Option
 ## 设计决策
 
 1. **函数型 Section**：减少样板代码，便于应用层按需组合。
-2. **系统文本作为工厂**：系统说明不需要独立接口，`System(text)` 足以表达。
+2. **Text 而非 System**：prompt 包整体只构建 system prompt，单个 section 不再重复标注 system 语义。
 3. **memory 通过 Section 注入**：Memory 不进入 root Agent 配置，prompt 是长期上下文进入请求的自然位置。
 4. **缓存字段贴近协议对象**：cache control 属于 part 或 system block 的元信息，不需要额外抽象层。
 

@@ -61,9 +61,16 @@ func WithCompact(c compact.Compactor) AgentOption {
 	}
 }
 
-// WithPrompt sets the prompt builder.
+// WithInstruction appends a static instruction to the system prompt.
+func WithInstruction(instruction string) AgentOption {
+	return func(a *llmAgent) {
+		a.promptBuilders = append(a.promptBuilders, prompt.Text(instruction))
+	}
+}
+
+// WithPrompt appends a prompt builder.
 func WithPrompt(b prompt.Builder) AgentOption {
 	return func(a *llmAgent) {
-		a.promptBuilder = b
+		a.promptBuilders = append(a.promptBuilders, b)
 	}
 }

@@ -21,13 +21,8 @@ func Static(parts ...content.Part) Section {
 	}
 }
 
-// Dynamic creates a section from a function evaluated at build time.
-func Dynamic(fn func(context.Context) ([]content.Part, error)) Section {
-	return fn
-}
-
-// System creates a section with a static text string.
-func System(text string) Section {
+// Text creates a section with a static text string.
+func Text(text string) Section {
 	return func(_ context.Context) ([]content.Part, error) {
 		if text == "" {
 			return nil, nil

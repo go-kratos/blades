@@ -77,7 +77,7 @@ func main() {
     agent, err := blades.NewAgent(
         "assistant",
         blades.WithModel(provider),
-        blades.WithPrompt(prompt.New(prompt.System("You are a concise, accurate assistant."))),
+        blades.WithPrompt(prompt.Text("You are a concise, accurate assistant.")),
     )
     if err != nil {
         log.Fatal(err)

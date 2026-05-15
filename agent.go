@@ -24,15 +24,15 @@ type Agent interface {
 
 // llmAgent is the default Agent implementation backed by an LLM provider.
 type llmAgent struct {
-	name          string
-	description   string
-	hooks         []hook.Hook
-	tools         []tools.Tool
-	resolver      tools.Resolver
-	provider      model.Provider
-	promptBuilder prompt.Builder
-	compactor     compact.Compactor
-	policy        policy.Policy
+	name           string
+	description    string
+	hooks          []hook.Hook
+	tools          []tools.Tool
+	resolver       tools.Resolver
+	provider       model.Provider
+	promptBuilders []prompt.Builder
+	compactor      compact.Compactor
+	policy         policy.Policy
 }
 
 // NewAgent creates a new default LLM-backed Agent.

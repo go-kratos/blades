@@ -16,6 +16,14 @@ type Builder interface {
 // Section is a function that produces prompt parts.
 type Section func(ctx context.Context) ([]content.Part, error)
 
+// Build implements Builder for a single section.
+func (s Section) Build(ctx context.Context) ([]content.Part, error) {
+	if s == nil {
+		return nil, nil
+	}
+	return s(ctx)
+}
+
 // New creates a Builder from ordered sections.
 func New(sections ...Section) Builder {
 	cp := make([]Section, len(sections))
@@ -30,7 +38,7 @@ type builder struct {
 func (b *builder) Build(ctx context.Context) ([]content.Part, error) {
 	var parts []content.Part
 	for _, s := range b.sections {
-		p, err := s(ctx)
+		p, err := s.Build(ctx)
 		if err != nil {
 			return nil, err
 		}

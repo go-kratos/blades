@@ -35,6 +35,73 @@ func TestJoinTextRejectsNonText(t *testing.T) {
 	}
 }
 
+func TestNilSectionBuildsEmptyParts(t *testing.T) {
+	t.Parallel()
+
+	var section Section
+	parts, err := section.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Section.Build() error = %v", err)
+	}
+	if len(parts) != 0 {
+		t.Fatalf("len(parts) = %d, want 0", len(parts))
+	}
+}
+
+func TestTextSectionSkipsEmptyText(t *testing.T) {
+	t.Parallel()
+
+	parts, err := Text("").Build(context.Background())
+	if err != nil {
+		t.Fatalf("Text(\"\").Build() error = %v", err)
+	}
+	if len(parts) != 0 {
+		t.Fatalf("len(parts) = %d, want 0", len(parts))
+	}
+}
+
+func TestNewBuildsSectionsInOrder(t *testing.T) {
+	t.Parallel()
+
+	builder := New(
+		Text("first"),
+		Section(func(context.Context) ([]content.Part, error) {
+			return []content.Part{content.Text{Text: "second"}}, nil
+		}),
+		nil,
+		Text(""),
+		Text("third"),
+	)
+	parts, err := builder.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	text, err := JoinText(parts)
+	if err != nil {
+		t.Fatalf("JoinText() error = %v", err)
+	}
+	if text != "first\n\nsecond\n\nthird" {
+		t.Fatalf("text = %q, want ordered sections", text)
+	}
+}
+
+func TestNewReturnsSectionError(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("section failed")
+	builder := New(
+		Text("first"),
+		Section(func(context.Context) ([]content.Part, error) {
+			return nil, want
+		}),
+		Text("unreached"),
+	)
+	_, err := builder.Build(context.Background())
+	if !errors.Is(err, want) {
+		t.Fatalf("Build() error = %v, want %v", err, want)
+	}
+}
+
 func TestMemorySectionSkipsEmptyQuery(t *testing.T) {
 	t.Parallel()
 

@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -91,7 +92,7 @@ func TestLLMAgentPromptBuilderCanReadLoopSessionFromContext(t *testing.T) {
 		"assistant",
 		blades.WithModel(provider),
 		blades.WithHooks(capture),
-		blades.WithPrompt(prompt.New(prompt.Dynamic(func(ctx context.Context) ([]content.Part, error) {
+		blades.WithPrompt(prompt.Section(func(ctx context.Context) ([]content.Part, error) {
 			sess, ok := session.FromContext(ctx)
 			if !ok {
 				return nil, fmt.Errorf("session missing from context")
@@ -101,7 +102,7 @@ func TestLLMAgentPromptBuilderCanReadLoopSessionFromContext(t *testing.T) {
 				return nil, err
 			}
 			return []content.Part{content.Text{Text: fmt.Sprintf("messages:%d", len(msgs))}}, nil
-		}))),
+		})),
 	)
 	assert.NoError(t, err)
 
@@ -112,6 +113,69 @@ func TestLLMAgentPromptBuilderCanReadLoopSessionFromContext(t *testing.T) {
 	_, err = collectAllAgentOutputs(context.Background(), agent, inputs)
 	assert.NoError(t, err)
 	assert.Equal(t, "messages:1", capture.System())
+}
+
+func TestLLMAgentInstructionsAndPromptsMergeInOptionOrder(t *testing.T) {
+	provider := dummyprovider.NewProvider(dummyprovider.TextResponse("ok"))
+	capture := &requestCaptureHook{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithHooks(capture),
+		blades.WithInstruction("first"),
+		blades.WithPrompt(prompt.Section(func(context.Context) ([]content.Part, error) {
+			return []content.Part{content.Text{Text: "second"}}, nil
+		})),
+		blades.WithInstruction("third"),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("hello")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+	assert.Equal(t, "first\n\nsecond\n\nthird", capture.System())
+	assert.Equal(t, 1, provider.CallCount())
+
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.NoError(t, turnEnd.Err)
+}
+
+func TestLLMAgentPromptBuilderErrorEndsTurn(t *testing.T) {
+	want := errors.New("prompt failed")
+	provider := dummyprovider.NewProvider(dummyprovider.TextResponse("unreached"))
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithPrompt(prompt.Section(func(context.Context) ([]content.Part, error) {
+			return nil, want
+		})),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("hello")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, provider.CallCount())
+
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.ErrorIs(t, turnEnd.Err, want)
+
+	var foundError bool
+	for _, output := range outputs {
+		if errOutput, ok := output.(event.Error); ok {
+			foundError = true
+			assert.ErrorIs(t, errOutput.Err, want)
+		}
+	}
+	assert.True(t, foundError)
 }
 
 func TestLLMAgentBeforeToolCanRewriteInput(t *testing.T) {
