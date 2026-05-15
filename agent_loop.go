@@ -204,7 +204,7 @@ func (l *agentLoop) runTurnStep(state *turnState) (bool, error) {
 		return l.handleToolStep(state, resp.Message, toolUses)
 	}
 
-	if err := l.commitStep(resp.Message, nil); err != nil {
+	if err := l.commitStep(resp.Message); err != nil {
 		return false, err
 	}
 	state.finish(resp.StopReason)
@@ -463,17 +463,17 @@ func (l *agentLoop) emitToolEnd(result execute.Result) {
 	l.output <- event.ToolEnd{ID: result.ID, Name: result.Name, Parts: result.Parts, IsError: result.IsError}
 }
 
-func (l *agentLoop) commitStep(assistantMsg *model.Message, toolMsg *model.Message) error {
-	switch {
-	case assistantMsg == nil && toolMsg == nil:
-		return nil
-	case assistantMsg == nil:
-		return l.sess.Append(l.ctx, toolMsg)
-	case toolMsg == nil:
-		return l.sess.Append(l.ctx, assistantMsg)
-	default:
-		return l.sess.Append(l.ctx, assistantMsg, toolMsg)
+func (l *agentLoop) commitStep(msgs ...*model.Message) error {
+	filtered := make([]*model.Message, 0, len(msgs))
+	for _, msg := range msgs {
+		if msg != nil {
+			filtered = append(filtered, msg)
+		}
 	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return l.sess.Append(l.ctx, filtered...)
 }
 
 func (l *agentLoop) consumeStepBoundaryInputs(state *turnState) (stepBoundaryResult, error) {
