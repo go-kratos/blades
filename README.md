@@ -63,7 +63,6 @@ import (
     "os"
 
     "github.com/go-kratos/blades"
-    "github.com/go-kratos/blades/content"
     "github.com/go-kratos/blades/contrib/openai"
     "github.com/go-kratos/blades/event"
     "github.com/go-kratos/blades/prompt"
@@ -83,7 +82,7 @@ func main() {
         log.Fatal(err)
     }
 
-    out, err := blades.NewRunner(agent).Run(
+    result, err := blades.NewRunner(agent).Run(
         context.Background(),
         event.NewPromptText("What is the capital of France?"),
     )
@@ -91,19 +90,7 @@ func main() {
         log.Fatal(err)
     }
 
-    if turn, ok := out.(event.TurnEnd); ok {
-        log.Println(textFromParts(turn.Parts))
-    }
-}
-
-func textFromParts(parts []content.Part) string {
-    var text string
-    for _, part := range parts {
-        if p, ok := part.(content.Text); ok {
-            text += p.Text
-        }
-    }
-    return text
+    log.Println(result.Text())
 }
 ```
 

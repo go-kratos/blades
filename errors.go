@@ -7,4 +7,5 @@ var (
 	ErrNoToolsConfigured     = errors.New("blades: no tools configured")
 	ErrMaxStepsExceeded      = errors.New("blades: maximum steps exceeded")
 	ErrAgentNotStarted       = errors.New("blades: agent failed to start")
+	ErrNoResult              = errors.New("blades: no result")
 )

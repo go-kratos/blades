@@ -3,6 +3,7 @@ package blades
 import (
 	"context"
 
+	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/event"
 )
 
@@ -12,6 +13,16 @@ type RunnerOption func(*Runner)
 // Runner provides convenience methods for running an Agent.
 type Runner struct {
 	agent Agent
+}
+
+// Result is the final result collected from an Agent output stream.
+type Result struct {
+	event.TurnEnd
+}
+
+// Text returns the concatenated text parts from the final turn.
+func (r Result) Text() string {
+	return content.TextFromParts(r.Parts)
 }
 
 // NewRunner creates a Runner wrapping the given Agent.
@@ -24,31 +35,34 @@ func NewRunner(agent Agent, opts ...RunnerOption) *Runner {
 }
 
 // Run sends a single input and blocks until the agent produces a final result.
-// Returns the last TurnEnd output. Runtime errors are extracted from event.Error.
-func (r *Runner) Run(ctx context.Context, in event.Input) (event.Output, error) {
-	ch := make(chan event.Input, 1)
-	ch <- in
-	close(ch)
-
-	output, err := r.agent.Run(ctx, ch)
+// Runtime errors are extracted from event.Error.
+func (r *Runner) Run(ctx context.Context, in event.Input) (Result, error) {
+	output, err := r.RunStream(ctx, in)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
-
-	var last event.Output
+	var (
+		result Result
+		ok     bool
+	)
 	for out := range output {
 		switch v := out.(type) {
 		case event.Error:
-			return nil, v.Err
-		case event.Done:
-			return last, nil
+			if err == nil {
+				err = v.Err
+			}
 		case event.TurnEnd:
-			last = v
-		default:
-			last = out
+			result = Result{TurnEnd: v}
+			ok = true
 		}
 	}
-	return last, nil
+	if err != nil {
+		return Result{}, err
+	}
+	if !ok {
+		return Result{}, ErrNoResult
+	}
+	return result, nil
 }
 
 // RunStream sends a single input and returns the output channel for streaming consumption.
@@ -56,7 +70,6 @@ func (r *Runner) RunStream(ctx context.Context, in event.Input) (<-chan event.Ou
 	ch := make(chan event.Input, 1)
 	ch <- in
 	close(ch)
-
 	return r.agent.Run(ctx, ch)
 }
 

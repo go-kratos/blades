@@ -193,7 +193,7 @@ Event 和 Message 不合并。原因：
 
 | 原则 | 决策 |
 |------|------|
-| 根包极简 | `blades/` 放 `Agent`、`NewAgent`、Option、默认 `llmAgent`、必要错误、`Runner`（Run/RunStream/RunLive 三方法 helper）和 `NewAgentTool` |
+| 根包极简 | `blades/` 放 `Agent`、`NewAgent`、Option、默认 `llmAgent`、必要错误、`Runner` helper 和 `NewAgentTool` |
 | 协议叶子互独立 | `content/`、`event/` 之间禁止形成循环；`model/` 单向依赖 `tools/`（ToolSpec）；`tools/` 单向依赖 `content/` |
 | 多模态共享叶子 | `content/` 仅依赖标准库；`Part` 为 sealed marker（私有 `part()`）；变体 = Text/FilePart/FileRefPart/DataPart/Thinking/ToolUse/ToolResult；Thinking 含 Signature |
 | Provider 协议 sealed | 三处 sealed 例外全部封闭：`content.Part`（私有 `part()`）、`event.Input`（私有 `input()`）、`event.Output`（私有 `output()`）。核心协议层无开放扩展接口；后台回流走 `event.Prompt`，应用业务事件由应用自己的 channel / event bus 承载。`hook/` 不再使用 sealed event union，改为单 `Hook` 接口（6 个生命周期方法）+ `hook.Noop` 嵌入式默认实现（详见 `design-hook-extension.md`） |
@@ -219,7 +219,7 @@ blades/
 ├── agent_loop.go               默认 LLM Agent 私有 loop：agentLoop/input queue/turn/step/tool wave/Session commit
 ├── option.go                   AgentOption + WithModel/WithTools/WithPolicy/WithHooks/WithCompact/WithPrompt/WithDescription/WithToolsResolver
 ├── tool.go                     NewAgentTool(Agent) tools.Tool —— 把 Agent 暴露为工具的根包适配器
-├── runner.go                   `Runner` 类型 + `NewRunner` / `RunnerOption`；三方法 `Run` / `RunStream` / `RunLive`
+├── runner.go                   `Runner` / `Result` + `NewRunner` / `RunnerOption`
 ├── errors.go
 │
 ├── content/
@@ -300,16 +300,22 @@ blades/
 
 ### Runner 边界
 
-`blades.Runner` 是根包提供的 **Agent 运行 helper 类型**，封装 input channel 装配、错误 fan-in、`event.Done` 终止识别和 `context.Context` 取消传播；它不改变 `blades.Agent` 协议，也不引入额外的运行管理语义。任何 `blades.Agent` 都能被 `blades.NewRunner(agent, opts...)` 包装。
+`blades.Runner` 是根包提供的 **Agent 运行 helper 类型**，封装 input channel 装配、输出流收敛、错误 fan-in 和 `context.Context` 取消传播；它不改变 `blades.Agent` 协议，也不引入额外的运行管理语义。任何 `blades.Agent` 都能被 `blades.NewRunner(agent, opts...)` 包装。
 
 ```go
 type Runner struct{ /* unexported */ }
 
+type Result struct {
+    event.TurnEnd
+}
+
+func (r Result) Text() string
+
 func NewRunner(agent Agent, opts ...RunnerOption) *Runner
 
-// 同步：内部用一次性 input channel 投递 in、消费输出直到 event.Done，
-// 返回最终 event.Output（默认是最后一个 event.TurnEnd）。
-func (r *Runner) Run(ctx context.Context, in event.Input) (event.Output, error)
+// 同步：内部用一次性 input channel 投递 in、消费输出直到 output channel 关闭，
+// 返回最终 Result（最后一个 event.TurnEnd）。
+func (r *Runner) Run(ctx context.Context, in event.Input) (Result, error)
 
 // 流式：把单个 in 装入只读 channel 转发给 Agent，原样返回输出 channel；
 // Agent 发出 event.Done 后 channel 关闭。
@@ -322,11 +328,11 @@ func (r *Runner) RunLive(ctx context.Context, in <-chan event.Input) (<-chan eve
 
 **三方法语义**：
 
-- `Run` 适用于"输入一次、拿到最终结果"的 RPC 场景；首个 `event.Error` 会被拆出为 Go `error` 返回，其它输出在内部聚合后返回最终 Output。
+- `Run` 适用于"输入一次、拿到最终结果"的 RPC 场景；内部消费 `<-chan event.Output>` 到 channel 关闭，记录最后一个 `event.TurnEnd`，首个 `event.Error` 会被拆出为 Go `error` 返回。最终返回 `Result`，它嵌入最终 `event.TurnEnd`，并提供 `Text()` 便捷访问。
 - `RunStream` 适用于服务端推送 / SSE / CLI 实时渲染；运行期 `event.Error` 不被拆包，由调用方在 channel 中自行处理。
 - `RunLive` 适用于交互式界面、长连接和 steering 场景；input channel 关闭表示"无更多输入"：若当前没有 active turn，Run 正常结束；若当前 turn 正在执行，则不 abort 当前 turn，待 active turn 和已排队 prompt 处理完后发出 `event.Done`。需要立即取消底层调用时使用 `ctx.Done()`；需要结束当前 turn 但继续处理后续队列时使用 `event.Abort`。
 
-**错误传播**：`Run` / `RunStream` / `RunLive` 的第二返回值仅承载"无法启动"的错误（例如 Agent 自身拒绝 Run、依赖未装配）。一旦返回 output channel，运行期错误统一作为 `event.Error` 进入同一输出流，并在最终 `event.Done` 后关闭 channel。
+**错误传播**：`Run` 的第二返回值承载无法启动的错误、运行期 `event.Error` 以及没有最终 turn 时的 `ErrNoResult`。`RunStream` / `RunLive` 的第二返回值仅承载"无法启动"的错误（例如 Agent 自身拒绝 Run、依赖未装配）；一旦返回 output channel，运行期错误统一作为 `event.Error` 进入同一输出流，并在最终 `event.Done` 后关闭 channel。
 
 **与 Agent 接口的关系**：Runner 是 channel I/O 的便利封装，不是协议层组件。`flow/` 等组合层应继续直接消费 `Agent.Run` 的 channel，**不要**经由 Runner 嵌套——避免双层 channel 转发与多余的 goroutine 拷贝。
 
@@ -402,8 +408,8 @@ contrib/*   -> model/ 或 tools/
 
 | 包 | 核心类型 | 示例 |
 |----|----------|------|
-| `blades` (root) | `Agent`, `NewAgent`, `AgentOption`, `NewAgentTool`, `Runner`/`NewRunner`/`RunnerOption`（`Run`/`RunStream`/`RunLive` 三方法）, `WithModel`/`WithTools`/`WithToolsResolver`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithPrompt`/`WithDescription` | `blades.Agent` |
-| `content` | `Part`（sealed marker：私有 `part()`），`Text`，`FilePart{URI, MIME, Filename}`，`FileRefPart{ID, MIME}`，`DataPart{Bytes, MIME, Filename}`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.Text{Text: "hi"}` |
+| `blades` (root) | `Agent`, `NewAgent`, `AgentOption`, `NewAgentTool`, `Runner`/`Result`/`NewRunner`/`RunnerOption`（`Run`/`RunStream`/`RunLive`）, `WithModel`/`WithTools`/`WithToolsResolver`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithPrompt`/`WithDescription` | `blades.Agent` |
+| `content` | `Part`（sealed marker：私有 `part()`），`Text`，`TextFromParts`，`FilePart{URI, MIME, Filename}`，`FileRefPart{ID, MIME}`，`DataPart{Bytes, MIME, Filename}`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.Text{Text: "hi"}` |
 | `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `ToolStart`, `ToolDelta`, `ToolEnd`, `Action`, `LoopExit{Escalate}`, `Handoff{Agent}`, `TurnEnd`, `Error`, `Done`, `StopReason`, `Usage`；构造糖：`NewPromptText`, `NewSteerText` | `event.NewPromptText("hi")` |
 | `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `Provider`(Name+Generate+Stream `iter.Seq2`), `EmbeddingProvider`, `Request{Model, System, Messages, Tools []tools.ToolSpec, Options}`, `Response{Message, StopReason, Usage}`, `Chunk{Parts, StopReason, Usage}`, `Option` sealed（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`/`ParallelToolCalls`）, `Usage`, `StopReason`, `Collect`, `MergeOptions` | `model.Provider` |
 | `tools` | `Tool`(Spec+Handle 两方法), `ToolSpec{Name, Description, InputSchema, OutputSchema}`, `Result{Parts []content.Part}`, `Resolver`(List+Resolve), `ToolFilter`, `ToolContext`(ID+Spec), `NewContext`/`FromContext`, `ErrLoopExit`/`ErrHandoff` | `tools.Tool` |
@@ -450,7 +456,7 @@ iterative := flow.NewLoopAgent(flow.LoopConfig{SubAgents: []blades.Agent{worker}
 
 需要把一个 Agent 当作工具供另一 Agent 调用时，使用根包 `blades.NewAgentTool(agent)`（不在 `flow/`）。
 
-需要把 Agent 暴露为同步 RPC、单输入流式或双向 live 调用时，使用根包 `blades.NewRunner(agent, opts...)`，通过 `Run` / `RunStream` / `RunLive` 三方法承接。Runner 是 channel I/O 的便利封装，不改变 Agent 协议；`flow/` 等组合层仍直接消费 Agent channel，不经由 Runner 嵌套。
+需要把 Agent 暴露为同步 RPC、单输入流式或双向 live 调用时，使用根包 `blades.NewRunner(agent, opts...)`，通过 `Run` / `RunStream` / `RunLive` 承接。Runner 是 channel I/O 的便利封装，不改变 Agent 协议；`flow/` 等组合层仍直接消费 Agent channel，不经由 Runner 嵌套。
 
 组合原语只组合 `event.Input` / `event.Output` channel，不读取 `model.Message`。
 

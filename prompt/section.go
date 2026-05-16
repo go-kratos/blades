@@ -37,6 +37,9 @@ func Memory(mem memory.Memory, query func(context.Context) (memory.Query, error)
 		if err != nil {
 			return nil, err
 		}
+		if emptyMemoryQuery(q) {
+			return nil, nil
+		}
 		entries, err := mem.Recall(ctx, q)
 		if err != nil {
 			return nil, err
@@ -50,6 +53,10 @@ func Memory(mem memory.Memory, query func(context.Context) (memory.Query, error)
 		}
 		return []content.Part{content.Text{Text: text}}, nil
 	}
+}
+
+func emptyMemoryQuery(q memory.Query) bool {
+	return strings.TrimSpace(q.Text) == "" && len(q.Filter) == 0
 }
 
 func renderMemory(entries []memory.Entry) (string, error) {
