@@ -54,9 +54,6 @@ func (a *llmAgent) contextTokenCounter() model.TokenCounter {
 	if a.tokenCounter != nil {
 		return a.tokenCounter
 	}
-	if counter, ok := a.provider.(model.TokenCounter); ok {
-		return counter
-	}
 	return model.ApproxTokenCounter{}
 }
 

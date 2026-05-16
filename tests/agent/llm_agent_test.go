@@ -288,8 +288,8 @@ func TestLLMAgentUsesApproxTokenCounterForContextBudget(t *testing.T) {
 	assert.Positive(t, capture.stats.Count.InputTokens)
 }
 
-func TestLLMAgentUsesProviderTokenCounterForContextBudget(t *testing.T) {
-	provider := &autoCountingProvider{captureProvider: newCaptureProvider(dummyprovider.TextResponse("ok"))}
+func TestLLMAgentIgnoresProviderTokenCounterForContextBudget(t *testing.T) {
+	provider := &failingCountingProvider{captureProvider: newCaptureProvider(dummyprovider.TextResponse("ok"))}
 	capture := &contextStatsCaptureHook{}
 	agent, err := blades.NewAgent(
 		"assistant",
@@ -307,22 +307,22 @@ func TestLLMAgentUsesProviderTokenCounterForContextBudget(t *testing.T) {
 	assert.NoError(t, turnEnd.Err)
 
 	assert.True(t, capture.ok)
-	assert.Equal(t, int64(len("system")+len("hello")), capture.stats.Count.InputTokens)
+	assert.True(t, capture.stats.Count.HasBreakdown)
+	assert.Positive(t, capture.stats.Count.InputTokens)
+	assert.Len(t, provider.Requests(), 1)
 }
 
-func TestForkWithModelUsesNewProviderTokenCounter(t *testing.T) {
-	baseProvider := &fixedCountingProvider{
-		captureProvider: newCaptureProvider(dummyprovider.TextResponse("base")),
-		inputTokens:     99,
-	}
-	forkProvider := &fixedCountingProvider{
-		captureProvider: newCaptureProvider(dummyprovider.TextResponse("fork")),
-		inputTokens:     7,
-	}
+func TestForkWithModelKeepsConfiguredTokenCounter(t *testing.T) {
+	baseProvider := newCaptureProvider(dummyprovider.TextResponse("base"))
+	forkProvider := &failingCountingProvider{captureProvider: newCaptureProvider(dummyprovider.TextResponse("fork"))}
+	counter := model.TokenCounterFunc(func(context.Context, *model.Request) (model.TokenCount, error) {
+		return model.TokenCount{InputTokens: 99}, nil
+	})
 	base, err := blades.NewAgent(
 		"assistant",
 		blades.WithModel(baseProvider),
 		blades.WithContextBudget(blades.ContextBudget{InputTokens: 100}),
+		blades.WithTokenCounter(counter),
 	)
 	assert.NoError(t, err)
 
@@ -341,7 +341,7 @@ func TestForkWithModelUsesNewProviderTokenCounter(t *testing.T) {
 	assert.NoError(t, turnEnd.Err)
 
 	assert.True(t, capture.ok)
-	assert.Equal(t, int64(7), capture.stats.Count.InputTokens)
+	assert.Equal(t, int64(99), capture.stats.Count.InputTokens)
 	assert.Len(t, forkProvider.Requests(), 1)
 	assert.Empty(t, baseProvider.Requests())
 }
@@ -1421,21 +1421,12 @@ type captureProvider struct {
 	requests  []*model.Request
 }
 
-type autoCountingProvider struct {
+type failingCountingProvider struct {
 	*captureProvider
 }
 
-type fixedCountingProvider struct {
-	*captureProvider
-	inputTokens int64
-}
-
-func (p *autoCountingProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	return countRequestTokens(ctx, req)
-}
-
-func (p *fixedCountingProvider) CountTokens(context.Context, *model.Request) (model.TokenCount, error) {
-	return model.TokenCount{InputTokens: p.inputTokens}, nil
+func (p *failingCountingProvider) CountTokens(context.Context, *model.Request) (model.TokenCount, error) {
+	return model.TokenCount{}, errors.New("provider token counter should not be used")
 }
 
 func countRequestTokens(_ context.Context, req *model.Request) (model.TokenCount, error) {

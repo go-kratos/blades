@@ -27,7 +27,7 @@ blades.WithContextBudget(blades.ContextBudget{
 blades.WithTokenCounter(counter)
 ```
 
-If no counter is provided explicitly, the default Agent uses the model provider when it also implements `model.TokenCounter`; otherwise it falls back to `model.ApproxTokenCounter`. The selected counter is passed explicitly to compactors through `compact.Request.TokenCounter`; it is not stored in `context.Context`. `ResponseReserveTokens` is advisory and does not require separate enforcement.
+If no counter is provided explicitly, the default Agent falls back to `model.ApproxTokenCounter`. The selected counter is passed explicitly to compactors through `compact.Request.TokenCounter`; it is not discovered from `model.Provider` and is not stored in `context.Context`. `ResponseReserveTokens` is advisory and does not require separate enforcement.
 
 ## API
 

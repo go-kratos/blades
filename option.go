@@ -69,8 +69,8 @@ func WithContextBudget(b ContextBudget) AgentOption {
 }
 
 // WithTokenCounter sets the request-level token counter used for context stats
-// and budget enforcement. When nil, the Agent falls back to provider counting
-// or the default approximate counter.
+// and budget enforcement. When nil, the Agent uses the default approximate
+// counter.
 func WithTokenCounter(counter model.TokenCounter) AgentOption {
 	return func(a *llmAgent) {
 		a.tokenCounter = counter

@@ -34,9 +34,8 @@ type TokenCount struct {
 
 // ApproxTokenCounter is a provider-agnostic, conservative token estimator.
 //
-// Provider integrations should prefer exact provider-native counters when
-// available. This fallback exists so context stats and coarse budgets work even
-// before a provider-specific tokenizer is wired in.
+// This fallback exists so context stats and coarse budgets work even before a
+// model-specific tokenizer is wired in.
 type ApproxTokenCounter struct{}
 
 // CountTokens implements TokenCounter.

@@ -24,7 +24,7 @@ tags: [agentos, model, provider, protocol]
 本文档相比上一版主要变化：
 
 - Provider 接口由 *stream-only* 调整为 **`Generate` + `Stream`** 双方法并列，与各 provider 原生 SDK 直接对齐，同步路径无需经 `Collect` 累加。
-- token 计数从 `Provider` 抽离为独立的 **`TokenCounter` 接口**，按能力探测；返回 `TokenCount` 而非裸 `int`，并提供 provider-agnostic `ApproxTokenCounter` 作为默认粗估。
+- token 计数从 `Provider` 抽离为独立的 **`TokenCounter` 接口**，由调用方显式注入；返回 `TokenCount` 而非裸 `int`，并提供 provider-agnostic `ApproxTokenCounter` 作为默认粗估。
 - `Response` 拆分为两个类型：**`Response`（同步终态）** 与 **`Chunk`（流式增量帧）**，避免一种类型承担两种语义。
 - `Message` 收敛为 **protocol-only**（仅 `Role` + `Parts`），`Status` / `FinishReason` / `TokenUsage` 等运行时字段移到 `Response`/`Chunk` 上。
 - `Chunk` 复用 `content.Part`：流式增量直接是 `[]content.Part`，不引入独立的 *Delta* 变体。
@@ -57,8 +57,8 @@ type Provider interface {
 }
 
 // TokenCounter estimates token usage for a request without invoking the model.
-// It is split from Provider because counting is often offered by a separate
-// endpoint (or pure local encoder) and not all providers support it.
+// It is split from Provider because counting is often backed by a separate
+// endpoint or local encoder.
 type TokenCounter interface {
     CountTokens(ctx context.Context, req *Request) (TokenCount, error)
 }
@@ -78,9 +78,9 @@ type ApproxTokenCounter struct{}
 
 - `Generate` 与 `Stream` 平级独立，调用方按需选择。两者对同一 `Request` 的最终态语义必须等价。
 - `Stream` 返回 `iter.Seq2[*Chunk, error]`，避免 `model/` 反向依赖根包；调用方用 `for chunk, err := range provider.Stream(ctx, req)` 消费。
-- **`TokenCounter` 从 `Provider` 抽离**：token 计数与生成是两类能力 —— 一些 provider 走独立 endpoint（Anthropic `/v1/messages/count_tokens`、OpenAI tiktoken 本地编码），一些 provider 不支持。adapter 可同时实现 `Provider` 与 `TokenCounter`，调用方按 `if tc, ok := p.(TokenCounter); ok { ... }` 探测能力。
+- **`TokenCounter` 从 `Provider` 抽离**：token 计数与生成是两类能力 —— 一些模型走独立 endpoint（Anthropic `/v1/messages/count_tokens`）、一些走本地编码器（如 tiktoken）、一些不支持。Agent 不从 `model.Provider` 自动探测计数能力；应用通过 `blades.WithTokenCounter`（或 compactor 自身的 `compact.WithTokenCounter`）显式接入。
 - `TokenCounter.CountTokens` 返回 `TokenCount`。`InputTokens` 是完整 request 输入估算；当实现能拆分 system/messages/tools 三段时设置 `HasBreakdown=true` 并填充分段字段。
-- `ApproxTokenCounter` 是默认粗估实现，适合 budget coordination 和测试；provider adapter 应优先暴露更精确的原生计数器。
+- `ApproxTokenCounter` 是默认粗估实现，适合 budget coordination 和测试；更精确的模型专用计数器可以作为独立 `TokenCounter` 提供。
 - 资源释放依赖 `ctx` 取消、deadline 与 provider 内部 `defer`，不提供额外关闭方法。
 - `Request` 不包含流式开关，是否流式由调用方法决定。
 
