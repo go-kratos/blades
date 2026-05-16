@@ -65,7 +65,6 @@ import (
     "github.com/go-kratos/blades"
     "github.com/go-kratos/blades/contrib/openai"
     "github.com/go-kratos/blades/event"
-    "github.com/go-kratos/blades/prompt"
 )
 
 func main() {
@@ -76,7 +75,7 @@ func main() {
     agent, err := blades.NewAgent(
         "assistant",
         blades.WithModel(provider),
-        blades.WithPrompt(prompt.Text("You are a concise, accurate assistant.")),
+        blades.WithInstruction("You are a concise, accurate assistant."),
     )
     if err != nil {
         log.Fatal(err)
