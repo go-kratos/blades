@@ -3,7 +3,6 @@ package blades
 import (
 	"context"
 
-	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/event"
 )
 
@@ -22,7 +21,7 @@ type Result struct {
 
 // Text returns the concatenated text parts from the final turn.
 func (r Result) Text() string {
-	return content.TextFromParts(r.Parts)
+	return r.TurnEnd.Text()
 }
 
 // NewRunner creates a Runner wrapping the given Agent.

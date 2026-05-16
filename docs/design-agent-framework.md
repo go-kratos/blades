@@ -328,7 +328,7 @@ func (r *Runner) RunLive(ctx context.Context, in <-chan event.Input) (<-chan eve
 
 **三方法语义**：
 
-- `Run` 适用于"输入一次、拿到最终结果"的 RPC 场景；内部消费 `<-chan event.Output>` 到 channel 关闭，记录最后一个 `event.TurnEnd`，首个 `event.Error` 会被拆出为 Go `error` 返回。最终返回 `Result`，它嵌入最终 `event.TurnEnd`，并提供 `Text()` 便捷访问。
+- `Run` 适用于"输入一次、拿到最终结果"的 RPC 场景；内部消费 `<-chan event.Output>` 到 channel 关闭，记录最后一个 `event.TurnEnd`，首个 `event.Error` 会被拆出为 Go `error` 返回。最终返回 `Result`，它嵌入最终 `event.TurnEnd`；`event.TurnEnd` 和 `Result` 都提供 `Text()` 便捷访问。
 - `RunStream` 适用于服务端推送 / SSE / CLI 实时渲染；运行期 `event.Error` 不被拆包，由调用方在 channel 中自行处理。
 - `RunLive` 适用于交互式界面、长连接和 steering 场景；input channel 关闭表示"无更多输入"：若当前没有 active turn，Run 正常结束；若当前 turn 正在执行，则不 abort 当前 turn，待 active turn 和已排队 prompt 处理完后发出 `event.Done`。需要立即取消底层调用时使用 `ctx.Done()`；需要结束当前 turn 但继续处理后续队列时使用 `event.Abort`。
 
@@ -410,7 +410,7 @@ contrib/*   -> model/ 或 tools/
 |----|----------|------|
 | `blades` (root) | `Agent`, `NewAgent`, `AgentOption`, `NewAgentTool`, `Runner`/`Result`/`NewRunner`/`RunnerOption`（`Run`/`RunStream`/`RunLive`）, `WithModel`/`WithTools`/`WithToolsResolver`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithPrompt`/`WithDescription` | `blades.Agent` |
 | `content` | `Part`（sealed marker：私有 `part()`），`Text`，`TextFromParts`，`FilePart{URI, MIME, Filename}`，`FileRefPart{ID, MIME}`，`DataPart{Bytes, MIME, Filename}`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.Text{Text: "hi"}` |
-| `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `ToolStart`, `ToolDelta`, `ToolEnd`, `Action`, `LoopExit{Escalate}`, `Handoff{Agent}`, `TurnEnd`, `Error`, `Done`, `StopReason`, `Usage`；构造糖：`NewPromptText`, `NewSteerText` | `event.NewPromptText("hi")` |
+| `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `ToolStart`, `ToolDelta`, `ToolEnd`, `Action`, `LoopExit{Escalate}`, `Handoff{Agent}`, `TurnEnd`（含 `Text()`）, `Error`, `Done`, `StopReason`, `Usage`；构造糖：`NewPromptText`, `NewSteerText` | `event.NewPromptText("hi")` |
 | `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `Provider`(Name+Generate+Stream `iter.Seq2`), `EmbeddingProvider`, `Request{Model, System, Messages, Tools []tools.ToolSpec, Options}`, `Response{Message, StopReason, Usage}`, `Chunk{Parts, StopReason, Usage}`, `Option` sealed（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`/`ParallelToolCalls`）, `Usage`, `StopReason`, `Collect`, `MergeOptions` | `model.Provider` |
 | `tools` | `Tool`(Spec+Handle 两方法), `ToolSpec{Name, Description, InputSchema, OutputSchema}`, `Result{Parts []content.Part}`, `Resolver`(List+Resolve), `ToolFilter`, `ToolContext`(ID+Spec), `NewContext`/`FromContext`, `ErrLoopExit`/`ErrHandoff` | `tools.Tool` |
 | `prompt` | `Builder`(接口), `Section`(函数类型), `Static`/`Dynamic`/`System`/`Memory` 工厂, `New` | `prompt.Builder` |

@@ -28,6 +28,11 @@ type TurnEnd struct {
 	Action     Action
 }
 
+// Text returns the concatenated text parts from the turn.
+func (e TurnEnd) Text() string {
+	return content.TextFromParts(e.Parts)
+}
+
 func (TurnEnd) output() {}
 
 // Error carries a runtime error in the output stream.

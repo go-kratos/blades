@@ -199,6 +199,8 @@ type TurnEnd struct {
     Action     Action
 }
 
+func (e TurnEnd) Text() string
+
 type Done struct{}
 ```
 
