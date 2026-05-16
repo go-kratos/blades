@@ -50,6 +50,14 @@ func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 func (a *llmAgent) Name() string        { return a.name }
 func (a *llmAgent) Description() string { return a.description }
 
+func (a *llmAgent) clone() *llmAgent {
+	fork := *a
+	fork.hooks = append([]hook.Hook(nil), a.hooks...)
+	fork.tools = append([]tools.Tool(nil), a.tools...)
+	fork.promptBuilders = append([]prompt.Builder(nil), a.promptBuilders...)
+	return &fork
+}
+
 // Run implements the Agent interface.
 func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan event.Output, error) {
 	allTools, err := a.resolveTools(ctx)
@@ -58,6 +66,7 @@ func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan ev
 	}
 	sess := session.Ensure(ctx)
 	ctx = session.NewContext(ctx, sess)
+	ctx = newRuntimeAgentContext(ctx, a)
 	output := make(chan event.Output, outputBufferSize)
 	l := &agentLoop{
 		agent:    a,

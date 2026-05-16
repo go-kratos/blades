@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/compact"
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/event"
 	"github.com/go-kratos/blades/hook"
@@ -113,6 +115,102 @@ func TestLLMAgentPromptBuilderCanReadLoopSessionFromContext(t *testing.T) {
 	_, err = collectAllAgentOutputs(context.Background(), agent, inputs)
 	assert.NoError(t, err)
 	assert.Equal(t, "messages:1", capture.System())
+}
+
+func TestLLMAgentWithCompactUsesForkSummarizer(t *testing.T) {
+	provider := newCaptureProvider(
+		dummyprovider.TextResponse("summary text"),
+		dummyprovider.TextResponse("final"),
+	)
+	promptCalls := 0
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(testtools.NewCalculateTool()),
+		blades.WithPrompt(prompt.Section(func(context.Context) ([]content.Part, error) {
+			promptCalls++
+			return []content.Part{content.Text{Text: "main prompt"}}, nil
+		})),
+		blades.WithCompact(compact.NewBlockSummarize(
+			compact.WithKeepRecentMessages(1),
+			compact.WithSummaryBatchMessages(10),
+			compact.WithSummarizer(blades.ForkSummarizer()),
+		)),
+	)
+	assert.NoError(t, err)
+
+	sess := session.NewSession(session.WithMessages(
+		&model.Message{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "old user"}}},
+		&model.Message{Role: model.RoleAssistant, Parts: []content.Part{content.Text{Text: "old assistant"}}},
+	))
+	ctx := session.NewContext(context.Background(), sess)
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("new")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
+	assert.NoError(t, err)
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.Equal(t, "final", textFromParts(turnEnd.Parts))
+	assert.Equal(t, 1, promptCalls)
+
+	requests := provider.Requests()
+	if assert.Len(t, requests, 2) {
+		assert.Empty(t, requests[0].System)
+		assert.Empty(t, requests[0].Tools)
+		assert.Contains(t, textFromRequest(requests[0]), "old user")
+		assert.Equal(t, "main prompt", requests[1].System)
+		assert.Len(t, requests[1].Tools, 1)
+		assert.Len(t, requests[1].Messages, 2)
+		assert.Contains(t, textFromParts(requests[1].Messages[0].Parts), "summary text")
+		assert.Equal(t, "new", textFromParts(requests[1].Messages[1].Parts))
+	}
+
+	messages, err := sess.Messages(ctx)
+	assert.NoError(t, err)
+	if assert.Len(t, messages, 4) {
+		assert.Equal(t, "old user", textFromParts(messages[0].Parts))
+		assert.Equal(t, "old assistant", textFromParts(messages[1].Parts))
+		assert.Equal(t, "new", textFromParts(messages[2].Parts))
+		assert.Equal(t, "final", textFromParts(messages[3].Parts))
+	}
+}
+
+func TestForkSummarizerCanOverrideModel(t *testing.T) {
+	mainProvider := newCaptureProvider(dummyprovider.TextResponse("final"))
+	summaryProvider := newCaptureProvider(dummyprovider.TextResponse("override summary"))
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(mainProvider),
+		blades.WithCompact(compact.NewBlockSummarize(
+			compact.WithKeepRecentMessages(1),
+			compact.WithSummarizer(blades.ForkSummarizer(
+				blades.WithModel(summaryProvider),
+			)),
+		)),
+	)
+	assert.NoError(t, err)
+
+	sess := session.NewSession(session.WithMessages(
+		&model.Message{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "old"}}},
+	))
+	ctx := session.NewContext(context.Background(), sess)
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("new")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
+	assert.NoError(t, err)
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.Equal(t, "final", textFromParts(turnEnd.Parts))
+
+	assert.Len(t, summaryProvider.Requests(), 1)
+	requests := mainProvider.Requests()
+	if assert.Len(t, requests, 1) {
+		assert.Contains(t, textFromParts(requests[0].Messages[0].Parts), "override summary")
+	}
 }
 
 func TestLLMAgentInstructionsAndPromptsMergeInOptionOrder(t *testing.T) {
@@ -954,6 +1052,70 @@ func (t actionTool) Spec() tools.ToolSpec {
 
 func (t actionTool) Handle(context.Context, json.RawMessage) (*tools.Result, error) {
 	return nil, t.err
+}
+
+type captureProvider struct {
+	mu        sync.Mutex
+	responses []*model.Response
+	requests  []*model.Request
+}
+
+func newCaptureProvider(responses ...*model.Response) *captureProvider {
+	return &captureProvider{responses: responses}
+}
+
+func (p *captureProvider) Name() string {
+	return "capture"
+}
+
+func (p *captureProvider) Generate(ctx context.Context, req *model.Request) (*model.Response, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.requests = append(p.requests, req)
+	if len(p.responses) == 0 {
+		return nil, dummyprovider.ErrNoResponses
+	}
+	resp := p.responses[0]
+	p.responses = p.responses[1:]
+	return resp, nil
+}
+
+func (p *captureProvider) Stream(ctx context.Context, req *model.Request) iter.Seq2[*model.Chunk, error] {
+	return func(yield func(*model.Chunk, error) bool) {
+		resp, err := p.Generate(ctx, req)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		for _, chunk := range dummyprovider.ChunksFromResponse(resp) {
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+	}
+}
+
+func (p *captureProvider) Requests() []*model.Request {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cp := make([]*model.Request, len(p.requests))
+	copy(cp, p.requests)
+	return cp
+}
+
+func textFromRequest(req *model.Request) string {
+	var text string
+	for _, msg := range req.Messages {
+		text += textFromParts(msg.Parts)
+	}
+	return text
 }
 
 type recordingSession struct {

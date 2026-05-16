@@ -6,37 +6,18 @@ import (
 	"github.com/go-kratos/blades/model"
 )
 
-// WindowOption configures the window compactor.
-type WindowOption func(*windowCompactor)
-
-// WithMaxMessages sets the maximum number of messages to retain.
-func WithMaxMessages(n int) WindowOption {
-	return func(w *windowCompactor) {
-		w.maxMessages = n
-	}
-}
-
-// WithMaxTokens sets the maximum token budget.
-func WithMaxTokens(n int64) WindowOption {
-	return func(w *windowCompactor) {
-		w.maxTokens = n
-	}
-}
-
-// WithTokenCounter sets the token counter for budget calculation.
-func WithTokenCounter(tc TokenCounter) WindowOption {
-	return func(w *windowCompactor) {
-		w.counter = tc
-	}
-}
-
 // NewWindow creates a sliding window compactor.
-func NewWindow(opts ...WindowOption) Compactor {
-	w := &windowCompactor{
+func NewWindow(opts ...Option) Compactor {
+	cfg := options{
 		maxMessages: 100,
 	}
 	for _, opt := range opts {
-		opt(w)
+		opt(&cfg)
+	}
+	w := &windowCompactor{
+		maxMessages: cfg.maxMessages,
+		maxTokens:   cfg.maxTokens,
+		counter:     cfg.counter,
 	}
 	return w
 }
@@ -51,16 +32,28 @@ func (w *windowCompactor) Compact(_ context.Context, msgs []*model.Message) ([]*
 	if len(msgs) == 0 {
 		return msgs, nil
 	}
+	groups, err := messageGroups(msgs)
+	if err != nil {
+		return nil, err
+	}
 	result := msgs
 	if w.maxMessages > 0 && len(result) > w.maxMessages {
-		result = result[len(result)-w.maxMessages:]
+		start := retainLastMessages(groups, w.maxMessages)
+		result = msgs[start:]
 	}
 	if w.maxTokens > 0 && w.counter != nil {
-		for len(result) > 1 {
+		for {
 			if w.counter.Count(result...) <= w.maxTokens {
 				break
 			}
-			result = result[1:]
+			resultGroups, err := messageGroups(result)
+			if err != nil {
+				return nil, err
+			}
+			if len(resultGroups) <= 1 {
+				break
+			}
+			result = result[resultGroups[1].start:]
 		}
 	}
 	return result, nil

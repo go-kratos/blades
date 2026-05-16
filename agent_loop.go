@@ -10,7 +10,6 @@ import (
 	"github.com/go-kratos/blades/internal/convert"
 	"github.com/go-kratos/blades/internal/execute"
 	"github.com/go-kratos/blades/model"
-	"github.com/go-kratos/blades/prompt"
 	"github.com/go-kratos/blades/session"
 	"github.com/go-kratos/blades/tools"
 )
@@ -299,41 +298,11 @@ func (l *agentLoop) runStep() (*model.Response, error) {
 }
 
 func (l *agentLoop) buildRequest() (*model.Request, error) {
-	msgs, err := l.sess.Messages(l.ctx)
-	if err != nil {
-		return nil, err
-	}
-	if l.agent.compactor != nil {
-		msgs, err = l.agent.compactor.Compact(l.ctx, msgs)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var systemParts []content.Part
-	for _, builder := range l.agent.promptBuilders {
-		if builder == nil {
-			continue
-		}
-		parts, err := builder.Build(l.ctx)
-		if err != nil {
-			return nil, err
-		}
-		systemParts = append(systemParts, parts...)
-	}
-	system, err := prompt.JoinText(systemParts)
-	if err != nil {
-		return nil, err
-	}
-	toolSpecs := make([]tools.ToolSpec, 0, len(l.allTools))
-	for _, t := range l.allTools {
-		toolSpecs = append(toolSpecs, t.Spec())
-	}
-	return &model.Request{
-		Model:    l.agent.provider.Name(),
-		System:   system,
-		Messages: msgs,
-		Tools:    toolSpecs,
-	}, nil
+	return contextBuilder{
+		agent:    l.agent,
+		sess:     l.sess,
+		allTools: l.allTools,
+	}.Build(l.ctx)
 }
 
 func (l *agentLoop) streamStep(req *model.Request) (*model.Response, error) {

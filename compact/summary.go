@@ -2,59 +2,289 @@ package compact
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/model"
+	"github.com/go-kratos/blades/session"
 )
 
-// Summarizer is a function that summarizes messages into a text summary.
-type Summarizer func(ctx context.Context, msgs []*model.Message) (string, error)
+const blockSummaryStateKey = "__compact_block_summary_state__"
 
-// SummarizeOption configures the summarize compactor.
-type SummarizeOption func(*summarizeCompactor)
-
-// WithKeepRecent sets how many recent messages to preserve unsummarized.
-func WithKeepRecent(n int) SummarizeOption {
-	return func(s *summarizeCompactor) {
-		s.keepRecent = n
-	}
-}
-
-// NewSummarize creates a compactor that uses an LLM to summarize older messages.
-func NewSummarize(summarizer Summarizer, opts ...SummarizeOption) Compactor {
-	s := &summarizeCompactor{
-		summarizer: summarizer,
-		keepRecent: 4,
+// NewBlockSummarize creates a compactor that folds older message groups into
+// summary blocks while preserving recent raw messages.
+func NewBlockSummarize(opts ...Option) Compactor {
+	cfg := options{
+		keepRecentMessages:   8,
+		maxSummaryBlocks:     4,
+		summaryBatchMessages: 20,
+		maxFoldIterations:    8,
 	}
 	for _, opt := range opts {
-		opt(s)
+		opt(&cfg)
 	}
-	return s
+	if cfg.maxFoldIterations <= 0 {
+		cfg.maxFoldIterations = 1
+	}
+	return &blockSummarizeCompactor{
+		messagesBudget:       cfg.messagesBudget,
+		keepRecentMessages:   cfg.keepRecentMessages,
+		keepRecentTokens:     cfg.keepRecentTokens,
+		summaryBlockTokens:   cfg.summaryBlockTokens,
+		maxSummaryBlocks:     cfg.maxSummaryBlocks,
+		summaryBatchMessages: cfg.summaryBatchMessages,
+		maxFoldIterations:    cfg.maxFoldIterations,
+		counter:              cfg.counter,
+		summarizer:           cfg.summarizer,
+	}
 }
 
-type summarizeCompactor struct {
-	summarizer Summarizer
-	keepRecent int
+type blockSummarizeCompactor struct {
+	messagesBudget       int64
+	keepRecentMessages   int
+	keepRecentTokens     int64
+	summaryBlockTokens   int64
+	maxSummaryBlocks     int
+	summaryBatchMessages int
+	maxFoldIterations    int
+	counter              TokenCounter
+	summarizer           Summarizer
 }
 
-func (s *summarizeCompactor) Compact(ctx context.Context, msgs []*model.Message) ([]*model.Message, error) {
-	if len(msgs) <= s.keepRecent {
+type blockSummaryState struct {
+	Version int                 `json:"version"`
+	Blocks  []blockSummaryBlock `json:"blocks"`
+}
+
+type blockSummaryBlock struct {
+	Start   int    `json:"start"`
+	End     int    `json:"end"`
+	Summary string `json:"summary"`
+}
+
+func (b *blockSummarizeCompactor) Compact(ctx context.Context, msgs []*model.Message) ([]*model.Message, error) {
+	if len(msgs) == 0 {
 		return msgs, nil
 	}
-	toSummarize := msgs[:len(msgs)-s.keepRecent]
-	recent := msgs[len(msgs)-s.keepRecent:]
-
-	summary, err := s.summarizer(ctx, toSummarize)
+	groups, err := messageGroups(msgs)
 	if err != nil {
-		return msgs, nil
+		return nil, err
+	}
+	sess, _ := session.FromContext(ctx)
+	state := b.loadState(sess)
+	if !state.validFor(len(msgs), groups) {
+		state = blockSummaryState{Version: 1}
 	}
 
-	summaryMsg := &model.Message{
-		Role:  model.RoleUser,
-		Parts: []content.Part{content.Text{Text: "[Summary of previous conversation]\n" + summary}},
+	changed := false
+	for i := 0; i < b.maxFoldIterations; i++ {
+		covered := state.covered()
+		recentStart := b.recentStart(ctx, msgs, groups, covered)
+		view := assembleSummaryView(state.Blocks, msgs)
+		if !b.shouldFold(view, covered, recentStart) {
+			break
+		}
+		if b.summarizer == nil {
+			break
+		}
+		foldEnd := b.foldEnd(groups, covered, recentStart)
+		if foldEnd <= covered {
+			break
+		}
+		summary, err := b.summarizer.Summarize(ctx, SummaryRequest{
+			Messages:  msgs[covered:foldEnd],
+			MaxTokens: b.summaryBlockTokens,
+		})
+		if err != nil {
+			return nil, err
+		}
+		state.Version = 1
+		state.Blocks = append(state.Blocks, blockSummaryBlock{
+			Start:   covered,
+			End:     foldEnd,
+			Summary: summary,
+		})
+		changed = true
+		if err := b.mergeBlocks(ctx, &state); err != nil {
+			return nil, err
+		}
 	}
-	result := make([]*model.Message, 0, 1+len(recent))
-	result = append(result, summaryMsg)
-	result = append(result, recent...)
-	return result, nil
+
+	if changed && sess != nil {
+		sess.SetState(blockSummaryStateKey, state)
+	}
+	return assembleSummaryView(state.Blocks, msgs), nil
+}
+
+func (b *blockSummarizeCompactor) loadState(sess session.Session) blockSummaryState {
+	if sess == nil {
+		return blockSummaryState{Version: 1}
+	}
+	value, ok := sess.State()[blockSummaryStateKey]
+	if !ok {
+		return blockSummaryState{Version: 1}
+	}
+	switch state := value.(type) {
+	case blockSummaryState:
+		return state
+	case *blockSummaryState:
+		if state != nil {
+			return *state
+		}
+	}
+	return blockSummaryState{Version: 1}
+}
+
+func (s blockSummaryState) validFor(msgLen int, groups []messageGroup) bool {
+	lastEnd := 0
+	for _, block := range s.Blocks {
+		if block.Start != lastEnd || block.End <= block.Start || block.End > msgLen {
+			return false
+		}
+		if !isGroupBoundary(groups, block.Start) || !isGroupBoundary(groups, block.End) {
+			return false
+		}
+		lastEnd = block.End
+	}
+	return true
+}
+
+func (s blockSummaryState) covered() int {
+	if len(s.Blocks) == 0 {
+		return 0
+	}
+	return s.Blocks[len(s.Blocks)-1].End
+}
+
+func (b *blockSummarizeCompactor) shouldFold(view []*model.Message, covered int, recentStart int) bool {
+	if covered < recentStart {
+		return true
+	}
+	if b.messagesBudget > 0 && b.counter != nil {
+		return b.counter.Count(view...) > b.messagesBudget
+	}
+	return false
+}
+
+func (b *blockSummarizeCompactor) recentStart(ctx context.Context, msgs []*model.Message, groups []messageGroup, covered int) int {
+	keepMessages := b.keepRecentMessages
+	if GetHint(ctx) == HintShrink && keepMessages > 1 {
+		keepMessages = keepMessages / 2
+		if keepMessages < 1 {
+			keepMessages = 1
+		}
+	}
+
+	recentStart := len(msgs)
+	if keepMessages > 0 {
+		recentStart = retainLastMessages(groups, keepMessages)
+	}
+	if b.keepRecentTokens > 0 && b.counter != nil {
+		for recentStart < len(msgs) && b.counter.Count(msgs[recentStart:]...) > b.keepRecentTokens {
+			next := nextGroupStart(groups, recentStart)
+			if next <= recentStart || next >= len(msgs) {
+				break
+			}
+			recentStart = next
+		}
+	}
+	if recentStart < covered {
+		return covered
+	}
+	return recentStart
+}
+
+func nextGroupStart(groups []messageGroup, start int) int {
+	for i, group := range groups {
+		if group.start == start && i+1 < len(groups) {
+			return groups[i+1].start
+		}
+	}
+	return lenFromGroups(groups)
+}
+
+func lenFromGroups(groups []messageGroup) int {
+	if len(groups) == 0 {
+		return 0
+	}
+	return groups[len(groups)-1].end
+}
+
+func (b *blockSummarizeCompactor) foldEnd(groups []messageGroup, covered int, recentStart int) int {
+	limit := b.summaryBatchMessages
+	total := 0
+	foldEnd := covered
+	for _, group := range groups {
+		if group.end <= covered {
+			continue
+		}
+		if group.end > recentStart {
+			break
+		}
+		size := group.end - group.start
+		if limit > 0 && total > 0 && total+size > limit {
+			break
+		}
+		total += size
+		foldEnd = group.end
+		if limit > 0 && total >= limit {
+			break
+		}
+	}
+	return foldEnd
+}
+
+func (b *blockSummarizeCompactor) mergeBlocks(ctx context.Context, state *blockSummaryState) error {
+	if b.maxSummaryBlocks <= 0 {
+		return nil
+	}
+	for len(state.Blocks) > b.maxSummaryBlocks {
+		if b.summarizer == nil {
+			state.Blocks = state.Blocks[1:]
+			continue
+		}
+		first := state.Blocks[0]
+		second := state.Blocks[1]
+		summary, err := b.summarizer.Summarize(ctx, SummaryRequest{
+			Messages: []*model.Message{
+				summaryMessage(1, first),
+				summaryMessage(2, second),
+			},
+			MaxTokens: b.summaryBlockTokens,
+		})
+		if err != nil {
+			return err
+		}
+		merged := blockSummaryBlock{
+			Start:   first.Start,
+			End:     second.End,
+			Summary: summary,
+		}
+		state.Blocks = append([]blockSummaryBlock{merged}, state.Blocks[2:]...)
+	}
+	return nil
+}
+
+func assembleSummaryView(blocks []blockSummaryBlock, msgs []*model.Message) []*model.Message {
+	covered := 0
+	result := make([]*model.Message, 0, len(blocks)+len(msgs))
+	for i, block := range blocks {
+		result = append(result, summaryMessage(i+1, block))
+		covered = block.End
+	}
+	result = append(result, msgs[covered:]...)
+	return result
+}
+
+func summaryMessage(index int, block blockSummaryBlock) *model.Message {
+	return &model.Message{
+		Role: model.RoleUser,
+		Parts: []content.Part{content.Text{Text: fmt.Sprintf(
+			"[Compact summary %d: messages %d-%d]\n%s",
+			index,
+			block.Start,
+			block.End,
+			block.Summary,
+		)}},
+	}
 }
