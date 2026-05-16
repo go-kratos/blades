@@ -17,7 +17,7 @@ tags: [agentos, compact, context, token-budget]
 
 ## 概述
 
-`compact/` 把历史 `[]*model.Message` 转换为仍然合法、但更短的消息列表，以适配 provider 的 token 预算。v1 的核心抽象是一个无副作用的纯函数式接口 `Compactor`，外加一个独立的 `TokenCounter` 用于估算消息体积。
+`compact/` 把历史 `[]*model.Message` 转换为仍然合法、但更短的消息列表，以适配 provider 的 token 预算。v1 的核心抽象是一个无副作用的纯函数式接口 `Compactor`，外加一个独立的 `MessageTokenCounter` 用于估算消息体积。
 
 设计边界：
 
@@ -36,10 +36,10 @@ type Compactor interface {
     Compact(ctx context.Context, msgs []*model.Message) ([]*model.Message, error)
 }
 
-// TokenCounter estimates token usage of one or more messages.
+// MessageTokenCounter estimates token usage of one or more messages.
 // Implementations may use model-specific tokenizers or heuristic approximations.
-type TokenCounter interface {
-    Count(msgs ...*model.Message) int64
+type MessageTokenCounter interface {
+    CountMessages(ctx context.Context, msgs ...*model.Message) (int64, error)
 }
 ```
 
@@ -56,14 +56,15 @@ type TokenCounter interface {
 ## 内置实现
 
 ```go
-func NewWindow(opts ...WindowOption) Compactor
+func NewWindow(opts ...Option) Compactor
 
-func NewSummarize(provider model.Provider, opts ...SummarizeOption) Compactor
+func NewBlockSummarize(opts ...Option) Compactor
 
-// planned, not in v1 minimum:
 func NewToolResultBudget(budget int64) Compactor
 
-func NewChain(cs ...Compactor) Compactor
+func Chain(cs ...Compactor) Compactor
+
+func NewModelSummarizer(provider model.Provider, opts ...SummarizerOption) Summarizer
 ```
 
 ### Window
@@ -74,7 +75,7 @@ func NewChain(cs ...Compactor) Compactor
 c := compact.NewWindow(
     compact.WithMaxMessages(100),
     compact.WithMaxTokens(32_000),
-    compact.WithTokenCounter(tokens),
+    compact.WithMessageTokenCounter(tokens),
 )
 ```
 
@@ -85,29 +86,28 @@ c := compact.NewWindow(
 - 当裁剪导致首条变成悬挂 tool 结果时，再额外丢弃这条 tool 结果。
 - 空输入直接返回空输出，无错误。
 
-### Summarize
+### BlockSummarize
 
-`NewSummarize` 将"过早的历史"折叠为一段滚动摘要，最近 N 条消息保持原样。摘要由一个外部 `model.Provider` 生成：
+`NewBlockSummarize` 将"过早的历史"折叠为多个 rolling summary block，最近 N 条消息保持原样。摘要能力通过 `Summarizer` 注入，常见用法是用 `NewModelSummarizer` 做 provider-direct 摘要调用：
 
 ```go
-c := compact.NewSummarize(
-    summaryModel,
-    compact.WithSummaryMaxTokens(20_000),
-    compact.WithSummaryKeepRecent(10),
-    compact.WithSummaryBatchSize(20),
-    compact.WithSummaryInstruction("Summarize the following transcript ..."),
-    compact.WithTokenCounter(tokens),
+c := compact.NewBlockSummarize(
+    compact.WithKeepRecentMessages(10),
+    compact.WithSummaryBlockTokens(20_000),
+    compact.WithSummaryBatchMessages(20),
+    compact.WithMessageTokenCounter(tokens),
+    compact.WithSummarizer(compact.NewModelSummarizer(summaryModel)),
 )
 ```
 
 工作流：
 
-1. 读取 Session 中持久化的 `(offset, summaryContent)`（key 由 compact 包私有，建议形如 `__compact_summary_offset__` / `__compact_summary_content__`）。Session 不存在时使用零值，等价于一次性纯函数。
-2. 构造工作视图 `[summaryMsg?] + msgs[offset:]`。
-3. 当 token 估算超过 `SummaryMaxTokens` 时，从 `offset` 起取下一批 `BatchSize` 条（不越过 `len(msgs) - KeepRecent` 边界），调用 `model.Generate` 与既有 `summaryContent` 合并产生新摘要；推进 `offset`。
+1. 读取 Session 中持久化的 summary blocks（key 由 compact 包私有，当前为 `__compact_block_summary_state__`）。Session 不存在时使用零值，等价于一次性纯函数。
+2. 构造工作视图 `[summaryBlockMessages...] + msgs[covered:]`。
+3. 当已覆盖区尚未抵达 recent 边界，或视图 token 估算超过 `WithMessagesBudget` 时，从 `covered` 起取下一批消息组（不越过 recent 边界），调用 `Summarizer` 生成一个新的 block，并推进 covered 边界。
 4. 重复直到工作视图在预算内或没有可压缩区间。
-5. 把更新后的 `(offset, summaryContent)` 写回 Session。
-6. 若 Session 在两次调用之间被外部 reset 致 `offset > len(msgs)`，重置为零值。
+5. summary block 数超过 `WithMaxSummaryBlocks` 时，调用 `Summarizer` 合并最旧 blocks。
+6. 把更新后的 blocks 写回 Session state；若状态与当前消息组边界不匹配，重置为零值。
 
 错误处理：摘要 LLM 调用失败时返回错误，由 Loop 决定回退（见 [错误处理](#错误处理与可观测性)）。
 
@@ -127,7 +127,7 @@ c := compact.NewSummarize(
 c := compact.NewChain(
     compact.NewToolResultBudget(64*1024),
     compact.NewWindow(compact.WithMaxMessages(80)),
-    compact.NewSummarize(summaryModel, compact.WithSummaryMaxTokens(20_000)),
+    compact.NewBlockSummarize(compact.WithSummarizer(compact.NewModelSummarizer(summaryModel))),
 )
 
 msgs, err := c.Compact(ctx, original)
@@ -280,8 +280,8 @@ Memory（`memory.Memory`，参见 [design-memory.md](design-memory.md)）和 Com
 ## 设计决策
 
 1. **单一接口 + 组合优先**：所有压缩方式都表现为 `Compactor`，通过 `Chain` 组合；不同策略不需要新接口。
-2. **TokenCounter 与 Compactor 解耦**：估算与压缩各司其职，便于在 Loop / 监控 / 不同策略中复用同一计数器。
-3. **摘要器以 `model.Provider` 注入**：复用 provider 的 system prompt、流式、超时、重试与工具豁免能力；不引入新的 `SummarizeFunc` 抽象。
+2. **MessageTokenCounter 与 Compactor 解耦**：估算与压缩各司其职，便于不同压缩策略复用同一 message 视图计数器；完整 request 计数属于 `model.TokenCounter`。
+3. **摘要器以 `Summarizer` 注入，provider-direct helper 可选**：`compact.Summarizer` 是压缩层接口；`NewModelSummarizer` 直接调用 `model.Provider.Generate`，不 fork Agent、不执行工具、不递归 compact。
 4. **状态可选**：无 Session = 等价无状态调用；有 Session = 借助 `State()` 做增量摘要。compact 不暴露独立的状态接口。
 5. **Loop 无条件调用、Compactor 自适应**：compact 实现不感知"是否到该压"，由策略自身决定短路或工作；Loop 不写"判断阈值再触发"分支，避免重复实现与漂移。
 6. **配对完整性是 compact 自身责任**：不外推到 provider adapter，避免重复实现。
@@ -299,19 +299,15 @@ Memory（`memory.Memory`，参见 [design-memory.md](design-memory.md)）和 Com
 
 ## 与红线对照
 
-- r20：`Compactor` 单一接口；内置 `NewWindow`、`NewSummarize`、`NewChain` 在 v1 提供，`NewToolResultBudget` 列为 planned。
-- r20：`TokenCounter` 与 `Compactor` 同层，互不依赖。
-- r20：摘要器以 `model.Provider` 注入，避免 compact 与 provider 形成依赖环。
+- r20：`Compactor` 单一接口；内置 `NewWindow`、`NewToolResultBudget`、`NewBlockSummarize`、`Chain` 在 v1 提供。
+- r20：`MessageTokenCounter` 与 `Compactor` 同层，互不依赖。
+- r20：摘要器以 `Summarizer` 注入；provider-direct `NewModelSummarizer` 不依赖 root Agent，避免 compact 与 root 形成依赖环。
 - r20：provider invariant 由实现内部负责，并建议复用 helper（planned）。
 
 ## 已知 gap
 
-本文采用目标命名 `compact.Compactor` / `compact.TokenCounter`，与当前代码现状存在以下差异，将在后续任务中收敛，不属于本设计文档的修订范围：
+当前代码已经收敛到 `compact.Compactor` / `MessageTokenCounter` / `NewModelSummarizer` 形态。剩余 gap：
 
-1. 代码现状包名为 `context/{window,summary}`，接口名为 `blades.ContextCompressor`；rename 到 `compact/Compactor` 待迁移。
-2. 触发点目前在 `Session.History()` 内，本文按设计目标描述为 Agent Loop 触发；落地后需把触发点迁移到 Loop。
-3. `Window` 当前实现未保护 tool_call / tool_result 配对，本文已将其写为契约；实现需补齐边界对齐逻辑。
-4. `Summarize` 已实现 rolling summary + offset 持久化（state key `__summary_offset__` / `__summary_content__`），rename 到 `compact` 包后建议同步把 key 改为 `__compact_*__` 前缀。
-5. `ToolResultBudget`、`Chain`、共享不变量校验 helper 尚未实现，文中以 planned 标注。
-6. 当前 `Summarize` 实现单次 `Compact` 调用只折叠一个批次，不在 step 内迭代到预算；新增的[迭代压缩契约](#迭代压缩契约) 要求循环到预算/无可压区/安全阀任一终止条件，落地需把外层循环下沉到 Compactor 内部。
-7. 当前实现未对 `offset > len(msgs)` 做防御回零；新增契约要求外部 reset / fork 后自动失效重建，落地需补一个一致性检查。
+1. 共享不变量校验 helper 尚未实现；目前由各 compactor 内部调用 message grouping 校验。
+2. provider context-too-long 错误归一化与 `HintShrink` 二次构造重试尚未完整接入默认 Loop。
+3. `BlockSummarize` 使用 rolling summary blocks，但仍可继续增强更细粒度的 offset 失效诊断和观测。

@@ -60,6 +60,28 @@ func TestToolResultBudgetDoesNotMutateOriginal(t *testing.T) {
 	assert.NotEqual(t, originalText, truncated)
 }
 
+func TestModelMessageTokenCounterUsesMessageBreakdown(t *testing.T) {
+	counter := model.TokenCounterFunc(func(_ context.Context, req *model.Request) (model.TokenCount, error) {
+		assert.Empty(t, req.System)
+		assert.Empty(t, req.Tools)
+		return model.TokenCount{InputTokens: 99, MessagesTokens: 7, HasBreakdown: true}, nil
+	})
+
+	tokens, err := NewModelMessageTokenCounter(counter).CountMessages(context.Background(), textMessage(model.RoleUser, "hello"))
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), tokens)
+}
+
+func TestModelMessageTokenCounterFallsBackToInputTokens(t *testing.T) {
+	counter := model.TokenCounterFunc(func(context.Context, *model.Request) (model.TokenCount, error) {
+		return model.TokenCount{InputTokens: 9}, nil
+	})
+
+	tokens, err := NewModelMessageTokenCounter(counter).CountMessages(context.Background(), textMessage(model.RoleUser, "hello"))
+	require.NoError(t, err)
+	assert.Equal(t, int64(9), tokens)
+}
+
 func TestBlockSummarizeBuildsSummaryBlocksAndKeepsSessionMessages(t *testing.T) {
 	msgs := []*model.Message{
 		textMessage(model.RoleUser, "u1"),

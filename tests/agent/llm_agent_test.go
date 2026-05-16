@@ -23,6 +23,7 @@ import (
 	"github.com/go-kratos/blades/tests/testtools"
 	"github.com/go-kratos/blades/tools"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLLMAgentExecutesCalculateTool(t *testing.T) {
@@ -117,7 +118,7 @@ func TestLLMAgentPromptBuilderCanReadLoopSessionFromContext(t *testing.T) {
 	assert.Equal(t, "messages:1", capture.System())
 }
 
-func TestLLMAgentWithCompactUsesForkSummarizer(t *testing.T) {
+func TestLLMAgentWithCompactUsesModelSummarizer(t *testing.T) {
 	provider := newCaptureProvider(
 		dummyprovider.TextResponse("summary text"),
 		dummyprovider.TextResponse("final"),
@@ -134,7 +135,7 @@ func TestLLMAgentWithCompactUsesForkSummarizer(t *testing.T) {
 		blades.WithCompact(compact.NewBlockSummarize(
 			compact.WithKeepRecentMessages(1),
 			compact.WithSummaryBatchMessages(10),
-			compact.WithSummarizer(blades.ForkSummarizer()),
+			compact.WithSummarizer(compact.NewModelSummarizer(provider)),
 		)),
 	)
 	assert.NoError(t, err)
@@ -157,7 +158,7 @@ func TestLLMAgentWithCompactUsesForkSummarizer(t *testing.T) {
 
 	requests := provider.Requests()
 	if assert.Len(t, requests, 2) {
-		assert.Empty(t, requests[0].System)
+		assert.Contains(t, requests[0].System, "Summarize conversation history")
 		assert.Empty(t, requests[0].Tools)
 		assert.Contains(t, textFromRequest(requests[0]), "old user")
 		assert.Equal(t, "main prompt", requests[1].System)
@@ -177,7 +178,7 @@ func TestLLMAgentWithCompactUsesForkSummarizer(t *testing.T) {
 	}
 }
 
-func TestForkSummarizerCanOverrideModel(t *testing.T) {
+func TestModelSummarizerCanUseSeparateProvider(t *testing.T) {
 	mainProvider := newCaptureProvider(dummyprovider.TextResponse("final"))
 	summaryProvider := newCaptureProvider(dummyprovider.TextResponse("override summary"))
 	agent, err := blades.NewAgent(
@@ -185,9 +186,7 @@ func TestForkSummarizerCanOverrideModel(t *testing.T) {
 		blades.WithModel(mainProvider),
 		blades.WithCompact(compact.NewBlockSummarize(
 			compact.WithKeepRecentMessages(1),
-			compact.WithSummarizer(blades.ForkSummarizer(
-				blades.WithModel(summaryProvider),
-			)),
+			compact.WithSummarizer(compact.NewModelSummarizer(summaryProvider)),
 		)),
 	)
 	assert.NoError(t, err)
@@ -211,6 +210,116 @@ func TestForkSummarizerCanOverrideModel(t *testing.T) {
 	if assert.Len(t, requests, 1) {
 		assert.Contains(t, textFromParts(requests[0].Messages[0].Parts), "override summary")
 	}
+}
+
+func TestLLMAgentExposesContextInfoAndStats(t *testing.T) {
+	provider := dummyprovider.NewProvider(dummyprovider.TextResponse("ok"))
+	budget := blades.ContextBudget{
+		InputTokens:           100,
+		SystemTokens:          100,
+		MessagesTokens:        100,
+		ToolTokens:            100,
+		ResponseReserveTokens: 10,
+	}
+	counter := model.TokenCounterFunc(func(_ context.Context, req *model.Request) (model.TokenCount, error) {
+		var messageTokens int64
+		for _, msg := range req.Messages {
+			messageTokens += int64(len(textFromParts(msg.Parts)))
+		}
+		return model.TokenCount{
+			SystemTokens:   int64(len(req.System)),
+			MessagesTokens: messageTokens,
+			ToolTokens:     int64(len(req.Tools)),
+			HasBreakdown:   true,
+		}, nil
+	})
+	var promptInfo blades.ContextInfo
+	var promptInfoOK bool
+	capture := &contextStatsCaptureHook{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithContextBudget(budget),
+		blades.WithTokenCounter(counter),
+		blades.WithHooks(capture),
+		blades.WithPrompt(prompt.Section(func(ctx context.Context) ([]content.Part, error) {
+			promptInfo, promptInfoOK = blades.ContextInfoFromContext(ctx)
+			return []content.Part{content.Text{Text: "system"}}, nil
+		})),
+	)
+	assert.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("hello"))
+	assert.NoError(t, err)
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.NoError(t, turnEnd.Err)
+
+	assert.True(t, promptInfoOK)
+	assert.Equal(t, blades.ContextPurposeMain, promptInfo.Purpose)
+	assert.Equal(t, budget, promptInfo.Budget)
+	assert.True(t, capture.ok)
+	assert.Equal(t, blades.ContextPurposeMain, capture.stats.Purpose)
+	assert.Equal(t, int64(len("system")), capture.stats.Count.SystemTokens)
+	assert.Equal(t, int64(len("hello")), capture.stats.Count.MessagesTokens)
+	assert.Equal(t, int64(len("system")+len("hello")), capture.stats.Count.InputTokens)
+	assert.Equal(t, 1, capture.stats.MessagesBefore)
+	assert.Equal(t, 1, capture.stats.MessagesAfter)
+}
+
+func TestLLMAgentRequiresTokenCounterForEnforcedContextBudget(t *testing.T) {
+	_, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(dummyprovider.NewProvider(dummyprovider.TextResponse("ok"))),
+		blades.WithContextBudget(blades.ContextBudget{InputTokens: 100}),
+	)
+	assert.ErrorIs(t, err, blades.ErrContextTokenCounterRequired)
+}
+
+func TestLLMAgentUsesProviderTokenCounterForContextBudget(t *testing.T) {
+	provider := &autoCountingProvider{captureProvider: newCaptureProvider(dummyprovider.TextResponse("ok"))}
+	capture := &contextStatsCaptureHook{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithContextBudget(blades.ContextBudget{InputTokens: 100}),
+		blades.WithHooks(capture),
+		blades.WithPrompt(prompt.Text("system")),
+	)
+	assert.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("hello"))
+	assert.NoError(t, err)
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.NoError(t, turnEnd.Err)
+
+	assert.True(t, capture.ok)
+	assert.Equal(t, int64(len("system")+len("hello")), capture.stats.Count.InputTokens)
+}
+
+func TestLLMAgentRechecksContextBudgetAfterBeforeModelHook(t *testing.T) {
+	provider := dummyprovider.NewProvider(dummyprovider.TextResponse("ok"))
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithContextBudget(blades.ContextBudget{SystemTokens: 4}),
+		blades.WithTokenCounter(model.TokenCounterFunc(countRequestTokens)),
+		blades.WithHooks(&mutateSystemHook{system: "too long"}),
+		blades.WithPrompt(prompt.Text("ok")),
+	)
+	assert.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("hello"))
+	assert.NoError(t, err)
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	require.Error(t, turnEnd.Err)
+
+	var budgetErr *blades.ContextBudgetError
+	require.True(t, errors.As(turnEnd.Err, &budgetErr))
+	assert.Equal(t, blades.ContextSegmentSystem, budgetErr.Segment)
+	assert.Equal(t, 0, provider.CallCount())
 }
 
 func TestLLMAgentInjectsRunningAgentIntoRuntimeExtensions(t *testing.T) {
@@ -873,6 +982,13 @@ func collectAgentOutputs(ctx context.Context, agent blades.Agent, inputs <-chan 
 	return collected, nil
 }
 
+func promptInputs(text string) <-chan event.Input {
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText(text)
+	close(inputs)
+	return inputs
+}
+
 func collectAllAgentOutputs(ctx context.Context, agent blades.Agent, inputs <-chan event.Input) ([]event.Output, error) {
 	outputs, err := agent.Run(ctx, inputs)
 	if err != nil {
@@ -1085,6 +1201,27 @@ func (h *runningAgentCaptureHook) BeforeModel(ctx context.Context, _ *model.Requ
 	return nil
 }
 
+type contextStatsCaptureHook struct {
+	hook.Noop
+	stats blades.ContextStats
+	ok    bool
+}
+
+func (h *contextStatsCaptureHook) BeforeModel(ctx context.Context, _ *model.Request) error {
+	h.stats, h.ok = blades.ContextStatsFromContext(ctx)
+	return nil
+}
+
+type mutateSystemHook struct {
+	hook.Noop
+	system string
+}
+
+func (h *mutateSystemHook) BeforeModel(_ context.Context, req *model.Request) error {
+	req.System = h.system
+	return nil
+}
+
 type runningAgentCaptureTool struct {
 	capture *runningAgentCapture
 }
@@ -1234,6 +1371,29 @@ type captureProvider struct {
 	mu        sync.Mutex
 	responses []*model.Response
 	requests  []*model.Request
+}
+
+type autoCountingProvider struct {
+	*captureProvider
+}
+
+func (p *autoCountingProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	return countRequestTokens(ctx, req)
+}
+
+func countRequestTokens(_ context.Context, req *model.Request) (model.TokenCount, error) {
+	var messages int64
+	for _, msg := range req.Messages {
+		messages += int64(len(textFromParts(msg.Parts)))
+	}
+	count := model.TokenCount{
+		SystemTokens:   int64(len(req.System)),
+		MessagesTokens: messages,
+		ToolTokens:     int64(len(req.Tools)),
+		HasBreakdown:   true,
+	}
+	count.InputTokens = count.SystemTokens + count.MessagesTokens + count.ToolTokens
+	return count, nil
 }
 
 func newCaptureProvider(responses ...*model.Response) *captureProvider {

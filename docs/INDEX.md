@@ -16,9 +16,10 @@
 - [Policy 与交互模式边界](./design-policy-mode.md) - 单一 Policy.Check 接口与应用层模式边界 `[draft]`
 - [Agent 组合与编排](./design-agent-orchestration.md) - `flow/` 组合（Sequential/Parallel/Loop/Routing/Deep）与多 Agent 边界 `[draft]`
 - [Memory 系统](./design-memory.md) - Memory 接口（Recall+Remember+Forget）、`Entry` / `Query` 数据载体、应用层经 prompt.Memory 注入策略 `[draft]`
-- [Prompt 系统](./design-prompt.md) - Builder 接口 + Section 函数类型；Static/Dynamic/System/Memory 工厂 `[draft]`
+- [Prompt 系统](./design-prompt.md) - Builder 接口 + Section 函数类型；Static/Text/Memory 工厂 `[draft]`
 - [Compact 系统](./design-compact.md) - 单一 Compactor 接口与内置实现（Window/ToolResultBudget/Summarize/Chain） `[draft]`
-- [Model 与 Provider](./design-model-provider.md) - `model/` Message、Part、Provider（Name/Generate/Stream）、TokenCounter（按能力探测）、Request/Response/Chunk、Options sealed union `[draft]`
+- [Context Management](./design-context-management.md) - root Agent request-view 构建、input/system/messages/tools 预算协同、context stats 与 summary request 边界 `[draft]`
+- [Model 与 Provider](./design-model-provider.md) - `model/` Message、Part、Provider（Name/Generate/Stream）、TokenCounter/TokenCount（按能力探测）、Request/Response/Chunk、Options sealed union `[draft]`
 
 ## 参考文档
 
@@ -42,6 +43,7 @@
 - [Memory 系统](./design-memory.md)
 - [Prompt 系统](./design-prompt.md)
 - [Compact 系统](./design-compact.md)
+- [Context Management](./design-context-management.md)
 
 ### Composition
 
@@ -54,7 +56,7 @@
 
 ## 文档状态统计
 
-- Draft: 11
+- Draft: 12
 - Review: 0
 - Approved: 0
 - Implemented: 0

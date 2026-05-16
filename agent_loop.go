@@ -269,27 +269,36 @@ func (l *agentLoop) endTurn(turn *hook.Turn, result turnState, err error) {
 }
 
 func (l *agentLoop) runStep() (*model.Response, error) {
-	req, err := l.buildRequest()
+	req, stats, err := l.buildRequest()
 	if err != nil {
 		return nil, err
 	}
+	modelCtx := newContextStats(l.ctx, stats)
 
 	for _, h := range l.agent.hooks {
-		if err := h.BeforeModel(l.ctx, req); err != nil {
+		if err := h.BeforeModel(modelCtx, req); err != nil {
 			return nil, err
 		}
 	}
+	stats, err = contextStatsForRequest(modelCtx, req, l.agent.contextBudget, stats.MessagesBefore, l.agent.tokenCounter)
+	if err != nil {
+		return nil, err
+	}
+	if err := enforceContextBudget(l.agent.contextBudget, stats); err != nil {
+		return nil, err
+	}
+	modelCtx = newContextStats(modelCtx, stats)
 
-	resp, err := l.streamStep(req)
+	resp, err := l.streamStep(modelCtx, req)
 	if err != nil {
 		for _, h := range l.agent.hooks {
-			_ = h.AfterModel(l.ctx, req, nil, err)
+			_ = h.AfterModel(modelCtx, req, nil, err)
 		}
 		return nil, err
 	}
 
 	for _, h := range l.agent.hooks {
-		if err := h.AfterModel(l.ctx, req, resp, nil); err != nil {
+		if err := h.AfterModel(modelCtx, req, resp, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -297,7 +306,7 @@ func (l *agentLoop) runStep() (*model.Response, error) {
 	return resp, nil
 }
 
-func (l *agentLoop) buildRequest() (*model.Request, error) {
+func (l *agentLoop) buildRequest() (*model.Request, ContextStats, error) {
 	return contextBuilder{
 		agent:    l.agent,
 		sess:     l.sess,
@@ -305,14 +314,14 @@ func (l *agentLoop) buildRequest() (*model.Request, error) {
 	}.Build(l.ctx)
 }
 
-func (l *agentLoop) streamStep(req *model.Request) (*model.Response, error) {
+func (l *agentLoop) streamStep(ctx context.Context, req *model.Request) (*model.Response, error) {
 	var (
 		parts      []content.Part
 		stopReason model.StopReason
 		usage      model.Usage
 	)
 
-	for chunk, err := range l.agent.provider.Stream(l.ctx, req) {
+	for chunk, err := range l.agent.provider.Stream(ctx, req) {
 		if err != nil {
 			return nil, err
 		}

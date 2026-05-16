@@ -24,7 +24,7 @@ tags: [agentos, model, provider, protocol]
 本文档相比上一版主要变化：
 
 - Provider 接口由 *stream-only* 调整为 **`Generate` + `Stream`** 双方法并列，与各 provider 原生 SDK 直接对齐，同步路径无需经 `Collect` 累加。
-- token 计数从 `Provider` 抽离为独立的 **`TokenCounter` 接口**，按能力探测；返回 `Usage` 而非裸 `int`。
+- token 计数从 `Provider` 抽离为独立的 **`TokenCounter` 接口**，按能力探测；返回 `TokenCount` 而非裸 `int`。
 - `Response` 拆分为两个类型：**`Response`（同步终态）** 与 **`Chunk`（流式增量帧）**，避免一种类型承担两种语义。
 - `Message` 收敛为 **protocol-only**（仅 `Role` + `Parts`），`Status` / `FinishReason` / `TokenUsage` 等运行时字段移到 `Response`/`Chunk` 上。
 - `Chunk` 复用 `content.Part`：流式增量直接是 `[]content.Part`，不引入独立的 *Delta* 变体。
@@ -60,7 +60,15 @@ type Provider interface {
 // It is split from Provider because counting is often offered by a separate
 // endpoint (or pure local encoder) and not all providers support it.
 type TokenCounter interface {
-    Count(ctx context.Context, req *Request) (Usage, error)
+    CountTokens(ctx context.Context, req *Request) (TokenCount, error)
+}
+
+type TokenCount struct {
+    InputTokens    int64
+    SystemTokens   int64
+    MessagesTokens int64
+    ToolTokens     int64
+    HasBreakdown   bool
 }
 ```
 
@@ -69,7 +77,7 @@ type TokenCounter interface {
 - `Generate` 与 `Stream` 平级独立，调用方按需选择。两者对同一 `Request` 的最终态语义必须等价。
 - `Stream` 返回 `iter.Seq2[*Chunk, error]`，避免 `model/` 反向依赖根包；调用方用 `for chunk, err := range provider.Stream(ctx, req)` 消费。
 - **`TokenCounter` 从 `Provider` 抽离**：token 计数与生成是两类能力 —— 一些 provider 走独立 endpoint（Anthropic `/v1/messages/count_tokens`、OpenAI tiktoken 本地编码），一些 provider 不支持。adapter 可同时实现 `Provider` 与 `TokenCounter`，调用方按 `if tc, ok := p.(TokenCounter); ok { ... }` 探测能力。
-- `TokenCounter.Count` 返回 `Usage`（与 `Response.Usage` 同类型），可同时给出 input / output 估算；不支持的字段填 0。
+- `TokenCounter.CountTokens` 返回 `TokenCount`。`InputTokens` 是完整 request 输入估算；当实现能拆分 system/messages/tools 三段时设置 `HasBreakdown=true` 并填充分段字段。
 - 资源释放依赖 `ctx` 取消、deadline 与 provider 内部 `defer`，不提供额外关闭方法。
 - `Request` 不包含流式开关，是否流式由调用方法决定。
 

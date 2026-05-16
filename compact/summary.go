@@ -47,7 +47,7 @@ type blockSummarizeCompactor struct {
 	maxSummaryBlocks     int
 	summaryBatchMessages int
 	maxFoldIterations    int
-	counter              TokenCounter
+	counter              MessageTokenCounter
 	summarizer           Summarizer
 }
 
@@ -79,9 +79,16 @@ func (b *blockSummarizeCompactor) Compact(ctx context.Context, msgs []*model.Mes
 	changed := false
 	for i := 0; i < b.maxFoldIterations; i++ {
 		covered := state.covered()
-		recentStart := b.recentStart(ctx, msgs, groups, covered)
+		recentStart, err := b.recentStart(ctx, msgs, groups, covered)
+		if err != nil {
+			return nil, err
+		}
 		view := assembleSummaryView(state.Blocks, msgs)
-		if !b.shouldFold(view, covered, recentStart) {
+		shouldFold, err := b.shouldFold(ctx, view, covered, recentStart)
+		if err != nil {
+			return nil, err
+		}
+		if !shouldFold {
 			break
 		}
 		if b.summarizer == nil {
@@ -156,17 +163,21 @@ func (s blockSummaryState) covered() int {
 	return s.Blocks[len(s.Blocks)-1].End
 }
 
-func (b *blockSummarizeCompactor) shouldFold(view []*model.Message, covered int, recentStart int) bool {
+func (b *blockSummarizeCompactor) shouldFold(ctx context.Context, view []*model.Message, covered int, recentStart int) (bool, error) {
 	if covered < recentStart {
-		return true
+		return true, nil
 	}
 	if b.messagesBudget > 0 && b.counter != nil {
-		return b.counter.Count(view...) > b.messagesBudget
+		tokens, err := b.counter.CountMessages(ctx, view...)
+		if err != nil {
+			return false, err
+		}
+		return tokens > b.messagesBudget, nil
 	}
-	return false
+	return false, nil
 }
 
-func (b *blockSummarizeCompactor) recentStart(ctx context.Context, msgs []*model.Message, groups []messageGroup, covered int) int {
+func (b *blockSummarizeCompactor) recentStart(ctx context.Context, msgs []*model.Message, groups []messageGroup, covered int) (int, error) {
 	keepMessages := b.keepRecentMessages
 	if GetHint(ctx) == HintShrink && keepMessages > 1 {
 		keepMessages = keepMessages / 2
@@ -180,7 +191,14 @@ func (b *blockSummarizeCompactor) recentStart(ctx context.Context, msgs []*model
 		recentStart = retainLastMessages(groups, keepMessages)
 	}
 	if b.keepRecentTokens > 0 && b.counter != nil {
-		for recentStart < len(msgs) && b.counter.Count(msgs[recentStart:]...) > b.keepRecentTokens {
+		for recentStart < len(msgs) {
+			tokens, err := b.counter.CountMessages(ctx, msgs[recentStart:]...)
+			if err != nil {
+				return 0, err
+			}
+			if tokens <= b.keepRecentTokens {
+				break
+			}
 			next := nextGroupStart(groups, recentStart)
 			if next <= recentStart || next >= len(msgs) {
 				break
@@ -189,9 +207,9 @@ func (b *blockSummarizeCompactor) recentStart(ctx context.Context, msgs []*model
 		}
 	}
 	if recentStart < covered {
-		return covered
+		return covered, nil
 	}
-	return recentStart
+	return recentStart, nil
 }
 
 func nextGroupStart(groups []messageGroup, start int) int {

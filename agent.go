@@ -24,15 +24,18 @@ type Agent interface {
 
 // llmAgent is the default Agent implementation backed by an LLM provider.
 type llmAgent struct {
-	name           string
-	description    string
-	hooks          []hook.Hook
-	tools          []tools.Tool
-	resolver       tools.Resolver
-	provider       model.Provider
-	promptBuilders []prompt.Builder
-	compactor      compact.Compactor
-	policy         policy.Policy
+	name            string
+	description     string
+	hooks           []hook.Hook
+	tools           []tools.Tool
+	resolver        tools.Resolver
+	provider        model.Provider
+	promptBuilders  []prompt.Builder
+	compactor       compact.Compactor
+	contextBudget   ContextBudget
+	tokenCounter    model.TokenCounter
+	tokenCounterSet bool
+	policy          policy.Policy
 }
 
 // NewAgent creates a new default LLM-backed Agent.
@@ -44,11 +47,26 @@ func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 	if a.provider == nil {
 		return nil, ErrModelProviderRequired
 	}
+	if err := a.prepareContextCounting(); err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 
 func (a *llmAgent) Name() string        { return a.name }
 func (a *llmAgent) Description() string { return a.description }
+
+func (a *llmAgent) prepareContextCounting() error {
+	if a.tokenCounter == nil && !a.tokenCounterSet {
+		if counter, ok := a.provider.(model.TokenCounter); ok {
+			a.tokenCounter = counter
+		}
+	}
+	if contextBudgetRequiresCounter(a.contextBudget) && a.tokenCounter == nil {
+		return ErrContextTokenCounterRequired
+	}
+	return nil
+}
 
 func (a *llmAgent) clone() *llmAgent {
 	fork := *a

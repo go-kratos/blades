@@ -216,7 +216,9 @@ Event 和 Message 不合并。原因：
 blades/
 ├── agent.go                    Agent 接口 + NewAgent + llmAgent 字段与方法
 ├── agent_loop.go               默认 LLM Agent 私有 loop：agentLoop/input queue/turn/step/tool wave/Session commit
-├── option.go                   AgentOption + WithModel/WithTools/WithPolicy/WithHooks/WithCompact/WithPrompt/WithDescription/WithToolsResolver
+├── context_info.go             ContextBudget/ContextInfo/ContextStats + ctx helper
+├── context_builder.go          默认 Agent 私有 request-view 装配：session + compact + prompt + tools + budget stats
+├── option.go                   AgentOption + WithModel/WithTools/WithPolicy/WithHooks/WithCompact/WithContextBudget/WithTokenCounter/WithPrompt/WithDescription/WithToolsResolver
 ├── tool.go                     NewAgentTool(Agent) tools.Tool —— 把 Agent 暴露为工具的根包适配器
 ├── runner.go                   `Runner` / `Result` + `NewRunner` / `RunnerOption`
 ├── errors.go
@@ -241,6 +243,7 @@ blades/
 │   ├── message.go              Message{Role, Parts []content.Part}, type Role string（RoleUser/RoleAssistant/RoleTool）
 │   ├── option.go               Option sealed interface + 内置 CacheHint/ReasoningEffort/ResponseFormat/Sampling/ParallelToolCalls；MergeOptions(defaults, request)
 │   ├── provider.go             Provider 接口（Name + Generate + Stream iter.Seq2）；EmbeddingProvider 平级独立接口
+│   ├── token.go                TokenCounter + TokenCount request-level 计数能力
 │   ├── request.go              Request{Model, System string, Messages, Tools []tools.ToolSpec, Options []Option}
 │   ├── response.go             Response{Message *Message, StopReason, Usage}, Chunk{Parts []content.Part, StopReason, Usage *Usage}
 │   ├── usage.go                Usage{InputTokens, OutputTokens int64}, StopReason 常量
@@ -256,7 +259,7 @@ blades/
 │
 ├── prompt/
 │   ├── prompt.go               Builder 接口 + Section 函数类型 + New(sections...) Builder
-│   └── section.go              内置 Section 工厂：Static / Dynamic / System / Memory
+│   └── section.go              内置 Section 工厂：Static / Text / Memory
 │
 ├── flow/
 │   ├── sequential.go           NewSequentialAgent(SequentialConfig) blades.Agent
@@ -271,10 +274,11 @@ blades/
 │   └── context.go              NewContext / FromContext / Ensure
 │
 ├── compact/
-│   ├── compact.go              Compactor 接口 + Chain + TokenCounter 接口
+│   ├── compact.go              Compactor 接口 + Chain + MessageTokenCounter 接口
 │   ├── window.go               NewWindow(opts...)
 │   ├── budget.go               NewToolResultBudget(maxBytes)
-│   ├── summary.go              NewSummarize(summarizer, opts...)
+│   ├── summary.go              NewBlockSummarize(opts...)
+│   ├── summarizer.go           NewModelSummarizer(provider, opts...) + SummarizerOption
 │   └── hint.go                 WithHint / HintShrink / GetHint
 │
 ├── hook/
@@ -374,7 +378,7 @@ tools/      -> content/ + jsonschema                    // ToolSpec 定义在此
 model/      -> content/ + tools/                       // Request.Tools []tools.ToolSpec
 
 session/    -> model/
-compact/    -> model/                                   // Summarizer 函数由上层注入
+compact/    -> model/, content/, session/                // Compactor + provider-direct Summarizer
 memory/     -> content/                                 // Memory.Recall 返回 []content.Part
 prompt/     -> content/, memory/                        // Memory section 引用
 hook/       -> content/, event/, model/, tools/
@@ -395,7 +399,7 @@ contrib/*   -> model/ 或 tools/
 - `tools/` 依赖 `content/` + `jsonschema`；`ToolSpec` 定义在 `tools/` 中。
 - `model/` 依赖 `content/` + `tools/`（仅 `tools.ToolSpec`）。`event/` 和 `model/` 互不依赖。
 - `policy/` 单向依赖 `tools/`，v1 仅 `ToolRequest`。
-- `compact/` 不依赖 Provider 或 root Agent；摘要能力通过 `func(ctx, []*model.Message) (string, error)` 注入。
+- `compact/` 不依赖 root Agent；摘要能力通过 `Summarizer` 注入，内置 `NewModelSummarizer` 直接调用 `model.Provider.Generate`，不运行 Agent loop。
 - `memory/` 依赖 `content/`（`Recall` 返回 `[]content.Part`），不依赖 `model/`。
 - 根包默认 `llmAgent` 是运行时汇聚层，依赖所有协议与能力包；`internal/convert/` 是 `llmAgent` 内部专用的 Event ↔ Message 转换实现，不导出给用户。
 
@@ -403,17 +407,17 @@ contrib/*   -> model/ 或 tools/
 
 | 包 | 核心类型 | 示例 |
 |----|----------|------|
-| `blades` (root) | `Agent`, `RunningAgent`, `NewAgent`, `AgentOption`, `NewAgentTool`, `NewContext`/`FromContext`, `Runner`/`Result`/`NewRunner`/`RunnerOption`（`Run`/`RunStream`/`RunLive`）, `WithModel`/`WithTools`/`WithToolsResolver`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithPrompt`/`WithDescription` | `blades.Agent` |
+| `blades` (root) | `Agent`, `RunningAgent`, `NewAgent`, `AgentOption`, `NewAgentTool`, `NewContext`/`FromContext`, `ContextBudget`/`ContextInfo`/`ContextStats`, `ContextInfoFromContext`/`ContextStatsFromContext`, `Runner`/`Result`/`NewRunner`/`RunnerOption`（`Run`/`RunStream`/`RunLive`）, `WithModel`/`WithTools`/`WithToolsResolver`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithContextBudget`/`WithTokenCounter`/`WithPrompt`/`WithDescription` | `blades.Agent` |
 | `content` | `Part`（sealed marker：私有 `part()`），`Text`，`TextFromParts`，`FilePart{URI, MIME, Filename}`，`FileRefPart{ID, MIME}`，`DataPart{Bytes, MIME, Filename}`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.Text{Text: "hi"}` |
 | `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `ToolStart`, `ToolDelta`, `ToolEnd`, `Action`, `LoopExit{Escalate}`, `Handoff{Agent}`, `TurnEnd`（含 `Text()`）, `Error`, `Done`, `StopReason`, `Usage`；构造糖：`NewPromptText`, `NewSteerText` | `event.NewPromptText("hi")` |
-| `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `Provider`(Name+Generate+Stream `iter.Seq2`), `EmbeddingProvider`, `Request{Model, System, Messages, Tools []tools.ToolSpec, Options}`, `Response{Message, StopReason, Usage}`, `Chunk{Parts, StopReason, Usage}`, `Option` sealed（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`/`ParallelToolCalls`）, `Usage`, `StopReason`, `Collect`, `MergeOptions` | `model.Provider` |
+| `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `Provider`(Name+Generate+Stream `iter.Seq2`), `TokenCounter`/`TokenCount`, `EmbeddingProvider`, `Request{Model, System, Messages, Tools []tools.ToolSpec, Options}`, `Response{Message, StopReason, Usage}`, `Chunk{Parts, StopReason, Usage}`, `Option` sealed（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`/`ParallelToolCalls`）, `Usage`, `StopReason`, `Collect`, `MergeOptions` | `model.Provider` |
 | `tools` | `Tool`(Spec+Handle 两方法), `ToolSpec{Name, Description, InputSchema, OutputSchema}`, `Result{Parts []content.Part}`, `Resolver`(List+Resolve), `ToolFilter`, `ToolContext`(ID+Spec), `NewContext`/`FromContext`, `ErrLoopExit`/`ErrHandoff` | `tools.Tool` |
 | `prompt` | `Builder`(接口), `Section`(函数类型), `Static`/`Dynamic`/`System`/`Memory` 工厂, `New` | `prompt.Builder` |
 | `flow` | `NewSequentialAgent`/`NewParallelAgent`/`NewLoopAgent`/`NewRoutingAgent`/`NewDeepAgent` 与对应 `*Config` 结构体 | `flow.NewParallelAgent(cfg)` |
 | `session` | `Session`(6 方法 append-only), `NewSession`, `WithSessionID`/`WithMessages`/`WithMetadata`/`WithState`, `NewContext`/`FromContext`/`Ensure` | `session.Session` |
 | `policy` | `Policy`(Check 单方法), `Decision`, `Action`(Allow/Deny/Ask/Modify), `ToolRequest`, `Chain`/`AllowAll`/`DenyAll`/`Budget`/`RateLimit`/`SafetyCheck` | `policy.Policy` |
 | `hook` | `Hook`（6 方法），`Noop`，carrier `ToolCall`/`Turn`/`TurnSummary`，`Abort`/`ErrAbort`/`AbortError`/`IsAbort` | `hook.Hook` |
-| `compact` | `Compactor`(单方法接口), `Chain`, `NewWindow`, `NewToolResultBudget`, `NewSummarize`, `TokenCounter`, `WithHint`/`HintShrink`/`GetHint` | `compact.Compactor` |
+| `compact` | `Compactor`(单方法接口), `Chain`, `NewWindow`, `NewToolResultBudget`, `NewBlockSummarize`, `NewModelSummarizer`, `Summarizer`, `MessageTokenCounter`, `NewModelMessageTokenCounter`, `WithHint`/`HintShrink`/`GetHint` | `compact.Compactor` |
 | `memory` | `Memory`(Recall+Remember+Forget), `Entry`, `Query`, `NewInMemory` | `memory.Memory` |
 
 ## 模块详细设计
@@ -501,7 +505,7 @@ v1 核心保留五个组合原语 + 一个 Agent→Tool 适配器：
 - **增量压缩**：Session append-only ⇒ 消息下标稳定 ⇒ Compactor 仅需在 `Session.State()` 中维护单调递增的 `offset` 即可区分"已压缩区"与"未压缩区"，每次只对 `msgs[offset:]` 中新增的部分做工作，不会重复对已折叠的历史调用摘要 LLM。详见 [design-compact.md](design-compact.md) §增量压缩契约、[design-session.md](design-session.md) §为什么 append-only 是增量压缩的前提。
 - **迭代压缩 + Hint 重试两层兜底**：单次 `Compact` 调用内部循环折叠批次直到 ① 满足预算 ② `offset` 抵达 `len(msgs) - KeepRecent` 无可压区 ③ 触发安全阀（Step 内）；provider 真实仍报 context-too-long 时由 Loop 透传 `HintShrink` 重试 1 次（Step 间），仍未严格下降则 fail-fast `event.Error`。两层正交不互相替代。详见 [design-compact.md](design-compact.md) §迭代压缩契约、[design-event-agent-loop.md](design-event-agent-loop.md) §上下文超长的两层兜底。
 
-`buildRequest` 是 Session / Prompt / Compact 与 `*model.Request` 之间的装配逻辑，位于 `agent_loop.go`，按有序 pipeline 装配——**先 compact 再 prompt**：`snapshot ← session.Messages(ctx)`；`view ← compactor.Compact(ctx, snapshot)`；`systemParts ← prompt.Builder.Build(ctx)`（memory 召回在此发生）；最终 `*model.Request{System: prompt.JoinText(systemParts), Messages: view, Tools, Options}`。Compactor 仅看 messages、prompt builder 仅看 system，二者互不感知。
+`contextBuilder` 是 Session / Prompt / Compact 与 `*model.Request` 之间的装配逻辑，位于根包私有实现，按有序 pipeline 装配——**先 compact 再 prompt**：`snapshot ← session.Messages(ctx)`；`view ← compactor.Compact(ctx, snapshot)`；`systemParts ← prompt.Builder.Build(ctx)`（memory 召回在此发生）；最终 `*model.Request{System: prompt.JoinText(systemParts), Messages: view, Tools}`。`WithContextBudget` 配置 input/system/messages/tools 预算，`WithTokenCounter` 或 provider 自身的 `model.TokenCounter` 提供完整 request 计数；根包把 `ContextInfo` 暴露给 prompt/memory 构建期、把 `ContextStats` 暴露给 model hooks/provider 调用期。Compactor 仅看 messages、prompt builder 仅看 system，二者互不感知。详见 [design-context-management.md](design-context-management.md)。
 
 `memory/` 提供 `Memory` 接口（`Recall + Remember + Forget` 三方法，围绕 `Entry` / `Query` 结构体），不在根 Agent 内置。应用层在 prompt builder 中调用 `memory.Recall` 注入相关记忆，在 turn 结束后调用 `memory.Remember` 写入已归一化的单条 Entry，并在用户撤回 / TTL 过期 / 人工纠错时通过 `memory.Forget(ctx, entry)` 删除条目（按 Entry.ID，空 ID 报错）。Memory 不进根 Agent 配置；保持根包极简。
 
@@ -534,7 +538,7 @@ v1 核心保留五个组合原语 + 一个 Agent→Tool 适配器：
 - [x] `tools/` — Tool 两方法接口 + ToolSpec（唯一定义点）+ Resolver + Filter + sentinel errors
 - [x] `session/` — Session 6 方法接口 + in-memory 实现 + context helpers
 - [x] `compact/` — Compactor + Window/Summary/Budget/Chain
-- [x] `prompt/` — Builder + Section + Static/Dynamic/System/Memory
+- [x] `prompt/` — Builder + Section + Static/Text/Memory
 - [x] `memory/` — Memory 接口 + NewInMemory
 - [x] `policy/` — Policy + Chain/AllowAll/DenyAll/Budget/RateLimit/SafetyCheck
 - [x] `hook/` — Hook 6 方法 + Noop + Abort/ErrAbort

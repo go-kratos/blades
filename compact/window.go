@@ -25,10 +25,10 @@ func NewWindow(opts ...Option) Compactor {
 type windowCompactor struct {
 	maxMessages int
 	maxTokens   int64
-	counter     TokenCounter
+	counter     MessageTokenCounter
 }
 
-func (w *windowCompactor) Compact(_ context.Context, msgs []*model.Message) ([]*model.Message, error) {
+func (w *windowCompactor) Compact(ctx context.Context, msgs []*model.Message) ([]*model.Message, error) {
 	if len(msgs) == 0 {
 		return msgs, nil
 	}
@@ -43,7 +43,11 @@ func (w *windowCompactor) Compact(_ context.Context, msgs []*model.Message) ([]*
 	}
 	if w.maxTokens > 0 && w.counter != nil {
 		for {
-			if w.counter.Count(result...) <= w.maxTokens {
+			tokens, err := w.counter.CountMessages(ctx, result...)
+			if err != nil {
+				return nil, err
+			}
+			if tokens <= w.maxTokens {
 				break
 			}
 			resultGroups, err := messageGroups(result)
