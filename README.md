@@ -31,6 +31,21 @@ type Agent interface {
 
 `blades.NewAgent(name, opts...)` builds the default LLM-backed Agent. A custom runtime can implement the same interface directly.
 
+## Running Agent Context
+
+Default Agents expose their current runtime identity through context:
+
+```go
+agent, ok := blades.FromContext(ctx)
+if ok {
+    fork, err := blades.Fork(agent.Root(), blades.WithInstruction("Handle this as a focused sub-task."))
+    _ = fork
+    _ = err
+}
+```
+
+`RunningAgent` includes the current Agent and parent/root traversal. Default LLM-backed running agents can be passed to `blades.Fork`.
+
 ## Model Provider Interface
 
 ```go

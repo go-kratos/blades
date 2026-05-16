@@ -15,7 +15,7 @@ import (
 
 // Fork creates a new default LLM agent from an existing default LLM agent.
 func Fork(agent Agent, opts ...AgentOption) (Agent, error) {
-	base, ok := agent.(*llmAgent)
+	base, ok := llmAgentFromAgent(agent)
 	if !ok {
 		return nil, ErrAgentNotForkable
 	}
@@ -30,6 +30,14 @@ func Fork(agent Agent, opts ...AgentOption) (Agent, error) {
 	return fork, nil
 }
 
+func llmAgentFromAgent(agent Agent) (*llmAgent, bool) {
+	if wrapper, ok := agent.(interface{ unwrapAgent() Agent }); ok {
+		agent = wrapper.unwrapAgent()
+	}
+	base, ok := agent.(*llmAgent)
+	return base, ok
+}
+
 // ForkSummarizer creates a compact.Summarizer backed by a compact-safe fork of
 // the currently running default LLM agent.
 func ForkSummarizer(opts ...AgentOption) compact.Summarizer {
@@ -41,7 +49,11 @@ type forkSummarizer struct {
 }
 
 func (s forkSummarizer) Summarize(ctx context.Context, req compact.SummaryRequest) (string, error) {
-	base, ok := runtimeAgentFromContext(ctx)
+	running, ok := FromContext(ctx)
+	if !ok {
+		return "", ErrAgentNotStarted
+	}
+	base, ok := llmAgentFromAgent(running)
 	if !ok {
 		return "", ErrAgentNotStarted
 	}

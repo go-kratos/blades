@@ -213,6 +213,105 @@ func TestForkSummarizerCanOverrideModel(t *testing.T) {
 	}
 }
 
+func TestLLMAgentInjectsRunningAgentIntoRuntimeExtensions(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.ToolUseResponse("call_1", "capture", json.RawMessage(`"input"`)),
+		dummyprovider.TextResponse("ok"),
+	)
+	promptCapture := &runningAgentCapture{}
+	hookCapture := &runningAgentCapture{}
+	toolCapture := &runningAgentCapture{}
+	captureTool := &runningAgentCaptureTool{capture: toolCapture}
+	var (
+		forkName string
+		forkDesc string
+		forkErr  error
+	)
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithDescription("main agent"),
+		blades.WithModel(provider),
+		blades.WithTools(captureTool),
+		blades.WithHooks(&runningAgentCaptureHook{capture: hookCapture}),
+		blades.WithPrompt(prompt.Section(func(ctx context.Context) ([]content.Part, error) {
+			promptCapture.Capture(ctx)
+			running, ok := blades.FromContext(ctx)
+			if ok && forkName == "" {
+				var fork blades.Agent
+				fork, forkErr = blades.Fork(running.Root(), blades.WithDescription("forked"))
+				if forkErr == nil {
+					forkName = fork.Name()
+					forkDesc = fork.Description()
+				}
+			}
+			return nil, nil
+		})),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("hello")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.NoError(t, turnEnd.Err)
+
+	assertRunningAgentSnapshot(t, promptCapture.Snapshot(), "assistant", "main agent", false, "", "assistant")
+	assertRunningAgentSnapshot(t, hookCapture.Snapshot(), "assistant", "main agent", false, "", "assistant")
+	assertRunningAgentSnapshot(t, toolCapture.Snapshot(), "assistant", "main agent", false, "", "assistant")
+	assert.NoError(t, forkErr)
+	assert.Equal(t, "assistant-fork", forkName)
+	assert.Equal(t, "forked", forkDesc)
+}
+
+func TestAgentToolSetsParentRunningAgentForSubAgent(t *testing.T) {
+	mainProvider := dummyprovider.NewProvider(
+		dummyprovider.ToolUseResponse("call_1", "delegate", json.RawMessage(`"work"`)),
+		dummyprovider.TextResponse("main final"),
+	)
+	subProvider := dummyprovider.NewProvider(dummyprovider.TextResponse("sub final"))
+	subCapture := &runningAgentCapture{}
+	sub, err := blades.NewAgent(
+		"delegate",
+		blades.WithDescription("sub agent"),
+		blades.WithModel(subProvider),
+		blades.WithPrompt(prompt.Section(func(ctx context.Context) ([]content.Part, error) {
+			subCapture.Capture(ctx)
+			return nil, nil
+		})),
+	)
+	assert.NoError(t, err)
+
+	agent, err := blades.NewAgent(
+		"main",
+		blades.WithDescription("main agent"),
+		blades.WithModel(mainProvider),
+		blades.WithTools(blades.NewAgentTool(sub)),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPromptText("hello")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.NoError(t, turnEnd.Err)
+	assert.Equal(t, "main final", textFromParts(turnEnd.Parts))
+	assertRunningAgentSnapshot(t, subCapture.Snapshot(), "delegate", "sub agent", true, "main", "main")
+}
+
+func TestRunningAgentFromContextMissing(t *testing.T) {
+	ac, ok := blades.FromContext(context.Background())
+	assert.False(t, ok)
+	assert.Nil(t, ac)
+}
+
 func TestLLMAgentInstructionsAndPromptsMergeInOptionOrder(t *testing.T) {
 	provider := dummyprovider.NewProvider(dummyprovider.TextResponse("ok"))
 	capture := &requestCaptureHook{}
@@ -920,6 +1019,83 @@ func (h *rewriteToolResultHook) AfterTool(_ context.Context, _ *hook.ToolCall, r
 	h.err = err
 	result.Parts = []content.Part{content.Text{Text: "redacted"}}
 	return nil
+}
+
+type runningAgentSnapshot struct {
+	ok          bool
+	name        string
+	description string
+	hasParent   bool
+	parentName  string
+	rootName    string
+}
+
+type runningAgentCapture struct {
+	mu       sync.Mutex
+	snapshot runningAgentSnapshot
+}
+
+func (c *runningAgentCapture) Capture(ctx context.Context) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.snapshot = snapshotRunningAgent(ctx)
+}
+
+func (c *runningAgentCapture) Snapshot() runningAgentSnapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.snapshot
+}
+
+func snapshotRunningAgent(ctx context.Context) runningAgentSnapshot {
+	ac, ok := blades.FromContext(ctx)
+	if !ok {
+		return runningAgentSnapshot{}
+	}
+	snapshot := runningAgentSnapshot{
+		ok:          true,
+		name:        ac.Name(),
+		description: ac.Description(),
+		rootName:    ac.Root().Name(),
+	}
+	if parent, ok := ac.Parent(); ok {
+		snapshot.hasParent = true
+		snapshot.parentName = parent.Name()
+	}
+	return snapshot
+}
+
+func assertRunningAgentSnapshot(t *testing.T, snapshot runningAgentSnapshot, name, description string, hasParent bool, parentName, rootName string) {
+	t.Helper()
+	assert.True(t, snapshot.ok)
+	assert.Equal(t, name, snapshot.name)
+	assert.Equal(t, description, snapshot.description)
+	assert.Equal(t, hasParent, snapshot.hasParent)
+	assert.Equal(t, parentName, snapshot.parentName)
+	assert.Equal(t, rootName, snapshot.rootName)
+}
+
+type runningAgentCaptureHook struct {
+	hook.Noop
+	capture *runningAgentCapture
+}
+
+func (h *runningAgentCaptureHook) BeforeModel(ctx context.Context, _ *model.Request) error {
+	h.capture.Capture(ctx)
+	return nil
+}
+
+type runningAgentCaptureTool struct {
+	capture *runningAgentCapture
+}
+
+func (t *runningAgentCaptureTool) Spec() tools.ToolSpec {
+	return tools.ToolSpec{Name: "capture", Description: "Capture running agent"}
+}
+
+func (t *runningAgentCaptureTool) Handle(ctx context.Context, _ json.RawMessage) (*tools.Result, error) {
+	t.capture.Capture(ctx)
+	return tools.TextResult("captured"), nil
 }
 
 type requestCaptureHook struct {

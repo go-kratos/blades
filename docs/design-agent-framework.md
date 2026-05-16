@@ -98,7 +98,7 @@ if ok {
 Core 保留两类 capability context helper：
 
 - `session.NewContext` / `session.FromContext`：当前会话。
-- `agent.NewContext` / `agent.FromContext`：当前 Agent 内省（name、parent、depth）。
+- `blades.NewContext` / `blades.FromContext`：当前 Agent 内省（Agent、parent、root）；默认 LLM Agent 的运行 context 可直接传给 `blades.Fork`。
 
 工具自身通过 `tools.NewContext` / `tools.FromContext` 取得每次调用的 `ToolContext`（`ID` / `Spec`），由 Agent Loop 在调用 `Tool.Handle` 前注入；`ToolContext` 仅暴露调用元数据，不承载控制信号。工具签名仍为 `Handle(ctx context.Context, input json.RawMessage)`。控制流信号通过 sentinel error 返回，由 Agent Loop 翻译为 `event.TurnEnd.Action` 上的 `event.LoopExit` / `event.Handoff`。
 
@@ -403,7 +403,7 @@ contrib/*   -> model/ 或 tools/
 
 | 包 | 核心类型 | 示例 |
 |----|----------|------|
-| `blades` (root) | `Agent`, `NewAgent`, `AgentOption`, `NewAgentTool`, `Runner`/`Result`/`NewRunner`/`RunnerOption`（`Run`/`RunStream`/`RunLive`）, `WithModel`/`WithTools`/`WithToolsResolver`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithPrompt`/`WithDescription` | `blades.Agent` |
+| `blades` (root) | `Agent`, `RunningAgent`, `NewAgent`, `AgentOption`, `NewAgentTool`, `NewContext`/`FromContext`, `Runner`/`Result`/`NewRunner`/`RunnerOption`（`Run`/`RunStream`/`RunLive`）, `WithModel`/`WithTools`/`WithToolsResolver`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithPrompt`/`WithDescription` | `blades.Agent` |
 | `content` | `Part`（sealed marker：私有 `part()`），`Text`，`TextFromParts`，`FilePart{URI, MIME, Filename}`，`FileRefPart{ID, MIME}`，`DataPart{Bytes, MIME, Filename}`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.Text{Text: "hi"}` |
 | `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `ToolStart`, `ToolDelta`, `ToolEnd`, `Action`, `LoopExit{Escalate}`, `Handoff{Agent}`, `TurnEnd`（含 `Text()`）, `Error`, `Done`, `StopReason`, `Usage`；构造糖：`NewPromptText`, `NewSteerText` | `event.NewPromptText("hi")` |
 | `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `Provider`(Name+Generate+Stream `iter.Seq2`), `EmbeddingProvider`, `Request{Model, System, Messages, Tools []tools.ToolSpec, Options}`, `Response{Message, StopReason, Usage}`, `Chunk{Parts, StopReason, Usage}`, `Option` sealed（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`/`ParallelToolCalls`）, `Usage`, `StopReason`, `Collect`, `MergeOptions` | `model.Provider` |

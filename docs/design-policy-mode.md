@@ -141,7 +141,7 @@ key := func(ctx context.Context, req policy.ToolRequest) string {
 }
 ```
 
-key 抽取通常基于 `session.FromContext` / `agent.FromContext` 等 ctx helper，由应用决定 scope（用户 / session / 项目 / 组织 / 工具粒度）。core 不规定 key 命名，也不内置存储后端：`BudgetLimit` 与 `Limiter` 是接口，由应用注入实现。
+key 抽取通常基于 `session.FromContext` / `blades.FromContext` 等 ctx helper，由应用决定 scope（用户 / session / 项目 / 组织 / 工具粒度）。core 不规定 key 命名，也不内置存储后端：`BudgetLimit` 与 `Limiter` 是接口，由应用注入实现。
 
 > 注意：v1 Policy 不裁决模型调用，所以 **模型 token / 调用次数 / 速率** 不属于这里的 Budget / RateLimit。模型侧的同类需求请走 hook、provider 适配层或应用层组合。
 

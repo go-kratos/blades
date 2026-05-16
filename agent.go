@@ -60,13 +60,13 @@ func (a *llmAgent) clone() *llmAgent {
 
 // Run implements the Agent interface.
 func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan event.Output, error) {
+	sess := session.Ensure(ctx)
+	ctx = session.NewContext(ctx, sess)
+	ctx = NewContext(ctx, newRunningAgent(ctx, a))
 	allTools, err := a.resolveTools(ctx)
 	if err != nil {
 		return nil, err
 	}
-	sess := session.Ensure(ctx)
-	ctx = session.NewContext(ctx, sess)
-	ctx = newRuntimeAgentContext(ctx, a)
 	output := make(chan event.Output, outputBufferSize)
 	l := &agentLoop{
 		agent:    a,

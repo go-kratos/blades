@@ -16,17 +16,6 @@ type contextBuilder struct {
 	allTools []tools.Tool
 }
 
-type runtimeAgentKey struct{}
-
-func newRuntimeAgentContext(ctx context.Context, agent *llmAgent) context.Context {
-	return context.WithValue(ctx, runtimeAgentKey{}, agent)
-}
-
-func runtimeAgentFromContext(ctx context.Context) (*llmAgent, bool) {
-	agent, ok := ctx.Value(runtimeAgentKey{}).(*llmAgent)
-	return agent, ok
-}
-
 func (b contextBuilder) Build(ctx context.Context) (*model.Request, error) {
 	msgs, err := b.sess.Messages(ctx)
 	if err != nil {
