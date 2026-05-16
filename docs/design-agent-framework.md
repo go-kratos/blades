@@ -243,7 +243,7 @@ blades/
 │   ├── message.go              Message{Role, Parts []content.Part}, type Role string（RoleUser/RoleAssistant/RoleTool）
 │   ├── option.go               Option sealed interface + 内置 CacheHint/ReasoningEffort/ResponseFormat/Sampling/ParallelToolCalls；MergeOptions(defaults, request)
 │   ├── provider.go             Provider 接口（Name + Generate + Stream iter.Seq2）；EmbeddingProvider 平级独立接口
-│   ├── token.go                TokenCounter + TokenCount request-level 计数能力
+│   ├── token.go                TokenCounter + TokenCount + ApproxTokenCounter request-level 计数能力
 │   ├── request.go              Request{Model, System string, Messages, Tools []tools.ToolSpec, Options []Option}
 │   ├── response.go             Response{Message *Message, StopReason, Usage}, Chunk{Parts []content.Part, StopReason, Usage *Usage}
 │   ├── usage.go                Usage{InputTokens, OutputTokens int64}, StopReason 常量
@@ -274,7 +274,7 @@ blades/
 │   └── context.go              NewContext / FromContext / Ensure
 │
 ├── compact/
-│   ├── compact.go              Compactor 接口 + Chain + MessageTokenCounter 接口
+│   ├── compact.go              Compactor 接口 + Chain + WithTokenCounter
 │   ├── window.go               NewWindow(opts...)
 │   ├── budget.go               NewToolResultBudget(maxBytes)
 │   ├── summary.go              NewBlockSummarize(opts...)
@@ -410,14 +410,14 @@ contrib/*   -> model/ 或 tools/
 | `blades` (root) | `Agent`, `RunningAgent`, `NewAgent`, `AgentOption`, `NewAgentTool`, `NewContext`/`FromContext`, `ContextBudget`/`ContextInfo`/`ContextStats`, `ContextInfoFromContext`/`ContextStatsFromContext`, `Runner`/`Result`/`NewRunner`/`RunnerOption`（`Run`/`RunStream`/`RunLive`）, `WithModel`/`WithTools`/`WithToolsResolver`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithContextBudget`/`WithTokenCounter`/`WithPrompt`/`WithDescription` | `blades.Agent` |
 | `content` | `Part`（sealed marker：私有 `part()`），`Text`，`TextFromParts`，`FilePart{URI, MIME, Filename}`，`FileRefPart{ID, MIME}`，`DataPart{Bytes, MIME, Filename}`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.Text{Text: "hi"}` |
 | `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `ToolStart`, `ToolDelta`, `ToolEnd`, `Action`, `LoopExit{Escalate}`, `Handoff{Agent}`, `TurnEnd`（含 `Text()`）, `Error`, `Done`, `StopReason`, `Usage`；构造糖：`NewPromptText`, `NewSteerText` | `event.NewPromptText("hi")` |
-| `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `Provider`(Name+Generate+Stream `iter.Seq2`), `TokenCounter`/`TokenCount`, `EmbeddingProvider`, `Request{Model, System, Messages, Tools []tools.ToolSpec, Options}`, `Response{Message, StopReason, Usage}`, `Chunk{Parts, StopReason, Usage}`, `Option` sealed（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`/`ParallelToolCalls`）, `Usage`, `StopReason`, `Collect`, `MergeOptions` | `model.Provider` |
+| `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `Provider`(Name+Generate+Stream `iter.Seq2`), `TokenCounter`/`TokenCount`/`ApproxTokenCounter`, `EmbeddingProvider`, `Request{Model, System, Messages, Tools []tools.ToolSpec, Options}`, `Response{Message, StopReason, Usage}`, `Chunk{Parts, StopReason, Usage}`, `Option` sealed（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`/`ParallelToolCalls`）, `Usage`, `StopReason`, `Collect`, `MergeOptions` | `model.Provider` |
 | `tools` | `Tool`(Spec+Handle 两方法), `ToolSpec{Name, Description, InputSchema, OutputSchema}`, `Result{Parts []content.Part}`, `Resolver`(List+Resolve), `ToolFilter`, `ToolContext`(ID+Spec), `NewContext`/`FromContext`, `ErrLoopExit`/`ErrHandoff` | `tools.Tool` |
 | `prompt` | `Builder`(接口), `Section`(函数类型), `Static`/`Dynamic`/`System`/`Memory` 工厂, `New` | `prompt.Builder` |
 | `flow` | `NewSequentialAgent`/`NewParallelAgent`/`NewLoopAgent`/`NewRoutingAgent`/`NewDeepAgent` 与对应 `*Config` 结构体 | `flow.NewParallelAgent(cfg)` |
 | `session` | `Session`(6 方法 append-only), `NewSession`, `WithSessionID`/`WithMessages`/`WithMetadata`/`WithState`, `NewContext`/`FromContext`/`Ensure` | `session.Session` |
 | `policy` | `Policy`(Check 单方法), `Decision`, `Action`(Allow/Deny/Ask/Modify), `ToolRequest`, `Chain`/`AllowAll`/`DenyAll`/`Budget`/`RateLimit`/`SafetyCheck` | `policy.Policy` |
 | `hook` | `Hook`（6 方法），`Noop`，carrier `ToolCall`/`Turn`/`TurnSummary`，`Abort`/`ErrAbort`/`AbortError`/`IsAbort` | `hook.Hook` |
-| `compact` | `Compactor`(单方法接口), `Chain`, `NewWindow`, `NewToolResultBudget`, `NewBlockSummarize`, `NewModelSummarizer`, `Summarizer`, `MessageTokenCounter`, `NewModelMessageTokenCounter`, `WithHint`/`HintShrink`/`GetHint` | `compact.Compactor` |
+| `compact` | `Compactor`(单方法接口), `Chain`, `NewWindow`, `NewToolResultBudget`, `NewBlockSummarize`, `NewModelSummarizer`, `Summarizer`, `WithTokenCounter`, `WithHint`/`HintShrink`/`GetHint` | `compact.Compactor` |
 | `memory` | `Memory`(Recall+Remember+Forget), `Entry`, `Query`, `NewInMemory` | `memory.Memory` |
 
 ## 模块详细设计
@@ -498,14 +498,14 @@ v1 核心保留五个组合原语 + 一个 Agent→Tool 适配器：
 
 `session.Session` 面向 Agent Loop，提供消息历史的最小操作集（`ID/Metadata/State/SetState/Append/Messages` 6 方法 append-only），不存在 `Truncate / Replace / Checkpoint / Store` 概念。常用 fork 可由应用层用 `session.NewSession + session.WithMessages + session.WithMetadata` 组合；它不是接口的一部分。JSONL、SQLite、Redis 等持久化后端独立暴露自身 API，不在 `session/` 包内置。详见 [design-session.md](design-session.md)。
 
-`compact.Compactor` 是一个纯函数式接口 `Compact(ctx, []*Message) ([]*Message, error)`。Loop 在每个 model step 构建 `*model.Request` 之前**无条件**调用一次 `Compact`，由 Compactor 自身决定短路（已在预算内零成本透传）或工作（增量摘要、窗口裁剪、tool result 截断）。Compactor 永不写回 Session；其滚动状态（如 summarize 的 offset / summary 内容）通过 `Session.State()` 私有 key（`__compact_summary_offset__` / `__compact_summary_content__`）持久化。详见 [design-compact.md](design-compact.md) §触发时机 与 [design-event-agent-loop.md](design-event-agent-loop.md) §9。
+`compact.Compactor` 是一个纯函数式接口 `Compact(ctx, compact.Request) ([]*Message, error)`。Loop 在每个 model step 构建 `*model.Request` 之前**无条件**调用一次 `Compact`，由 Compactor 自身决定短路（已在预算内零成本透传）或工作（增量摘要、窗口裁剪、tool result 截断）。Compactor 永不写回 Session；其滚动状态（如 summarize 的 offset / summary 内容）通过 `Session.State()` 私有 key（`__compact_summary_offset__` / `__compact_summary_content__`）持久化。详见 [design-compact.md](design-compact.md) §触发时机 与 [design-event-agent-loop.md](design-event-agent-loop.md) §9。
 
 **增量与迭代两个契约支撑"按需控制上下文大小"**：
 
 - **增量压缩**：Session append-only ⇒ 消息下标稳定 ⇒ Compactor 仅需在 `Session.State()` 中维护单调递增的 `offset` 即可区分"已压缩区"与"未压缩区"，每次只对 `msgs[offset:]` 中新增的部分做工作，不会重复对已折叠的历史调用摘要 LLM。详见 [design-compact.md](design-compact.md) §增量压缩契约、[design-session.md](design-session.md) §为什么 append-only 是增量压缩的前提。
 - **迭代压缩 + Hint 重试两层兜底**：单次 `Compact` 调用内部循环折叠批次直到 ① 满足预算 ② `offset` 抵达 `len(msgs) - KeepRecent` 无可压区 ③ 触发安全阀（Step 内）；provider 真实仍报 context-too-long 时由 Loop 透传 `HintShrink` 重试 1 次（Step 间），仍未严格下降则 fail-fast `event.Error`。两层正交不互相替代。详见 [design-compact.md](design-compact.md) §迭代压缩契约、[design-event-agent-loop.md](design-event-agent-loop.md) §上下文超长的两层兜底。
 
-`contextBuilder` 是 Session / Prompt / Compact 与 `*model.Request` 之间的装配逻辑，位于根包私有实现，按有序 pipeline 装配——**先 compact 再 prompt**：`snapshot ← session.Messages(ctx)`；`view ← compactor.Compact(ctx, snapshot)`；`systemParts ← prompt.Builder.Build(ctx)`（memory 召回在此发生）；最终 `*model.Request{System: prompt.JoinText(systemParts), Messages: view, Tools}`。`WithContextBudget` 配置 input/system/messages/tools 预算，`WithTokenCounter` 或 provider 自身的 `model.TokenCounter` 提供完整 request 计数；根包把 `ContextInfo` 暴露给 prompt/memory 构建期、把 `ContextStats` 暴露给 model hooks/provider 调用期。Compactor 仅看 messages、prompt builder 仅看 system，二者互不感知。详见 [design-context-management.md](design-context-management.md)。
+`contextBuilder` 是 Session / Prompt / Compact 与 `*model.Request` 之间的装配逻辑，位于根包私有实现，按有序 pipeline 装配——**先 compact 再 prompt**：`snapshot ← session.Messages(ctx)`；`view ← compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})`；`systemParts ← prompt.Builder.Build(ctx)`（memory 召回在此发生）；最终 `*model.Request{System: prompt.JoinText(systemParts), Messages: view, Tools}`。`WithContextBudget` 配置 input/system/messages/tools 预算，`WithTokenCounter`、provider 自身的 `model.TokenCounter` 或 `model.ApproxTokenCounter` 提供完整 request 计数；根包把 `ContextInfo` 暴露给 prompt/memory 构建期，把 `ContextStats` 暴露给 model hooks/provider 调用期。Compactor 仅看 messages、prompt builder 仅看 system，二者互不感知。详见 [design-context-management.md](design-context-management.md)。
 
 `memory/` 提供 `Memory` 接口（`Recall + Remember + Forget` 三方法，围绕 `Entry` / `Query` 结构体），不在根 Agent 内置。应用层在 prompt builder 中调用 `memory.Recall` 注入相关记忆，在 turn 结束后调用 `memory.Remember` 写入已归一化的单条 Entry，并在用户撤回 / TTL 过期 / 人工纠错时通过 `memory.Forget(ctx, entry)` 删除条目（按 Entry.ID，空 ID 报错）。Memory 不进根 Agent 配置；保持根包极简。
 

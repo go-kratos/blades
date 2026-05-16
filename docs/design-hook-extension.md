@@ -261,7 +261,7 @@ Hook 不是通用事件总线。下列事件不进入 `hook/`：
 
 ### 为什么没有 `RunStart` / `RunEnd` / `PreCompact`
 
-- **Compact** 是独立扩展点 `compact.Compactor`（`Compact(ctx, msgs) -> msgs`）；需要在压缩前后做指标 / 日志的应用包一层 `Compactor` 即可。把 compact 放进 hook 会让 `compact/` 被迫依赖 `hook/`，与依赖图里 `compact/ -> model/` 的单向约束冲突。
+- **Compact** 是独立扩展点 `compact.Compactor`（`Compact(ctx, compact.Request) -> msgs`）；需要在压缩前后做指标 / 日志的应用包一层 `Compactor` 即可。把 compact 放进 hook 会让 `compact/` 被迫依赖 `hook/`，与依赖图里 `compact/ -> model/` 的单向约束冲突。
 - **Run 生命周期**由输出流上的 `event.Done` / `event.Error` 自然表达：`Done` 在 channel 关闭前发送；run 起点则是调用 `Agent.Run` 本身。再额外引入 `RunStart` / `RunEnd` 会与 channel 语义重复。
 
 ### 为什么 `WithHooks` 接收变长 `Hook`

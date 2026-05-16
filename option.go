@@ -16,14 +16,6 @@ type AgentOption func(*llmAgent)
 func WithModel(p model.Provider) AgentOption {
 	return func(a *llmAgent) {
 		a.provider = p
-		if a.tokenCounterSet {
-			return
-		}
-		if counter, ok := p.(model.TokenCounter); ok {
-			a.tokenCounter = counter
-		} else {
-			a.tokenCounter = nil
-		}
 	}
 }
 
@@ -77,11 +69,11 @@ func WithContextBudget(b ContextBudget) AgentOption {
 }
 
 // WithTokenCounter sets the request-level token counter used for context stats
-// and budget enforcement.
+// and budget enforcement. When nil, the Agent falls back to provider counting
+// or the default approximate counter.
 func WithTokenCounter(counter model.TokenCounter) AgentOption {
 	return func(a *llmAgent) {
 		a.tokenCounter = counter
-		a.tokenCounterSet = true
 	}
 }
 

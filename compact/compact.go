@@ -2,51 +2,45 @@ package compact
 
 import (
 	"context"
-	"errors"
 
 	"github.com/go-kratos/blades/model"
 )
 
 // Compactor transforms a message slice to fit within context budget.
 type Compactor interface {
-	Compact(ctx context.Context, msgs []*model.Message) ([]*model.Message, error)
+	Compact(ctx context.Context, req Request) ([]*model.Message, error)
+}
+
+// Request is the runtime input to a compactor.
+type Request struct {
+	Messages     []*model.Message
+	TokenCounter model.TokenCounter
 }
 
 // CompactorFunc is a function adapter for Compactor.
-type CompactorFunc func(ctx context.Context, msgs []*model.Message) ([]*model.Message, error)
+type CompactorFunc func(ctx context.Context, req Request) ([]*model.Message, error)
 
-func (f CompactorFunc) Compact(ctx context.Context, msgs []*model.Message) ([]*model.Message, error) {
-	return f(ctx, msgs)
+func (f CompactorFunc) Compact(ctx context.Context, req Request) ([]*model.Message, error) {
+	return f(ctx, req)
 }
 
 // Chain composes multiple compactors in sequence.
 func Chain(cs ...Compactor) Compactor {
-	return CompactorFunc(func(ctx context.Context, msgs []*model.Message) ([]*model.Message, error) {
+	return CompactorFunc(func(ctx context.Context, req Request) ([]*model.Message, error) {
 		var err error
+		msgs := req.Messages
 		for _, c := range cs {
 			if c == nil {
 				continue
 			}
-			msgs, err = c.Compact(ctx, msgs)
+			req.Messages = msgs
+			msgs, err = c.Compact(ctx, req)
 			if err != nil {
 				return nil, err
 			}
 		}
 		return msgs, nil
 	})
-}
-
-// MessageTokenCounter counts tokens for a message view.
-type MessageTokenCounter interface {
-	CountMessages(ctx context.Context, msgs ...*model.Message) (int64, error)
-}
-
-// MessageTokenCounterFunc adapts a function into a MessageTokenCounter.
-type MessageTokenCounterFunc func(ctx context.Context, msgs ...*model.Message) (int64, error)
-
-// CountMessages implements MessageTokenCounter.
-func (f MessageTokenCounterFunc) CountMessages(ctx context.Context, msgs ...*model.Message) (int64, error) {
-	return f(ctx, msgs...)
 }
 
 // SummaryRequest is the input to a Summarizer.
@@ -78,7 +72,7 @@ type options struct {
 	maxSummaryBlocks     int
 	summaryBatchMessages int
 	maxFoldIterations    int
-	counter              MessageTokenCounter
+	counter              model.TokenCounter
 	summarizer           Summarizer
 }
 
@@ -99,8 +93,11 @@ func WithMaxTokens(n int64) Option {
 	}
 }
 
-// WithMessageTokenCounter sets the token counter used by budgeted compactors.
-func WithMessageTokenCounter(tc MessageTokenCounter) Option {
+// WithTokenCounter sets the token counter used by budgeted compactors.
+//
+// Compactors count only the message view by invoking the counter with
+// model.Request{Messages: msgs}.
+func WithTokenCounter(tc model.TokenCounter) Option {
 	return func(o *options) {
 		o.counter = tc
 	}
@@ -162,26 +159,24 @@ func WithSummarizer(s Summarizer) Option {
 	}
 }
 
-// NewModelMessageTokenCounter adapts a full request token counter for
-// message-only compaction decisions.
-func NewModelMessageTokenCounter(counter model.TokenCounter) MessageTokenCounter {
-	return modelMessageTokenCounter{counter: counter}
-}
-
-type modelMessageTokenCounter struct {
-	counter model.TokenCounter
-}
-
-func (c modelMessageTokenCounter) CountMessages(ctx context.Context, msgs ...*model.Message) (int64, error) {
-	if c.counter == nil {
-		return 0, errors.New("compact: model token counter is required")
-	}
-	count, err := c.counter.CountTokens(ctx, &model.Request{Messages: msgs})
+func countMessagesTokens(ctx context.Context, counter model.TokenCounter, msgs ...*model.Message) (int64, error) {
+	counter = resolveTokenCounter(counter)
+	count, err := counter.CountTokens(ctx, &model.Request{Messages: msgs})
 	if err != nil {
 		return 0, err
 	}
-	if count.HasBreakdown || count.MessagesTokens > 0 {
+	if count.HasBreakdown {
+		return count.MessagesTokens, nil
+	}
+	if count.MessagesTokens > 0 {
 		return count.MessagesTokens, nil
 	}
 	return count.InputTokens, nil
+}
+
+func resolveTokenCounter(counter model.TokenCounter) model.TokenCounter {
+	if counter != nil {
+		return counter
+	}
+	return model.ApproxTokenCounter{}
 }

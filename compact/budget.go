@@ -19,7 +19,8 @@ type toolResultBudget struct {
 	maxBytes int64
 }
 
-func (t *toolResultBudget) Compact(_ context.Context, msgs []*model.Message) ([]*model.Message, error) {
+func (t *toolResultBudget) Compact(_ context.Context, req Request) ([]*model.Message, error) {
+	msgs := req.Messages
 	if t.maxBytes <= 0 {
 		return msgs, nil
 	}

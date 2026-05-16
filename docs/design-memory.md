@@ -103,7 +103,7 @@ Memory 与 Compact（[design-compact.md](design-compact.md)）在 Agent Loop 中
 | 维度 | Memory | Compact |
 |------|--------|---------|
 | 作用对象 | `*model.Request.System`（prompt 的 system 段） | `*model.Request.Messages`（消息历史段） |
-| 调用入口 | `prompt.Memory(...)` section → `prompt.Builder.Build` | Agent Loop 请求构造阶段调用 `compactor.Compact(ctx, snapshot)` |
+| 调用入口 | `prompt.Memory(...)` section → `prompt.Builder.Build` | Agent Loop 请求构造阶段调用 `compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})` |
 | 数据源 | 跨 turn / 跨 session 的长期上下文存储 | 当前 Session 的 `Messages()` 快照 |
 | 是否进入 Session | 不进 | 不进（仅 rolling state 进 `State()`） |
 | 是否每 step 重新计算 | 是（每个 model step 重新 `Recall`，除非 section 内部缓存） | 是（带状态 Compactor 通过 `__compact_*__` state 增量复用） |

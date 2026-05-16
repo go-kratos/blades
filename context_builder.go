@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-kratos/blades/compact"
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/prompt"
@@ -18,6 +19,7 @@ type contextBuilder struct {
 }
 
 func (b contextBuilder) Build(ctx context.Context) (*model.Request, ContextStats, error) {
+	counter := b.agent.contextTokenCounter()
 	ctx = newContextInfo(ctx, ContextInfo{
 		Purpose: ContextPurposeMain,
 		Budget:  b.agent.contextBudget,
@@ -29,7 +31,10 @@ func (b contextBuilder) Build(ctx context.Context) (*model.Request, ContextStats
 	}
 	messagesBefore := len(msgs)
 	if b.agent.compactor != nil {
-		msgs, err = b.agent.compactor.Compact(ctx, msgs)
+		msgs, err = b.agent.compactor.Compact(ctx, compact.Request{
+			Messages:     msgs,
+			TokenCounter: counter,
+		})
 		if err != nil {
 			return nil, ContextStats{}, err
 		}
@@ -51,7 +56,7 @@ func (b contextBuilder) Build(ctx context.Context) (*model.Request, ContextStats
 		Messages: msgs,
 		Tools:    toolSpecs,
 	}
-	stats, err := contextStatsForRequest(ctx, req, b.agent.contextBudget, messagesBefore, b.agent.tokenCounter)
+	stats, err := contextStatsForRequest(ctx, req, b.agent.contextBudget, messagesBefore, counter)
 	if err != nil {
 		return nil, ContextStats{}, err
 	}
@@ -141,8 +146,4 @@ func normalizeTokenCount(count model.TokenCount) model.TokenCount {
 		count.InputTokens = count.SystemTokens + count.MessagesTokens + count.ToolTokens
 	}
 	return count
-}
-
-func contextBudgetRequiresCounter(budget ContextBudget) bool {
-	return budget.InputTokens > 0 || budget.SystemTokens > 0 || budget.MessagesTokens > 0 || budget.ToolTokens > 0
 }

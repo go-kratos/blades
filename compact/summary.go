@@ -47,7 +47,7 @@ type blockSummarizeCompactor struct {
 	maxSummaryBlocks     int
 	summaryBatchMessages int
 	maxFoldIterations    int
-	counter              MessageTokenCounter
+	counter              model.TokenCounter
 	summarizer           Summarizer
 }
 
@@ -62,7 +62,8 @@ type blockSummaryBlock struct {
 	Summary string `json:"summary"`
 }
 
-func (b *blockSummarizeCompactor) Compact(ctx context.Context, msgs []*model.Message) ([]*model.Message, error) {
+func (b *blockSummarizeCompactor) Compact(ctx context.Context, req Request) ([]*model.Message, error) {
+	msgs := req.Messages
 	if len(msgs) == 0 {
 		return msgs, nil
 	}
@@ -79,12 +80,12 @@ func (b *blockSummarizeCompactor) Compact(ctx context.Context, msgs []*model.Mes
 	changed := false
 	for i := 0; i < b.maxFoldIterations; i++ {
 		covered := state.covered()
-		recentStart, err := b.recentStart(ctx, msgs, groups, covered)
+		recentStart, err := b.recentStart(ctx, req.TokenCounter, msgs, groups, covered)
 		if err != nil {
 			return nil, err
 		}
 		view := assembleSummaryView(state.Blocks, msgs)
-		shouldFold, err := b.shouldFold(ctx, view, covered, recentStart)
+		shouldFold, err := b.shouldFold(ctx, req.TokenCounter, view, covered, recentStart)
 		if err != nil {
 			return nil, err
 		}
@@ -163,12 +164,16 @@ func (s blockSummaryState) covered() int {
 	return s.Blocks[len(s.Blocks)-1].End
 }
 
-func (b *blockSummarizeCompactor) shouldFold(ctx context.Context, view []*model.Message, covered int, recentStart int) (bool, error) {
+func (b *blockSummarizeCompactor) shouldFold(ctx context.Context, reqCounter model.TokenCounter, view []*model.Message, covered int, recentStart int) (bool, error) {
 	if covered < recentStart {
 		return true, nil
 	}
-	if b.messagesBudget > 0 && b.counter != nil {
-		tokens, err := b.counter.CountMessages(ctx, view...)
+	if b.messagesBudget > 0 {
+		counter := b.counter
+		if counter == nil {
+			counter = reqCounter
+		}
+		tokens, err := countMessagesTokens(ctx, counter, view...)
 		if err != nil {
 			return false, err
 		}
@@ -177,7 +182,7 @@ func (b *blockSummarizeCompactor) shouldFold(ctx context.Context, view []*model.
 	return false, nil
 }
 
-func (b *blockSummarizeCompactor) recentStart(ctx context.Context, msgs []*model.Message, groups []messageGroup, covered int) (int, error) {
+func (b *blockSummarizeCompactor) recentStart(ctx context.Context, reqCounter model.TokenCounter, msgs []*model.Message, groups []messageGroup, covered int) (int, error) {
 	keepMessages := b.keepRecentMessages
 	if GetHint(ctx) == HintShrink && keepMessages > 1 {
 		keepMessages = keepMessages / 2
@@ -190,9 +195,13 @@ func (b *blockSummarizeCompactor) recentStart(ctx context.Context, msgs []*model
 	if keepMessages > 0 {
 		recentStart = retainLastMessages(groups, keepMessages)
 	}
-	if b.keepRecentTokens > 0 && b.counter != nil {
+	if b.keepRecentTokens > 0 {
+		counter := b.counter
+		if counter == nil {
+			counter = reqCounter
+		}
 		for recentStart < len(msgs) {
-			tokens, err := b.counter.CountMessages(ctx, msgs[recentStart:]...)
+			tokens, err := countMessagesTokens(ctx, counter, msgs[recentStart:]...)
 			if err != nil {
 				return 0, err
 			}

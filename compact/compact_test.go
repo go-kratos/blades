@@ -21,13 +21,13 @@ func TestWindowDropsWholeToolPairAtBoundary(t *testing.T) {
 		textMessage(model.RoleAssistant, "final"),
 	}
 
-	view, err := NewWindow(WithMaxMessages(2)).Compact(context.Background(), msgs)
+	view, err := NewWindow(WithMaxMessages(2)).Compact(context.Background(), Request{Messages: msgs})
 	require.NoError(t, err)
 	require.Len(t, view, 1)
 	assert.Equal(t, model.RoleAssistant, view[0].Role)
 	assert.Equal(t, "final", content.TextFromParts(view[0].Parts))
 
-	view, err = NewWindow(WithMaxMessages(3)).Compact(context.Background(), msgs)
+	view, err = NewWindow(WithMaxMessages(3)).Compact(context.Background(), Request{Messages: msgs})
 	require.NoError(t, err)
 	require.Len(t, view, 3)
 	assert.Equal(t, model.RoleAssistant, view[0].Role)
@@ -38,7 +38,7 @@ func TestWindowDropsWholeToolPairAtBoundary(t *testing.T) {
 func TestWindowRejectsDanglingToolResult(t *testing.T) {
 	msgs := []*model.Message{toolResultMessage("call-1", "result")}
 
-	_, err := NewWindow().Compact(context.Background(), msgs)
+	_, err := NewWindow().Compact(context.Background(), Request{Messages: msgs})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "dangling tool message")
 }
@@ -50,7 +50,7 @@ func TestToolResultBudgetDoesNotMutateOriginal(t *testing.T) {
 		toolResultMessage("call-1", originalText),
 	}
 
-	view, err := NewToolResultBudget(20).Compact(context.Background(), msgs)
+	view, err := NewToolResultBudget(20).Compact(context.Background(), Request{Messages: msgs})
 	require.NoError(t, err)
 	require.Len(t, view, 2)
 
@@ -60,26 +60,49 @@ func TestToolResultBudgetDoesNotMutateOriginal(t *testing.T) {
 	assert.NotEqual(t, originalText, truncated)
 }
 
-func TestModelMessageTokenCounterUsesMessageBreakdown(t *testing.T) {
+func TestCountMessagesTokensUsesMessageBreakdown(t *testing.T) {
 	counter := model.TokenCounterFunc(func(_ context.Context, req *model.Request) (model.TokenCount, error) {
 		assert.Empty(t, req.System)
 		assert.Empty(t, req.Tools)
 		return model.TokenCount{InputTokens: 99, MessagesTokens: 7, HasBreakdown: true}, nil
 	})
 
-	tokens, err := NewModelMessageTokenCounter(counter).CountMessages(context.Background(), textMessage(model.RoleUser, "hello"))
+	tokens, err := countMessagesTokens(context.Background(), counter, textMessage(model.RoleUser, "hello"))
 	require.NoError(t, err)
 	assert.Equal(t, int64(7), tokens)
 }
 
-func TestModelMessageTokenCounterFallsBackToInputTokens(t *testing.T) {
+func TestCountMessagesTokensFallsBackToInputTokens(t *testing.T) {
 	counter := model.TokenCounterFunc(func(context.Context, *model.Request) (model.TokenCount, error) {
 		return model.TokenCount{InputTokens: 9}, nil
 	})
 
-	tokens, err := NewModelMessageTokenCounter(counter).CountMessages(context.Background(), textMessage(model.RoleUser, "hello"))
+	tokens, err := countMessagesTokens(context.Background(), counter, textMessage(model.RoleUser, "hello"))
 	require.NoError(t, err)
 	assert.Equal(t, int64(9), tokens)
+}
+
+func TestWindowUsesRequestTokenCounter(t *testing.T) {
+	called := false
+	counter := model.TokenCounterFunc(func(_ context.Context, req *model.Request) (model.TokenCount, error) {
+		called = true
+		return model.TokenCount{InputTokens: int64(len(req.Messages)) * 10}, nil
+	})
+	msgs := []*model.Message{
+		textMessage(model.RoleUser, "one"),
+		textMessage(model.RoleAssistant, "two"),
+		textMessage(model.RoleUser, "three"),
+	}
+
+	view, err := NewWindow(WithMaxTokens(15)).Compact(context.Background(), Request{
+		Messages:     msgs,
+		TokenCounter: counter,
+	})
+	require.NoError(t, err)
+
+	require.True(t, called)
+	require.Len(t, view, 1)
+	assert.Equal(t, "three", content.TextFromParts(view[0].Parts))
 }
 
 func TestBlockSummarizeBuildsSummaryBlocksAndKeepsSessionMessages(t *testing.T) {
@@ -101,7 +124,7 @@ func TestBlockSummarizeBuildsSummaryBlocksAndKeepsSessionMessages(t *testing.T) 
 		WithKeepRecentMessages(2),
 		WithSummaryBatchMessages(2),
 		WithSummarizer(summarizer),
-	).Compact(ctx, snapshot)
+	).Compact(ctx, Request{Messages: snapshot})
 	require.NoError(t, err)
 
 	require.Len(t, view, 4)
@@ -140,7 +163,7 @@ func TestBlockSummarizeMergesOldSummaryBlocks(t *testing.T) {
 		WithSummaryBatchMessages(1),
 		WithMaxSummaryBlocks(1),
 		WithSummarizer(summarizer),
-	).Compact(ctx, msgs)
+	).Compact(ctx, Request{Messages: msgs})
 	require.NoError(t, err)
 
 	require.Len(t, view, 2)

@@ -17,7 +17,7 @@ tags: [agentos, compact, context, token-budget]
 
 ## 概述
 
-`compact/` 把历史 `[]*model.Message` 转换为仍然合法、但更短的消息列表，以适配 provider 的 token 预算。v1 的核心抽象是一个无副作用的纯函数式接口 `Compactor`，外加一个独立的 `MessageTokenCounter` 用于估算消息体积。
+`compact/` 把历史 `[]*model.Message` 转换为仍然合法、但更短的消息列表，以适配 provider 的 token 预算。v1 的核心抽象是一个无副作用的纯函数式接口 `Compactor`；内置预算策略复用 `model.TokenCounter`，用 `model.Request{Messages: msgs}` 计量 message view。计数器优先级是显式 `compact.WithTokenCounter` > `compact.Request.TokenCounter` > `model.ApproxTokenCounter`。
 
 设计边界：
 
@@ -33,14 +33,16 @@ package compact
 
 // Compactor compacts a message list into a shorter, still-valid message list.
 type Compactor interface {
-    Compact(ctx context.Context, msgs []*model.Message) ([]*model.Message, error)
+    Compact(ctx context.Context, req Request) ([]*model.Message, error)
 }
 
-// MessageTokenCounter estimates token usage of one or more messages.
-// Implementations may use model-specific tokenizers or heuristic approximations.
-type MessageTokenCounter interface {
-    CountMessages(ctx context.Context, msgs ...*model.Message) (int64, error)
+type Request struct {
+    Messages     []*model.Message
+    TokenCounter model.TokenCounter
 }
+
+// Budgeted compactors accept model.TokenCounter via compact.WithTokenCounter.
+// If omitted, they use Request.TokenCounter, then model.ApproxTokenCounter.
 ```
 
 约束（Compactor 必须遵守）：
@@ -75,7 +77,7 @@ func NewModelSummarizer(provider model.Provider, opts ...SummarizerOption) Summa
 c := compact.NewWindow(
     compact.WithMaxMessages(100),
     compact.WithMaxTokens(32_000),
-    compact.WithMessageTokenCounter(tokens),
+    compact.WithTokenCounter(tokens),
 )
 ```
 
@@ -95,7 +97,7 @@ c := compact.NewBlockSummarize(
     compact.WithKeepRecentMessages(10),
     compact.WithSummaryBlockTokens(20_000),
     compact.WithSummaryBatchMessages(20),
-    compact.WithMessageTokenCounter(tokens),
+    compact.WithTokenCounter(tokens),
     compact.WithSummarizer(compact.NewModelSummarizer(summaryModel)),
 )
 ```
@@ -130,7 +132,7 @@ c := compact.NewChain(
     compact.NewBlockSummarize(compact.WithSummarizer(compact.NewModelSummarizer(summaryModel))),
 )
 
-msgs, err := c.Compact(ctx, original)
+msgs, err := c.Compact(ctx, compact.Request{Messages: original, TokenCounter: counter})
 ```
 
 契约：
@@ -211,7 +213,7 @@ for {
 
 Compactor 的调用点位于 Agent Loop 的请求构造阶段，遵循**"Loop 无条件调用、Compactor 自适应"**契约：
 
-1. **Loop 无条件调用**：每个 model step 构建 `*model.Request` 之前，Loop 都调用一次 `compactor.Compact(ctx, snapshot)`（hint 通过 `compact.WithHint(ctx, ...)` 注入 ctx）。Loop 不再判断"是否到了该压缩的时机"。
+1. **Loop 无条件调用**：每个 model step 构建 `*model.Request` 之前，Loop 都调用一次 `compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})`（hint 通过 `compact.WithHint(ctx, ...)` 注入 ctx）。Loop 不再判断"是否到了该压缩的时机"。
 2. **Compactor 自适应短路**：
    - `Window` / `ToolResultBudget` 等纯函数策略在已经低于预算时直接 `return msgs, nil` 零成本透传。
    - `Summarize` 等带状态策略读取 `Session.State()` 中的 rolling summary 键（`__compact_summary_offset__` / `__compact_summary_content__`），仅当未摘要部分增长跨过阈值时才调用 LLM；其余调用直接拼接已有摘要 + 增量原文返回。
@@ -235,7 +237,7 @@ Memory（`memory.Memory`，参见 [design-memory.md](design-memory.md)）和 Com
 - **调用顺序（在请求构造阶段）**：
   ```
   snapshot := session.Messages(ctx)              // 1. 全量原始消息
-  view     := compactor.Compact(ctx, snapshot)   // 2. 仅作用于 Messages 段
+  view     := compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter}) // 2. 仅作用于 Messages 段
   system   := prompt.Builder.Build(ctx)          // 3. memory.Recall 在此处发生
   request  := &model.Request{
       System:   systemTextFrom(system),
@@ -280,7 +282,7 @@ Memory（`memory.Memory`，参见 [design-memory.md](design-memory.md)）和 Com
 ## 设计决策
 
 1. **单一接口 + 组合优先**：所有压缩方式都表现为 `Compactor`，通过 `Chain` 组合；不同策略不需要新接口。
-2. **MessageTokenCounter 与 Compactor 解耦**：估算与压缩各司其职，便于不同压缩策略复用同一 message 视图计数器；完整 request 计数属于 `model.TokenCounter`。
+2. **TokenCounter 语义统一**：完整 request 计数和 compact message view 计数都复用 `model.TokenCounter`；compact 内部只传 `model.Request{Messages: msgs}`，避免维护第二套 token 接口。默认 Agent 会把当前 counter 显式放进 `compact.Request`，因此 compact 与 root budget 默认使用同一套计数语义。
 3. **摘要器以 `Summarizer` 注入，provider-direct helper 可选**：`compact.Summarizer` 是压缩层接口；`NewModelSummarizer` 直接调用 `model.Provider.Generate`，不 fork Agent、不执行工具、不递归 compact。
 4. **状态可选**：无 Session = 等价无状态调用；有 Session = 借助 `State()` 做增量摘要。compact 不暴露独立的状态接口。
 5. **Loop 无条件调用、Compactor 自适应**：compact 实现不感知"是否到该压"，由策略自身决定短路或工作；Loop 不写"判断阈值再触发"分支，避免重复实现与漂移。
@@ -300,13 +302,13 @@ Memory（`memory.Memory`，参见 [design-memory.md](design-memory.md)）和 Com
 ## 与红线对照
 
 - r20：`Compactor` 单一接口；内置 `NewWindow`、`NewToolResultBudget`、`NewBlockSummarize`、`Chain` 在 v1 提供。
-- r20：`MessageTokenCounter` 与 `Compactor` 同层，互不依赖。
+- r20：`Compactor` 不定义第二套 token counter；预算策略通过 `model.TokenCounter` 计量 message view。
 - r20：摘要器以 `Summarizer` 注入；provider-direct `NewModelSummarizer` 不依赖 root Agent，避免 compact 与 root 形成依赖环。
 - r20：provider invariant 由实现内部负责，并建议复用 helper（planned）。
 
 ## 已知 gap
 
-当前代码已经收敛到 `compact.Compactor` / `MessageTokenCounter` / `NewModelSummarizer` 形态。剩余 gap：
+当前代码已经收敛到 `compact.Compactor` / `model.TokenCounter` / `NewModelSummarizer` 形态。剩余 gap：
 
 1. 共享不变量校验 helper 尚未实现；目前由各 compactor 内部调用 message grouping 校验。
 2. provider context-too-long 错误归一化与 `HintShrink` 二次构造重试尚未完整接入默认 Loop。

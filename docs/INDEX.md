@@ -19,7 +19,7 @@
 - [Prompt 系统](./design-prompt.md) - Builder 接口 + Section 函数类型；Static/Text/Memory 工厂 `[draft]`
 - [Compact 系统](./design-compact.md) - 单一 Compactor 接口与内置实现（Window/ToolResultBudget/Summarize/Chain） `[draft]`
 - [Context Management](./design-context-management.md) - root Agent request-view 构建、input/system/messages/tools 预算协同、context stats 与 summary request 边界 `[draft]`
-- [Model 与 Provider](./design-model-provider.md) - `model/` Message、Part、Provider（Name/Generate/Stream）、TokenCounter/TokenCount（按能力探测）、Request/Response/Chunk、Options sealed union `[draft]`
+- [Model 与 Provider](./design-model-provider.md) - `model/` Message、Part、Provider（Name/Generate/Stream）、TokenCounter/TokenCount/ApproxTokenCounter、Request/Response/Chunk、Options sealed union `[draft]`
 
 ## 参考文档
 

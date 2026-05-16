@@ -14,9 +14,6 @@ func Fork(agent Agent, opts ...AgentOption) (Agent, error) {
 	if fork.provider == nil {
 		return nil, ErrModelProviderRequired
 	}
-	if err := fork.prepareContextCounting(); err != nil {
-		return nil, err
-	}
 	return fork, nil
 }
 

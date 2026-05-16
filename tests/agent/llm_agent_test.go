@@ -267,13 +267,25 @@ func TestLLMAgentExposesContextInfoAndStats(t *testing.T) {
 	assert.Equal(t, 1, capture.stats.MessagesAfter)
 }
 
-func TestLLMAgentRequiresTokenCounterForEnforcedContextBudget(t *testing.T) {
-	_, err := blades.NewAgent(
+func TestLLMAgentUsesApproxTokenCounterForContextBudget(t *testing.T) {
+	capture := &contextStatsCaptureHook{}
+	agent, err := blades.NewAgent(
 		"assistant",
 		blades.WithModel(dummyprovider.NewProvider(dummyprovider.TextResponse("ok"))),
 		blades.WithContextBudget(blades.ContextBudget{InputTokens: 100}),
+		blades.WithHooks(capture),
 	)
-	assert.ErrorIs(t, err, blades.ErrContextTokenCounterRequired)
+	assert.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("hello"))
+	assert.NoError(t, err)
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.NoError(t, turnEnd.Err)
+
+	assert.True(t, capture.ok)
+	assert.True(t, capture.stats.Count.HasBreakdown)
+	assert.Positive(t, capture.stats.Count.InputTokens)
 }
 
 func TestLLMAgentUsesProviderTokenCounterForContextBudget(t *testing.T) {
@@ -296,6 +308,42 @@ func TestLLMAgentUsesProviderTokenCounterForContextBudget(t *testing.T) {
 
 	assert.True(t, capture.ok)
 	assert.Equal(t, int64(len("system")+len("hello")), capture.stats.Count.InputTokens)
+}
+
+func TestForkWithModelUsesNewProviderTokenCounter(t *testing.T) {
+	baseProvider := &fixedCountingProvider{
+		captureProvider: newCaptureProvider(dummyprovider.TextResponse("base")),
+		inputTokens:     99,
+	}
+	forkProvider := &fixedCountingProvider{
+		captureProvider: newCaptureProvider(dummyprovider.TextResponse("fork")),
+		inputTokens:     7,
+	}
+	base, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(baseProvider),
+		blades.WithContextBudget(blades.ContextBudget{InputTokens: 100}),
+	)
+	assert.NoError(t, err)
+
+	capture := &contextStatsCaptureHook{}
+	fork, err := blades.Fork(
+		base,
+		blades.WithModel(forkProvider),
+		blades.WithHooks(capture),
+	)
+	assert.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), fork, promptInputs("hello"))
+	assert.NoError(t, err)
+	turnEnd, ok := lastTurnEnd(outputs)
+	assert.True(t, ok)
+	assert.NoError(t, turnEnd.Err)
+
+	assert.True(t, capture.ok)
+	assert.Equal(t, int64(7), capture.stats.Count.InputTokens)
+	assert.Len(t, forkProvider.Requests(), 1)
+	assert.Empty(t, baseProvider.Requests())
 }
 
 func TestLLMAgentRechecksContextBudgetAfterBeforeModelHook(t *testing.T) {
@@ -1377,8 +1425,17 @@ type autoCountingProvider struct {
 	*captureProvider
 }
 
+type fixedCountingProvider struct {
+	*captureProvider
+	inputTokens int64
+}
+
 func (p *autoCountingProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
 	return countRequestTokens(ctx, req)
+}
+
+func (p *fixedCountingProvider) CountTokens(context.Context, *model.Request) (model.TokenCount, error) {
+	return model.TokenCount{InputTokens: p.inputTokens}, nil
 }
 
 func countRequestTokens(_ context.Context, req *model.Request) (model.TokenCount, error) {

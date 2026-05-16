@@ -269,7 +269,8 @@ func (l *agentLoop) endTurn(turn *hook.Turn, result turnState, err error) {
 }
 
 func (l *agentLoop) runStep() (*model.Response, error) {
-	req, stats, err := l.buildRequest()
+	counter := l.agent.contextTokenCounter()
+	req, stats, err := l.buildRequest(l.ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +281,7 @@ func (l *agentLoop) runStep() (*model.Response, error) {
 			return nil, err
 		}
 	}
-	stats, err = contextStatsForRequest(modelCtx, req, l.agent.contextBudget, stats.MessagesBefore, l.agent.tokenCounter)
+	stats, err = contextStatsForRequest(modelCtx, req, l.agent.contextBudget, stats.MessagesBefore, counter)
 	if err != nil {
 		return nil, err
 	}
@@ -306,12 +307,12 @@ func (l *agentLoop) runStep() (*model.Response, error) {
 	return resp, nil
 }
 
-func (l *agentLoop) buildRequest() (*model.Request, ContextStats, error) {
+func (l *agentLoop) buildRequest(ctx context.Context) (*model.Request, ContextStats, error) {
 	return contextBuilder{
 		agent:    l.agent,
 		sess:     l.sess,
 		allTools: l.allTools,
-	}.Build(l.ctx)
+	}.Build(ctx)
 }
 
 func (l *agentLoop) streamStep(ctx context.Context, req *model.Request) (*model.Response, error) {

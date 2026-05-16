@@ -21,12 +21,14 @@ func TestContextBuilderCompactsThenBuildsPromptAndStats(t *testing.T) {
 	))
 	budget := ContextBudget{SystemTokens: 100, MessagesTokens: 100, ResponseReserveTokens: 10}
 	var compactInfo ContextInfo
+	var compactCounterOK bool
 	var promptInfo ContextInfo
 	agent := &llmAgent{
 		provider: testProvider{name: "test-model"},
-		compactor: compact.CompactorFunc(func(ctx context.Context, msgs []*model.Message) ([]*model.Message, error) {
+		compactor: compact.CompactorFunc(func(ctx context.Context, req compact.Request) ([]*model.Message, error) {
 			compactInfo, _ = ContextInfoFromContext(ctx)
-			return msgs[1:], nil
+			compactCounterOK = req.TokenCounter != nil
+			return req.Messages[1:], nil
 		}),
 		promptBuilders: []prompt.Builder{
 			prompt.Section(func(ctx context.Context) ([]content.Part, error) {
@@ -54,6 +56,7 @@ func TestContextBuilderCompactsThenBuildsPromptAndStats(t *testing.T) {
 	assert.Equal(t, ContextPurposeMain, compactInfo.Purpose)
 	assert.Equal(t, budget, compactInfo.Budget)
 	assert.Equal(t, compactInfo, promptInfo)
+	assert.True(t, compactCounterOK)
 	assert.Equal(t, ContextPurposeMain, stats.Purpose)
 	assert.Equal(t, int64(len("system")), stats.Count.SystemTokens)
 	assert.Equal(t, int64(len("recent")), stats.Count.MessagesTokens)

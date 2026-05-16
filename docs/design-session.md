@@ -100,7 +100,7 @@ Session 与 compaction **完全解耦**：
 - `Messages()` 永远返回完整原始快照（Session 是审计真相）。
 - Compaction 是 **Agent Loop request construction** 的策略层职责，且**不写回 Session**。Loop 每次构造模型请求时按以下流程（Compactor 自适应契约见 [design-compact.md](design-compact.md) §触发时机）：
   1. `msgs, _ := session.Messages(ctx)`
-  2. `view, err := compactor.Compact(ctx, msgs, hint)`  // 纯变换，不副作用；Compactor 自身决定是否短路
+  2. `view, err := compactor.Compact(ctx, compact.Request{Messages: msgs, TokenCounter: counter})`  // 纯变换，不副作用；Compactor 自身决定是否短路
   3. 用 `view` 组装 `model.Request` 调用 provider
   4. provider 返回的 final assistant 消息与本 step 的全部 tool 结果作为一个语义组通过一次 `Append` 写回 Session（仍然是完整原始消息，不是压缩后的视图）
 - compactor 的滚动状态（如 summarize 的 `offset` / `summaryContent`）通过 `Session.State()` 持久化，避免每轮重算。参见 [design-compact.md](design-compact.md) §3。

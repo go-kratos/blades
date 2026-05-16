@@ -27,7 +27,7 @@ blades.WithContextBudget(blades.ContextBudget{
 blades.WithTokenCounter(counter)
 ```
 
-If no counter is provided explicitly, the default Agent uses the model provider when it also implements `model.TokenCounter`. If any enforced budget is configured and no counter is available, `NewAgent` returns `ErrContextTokenCounterRequired`. `ResponseReserveTokens` is advisory and does not require a counter by itself.
+If no counter is provided explicitly, the default Agent uses the model provider when it also implements `model.TokenCounter`; otherwise it falls back to `model.ApproxTokenCounter`. The selected counter is passed explicitly to compactors through `compact.Request.TokenCounter`; it is not stored in `context.Context`. `ResponseReserveTokens` is advisory and does not require separate enforcement.
 
 ## API
 
@@ -80,14 +80,14 @@ type TokenCount struct {
 }
 ```
 
-The counter is deliberately request-view oriented rather than message-only, because system prompt, memory recall, and tool declarations live outside `[]*model.Message`. It is model-owned because it describes provider-facing request accounting, not a compact-only message view.
+The counter is deliberately request-view oriented rather than message-only, because system prompt, memory recall, and tool declarations live outside `[]*model.Message`. It is model-owned because it describes provider-facing request accounting, not a compact-only message view. When compact only needs message accounting, it calls the same counter with `model.Request{Messages: msgs}`.
 
 ## Pipeline
 
 The private root context builder assembles requests in a fixed order:
 
 1. Read `Session.Messages(ctx)` as the full append-only transcript.
-2. Call `Compactor.Compact(ctx, snapshot)` on the messages segment only.
+2. Call `Compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})` on the messages segment only.
 3. Build prompt sections into `model.Request.System`; `prompt.Memory` recall happens here.
 4. Render tool specs into `model.Request.Tools`.
 5. Count tokens and enforce configured segment budgets.
