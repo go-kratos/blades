@@ -13,8 +13,6 @@ import (
 	"github.com/go-kratos/blades/tools"
 )
 
-const outputBufferSize = 64
-
 // Agent is the core interface for all agents in the system.
 type Agent interface {
 	Name() string
@@ -79,7 +77,7 @@ func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan ev
 	if err != nil {
 		return nil, err
 	}
-	output := make(chan event.Output, outputBufferSize)
+	output := make(chan event.Output, 64)
 	l := &agentLoop{
 		agent:    a,
 		ctx:      ctx,
