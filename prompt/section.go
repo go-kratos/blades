@@ -2,7 +2,6 @@ package prompt
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -34,18 +33,9 @@ func Text(text string) Section {
 // Memory creates a section that recalls relevant memories at build time.
 func Memory(mem memory.Memory, query func(context.Context) (memory.Query, error)) Section {
 	return func(ctx context.Context) ([]content.Part, error) {
-		if mem == nil {
-			return nil, errors.New("prompt: memory is nil")
-		}
-		if query == nil {
-			return nil, errors.New("prompt: memory query is nil")
-		}
 		q, err := query(ctx)
 		if err != nil {
 			return nil, err
-		}
-		if strings.TrimSpace(q.Text) == "" && len(q.Filter) == 0 {
-			return nil, nil
 		}
 		entries, err := mem.Recall(ctx, q)
 		if err != nil {
