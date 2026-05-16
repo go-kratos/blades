@@ -15,7 +15,7 @@ tags: [agentos, policy, mode, safety]
 
 `policy/` 提供 AgentOS core 在 **工具调用边界** 上的通用决策原语。v1 设计目标：
 
-- **聚焦工具裁决**：v1 Policy 只回答一个问题——"这次工具调用是否允许执行，是否需要改写或人工审批"。其它边界（模型请求改写、模型预算、限流）由 hook 与 middleware 承接，不进入 `policy/`。
+- **聚焦工具裁决**：v1 Policy 只回答一个问题——"这次工具调用是否允许执行，是否需要改写或人工审批"。其它边界（模型请求改写、模型预算、限流）由 hook、provider 适配层或应用层组合承接，不进入 `policy/`。
 - **零抽象税**：不引入 sealed union 或多变体 Request。`Policy.Check` 直接接受 `ToolRequest`，这是 v1 唯一的决策入口。
 - **直传完整工具对象**：消除 Loop 与 Policy 之间的元数据映射样板，Policy 实现可直接读取 `Tool.Spec()`，也可以识别应用自定义的能力接口。
 - **Fail-closed**：错误（远端不可达、解析失败等）一律按 Deny 处理。
@@ -143,7 +143,7 @@ key := func(ctx context.Context, req policy.ToolRequest) string {
 
 key 抽取通常基于 `session.FromContext` / `agent.FromContext` 等 ctx helper，由应用决定 scope（用户 / session / 项目 / 组织 / 工具粒度）。core 不规定 key 命名，也不内置存储后端：`BudgetLimit` 与 `Limiter` 是接口，由应用注入实现。
 
-> 注意：v1 Policy 不裁决模型调用，所以 **模型 token / 调用次数 / 速率** 不属于这里的 Budget / RateLimit。模型侧的同类需求请走 hook 或 middleware。
+> 注意：v1 Policy 不裁决模型调用，所以 **模型 token / 调用次数 / 速率** 不属于这里的 Budget / RateLimit。模型侧的同类需求请走 hook、provider 适配层或应用层组合。
 
 ### SafetyCheck
 
@@ -190,16 +190,12 @@ Run
 - Policy 实现读取 `Tool.Spec()` 或应用自定义能力接口做粗粒度分流，再解析 `ToolRequest.Input` 做细粒度裁决。
 - 副作用全部走 tool：v1 不引入资源边界 Policy；非 tool 路径的副作用（应用级 scheduler、background workflow 等）属于应用层，不进 core。
 
-### 与 hook（替代模型边界 Policy）
+### 与 hook / provider（替代模型边界 Policy）
 
 - 模型请求的运行时改写（注入 system block、裁剪 `Tools`、调整 sampling 等）由 `hook.Hook` 的 `BeforeModel` 方法直接修改 `*model.Request` 承担，而非 Policy。
 - 模型调用的观察（耗时、token 用量、错误）也走 hook，不在 Policy 类型系统里。
+- 模型层面的 token 预算、QPS 限制、provider 重试退避等由 hook、provider 适配层或应用层组合实现，不进 policy。
 - Hook 与 Policy 关注点互补：Hook 观察/扩展、可改写模型请求；Policy 裁决工具调用。
-
-### 与 middleware（替代模型 Budget / RateLimit）
-
-- 输入/输出 middleware（`middleware/`）作用于 channel 级输入加工与跨 Run 公共能力。
-- 模型层面的 token 预算、QPS 限制、provider 重试退避等放在 middleware 或 provider 适配层，不进 policy/。
 
 ### 与 event
 
@@ -282,7 +278,7 @@ core 不内置 Plan、Accept、Auto 模式。应用通过组合实现：
 
 ## 设计决策
 
-1. **v1 Policy 仅工具裁决**：唯一边界是 `ToolRequest`，不引入模型请求/资源请求等 sealed union，模型侧改写交给 hook，模型预算/限流交给 middleware。带来的好处：核心类型最小，工具是模型唯一的副作用接触面，能力标注 + Input 解析已足够。
+1. **v1 Policy 仅工具裁决**：唯一边界是 `ToolRequest`，不引入模型请求/资源请求等 sealed union，模型侧改写、预算和限流交给 hook、provider 适配层或应用层组合。带来的好处：核心类型最小，工具是模型唯一的副作用接触面，能力标注 + Input 解析已足够。
 2. **单一 Check 接口**：所有工具决策点都用同一形态，Loop 集成简单。
 3. **直接持有工具对象**：`ToolRequest` 直传 `tools.Tool`，Policy 不需要二次查表，可直接读取可选能力接口。
 4. **Tool 是副作用的唯一边界**：文件、网络、命令执行等资源裁决统一在 `ToolRequest` 内完成（能力标注 + Input 解析），保持核心类型最小、避免工具实现反向感知 policy。

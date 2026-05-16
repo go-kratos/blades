@@ -37,7 +37,7 @@ If the maintainer team members have major differences on a requirement, the fina
 ### What problem is the feature used to solve?
 <!--
 example:
-    We hope to add event interface to Blades framework to access middleware such as OpenTelemetry
+    We hope to add lifecycle hooks to Blades framework for observability such as OpenTelemetry
 -->
 
 ### Requirements description of the feature

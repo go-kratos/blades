@@ -37,7 +37,7 @@ If the maintainer team members have major differences on a requirement, the fina
 ### Proposal description
 <!--
 example:
-Add event interface for accessing message oriented middleware
+Add lifecycle hooks for message-oriented observability
 -->
 ### Implementation mode
 <!--

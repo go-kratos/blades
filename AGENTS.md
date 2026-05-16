@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-The root package contains the framework core (`agent.go`, `runner.go`, `message.go`, etc.). Feature areas are split into focused packages such as `flow/`, `graph/`, `memory/`, `middleware/`, `tools/`, `stream/`, and `evaluator/`.  
+The root package contains the framework core (`agent.go`, `runner.go`, `message.go`, etc.). Feature areas are split into focused packages such as `flow/`, `memory/`, `hook/`, `tools/`, `stream/`, and `evaluator/`.
 `contrib/` contains provider integrations (`openai`, `anthropic`, `gemini`, `mcp`, `otel`), each with its own `go.mod`.  
 `examples/` is a separate module with runnable demos.  
 `cmd/docs/` contains documentation tooling.  
@@ -17,7 +17,7 @@ Use the root `Makefile` (it discovers all `go.mod` directories and runs commands
 - `make examples`: run a curated set of demos from `examples/`.
 
 For targeted checks during development, run package tests directly, for example:  
-`go test -race ./middleware -run TestConversationBuffered`
+`go test -race ./memory -run TestInMemoryRememberRecallForget`
 
 ## Coding Style & Naming Conventions
 Follow idiomatic Go and keep code `gofmt`-clean before commit. Use `PascalCase` for exported symbols, `camelCase` for internal identifiers, and short lowercase package names. Keep package scope tight and place new model/provider adapters under `contrib/<provider>`. Prefer established option-style APIs (`WithXxx`) for new configuration hooks.

@@ -150,7 +150,7 @@ worker := flow.NewLoopAgent(flow.LoopConfig{
 })
 ```
 
-`LoopState` 暴露 `Iteration / LastOutput`，全部建立在 `event.Output` 之上。Loop 不直接读取模型上下文；需要更复杂判断时通过 Agent 中间件、`tools.ExitTool` 或 session state 实现，避免把模型推理塞进 flow 层。
+`LoopState` 暴露 `Iteration / LastOutput`，全部建立在 `event.Output` 之上。Loop 不直接读取模型上下文；需要更复杂判断时通过 hook、`tools.ExitTool` 或 session state 实现，避免把模型推理塞进 flow 层。
 
 ## Routing
 
@@ -176,7 +176,7 @@ Routing 只做单跳。多跳/链式路由通过组合 `NewRoutingAgent` + `NewS
 
 - `write_todos` 工具与对应 prompt：让模型显式维护任务列表
 - 可选的 `task` 工具：当 `SubAgents` 非空或允许 general-purpose agent 时，把子 Agent 暴露为可被调用的 task
-- 用户额外传入的 `Tools` 与 `Middlewares`
+- 用户额外传入的 `Tools` 与 `Hooks`
 
 ```go
 deep, err := flow.NewDeepAgent(flow.DeepConfig{
@@ -194,7 +194,7 @@ DeepAgent 仍然是一个普通 `blades.Agent`，可以再被 Sequential/Paralle
 
 1. **统一 Agent 接口**：所有原语都遵循 `Run(ctx, <-chan event.Input) (<-chan event.Output, error)`；组合的结果仍是一个普通 `blades.Agent`，可以无限嵌套。
 2. **统一构造风格**：所有原语用 `NewXxxAgent(XxxConfig{...})`，方便未来在不破坏调用方的情况下增加字段。
-3. **只组合 channel，不读取 Message**：`flow/` 不感知 `model.Message`、provider、session；需要复杂 DAG/checkpoint/条件边时使用 `graph/`，不要把工作流语义塞进 flow。
+3. **只组合 channel，不读取 Message**：`flow/` 不感知 `model.Message`、provider、session；复杂编排先放到应用层或 `contrib/`，不要把工作流语义塞进 flow。
 4. **桥接显式化**：Sequential 默认只透传 `event.TurnEnd` 的最终内容，工具生命周期事件不默认变成下游 prompt；其它桥接策略由调用方显式提供。
 5. **来源信息靠 `Name()`**：Parallel/Routing 都不给事件加 wrapper，调用方通过子 Agent 名字与 trace/hook 还原来源。
 6. **范围克制**：`flow/` 只做组合；后台运行、workspace、preset、复杂编排都放到应用层或 `contrib/`，避免根包膨胀。

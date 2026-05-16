@@ -14,7 +14,7 @@ tags: [agentos, tools, protocol, runtime]
 
 `tools/` 是 AgentOS 的工具协议叶子包。它定义工具如何声明规格、接收 JSON 输入、返回多模态结果，以及如何被运行时解析。它不承载模型调度、工具并发执行、权限裁决、重试或业务标识传播。
 
-工具执行编排属于根包默认 `llmAgent` 的内部 tool wave。工具安全、预算和授权属于 `policy/` 或 middleware。工具实现只需要关注自身协议和处理逻辑。
+工具执行编排属于根包默认 `llmAgent` 的内部 tool wave。工具安全、预算和授权属于 `policy/`、hook、provider 适配层或应用层组合。工具实现只需要关注自身协议和处理逻辑。
 
 ## 2. Tool 接口
 
@@ -114,7 +114,7 @@ type ToolFilter interface {
 
 以下能力不进入 `tools.Tool` 协议：
 
-- 幂等、缓存、重试：由 middleware 或调用侧包装。
+- 幂等、缓存、重试：由 hook、provider 适配层或调用侧包装。
 - 授权：由 `policy.Policy` 基于工具、输入和上下文裁决。
 - 业务注解：由应用层嵌入业务结构体，不进入核心协议。
 

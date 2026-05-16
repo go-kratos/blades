@@ -12,7 +12,7 @@ tags: [agentos, hook, extension, guardrail]
 
 ## 1. 概述
 
-`hook/` 是 AgentOS core 的生命周期回调命名空间。v1 只提供一个接口 `Hook`：6 个生命周期方法（`BeforeModel` / `AfterModel` / `BeforeTool` / `AfterTool` / `BeforeTurn` / `AfterTurn`），用户嵌入 `hook.Noop` 后只重写自己关心的方法即可。改写直接修改指针入参，拦截通过返回 `Abort(reason)` 表达。无 sealed event union、无 Mutator、无 type-safe helper、无中间件包装。
+`hook/` 是 AgentOS core 的生命周期回调命名空间。v1 只提供一个接口 `Hook`：6 个生命周期方法（`BeforeModel` / `AfterModel` / `BeforeTool` / `AfterTool` / `BeforeTurn` / `AfterTurn`），用户嵌入 `hook.Noop` 后只重写自己关心的方法即可。改写直接修改指针入参，拦截通过返回 `Abort(reason)` 表达。无 sealed event union、无 Mutator、无 type-safe helper、无 wrapper 链。
 
 Hook 只承载 Agent Loop 的稳定生命周期契约，不承载应用业务事件。配置加载、文件监听、任务队列、UI notification、workspace 事件等由应用自己的 event bus 处理。控制信号（`LoopExit` / `Handoff`）也不在 hook 范围内——它们由 `event.TurnEnd.Action` 承载，应用消费 `<-chan event.Output` 中的 `TurnEnd` 即可观察。
 
