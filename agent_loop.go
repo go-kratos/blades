@@ -269,7 +269,7 @@ func (l *agentLoop) endTurn(turn *hook.Turn, result turnState, err error) {
 }
 
 func (l *agentLoop) runStep() (*model.Response, error) {
-	counter := l.agent.contextTokenCounter()
+	counter := l.agent.tokenCounter
 	req, stats, err := l.buildRequest(l.ctx)
 	if err != nil {
 		return nil, err

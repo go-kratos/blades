@@ -11,9 +11,6 @@ func Fork(agent Agent, opts ...AgentOption) (Agent, error) {
 	for _, opt := range opts {
 		opt(fork)
 	}
-	if fork.provider == nil {
-		return nil, ErrModelProviderRequired
-	}
 	return fork, nil
 }
 

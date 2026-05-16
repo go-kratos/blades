@@ -19,7 +19,7 @@ type contextBuilder struct {
 }
 
 func (b contextBuilder) Build(ctx context.Context) (*model.Request, ContextStats, error) {
-	counter := b.agent.contextTokenCounter()
+	counter := b.agent.tokenCounter
 	ctx = newContextInfo(ctx, ContextInfo{
 		Purpose: ContextPurposeMain,
 		Budget:  b.agent.contextBudget,

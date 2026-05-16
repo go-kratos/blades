@@ -37,7 +37,10 @@ type llmAgent struct {
 
 // NewAgent creates a new default LLM-backed Agent.
 func NewAgent(name string, opts ...AgentOption) (Agent, error) {
-	a := &llmAgent{name: name}
+	a := &llmAgent{
+		name:         name,
+		tokenCounter: model.ApproxTokenCounter{},
+	}
 	for _, opt := range opts {
 		opt(a)
 	}
@@ -47,23 +50,11 @@ func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 	return a, nil
 }
 
-func (a *llmAgent) Name() string        { return a.name }
+// Name returns the name of the agent.
+func (a *llmAgent) Name() string { return a.name }
+
+// Description returns a brief description of the agent's purpose and capabilities.
 func (a *llmAgent) Description() string { return a.description }
-
-func (a *llmAgent) contextTokenCounter() model.TokenCounter {
-	if a.tokenCounter != nil {
-		return a.tokenCounter
-	}
-	return model.ApproxTokenCounter{}
-}
-
-func (a *llmAgent) clone() *llmAgent {
-	fork := *a
-	fork.hooks = append([]hook.Hook(nil), a.hooks...)
-	fork.tools = append([]tools.Tool(nil), a.tools...)
-	fork.promptBuilders = append([]prompt.Builder(nil), a.promptBuilders...)
-	return &fork
-}
 
 // Run implements the Agent interface.
 func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan event.Output, error) {
@@ -98,4 +89,12 @@ func (a *llmAgent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
 		allTools = append(allTools, resolved...)
 	}
 	return allTools, nil
+}
+
+func (a *llmAgent) clone() *llmAgent {
+	fork := *a
+	fork.hooks = append([]hook.Hook(nil), a.hooks...)
+	fork.tools = append([]tools.Tool(nil), a.tools...)
+	fork.promptBuilders = append([]prompt.Builder(nil), a.promptBuilders...)
+	return &fork
 }
