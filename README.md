@@ -168,4 +168,210 @@ We look forward to any feedback, suggestions, and contributions from you to join
 
 ## 📄 License
 
-Blades is licensed under the MIT License. For details, please see the [LICENSE](LICENSE) file.
+Blades is licensed under the MIT License. For details, please see the [LICENSE](LICENSE) file.\n\n## ❓ Frequently Asked Questions
+
+### General
+
+**Q: What is Blades?**
+
+Blades is a **multimodal AI Agent framework for Go**, supporting custom models, tools, memory, middleware, and more. It's designed for multi-turn conversations, chain-of-thought reasoning, and structured output.
+
+> The name originates from: The game *God of War* - the Blades are Kratos's iconic weapons.
+
+**Q: How does Blades differ from LangChain or CrewAI?**
+
+| Framework | Language | Key Differentiator |
+|-----------|----------|-------------------|
+| **Blades** | **Go** | **Go Idiomatic + Middleware Ecosystem** |
+| LangChain | Python/JS | Chain-based orchestration |
+| CrewAI | Python | Role-playing agents |
+
+Blades is built **entirely according to Go's philosophy**, with middleware support inspired by Kratos framework.
+
+**Q: What are the core concepts?**
+
+| Concept | Description |
+|---------|-------------|
+| **Agent** | Core unit that executes tasks, invoking models and tools |
+| **Prompt** | Templated text with dynamic variable substitution |
+| **Chain** | Connects multiple Agents/Chains for complex workflows |
+| **ModelProvider** | Pluggable LLM interface (OpenAI, etc.) |
+| **Tool** | External capabilities (API calls, databases, filesystem) |
+| **Memory** | Short-term or long-term memory for context |
+| **Middleware** | Cross-cutting control (Observability, Guardrails) |
+
+### Architecture
+
+**Q: What is the architecture design?**
+
+![architecture](./docs/images/architecture.png)
+
+Key principles:
+- **Go Idiomatic**: Familiar code style for Go developers
+- **Simple to Use**: Concise code declarations for rapid delivery
+- **Middleware Ecosystem**: Easy integration of Observability/Guardrails
+- **Highly Extensible**: Unified interfaces + pluggable components
+
+**Q: What is the Agent interface?**
+
+```go
+// Agent represents an autonomous agent that can process invocations
+type Agent interface {
+    Name() string
+    Description() string
+    Run(context.Context, *Invocation) Generator[*Message, error]
+}
+```
+
+Components like `Agent`, `Chain`, and `ModelProvider` all implement this interface, allowing **flexible composition like Lego bricks**.
+
+**Q: What is ModelProvider?**
+
+`ModelProvider` is the core abstraction layer for interacting with LLMs:
+
+- **Unified interface**: Decoupling and extensibility
+- **Easy switching**: Integrate different LLM services
+- **Pluggable design**: Add new providers without changing core
+
+### Getting Started
+
+**Q: How do I install Blades?**
+
+```bash
+go get github.com/go-kratos/blades
+```
+
+**Q: How do I define an Agent?**
+
+```go
+agent := blades.NewAgent(
+    blades.WithName("my-agent"),
+    blades.WithModelProvider(openai.New()),
+    blades.WithTools([]blades.Tool{...}),
+    blades.WithMemory(memory.New()),
+)
+```
+
+**Q: How do I run an Agent?**
+
+```go
+invocation := blades.NewInvocation(ctx, prompt)
+generator := agent.Run(ctx, invocation)
+for msg, err := range generator {
+    // Process messages
+}
+```
+
+### LLM Providers
+
+**Q: What LLM providers are supported?**
+
+Blades supports **pluggable ModelProvider**:
+
+| Provider | Package |
+|----------|---------|
+| **OpenAI** | `openai.New()` |
+| **Anthropic** | Claude integration |
+| **Custom** | Implement `ModelProvider` interface |
+
+**Q: How do I add a custom ModelProvider?**
+
+1. Implement `ModelProvider` interface
+2. Register with Agent via `WithModelProvider()`
+3. Use in Agent execution
+
+### Tools & Memory
+
+**Q: How do I create custom Tools?**
+
+Implement the `Tool` interface:
+
+```go
+type Tool interface {
+    Name() string
+    Description() string
+    Execute(ctx context.Context, input any) (any, error)
+}
+```
+
+**Q: What memory types are available?**
+
+- **Short-term**: Conversation context
+- **Long-term**: Persistent knowledge storage
+- **Custom**: Implement `Memory` interface
+
+### Middleware
+
+**Q: What middleware features are supported?**
+
+| Middleware | Description |
+|------------|-------------|
+| **Observability** | Logging, metrics, tracing |
+| **Guardrails** | Safety controls, rate limiting |
+| **Custom** | Implement middleware interface |
+
+**Q: How do I add middleware?**
+
+```go
+agent := blades.NewAgent(
+    blades.WithMiddleware(
+        observability.New(),
+        guardrails.New(),
+    ),
+)
+```
+
+### Chains
+
+**Q: What is a Chain?**
+
+`Chain` connects multiple Agents or Chains to form **complex workflows**:
+
+- Sequential execution
+- Conditional branching
+- Parallel processing
+
+**Q: How do I create a Chain?**
+
+```go
+chain := blades.NewChain(
+    blades.WithAgents(agent1, agent2),
+    blades.WithSequence(),
+)
+```
+
+### Troubleshooting
+
+**Q: Agent execution fails?**
+
+Check:
+1. ModelProvider configuration
+2. Tool registration
+3. Memory initialization
+4. Middleware setup
+
+**Q: LLM connection issues?**
+
+Check:
+1. API endpoint reachable
+2. API key valid
+3. Network connectivity
+4. Rate limits not exceeded
+
+**Q: Tool execution error?**
+
+Check:
+1. Tool implements correct interface
+2. Input format matches tool expectation
+3. Error handling in Execute method
+
+### Help & Resources
+
+- **GoDoc**: [pkg.go.dev/github.com/go-kratos/blades](https://pkg.go.dev/github.com/go-kratos/blades)
+- **DeepWiki**: [deepwiki.com/go-kratos/blades](https://deepwiki.com/go-kratos/blades)
+- **GitHub**: [go-kratos/blades](https://github.com/go-kratos/blades)
+- **Issues**: [GitHub Issues](https://github.com/go-kratos/blades/issues)
+
+---
+
+*For more details, see the [GoDoc](https://pkg.go.dev/github.com/go-kratos/blades) and [GitHub repository](https://github.com/go-kratos/blades).*
