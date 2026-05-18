@@ -35,3 +35,10 @@ type ToolRequest struct {
 type Policy interface {
 	Check(ctx context.Context, req ToolRequest) (Decision, error)
 }
+
+// PolicyFunc is a function adapter for Policy.
+type PolicyFunc func(ctx context.Context, req ToolRequest) (Decision, error)
+
+func (f PolicyFunc) Check(ctx context.Context, req ToolRequest) (Decision, error) {
+	return f(ctx, req)
+}
