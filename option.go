@@ -61,10 +61,10 @@ func WithCompact(c compact.Compactor) AgentOption {
 	}
 }
 
-// WithContextBudget sets request-view budgets for the default Agent runtime.
-func WithContextBudget(b ContextBudget) AgentOption {
+// WithContextBudget sets request-view token budgets for the default Agent runtime.
+func WithContextBudget(budget model.TokenCount) AgentOption {
 	return func(a *llmAgent) {
-		a.contextBudget = b
+		a.contextBudget = budget
 	}
 }
 

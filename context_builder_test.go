@@ -19,76 +19,75 @@ func TestContextBuilderCompactsThenBuildsPromptAndStats(t *testing.T) {
 		testTextMessage(model.RoleUser, "old"),
 		testTextMessage(model.RoleAssistant, "recent"),
 	))
-	budget := ContextBudget{SystemTokens: 100, MessagesTokens: 100, ResponseReserveTokens: 10}
-	var compactInfo ContextInfo
+	budget := model.TokenCount{System: 100, Messages: 100}
+	var compactWindow ContextWindow
 	var compactCounterOK bool
-	var promptInfo ContextInfo
+	var promptWindow ContextWindow
 	agent := &llmAgent{
 		provider: testProvider{name: "test-model"},
 		compactor: compact.CompactorFunc(func(ctx context.Context, req compact.Request) ([]*model.Message, error) {
-			compactInfo, _ = ContextInfoFromContext(ctx)
+			compactWindow, _ = ContextWindowFrom(ctx)
 			compactCounterOK = req.TokenCounter != nil
 			return req.Messages[1:], nil
 		}),
 		promptBuilders: []prompt.Builder{
 			prompt.Section(func(ctx context.Context) ([]content.Part, error) {
-				promptInfo, _ = ContextInfoFromContext(ctx)
+				promptWindow, _ = ContextWindowFrom(ctx)
 				return []content.Part{content.Text{Text: "system"}}, nil
 			}),
 		},
 		contextBudget: budget,
 		tokenCounter: model.TokenCounterFunc(func(_ context.Context, req *model.Request) (model.TokenCount, error) {
 			return model.TokenCount{
-				SystemTokens:   int64(len(req.System)),
-				MessagesTokens: int64(len(content.TextFromParts(req.Messages[0].Parts))),
-				HasBreakdown:   true,
+				System:   int64(len(req.System)),
+				Messages: int64(len(content.TextFromParts(req.Messages[0].Parts))),
 			}, nil
 		}),
 	}
 
-	req, stats, err := contextBuilder{agent: agent, sess: sess}.Build(context.Background())
+	req, w, err := contextBuilder{agent: agent, sess: sess}.Build(context.Background())
 	require.NoError(t, err)
 
 	assert.Equal(t, "test-model", req.Model)
 	assert.Equal(t, "system", req.System)
 	require.Len(t, req.Messages, 1)
 	assert.Equal(t, "recent", content.TextFromParts(req.Messages[0].Parts))
-	assert.Equal(t, ContextPurposeMain, compactInfo.Purpose)
-	assert.Equal(t, budget, compactInfo.Budget)
-	assert.Equal(t, compactInfo, promptInfo)
+	assert.Equal(t, budget, compactWindow.Budget)
+	assert.Equal(t, compactWindow.Budget, promptWindow.Budget)
 	assert.True(t, compactCounterOK)
-	assert.Equal(t, ContextPurposeMain, stats.Purpose)
-	assert.Equal(t, int64(len("system")), stats.Count.SystemTokens)
-	assert.Equal(t, int64(len("recent")), stats.Count.MessagesTokens)
-	assert.Equal(t, int64(len("system")+len("recent")), stats.Count.InputTokens)
-	assert.Equal(t, 2, stats.MessagesBefore)
-	assert.Equal(t, 1, stats.MessagesAfter)
+	assert.Equal(t, int64(len("system")), w.Usage.System)
+	assert.Equal(t, int64(len("recent")), w.Usage.Messages)
+	assert.Equal(t, int64(len("system")+len("recent")), w.Usage.Input)
+	assert.Equal(t, 2, w.MessagesBefore)
+	assert.Equal(t, 1, w.MessagesAfter)
 }
 
 func TestEnforceContextBudgetReturnsBudgetError(t *testing.T) {
-	err := enforceContextBudget(
-		ContextBudget{SystemTokens: 3},
-		ContextStats{Count: model.TokenCount{SystemTokens: int64(len("too long")), HasBreakdown: true}},
-	)
+	w := ContextWindow{
+		Budget: model.TokenCount{System: 3},
+		Usage:  model.TokenCount{System: int64(len("too long"))},
+	}
+	err := w.Enforce()
 	require.Error(t, err)
 
-	var budgetErr *ContextBudgetError
+	var budgetErr *BudgetError
 	require.True(t, errors.As(err, &budgetErr))
-	assert.Equal(t, ContextSegmentSystem, budgetErr.Segment)
+	assert.Equal(t, "system", budgetErr.Segment)
 	assert.Equal(t, int64(3), budgetErr.Limit)
 	assert.Equal(t, int64(len("too long")), budgetErr.Actual)
 }
 
 func TestEnforceContextBudgetRequiresSegmentBreakdown(t *testing.T) {
-	err := enforceContextBudget(
-		ContextBudget{SystemTokens: 3},
-		ContextStats{Count: model.TokenCount{InputTokens: 2}},
-	)
+	w := ContextWindow{
+		Budget: model.TokenCount{System: 3},
+		Usage:  model.TokenCount{Input: 2},
+	}
+	err := w.Enforce()
 	require.Error(t, err)
 
-	var budgetErr *ContextBudgetError
+	var budgetErr *BudgetError
 	require.True(t, errors.As(err, &budgetErr))
-	assert.Equal(t, ContextSegmentSystem, budgetErr.Segment)
+	assert.Equal(t, "system", budgetErr.Segment)
 	assert.True(t, budgetErr.Unavailable)
 }
 

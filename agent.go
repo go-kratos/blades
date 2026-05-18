@@ -30,7 +30,7 @@ type llmAgent struct {
 	provider       model.Provider
 	promptBuilders []prompt.Builder
 	compactor      compact.Compactor
-	contextBudget  ContextBudget
+	contextBudget  model.TokenCount
 	tokenCounter   model.TokenCounter
 	policy         policy.Policy
 }

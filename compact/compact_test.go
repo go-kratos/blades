@@ -64,7 +64,7 @@ func TestCountMessagesTokensUsesMessageBreakdown(t *testing.T) {
 	counter := model.TokenCounterFunc(func(_ context.Context, req *model.Request) (model.TokenCount, error) {
 		assert.Empty(t, req.System)
 		assert.Empty(t, req.Tools)
-		return model.TokenCount{InputTokens: 99, MessagesTokens: 7, HasBreakdown: true}, nil
+		return model.TokenCount{Input: 99, Messages: 7}, nil
 	})
 
 	tokens, err := countMessagesTokens(context.Background(), counter, textMessage(model.RoleUser, "hello"))
@@ -74,7 +74,7 @@ func TestCountMessagesTokensUsesMessageBreakdown(t *testing.T) {
 
 func TestCountMessagesTokensFallsBackToInputTokens(t *testing.T) {
 	counter := model.TokenCounterFunc(func(context.Context, *model.Request) (model.TokenCount, error) {
-		return model.TokenCount{InputTokens: 9}, nil
+		return model.TokenCount{Input: 9}, nil
 	})
 
 	tokens, err := countMessagesTokens(context.Background(), counter, textMessage(model.RoleUser, "hello"))
@@ -86,7 +86,7 @@ func TestWindowUsesRequestTokenCounter(t *testing.T) {
 	called := false
 	counter := model.TokenCounterFunc(func(_ context.Context, req *model.Request) (model.TokenCount, error) {
 		called = true
-		return model.TokenCount{InputTokens: int64(len(req.Messages)) * 10}, nil
+		return model.TokenCount{Input: int64(len(req.Messages)) * 10}, nil
 	})
 	msgs := []*model.Message{
 		textMessage(model.RoleUser, "one"),

@@ -214,12 +214,11 @@ func TestModelSummarizerCanUseSeparateProvider(t *testing.T) {
 
 func TestLLMAgentExposesContextInfoAndStats(t *testing.T) {
 	provider := dummyprovider.NewProvider(dummyprovider.TextResponse("ok"))
-	budget := blades.ContextBudget{
-		InputTokens:           100,
-		SystemTokens:          100,
-		MessagesTokens:        100,
-		ToolTokens:            100,
-		ResponseReserveTokens: 10,
+	budget := model.TokenCount{
+		Input:    100,
+		System:   100,
+		Messages: 100,
+		Tools:    100,
 	}
 	counter := model.TokenCounterFunc(func(_ context.Context, req *model.Request) (model.TokenCount, error) {
 		var messageTokens int64
@@ -227,15 +226,14 @@ func TestLLMAgentExposesContextInfoAndStats(t *testing.T) {
 			messageTokens += int64(len(textFromParts(msg.Parts)))
 		}
 		return model.TokenCount{
-			SystemTokens:   int64(len(req.System)),
-			MessagesTokens: messageTokens,
-			ToolTokens:     int64(len(req.Tools)),
-			HasBreakdown:   true,
+			System:   int64(len(req.System)),
+			Messages: messageTokens,
+			Tools:    int64(len(req.Tools)),
 		}, nil
 	})
-	var promptInfo blades.ContextInfo
-	var promptInfoOK bool
-	capture := &contextStatsCaptureHook{}
+	var promptWindow blades.ContextWindow
+	var promptWindowOK bool
+	capture := &contextWindowCaptureHook{}
 	agent, err := blades.NewAgent(
 		"assistant",
 		blades.WithModel(provider),
@@ -243,7 +241,7 @@ func TestLLMAgentExposesContextInfoAndStats(t *testing.T) {
 		blades.WithTokenCounter(counter),
 		blades.WithHooks(capture),
 		blades.WithPrompt(prompt.Section(func(ctx context.Context) ([]content.Part, error) {
-			promptInfo, promptInfoOK = blades.ContextInfoFromContext(ctx)
+			promptWindow, promptWindowOK = blades.ContextWindowFrom(ctx)
 			return []content.Part{content.Text{Text: "system"}}, nil
 		})),
 	)
@@ -255,24 +253,22 @@ func TestLLMAgentExposesContextInfoAndStats(t *testing.T) {
 	assert.True(t, ok)
 	assert.NoError(t, turnEnd.Err)
 
-	assert.True(t, promptInfoOK)
-	assert.Equal(t, blades.ContextPurposeMain, promptInfo.Purpose)
-	assert.Equal(t, budget, promptInfo.Budget)
+	assert.True(t, promptWindowOK)
+	assert.Equal(t, budget, promptWindow.Budget)
 	assert.True(t, capture.ok)
-	assert.Equal(t, blades.ContextPurposeMain, capture.stats.Purpose)
-	assert.Equal(t, int64(len("system")), capture.stats.Count.SystemTokens)
-	assert.Equal(t, int64(len("hello")), capture.stats.Count.MessagesTokens)
-	assert.Equal(t, int64(len("system")+len("hello")), capture.stats.Count.InputTokens)
-	assert.Equal(t, 1, capture.stats.MessagesBefore)
-	assert.Equal(t, 1, capture.stats.MessagesAfter)
+	assert.Equal(t, int64(len("system")), capture.window.Usage.System)
+	assert.Equal(t, int64(len("hello")), capture.window.Usage.Messages)
+	assert.Equal(t, int64(len("system")+len("hello")), capture.window.Usage.Input)
+	assert.Equal(t, 1, capture.window.MessagesBefore)
+	assert.Equal(t, 1, capture.window.MessagesAfter)
 }
 
 func TestLLMAgentUsesApproxTokenCounterForContextBudget(t *testing.T) {
-	capture := &contextStatsCaptureHook{}
+	capture := &contextWindowCaptureHook{}
 	agent, err := blades.NewAgent(
 		"assistant",
 		blades.WithModel(dummyprovider.NewProvider(dummyprovider.TextResponse("ok"))),
-		blades.WithContextBudget(blades.ContextBudget{InputTokens: 100}),
+		blades.WithContextBudget(model.TokenCount{Input: 100}),
 		blades.WithHooks(capture),
 	)
 	assert.NoError(t, err)
@@ -284,17 +280,17 @@ func TestLLMAgentUsesApproxTokenCounterForContextBudget(t *testing.T) {
 	assert.NoError(t, turnEnd.Err)
 
 	assert.True(t, capture.ok)
-	assert.True(t, capture.stats.Count.HasBreakdown)
-	assert.Positive(t, capture.stats.Count.InputTokens)
+	assert.True(t, capture.window.Usage.HasSegments())
+	assert.Positive(t, capture.window.Usage.Input)
 }
 
 func TestLLMAgentIgnoresProviderTokenCounterForContextBudget(t *testing.T) {
 	provider := &failingCountingProvider{captureProvider: newCaptureProvider(dummyprovider.TextResponse("ok"))}
-	capture := &contextStatsCaptureHook{}
+	capture := &contextWindowCaptureHook{}
 	agent, err := blades.NewAgent(
 		"assistant",
 		blades.WithModel(provider),
-		blades.WithContextBudget(blades.ContextBudget{InputTokens: 100}),
+		blades.WithContextBudget(model.TokenCount{Input: 100}),
 		blades.WithHooks(capture),
 		blades.WithPrompt(prompt.Text("system")),
 	)
@@ -307,8 +303,8 @@ func TestLLMAgentIgnoresProviderTokenCounterForContextBudget(t *testing.T) {
 	assert.NoError(t, turnEnd.Err)
 
 	assert.True(t, capture.ok)
-	assert.True(t, capture.stats.Count.HasBreakdown)
-	assert.Positive(t, capture.stats.Count.InputTokens)
+	assert.True(t, capture.window.Usage.HasSegments())
+	assert.Positive(t, capture.window.Usage.Input)
 	assert.Len(t, provider.Requests(), 1)
 }
 
@@ -316,17 +312,17 @@ func TestForkWithModelKeepsConfiguredTokenCounter(t *testing.T) {
 	baseProvider := newCaptureProvider(dummyprovider.TextResponse("base"))
 	forkProvider := &failingCountingProvider{captureProvider: newCaptureProvider(dummyprovider.TextResponse("fork"))}
 	counter := model.TokenCounterFunc(func(context.Context, *model.Request) (model.TokenCount, error) {
-		return model.TokenCount{InputTokens: 99}, nil
+		return model.TokenCount{Input: 99}, nil
 	})
 	base, err := blades.NewAgent(
 		"assistant",
 		blades.WithModel(baseProvider),
-		blades.WithContextBudget(blades.ContextBudget{InputTokens: 100}),
+		blades.WithContextBudget(model.TokenCount{Input: 100}),
 		blades.WithTokenCounter(counter),
 	)
 	assert.NoError(t, err)
 
-	capture := &contextStatsCaptureHook{}
+	capture := &contextWindowCaptureHook{}
 	fork, err := blades.Fork(
 		base,
 		blades.WithModel(forkProvider),
@@ -341,7 +337,7 @@ func TestForkWithModelKeepsConfiguredTokenCounter(t *testing.T) {
 	assert.NoError(t, turnEnd.Err)
 
 	assert.True(t, capture.ok)
-	assert.Equal(t, int64(99), capture.stats.Count.InputTokens)
+	assert.Equal(t, int64(99), capture.window.Usage.Input)
 	assert.Len(t, forkProvider.Requests(), 1)
 	assert.Empty(t, baseProvider.Requests())
 }
@@ -351,7 +347,7 @@ func TestLLMAgentRechecksContextBudgetAfterBeforeModelHook(t *testing.T) {
 	agent, err := blades.NewAgent(
 		"assistant",
 		blades.WithModel(provider),
-		blades.WithContextBudget(blades.ContextBudget{SystemTokens: 4}),
+		blades.WithContextBudget(model.TokenCount{System: 4}),
 		blades.WithTokenCounter(model.TokenCounterFunc(countRequestTokens)),
 		blades.WithHooks(&mutateSystemHook{system: "too long"}),
 		blades.WithPrompt(prompt.Text("ok")),
@@ -364,9 +360,9 @@ func TestLLMAgentRechecksContextBudgetAfterBeforeModelHook(t *testing.T) {
 	assert.True(t, ok)
 	require.Error(t, turnEnd.Err)
 
-	var budgetErr *blades.ContextBudgetError
+	var budgetErr *blades.BudgetError
 	require.True(t, errors.As(turnEnd.Err, &budgetErr))
-	assert.Equal(t, blades.ContextSegmentSystem, budgetErr.Segment)
+	assert.Equal(t, "system", budgetErr.Segment)
 	assert.Equal(t, 0, provider.CallCount())
 }
 
@@ -1249,14 +1245,14 @@ func (h *runningAgentCaptureHook) BeforeModel(ctx context.Context, _ *model.Requ
 	return nil
 }
 
-type contextStatsCaptureHook struct {
+type contextWindowCaptureHook struct {
 	hook.Noop
-	stats blades.ContextStats
-	ok    bool
+	window blades.ContextWindow
+	ok     bool
 }
 
-func (h *contextStatsCaptureHook) BeforeModel(ctx context.Context, _ *model.Request) error {
-	h.stats, h.ok = blades.ContextStatsFromContext(ctx)
+func (h *contextWindowCaptureHook) BeforeModel(ctx context.Context, _ *model.Request) error {
+	h.window, h.ok = blades.ContextWindowFrom(ctx)
 	return nil
 }
 
@@ -1435,12 +1431,11 @@ func countRequestTokens(_ context.Context, req *model.Request) (model.TokenCount
 		messages += int64(len(textFromParts(msg.Parts)))
 	}
 	count := model.TokenCount{
-		SystemTokens:   int64(len(req.System)),
-		MessagesTokens: messages,
-		ToolTokens:     int64(len(req.Tools)),
-		HasBreakdown:   true,
+		System:   int64(len(req.System)),
+		Messages: messages,
+		Tools:    int64(len(req.Tools)),
 	}
-	count.InputTokens = count.SystemTokens + count.MessagesTokens + count.ToolTokens
+	count.Input = count.System + count.Messages + count.Tools
 	return count, nil
 }
 

@@ -165,13 +165,13 @@ func countMessagesTokens(ctx context.Context, counter model.TokenCounter, msgs .
 	if err != nil {
 		return 0, err
 	}
-	if count.HasBreakdown {
-		return count.MessagesTokens, nil
+	if count.HasSegments() {
+		return count.Messages, nil
 	}
-	if count.MessagesTokens > 0 {
-		return count.MessagesTokens, nil
+	if count.Messages > 0 {
+		return count.Messages, nil
 	}
-	return count.InputTokens, nil
+	return count.Total(), nil
 }
 
 func resolveTokenCounter(counter model.TokenCounter) model.TokenCounter {

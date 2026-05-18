@@ -64,11 +64,10 @@ type TokenCounter interface {
 }
 
 type TokenCount struct {
-    InputTokens    int64
-    SystemTokens   int64
-    MessagesTokens int64
-    ToolTokens     int64
-    HasBreakdown   bool
+    Input    int64
+    System   int64
+    Messages int64
+    Tools    int64
 }
 
 type ApproxTokenCounter struct{}
@@ -79,7 +78,7 @@ type ApproxTokenCounter struct{}
 - `Generate` 与 `Stream` 平级独立，调用方按需选择。两者对同一 `Request` 的最终态语义必须等价。
 - `Stream` 返回 `iter.Seq2[*Chunk, error]`，避免 `model/` 反向依赖根包；调用方用 `for chunk, err := range provider.Stream(ctx, req)` 消费。
 - **`TokenCounter` 从 `Provider` 抽离**：token 计数与生成是两类能力 —— 一些模型走独立 endpoint（Anthropic `/v1/messages/count_tokens`）、一些走本地编码器（如 tiktoken）、一些不支持。Agent 不从 `model.Provider` 自动探测计数能力；应用通过 `blades.WithTokenCounter`（或 compactor 自身的 `compact.WithTokenCounter`）显式接入。
-- `TokenCounter.CountTokens` 返回 `TokenCount`。`InputTokens` 是完整 request 输入估算；当实现能拆分 system/messages/tools 三段时设置 `HasBreakdown=true` 并填充分段字段。
+- `TokenCounter.CountTokens` 返回 `TokenCount`。`Input` 是完整 request 输入估算；当实现能拆分 system/messages/tools 三段时填充分段字段，`HasSegments()` 返回 true。
 - `ApproxTokenCounter` 是默认粗估实现，适合 budget coordination 和测试；更精确的模型专用计数器可以作为独立 `TokenCounter` 提供。
 - 资源释放依赖 `ctx` 取消、deadline 与 provider 内部 `defer`，不提供额外关闭方法。
 - `Request` 不包含流式开关，是否流式由调用方法决定。

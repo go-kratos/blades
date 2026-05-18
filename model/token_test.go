@@ -21,15 +21,15 @@ func TestApproxTokenCounterReturnsSegmentBreakdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApproxTokenCounter.CountTokens() error = %v", err)
 	}
-	if !count.HasBreakdown {
-		t.Fatal("ApproxTokenCounter.CountTokens().HasBreakdown = false, want true")
+	if !count.HasSegments() {
+		t.Fatal("ApproxTokenCounter.CountTokens().HasSegments() = false, want true")
 	}
-	if count.SystemTokens <= 0 || count.MessagesTokens <= 0 || count.ToolTokens <= 0 {
+	if count.System <= 0 || count.Messages <= 0 || count.Tools <= 0 {
 		t.Fatalf("ApproxTokenCounter.CountTokens() = %#v, want positive segment counts", count)
 	}
-	wantInput := count.SystemTokens + count.MessagesTokens + count.ToolTokens
-	if count.InputTokens != wantInput {
-		t.Fatalf("InputTokens = %d, want %d", count.InputTokens, wantInput)
+	wantInput := count.System + count.Messages + count.Tools
+	if count.Input != wantInput {
+		t.Fatalf("Input = %d, want %d", count.Input, wantInput)
 	}
 }
 

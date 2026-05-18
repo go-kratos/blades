@@ -25,11 +25,23 @@ func (f TokenCounterFunc) CountTokens(ctx context.Context, req *Request) (TokenC
 
 // TokenCount describes estimated request token usage.
 type TokenCount struct {
-	InputTokens    int64
-	SystemTokens   int64
-	MessagesTokens int64
-	ToolTokens     int64
-	HasBreakdown   bool
+	Input    int64
+	System   int64
+	Messages int64
+	Tools    int64
+}
+
+// Total returns Input if set, otherwise the sum of sub-segments.
+func (c TokenCount) Total() int64 {
+	if c.Input > 0 {
+		return c.Input
+	}
+	return c.System + c.Messages + c.Tools
+}
+
+// HasSegments reports whether per-segment breakdown is available.
+func (c TokenCount) HasSegments() bool {
+	return c.System > 0 || c.Messages > 0 || c.Tools > 0
 }
 
 // ApproxTokenCounter is a provider-agnostic, conservative token estimator.
@@ -44,17 +56,16 @@ func (ApproxTokenCounter) CountTokens(ctx context.Context, req *Request) (TokenC
 		return TokenCount{}, err
 	}
 	if req == nil {
-		return TokenCount{HasBreakdown: true}, nil
+		return TokenCount{}, nil
 	}
 	system := estimateTextTokens(req.System)
 	messages := estimateMessagesTokens(req.Messages)
 	tools := estimateJSONTokens(req.Tools)
 	return TokenCount{
-		InputTokens:    system + messages + tools,
-		SystemTokens:   system,
-		MessagesTokens: messages,
-		ToolTokens:     tools,
-		HasBreakdown:   true,
+		Input:    system + messages + tools,
+		System:   system,
+		Messages: messages,
+		Tools:    tools,
 	}, nil
 }
 
