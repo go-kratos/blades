@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/go-kratos/blades/content"
@@ -16,6 +17,12 @@ var (
 	ErrSummarizerProviderRequired = errors.New("compact: summarizer provider is required")
 	// ErrSummarizerEmptyResponse is returned when the summary model returns no text.
 	ErrSummarizerEmptyResponse = errors.New("compact: summarizer returned empty response")
+)
+
+var (
+	analysisTagRe = regexp.MustCompile(`(?s)<analysis>.*?</analysis>`)
+	summaryTagRe  = regexp.MustCompile(`(?s)<summary>(.*?)</summary>`)
+	blankLineRe   = regexp.MustCompile(`\n{3,}`)
 )
 
 const defaultSummaryInstruction = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
@@ -78,6 +85,23 @@ type modelSummarizer struct {
 	options     []model.Option
 }
 
+// formatSummaryResponse strips the <analysis> drafting scratchpad and extracts
+// the <summary> content. If no tags are present, the text is returned as-is.
+func formatSummaryResponse(text string) string {
+	// Strip <analysis>...</analysis> — it's a drafting scratchpad.
+	text = analysisTagRe.ReplaceAllString(text, "")
+
+	// Extract <summary>...</summary> content if present.
+	if m := summaryTagRe.FindStringSubmatch(text); m != nil {
+		text = m[1]
+	}
+
+	// Collapse runs of blank lines left by stripping.
+	text = blankLineRe.ReplaceAllString(text, "\n\n")
+
+	return strings.TrimSpace(text)
+}
+
 func (s *modelSummarizer) Summarize(ctx context.Context, req SummaryRequest) (string, error) {
 	if s.provider == nil {
 		return "", ErrSummarizerProviderRequired
@@ -98,7 +122,7 @@ func (s *modelSummarizer) Summarize(ctx context.Context, req SummaryRequest) (st
 	if text == "" {
 		return "", ErrSummarizerEmptyResponse
 	}
-	return text, nil
+	return formatSummaryResponse(text), nil
 }
 
 func summaryMessages(req SummaryRequest) []*model.Message {

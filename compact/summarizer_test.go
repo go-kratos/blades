@@ -66,3 +66,21 @@ func (p *recordingSummaryProvider) Generate(ctx context.Context, req *model.Requ
 func (p *recordingSummaryProvider) Stream(context.Context, *model.Request) iter.Seq2[*model.Chunk, error] {
 	return func(func(*model.Chunk, error) bool) {}
 }
+
+func TestFormatSummaryResponseStripsAnalysisExtractsSummary(t *testing.T) {
+	input := "<analysis>\nthinking about stuff\n</analysis>\n\n<summary>\nThe user asked for X.\n</summary>"
+	got := formatSummaryResponse(input)
+	assert.Equal(t, "The user asked for X.", got)
+}
+
+func TestFormatSummaryResponseStripsAnalysisOnly(t *testing.T) {
+	input := "<analysis>\nthinking\n</analysis>\n\nRemaining text here."
+	got := formatSummaryResponse(input)
+	assert.Equal(t, "Remaining text here.", got)
+}
+
+func TestFormatSummaryResponsePassthroughWithoutTags(t *testing.T) {
+	input := "Plain summary without any tags."
+	got := formatSummaryResponse(input)
+	assert.Equal(t, "Plain summary without any tags.", got)
+}

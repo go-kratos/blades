@@ -6,15 +6,15 @@ import (
 	"github.com/go-kratos/blades/model"
 )
 
-// Compactor transforms a message slice to fit within context budget.
-type Compactor interface {
-	Compact(ctx context.Context, req Request) ([]*model.Message, error)
-}
-
 // Request is the runtime input to a compactor.
 type Request struct {
 	Messages     []*model.Message
 	TokenCounter model.TokenCounter
+}
+
+// Compactor transforms a message slice to fit within context budget.
+type Compactor interface {
+	Compact(ctx context.Context, req Request) ([]*model.Message, error)
 }
 
 // CompactorFunc is a function adapter for Compactor.
@@ -43,15 +43,15 @@ func Chain(cs ...Compactor) Compactor {
 	})
 }
 
-// Summarizer summarizes model messages into compact text.
-type Summarizer interface {
-	Summarize(ctx context.Context, req SummaryRequest) (string, error)
-}
-
 // SummaryRequest is the input to a Summarizer.
 type SummaryRequest struct {
 	Messages  []*model.Message
 	MaxTokens int64
+}
+
+// Summarizer summarizes model messages into compact text.
+type Summarizer interface {
+	Summarize(ctx context.Context, req SummaryRequest) (string, error)
 }
 
 // SummarizerFunc adapts a function into a Summarizer.
@@ -63,9 +63,6 @@ func (f SummarizerFunc) Summarize(ctx context.Context, req SummaryRequest) (stri
 }
 
 func countMessagesTokens(ctx context.Context, counter model.TokenCounter, msgs []*model.Message) (int64, error) {
-	if counter == nil {
-		counter = model.ApproxTokenCounter{}
-	}
 	count, err := counter.CountTokens(ctx, &model.Request{Messages: msgs})
 	if err != nil {
 		return 0, err
