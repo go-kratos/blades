@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/model"
-	"github.com/go-kratos/blades/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,23 +42,6 @@ func TestWindowRejectsDanglingToolResult(t *testing.T) {
 	assert.Contains(t, err.Error(), "dangling tool message")
 }
 
-func TestToolResultBudgetDoesNotMutateOriginal(t *testing.T) {
-	originalText := "abcdefghijklmnopqrstuvwxyz"
-	msgs := []*model.Message{
-		toolUseMessage("call-1"),
-		toolResultMessage("call-1", originalText),
-	}
-
-	view, err := NewToolResultBudget(20).Compact(context.Background(), Request{Messages: msgs})
-	require.NoError(t, err)
-	require.Len(t, view, 2)
-
-	assert.Equal(t, originalText, toolResultText(msgs[1]))
-	truncated := toolResultText(view[1])
-	assert.Contains(t, truncated, "truncated")
-	assert.NotEqual(t, originalText, truncated)
-}
-
 func TestCountMessagesTokensUsesMessageBreakdown(t *testing.T) {
 	counter := model.TokenCounterFunc(func(_ context.Context, req *model.Request) (model.TokenCount, error) {
 		assert.Empty(t, req.System)
@@ -67,7 +49,7 @@ func TestCountMessagesTokensUsesMessageBreakdown(t *testing.T) {
 		return model.TokenCount{Input: 99, Messages: 7}, nil
 	})
 
-	tokens, err := countMessagesTokens(context.Background(), counter, textMessage(model.RoleUser, "hello"))
+	tokens, err := countMessagesTokens(context.Background(), counter, []*model.Message{textMessage(model.RoleUser, "hello")})
 	require.NoError(t, err)
 	assert.Equal(t, int64(7), tokens)
 }
@@ -77,7 +59,7 @@ func TestCountMessagesTokensFallsBackToInputTokens(t *testing.T) {
 		return model.TokenCount{Input: 9}, nil
 	})
 
-	tokens, err := countMessagesTokens(context.Background(), counter, textMessage(model.RoleUser, "hello"))
+	tokens, err := countMessagesTokens(context.Background(), counter, []*model.Message{textMessage(model.RoleUser, "hello")})
 	require.NoError(t, err)
 	assert.Equal(t, int64(9), tokens)
 }
@@ -105,7 +87,7 @@ func TestWindowUsesRequestTokenCounter(t *testing.T) {
 	assert.Equal(t, "three", content.TextFromParts(view[0].Parts))
 }
 
-func TestBlockSummarizeBuildsSummaryBlocksAndKeepsSessionMessages(t *testing.T) {
+func TestBlockSummarizeBuildsSummaryAndKeepsRecentMessages(t *testing.T) {
 	msgs := []*model.Message{
 		textMessage(model.RoleUser, "u1"),
 		textMessage(model.RoleAssistant, "a1"),
@@ -114,66 +96,37 @@ func TestBlockSummarizeBuildsSummaryBlocksAndKeepsSessionMessages(t *testing.T) 
 		textMessage(model.RoleUser, "u3"),
 		textMessage(model.RoleAssistant, "a3"),
 	}
-	sess := session.NewSession(session.WithMessages(msgs...))
-	ctx := session.NewContext(context.Background(), sess)
 	summarizer := &recordingSummarizer{}
 
-	snapshot, err := sess.Messages(ctx)
-	require.NoError(t, err)
-	view, err := NewBlockSummarize(
+	view, err := NewSummarize(
 		WithKeepRecentMessages(2),
-		WithSummaryBatchMessages(2),
 		WithSummarizer(summarizer),
-	).Compact(ctx, Request{Messages: snapshot})
+	).Compact(context.Background(), Request{Messages: msgs})
 	require.NoError(t, err)
 
-	require.Len(t, view, 4)
+	require.Len(t, view, 3)
 	assert.Contains(t, content.TextFromParts(view[0].Parts), "summary-1")
-	assert.Contains(t, content.TextFromParts(view[1].Parts), "summary-2")
-	assert.Equal(t, "u3", content.TextFromParts(view[2].Parts))
-	assert.Equal(t, "a3", content.TextFromParts(view[3].Parts))
-	assert.Len(t, summarizer.calls, 2)
-
-	full, err := sess.Messages(ctx)
-	require.NoError(t, err)
-	require.Len(t, full, 6)
-	assert.Equal(t, "u1", content.TextFromParts(full[0].Parts))
-
-	state, ok := sess.State()[blockSummaryStateKey].(blockSummaryState)
-	require.True(t, ok)
-	require.Len(t, state.Blocks, 2)
-	assert.Equal(t, 0, state.Blocks[0].Start)
-	assert.Equal(t, 2, state.Blocks[0].End)
-	assert.Equal(t, 2, state.Blocks[1].Start)
-	assert.Equal(t, 4, state.Blocks[1].End)
+	assert.Equal(t, "u3", content.TextFromParts(view[1].Parts))
+	assert.Equal(t, "a3", content.TextFromParts(view[2].Parts))
+	assert.Len(t, summarizer.calls, 1)
+	assert.Len(t, summarizer.calls[0].Messages, 4)
 }
 
-func TestBlockSummarizeMergesOldSummaryBlocks(t *testing.T) {
+func TestBlockSummarizeWithNoSummarizerDropsOldMessages(t *testing.T) {
 	msgs := []*model.Message{
 		textMessage(model.RoleUser, "u1"),
 		textMessage(model.RoleAssistant, "a1"),
 		textMessage(model.RoleUser, "u2"),
 		textMessage(model.RoleAssistant, "a2"),
 	}
-	ctx := session.NewContext(context.Background(), session.NewSession(session.WithMessages(msgs...)))
-	summarizer := &recordingSummarizer{}
 
-	view, err := NewBlockSummarize(
+	view, err := NewSummarize(
 		WithKeepRecentMessages(1),
-		WithSummaryBatchMessages(1),
-		WithMaxSummaryBlocks(1),
-		WithSummarizer(summarizer),
-	).Compact(ctx, Request{Messages: msgs})
+	).Compact(context.Background(), Request{Messages: msgs})
 	require.NoError(t, err)
 
-	require.Len(t, view, 2)
-	assert.Contains(t, content.TextFromParts(view[0].Parts), "summary")
-	assert.Equal(t, "a2", content.TextFromParts(view[1].Parts))
-
-	state := ctxSessionState(ctx)
-	require.Len(t, state.Blocks, 1)
-	assert.Equal(t, 0, state.Blocks[0].Start)
-	assert.Equal(t, 3, state.Blocks[0].End)
+	require.Len(t, view, 1)
+	assert.Equal(t, "a2", content.TextFromParts(view[0].Parts))
 }
 
 type recordingSummarizer struct {
@@ -218,10 +171,4 @@ func toolResultText(msg *model.Message) string {
 		}
 	}
 	return ""
-}
-
-func ctxSessionState(ctx context.Context) blockSummaryState {
-	sess, _ := session.FromContext(ctx)
-	state, _ := sess.State()[blockSummaryStateKey].(blockSummaryState)
-	return state
 }

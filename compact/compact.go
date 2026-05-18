@@ -43,15 +43,15 @@ func Chain(cs ...Compactor) Compactor {
 	})
 }
 
+// Summarizer summarizes model messages into compact text.
+type Summarizer interface {
+	Summarize(ctx context.Context, req SummaryRequest) (string, error)
+}
+
 // SummaryRequest is the input to a Summarizer.
 type SummaryRequest struct {
 	Messages  []*model.Message
 	MaxTokens int64
-}
-
-// Summarizer summarizes model messages into compact text.
-type Summarizer interface {
-	Summarize(ctx context.Context, req SummaryRequest) (string, error)
 }
 
 // SummarizerFunc adapts a function into a Summarizer.
@@ -62,105 +62,10 @@ func (f SummarizerFunc) Summarize(ctx context.Context, req SummaryRequest) (stri
 	return f(ctx, req)
 }
 
-type options struct {
-	maxMessages          int
-	maxTokens            int64
-	messagesBudget       int64
-	keepRecentMessages   int
-	keepRecentTokens     int64
-	summaryBlockTokens   int64
-	maxSummaryBlocks     int
-	summaryBatchMessages int
-	maxFoldIterations    int
-	counter              model.TokenCounter
-	summarizer           Summarizer
-}
-
-// Option configures compactors.
-type Option func(*options)
-
-// WithMaxMessages sets the maximum number of messages for window compaction.
-func WithMaxMessages(n int) Option {
-	return func(o *options) {
-		o.maxMessages = n
+func countMessagesTokens(ctx context.Context, counter model.TokenCounter, msgs []*model.Message) (int64, error) {
+	if counter == nil {
+		counter = model.ApproxTokenCounter{}
 	}
-}
-
-// WithMaxTokens sets the maximum token budget for window compaction.
-func WithMaxTokens(n int64) Option {
-	return func(o *options) {
-		o.maxTokens = n
-	}
-}
-
-// WithTokenCounter sets the token counter used by budgeted compactors.
-//
-// Compactors count only the message view by invoking the counter with
-// model.Request{Messages: msgs}.
-func WithTokenCounter(tc model.TokenCounter) Option {
-	return func(o *options) {
-		o.counter = tc
-	}
-}
-
-// WithMessagesBudget sets the target message-view budget for block summarization.
-func WithMessagesBudget(n int64) Option {
-	return func(o *options) {
-		o.messagesBudget = n
-	}
-}
-
-// WithKeepRecentMessages sets the minimum number of recent raw messages to keep.
-func WithKeepRecentMessages(n int) Option {
-	return func(o *options) {
-		o.keepRecentMessages = n
-	}
-}
-
-// WithKeepRecentTokens sets the target token budget for recent raw messages.
-func WithKeepRecentTokens(n int64) Option {
-	return func(o *options) {
-		o.keepRecentTokens = n
-	}
-}
-
-// WithSummaryBlockTokens sets the target token budget for each summary block.
-func WithSummaryBlockTokens(n int64) Option {
-	return func(o *options) {
-		o.summaryBlockTokens = n
-	}
-}
-
-// WithMaxSummaryBlocks sets the maximum number of summary blocks to keep before merging.
-func WithMaxSummaryBlocks(n int) Option {
-	return func(o *options) {
-		o.maxSummaryBlocks = n
-	}
-}
-
-// WithSummaryBatchMessages sets the maximum number of raw messages folded into one summary block.
-func WithSummaryBatchMessages(n int) Option {
-	return func(o *options) {
-		o.summaryBatchMessages = n
-	}
-}
-
-// WithMaxFoldIterations sets the maximum number of folds per Compact call.
-func WithMaxFoldIterations(n int) Option {
-	return func(o *options) {
-		o.maxFoldIterations = n
-	}
-}
-
-// WithSummarizer sets the summarizer used by block summarization.
-func WithSummarizer(s Summarizer) Option {
-	return func(o *options) {
-		o.summarizer = s
-	}
-}
-
-func countMessagesTokens(ctx context.Context, counter model.TokenCounter, msgs ...*model.Message) (int64, error) {
-	counter = resolveTokenCounter(counter)
 	count, err := counter.CountTokens(ctx, &model.Request{Messages: msgs})
 	if err != nil {
 		return 0, err
@@ -172,11 +77,4 @@ func countMessagesTokens(ctx context.Context, counter model.TokenCounter, msgs .
 		return count.Messages, nil
 	}
 	return count.Total(), nil
-}
-
-func resolveTokenCounter(counter model.TokenCounter) model.TokenCounter {
-	if counter != nil {
-		return counter
-	}
-	return model.ApproxTokenCounter{}
 }

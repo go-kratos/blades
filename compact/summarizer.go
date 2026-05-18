@@ -18,20 +18,37 @@ var (
 	ErrSummarizerEmptyResponse = errors.New("compact: summarizer returned empty response")
 )
 
-const defaultSummarySystem = "Summarize conversation history for future model context. Preserve user goals, decisions, constraints, tool results, unresolved tasks, and important facts. Do not invent facts. Keep the summary concise and self-contained."
+const defaultSummaryInstruction = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
+
+Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts. In your analysis process:
+1. Identify the user's primary goals and any explicit requests
+2. Note key technical concepts, decisions, and patterns discussed
+3. List specific files examined, modified, or created
+4. Document any errors encountered and how they were resolved
+5. Highlight important context needed to continue the work
+
+Your summary should include the following sections:
+
+1. Primary Request and Intent: Capture all of the user's explicit requests and intents in detail
+2. Key Technical Concepts: List all important technical concepts, technologies, and frameworks discussed
+3. Files and Code Sections: Enumerate specific files and code sections examined, modified, or created. Include important code snippets and explain why each file is relevant
+4. Errors and Fixes: List all errors encountered and how they were fixed. Pay special attention to user feedback and corrections
+5. Current State: Summarize the current state of the work and what remains to be done
+
+CRITICAL: Respond with TEXT ONLY. Do NOT call any tools. Provide your response as an <analysis> block followed by a <summary> block.`
 
 // SummarizerOption configures a model-backed summarizer.
 type SummarizerOption func(*summarizerOptions)
 
 type summarizerOptions struct {
-	system  string
-	options []model.Option
+	instruction string
+	options     []model.Option
 }
 
-// WithSummarySystem sets the system prompt for model-backed summaries.
-func WithSummarySystem(system string) SummarizerOption {
+// WithSummaryInstruction sets the instruction for model-backed summaries.
+func WithSummaryInstruction(instruction string) SummarizerOption {
 	return func(o *summarizerOptions) {
-		o.system = system
+		o.instruction = instruction
 	}
 }
 
@@ -44,21 +61,21 @@ func WithSummaryOptions(opts ...model.Option) SummarizerOption {
 
 // NewModelSummarizer creates a Summarizer backed by direct provider calls.
 func NewModelSummarizer(provider model.Provider, opts ...SummarizerOption) Summarizer {
-	cfg := summarizerOptions{system: defaultSummarySystem}
+	cfg := summarizerOptions{instruction: defaultSummaryInstruction}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	return &modelSummarizer{
-		provider: provider,
-		system:   cfg.system,
-		options:  append([]model.Option(nil), cfg.options...),
+		provider:    provider,
+		instruction: cfg.instruction,
+		options:     append([]model.Option(nil), cfg.options...),
 	}
 }
 
 type modelSummarizer struct {
-	provider model.Provider
-	system   string
-	options  []model.Option
+	provider    model.Provider
+	instruction string
+	options     []model.Option
 }
 
 func (s *modelSummarizer) Summarize(ctx context.Context, req SummaryRequest) (string, error) {
@@ -67,7 +84,7 @@ func (s *modelSummarizer) Summarize(ctx context.Context, req SummaryRequest) (st
 	}
 	resp, err := s.provider.Generate(ctx, &model.Request{
 		Model:    s.provider.Name(),
-		System:   s.system,
+		System:   s.instruction,
 		Messages: summaryMessages(req),
 		Options:  summaryOptions(req.MaxTokens, s.options),
 	})

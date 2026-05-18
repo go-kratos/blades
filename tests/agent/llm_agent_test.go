@@ -131,9 +131,8 @@ func TestLLMAgentWithCompactUsesModelSummarizer(t *testing.T) {
 			promptCalls++
 			return []content.Part{content.Text{Text: "main prompt"}}, nil
 		})),
-		blades.WithCompact(compact.NewBlockSummarize(
+		blades.WithCompact(compact.NewSummarize(
 			compact.WithKeepRecentMessages(1),
-			compact.WithSummaryBatchMessages(10),
 			compact.WithSummarizer(compact.NewModelSummarizer(provider)),
 		)),
 	)
@@ -157,7 +156,7 @@ func TestLLMAgentWithCompactUsesModelSummarizer(t *testing.T) {
 
 	requests := provider.Requests()
 	if assert.Len(t, requests, 2) {
-		assert.Contains(t, requests[0].System, "Summarize conversation history")
+		assert.Contains(t, requests[0].System, "Your task is to create a detailed summary")
 		assert.Empty(t, requests[0].Tools)
 		assert.Contains(t, textFromRequest(requests[0]), "old user")
 		assert.Equal(t, "main prompt", requests[1].System)
@@ -183,7 +182,7 @@ func TestModelSummarizerCanUseSeparateProvider(t *testing.T) {
 	agent, err := blades.NewAgent(
 		"assistant",
 		blades.WithModel(mainProvider),
-		blades.WithCompact(compact.NewBlockSummarize(
+		blades.WithCompact(compact.NewSummarize(
 			compact.WithKeepRecentMessages(1),
 			compact.WithSummarizer(compact.NewModelSummarizer(summaryProvider)),
 		)),

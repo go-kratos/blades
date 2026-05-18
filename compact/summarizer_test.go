@@ -18,7 +18,7 @@ func TestModelSummarizerUsesDirectProviderRequest(t *testing.T) {
 		},
 	}
 
-	summary, err := NewModelSummarizer(provider, WithSummarySystem("summary system")).Summarize(context.Background(), SummaryRequest{
+	summary, err := NewModelSummarizer(provider, WithSummaryInstruction("summary instruction")).Summarize(context.Background(), SummaryRequest{
 		Messages:  []*model.Message{textMessage(model.RoleUser, "old user")},
 		MaxTokens: 42,
 	})
@@ -27,7 +27,7 @@ func TestModelSummarizerUsesDirectProviderRequest(t *testing.T) {
 	assert.Equal(t, "summary text", summary)
 	require.NotNil(t, provider.req)
 	assert.Equal(t, "summary-provider", provider.req.Model)
-	assert.Equal(t, "summary system", provider.req.System)
+	assert.Equal(t, "summary instruction", provider.req.System)
 	assert.Empty(t, provider.req.Tools)
 	require.Len(t, provider.req.Messages, 1)
 	assert.Contains(t, content.TextFromParts(provider.req.Messages[0].Parts), "old user")
