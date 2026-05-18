@@ -19,8 +19,6 @@ var (
 	ErrAudioGenerationEmpty = errors.New("openai/audio: provider returned no audio")
 	// ErrAudioRequestNil is returned when the request is nil.
 	ErrAudioRequestNil = errors.New("openai/audio: request is nil")
-	// ErrAudioModelRequired is returned when the model is not specified.
-	ErrAudioModelRequired = errors.New("openai/audio: model is required")
 	// ErrAudioVoiceRequired is returned when the voice is not specified.
 	ErrAudioVoiceRequired = errors.New("openai/audio: voice is required")
 )
@@ -94,9 +92,6 @@ func (m *audioModel) buildAudioParams(req *model.Request) openai.AudioSpeechNewP
 func (m *audioModel) Generate(ctx context.Context, req *model.Request) (*model.Response, error) {
 	if req == nil {
 		return nil, ErrAudioRequestNil
-	}
-	if m.model == "" {
-		return nil, ErrAudioModelRequired
 	}
 	if m.config.Voice == "" {
 		return nil, ErrAudioVoiceRequired

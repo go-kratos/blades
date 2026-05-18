@@ -253,9 +253,6 @@ func textFromParts(parts []content.Part) string {
 	var text string
 	for _, part := range parts {
 		if t, ok := part.(content.Text); ok {
-			if text != "" {
-				text += "\n"
-			}
 			text += t.Text
 		}
 	}

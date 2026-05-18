@@ -19,10 +19,15 @@ type agentTool struct {
 }
 
 func (t *agentTool) Spec() tools.ToolSpec {
-	return tools.ToolSpec{
+	spec := tools.ToolSpec{
 		Name:        t.agent.Name(),
 		Description: t.agent.Description(),
 	}
+	if sp, ok := t.agent.(Schemaer); ok {
+		spec.InputSchema = sp.InputSchema()
+		spec.OutputSchema = sp.OutputSchema()
+	}
+	return spec
 }
 
 func (t *agentTool) Handle(ctx context.Context, input json.RawMessage) (*tools.Result, error) {

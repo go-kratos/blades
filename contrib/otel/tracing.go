@@ -16,7 +16,10 @@ import (
 	"github.com/go-kratos/blades/tools"
 )
 
-const traceScope = "blades"
+const (
+	traceScope    = "blades"
+	defaultSystem = "other"
+)
 
 // TraceOption configures tracing hooks.
 type TraceOption func(*TracingHook)
@@ -60,15 +63,10 @@ func WithTracerProvider(provider trace.TracerProvider) TraceOption {
 	}
 }
 
-// Tracing returns a lifecycle hook that records OpenTelemetry spans.
-func Tracing(opts ...TraceOption) hook.Hook {
-	return NewTracingHook(opts...)
-}
-
 // NewTracingHook constructs a tracing hook.
 func NewTracingHook(opts ...TraceOption) *TracingHook {
 	t := &TracingHook{
-		system: "_OTHER",
+		system: defaultSystem,
 		tracer: otel.GetTracerProvider().Tracer(traceScope),
 		turns:  make(map[turnKey]trace.Span),
 		models: make(map[*model.Request]trace.Span),

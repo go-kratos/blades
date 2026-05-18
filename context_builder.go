@@ -42,6 +42,12 @@ func (b contextBuilder) Build(ctx context.Context) (*model.Request, error) {
 		System:   system,
 		Messages: msgs,
 	}
+	if b.agent.outputSchema != nil {
+		req.Options = append(req.Options, model.ResponseFormat{
+			Schema: b.agent.outputSchema,
+			Strict: true,
+		})
+	}
 	return req, nil
 }
 

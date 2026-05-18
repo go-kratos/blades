@@ -7,6 +7,7 @@ import (
 	"github.com/go-kratos/blades/policy"
 	"github.com/go-kratos/blades/prompt"
 	"github.com/go-kratos/blades/tools"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // AgentOption configures an llmAgent.
@@ -88,5 +89,19 @@ func WithInstruction(instruction string) AgentOption {
 func WithPrompt(b prompt.Builder) AgentOption {
 	return func(a *llmAgent) {
 		a.promptBuilders = append(a.promptBuilders, b)
+	}
+}
+
+// WithInputSchema sets the JSON schema describing the agent's expected input.
+func WithInputSchema(schema *jsonschema.Schema) AgentOption {
+	return func(a *llmAgent) {
+		a.inputSchema = schema
+	}
+}
+
+// WithOutputSchema sets the JSON schema describing the agent's output format.
+func WithOutputSchema(schema *jsonschema.Schema) AgentOption {
+	return func(a *llmAgent) {
+		a.outputSchema = schema
 	}
 }

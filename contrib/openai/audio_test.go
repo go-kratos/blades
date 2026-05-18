@@ -33,22 +33,6 @@ func TestAudioGenerateValidateRequest(t *testing.T) {
 	}
 }
 
-func TestAudioGenerateValidateModel(t *testing.T) {
-	t.Parallel()
-
-	provider := &audioModel{
-		config: AudioConfig{
-			Voice: "alloy",
-		},
-	}
-	_, err := provider.Generate(context.Background(), &model.Request{
-		Messages: []*model.Message{{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello"}}}},
-	})
-	if !errors.Is(err, ErrAudioModelRequired) {
-		t.Fatalf("expected ErrAudioModelRequired, got %v", err)
-	}
-}
-
 func TestAudioGenerateValidateVoice(t *testing.T) {
 	t.Parallel()
 

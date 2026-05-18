@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
-	"log"
 	"strings"
 
 	"github.com/go-kratos/blades/content"
@@ -20,7 +19,7 @@ import (
 
 var ErrChatRequestNil = errors.New("openai/chat: request is nil")
 
-type Config struct {
+type ChatConfig struct {
 	BaseURL          string
 	APIKey           string
 	Seed             int64
@@ -36,79 +35,75 @@ type Config struct {
 	ReasoningEffort  shared.ReasoningEffort
 }
 
-// ModelOption configures an OpenAI model provider.
-type ModelOption func(*Config)
+// ChatOption configures an OpenAI chat model provider.
+type ChatOption func(*ChatConfig)
 
-// WithConfig applies a full Config value.
-func WithConfig(config Config) ModelOption {
-	return func(c *Config) {
+// WithConfig applies a full ChatConfig value.
+func WithConfig(config ChatConfig) ChatOption {
+	return func(c *ChatConfig) {
 		*c = config
 	}
 }
 
 // WithBaseURL sets a custom API base URL.
-func WithBaseURL(baseURL string) ModelOption {
-	return func(c *Config) {
+func WithBaseURL(baseURL string) ChatOption {
+	return func(c *ChatConfig) {
 		c.BaseURL = baseURL
 	}
 }
 
 // WithAPIKey sets the API key.
-func WithAPIKey(apiKey string) ModelOption {
-	return func(c *Config) {
+func WithAPIKey(apiKey string) ChatOption {
+	return func(c *ChatConfig) {
 		c.APIKey = apiKey
 	}
 }
 
 // WithRequestOptions appends SDK request options.
-func WithRequestOptions(opts ...sdkoption.RequestOption) ModelOption {
-	return func(c *Config) {
+func WithRequestOptions(opts ...sdkoption.RequestOption) ChatOption {
+	return func(c *ChatConfig) {
 		c.RequestOptions = append(c.RequestOptions, opts...)
 	}
 }
 
 // WithParallelToolCalls configures whether the model may emit multiple tool calls in one response.
-func WithParallelToolCalls(enabled bool) ModelOption {
-	return func(c *Config) {
+func WithParallelToolCalls(enabled bool) ChatOption {
+	return func(c *ChatConfig) {
 		c.ModelOptions = model.MergeOptions(c.ModelOptions, []model.Option{
 			model.ParallelToolCalls{Enabled: enabled},
 		})
 	}
 }
 
-// NewModel constructs an OpenAI provider from model options. The API key is read
+// NewChat constructs an OpenAI chat provider. The API key is read
 // from the SDK default environment variables unless WithAPIKey is used.
-func NewModel(modelName string, opts ...ModelOption) model.Provider {
-	var config Config
+func NewChat(modelName string, opts ...ChatOption) model.Provider {
+	var config ChatConfig
 	for _, opt := range opts {
 		opt(&config)
 	}
-	return newModel(modelName, config)
+	sdkOpts := append([]sdkoption.RequestOption(nil), config.RequestOptions...)
+	if config.BaseURL != "" {
+		sdkOpts = append(sdkOpts, sdkoption.WithBaseURL(config.BaseURL))
+	}
+	if config.APIKey != "" {
+		sdkOpts = append(sdkOpts, sdkoption.WithAPIKey(config.APIKey))
+	}
+	return &chatModel{
+		model:  modelName,
+		config: config,
+		client: openai.NewClient(sdkOpts...),
+	}
 }
 
 // chatModel implements model.Provider for OpenAI-compatible chat models.
 type chatModel struct {
 	model  string
-	config Config
+	config ChatConfig
 	client openai.Client
 }
 
 var _ model.Provider = (*chatModel)(nil)
-
-func newModel(modelName string, config Config) model.Provider {
-	opts := append([]sdkoption.RequestOption(nil), config.RequestOptions...)
-	if config.BaseURL != "" {
-		opts = append(opts, sdkoption.WithBaseURL(config.BaseURL))
-	}
-	if config.APIKey != "" {
-		opts = append(opts, sdkoption.WithAPIKey(config.APIKey))
-	}
-	return &chatModel{
-		model:  modelName,
-		config: config,
-		client: openai.NewClient(opts...),
-	}
-}
 
 // Name returns the model name.
 func (m *chatModel) Name() string {
@@ -347,7 +342,6 @@ func toContentParts(parts []content.Part) []openai.ChatCompletionContentPartUnio
 					Format: mimeFormat(v.MIME),
 				}))
 			default:
-				log.Println("failed to process file part with MIME type:", v.MIME)
 			}
 		case content.DataPart:
 			switch mimeKind(v.MIME) {

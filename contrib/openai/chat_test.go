@@ -41,7 +41,7 @@ func TestToChatCompletionParamsAssistantRole(t *testing.T) {
 func TestToChatCompletionParamsParallelToolCalls(t *testing.T) {
 	t.Parallel()
 
-	provider := NewModel("gpt-test", WithParallelToolCalls(false)).(*chatModel)
+	provider := NewChat("gpt-test", WithParallelToolCalls(false)).(*chatModel)
 	params, err := provider.toChatCompletionParams(false, &model.Request{})
 	if err != nil {
 		t.Fatalf("toChatCompletionParams returned error: %v", err)
@@ -59,7 +59,7 @@ func TestToChatCompletionParamsParallelToolCalls(t *testing.T) {
 func TestToChatCompletionParamsParallelToolCallsRequestOverridesDefault(t *testing.T) {
 	t.Parallel()
 
-	provider := NewModel("gpt-test", WithParallelToolCalls(false)).(*chatModel)
+	provider := NewChat("gpt-test", WithParallelToolCalls(false)).(*chatModel)
 	params, err := provider.toChatCompletionParams(false, &model.Request{
 		Options: []model.Option{model.ParallelToolCalls{Enabled: true}},
 	})

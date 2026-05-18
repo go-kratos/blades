@@ -77,7 +77,18 @@ func NewModel(modelName string, opts ...ModelOption) model.Provider {
 	for _, opt := range opts {
 		opt(&config)
 	}
-	return newModel(modelName, config)
+	sdkOpts := append([]sdkoption.RequestOption(nil), config.RequestOptions...)
+	if config.BaseURL != "" {
+		sdkOpts = append(sdkOpts, sdkoption.WithBaseURL(config.BaseURL))
+	}
+	if config.APIKey != "" {
+		sdkOpts = append(sdkOpts, sdkoption.WithAPIKey(config.APIKey))
+	}
+	return &Claude{
+		model:  modelName,
+		config: config,
+		client: anthropic.NewClient(sdkOpts...),
+	}
 }
 
 // Claude provides a unified interface for Claude API access.
@@ -88,21 +99,6 @@ type Claude struct {
 }
 
 var _ model.Provider = (*Claude)(nil)
-
-func newModel(modelName string, config Config) model.Provider {
-	opts := append([]sdkoption.RequestOption(nil), config.RequestOptions...)
-	if config.BaseURL != "" {
-		opts = append(opts, sdkoption.WithBaseURL(config.BaseURL))
-	}
-	if config.APIKey != "" {
-		opts = append(opts, sdkoption.WithAPIKey(config.APIKey))
-	}
-	return &Claude{
-		model:  modelName,
-		config: config,
-		client: anthropic.NewClient(opts...),
-	}
-}
 
 // Name returns the name of the Claude model.
 func (m *Claude) Name() string {
@@ -167,9 +163,16 @@ func (m *Claude) Stream(ctx context.Context, req *model.Request) iter.Seq2[*mode
 			yield(nil, err)
 			return
 		}
-		toolParts := toolUseParts(finalResponse.Message)
-		if len(toolParts) > 0 {
-			yield(&model.Chunk{Parts: toolParts, StopReason: finalResponse.StopReason}, nil)
+		if finalResponse.Message != nil {
+			var toolParts []content.Part
+			for _, part := range finalResponse.Message.Parts {
+				if _, ok := part.(content.ToolUse); ok {
+					toolParts = append(toolParts, part)
+				}
+			}
+			if len(toolParts) > 0 {
+				yield(&model.Chunk{Parts: toolParts, StopReason: finalResponse.StopReason}, nil)
+			}
 		}
 	}
 }
@@ -273,17 +276,4 @@ func applyEphemeralCache(params *anthropic.MessageNewParams) {
 			}
 		}
 	}
-}
-
-func toolUseParts(msg *model.Message) []content.Part {
-	if msg == nil {
-		return nil
-	}
-	var parts []content.Part
-	for _, part := range msg.Parts {
-		if _, ok := part.(content.ToolUse); ok {
-			parts = append(parts, part)
-		}
-	}
-	return parts
 }

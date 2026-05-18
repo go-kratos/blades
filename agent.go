@@ -11,6 +11,7 @@ import (
 	"github.com/go-kratos/blades/prompt"
 	"github.com/go-kratos/blades/session"
 	"github.com/go-kratos/blades/tools"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // Agent is the core interface for all agents in the system.
@@ -20,10 +21,19 @@ type Agent interface {
 	Run(ctx context.Context, input <-chan event.Input) (<-chan event.Output, error)
 }
 
+// Schemaer is an optional interface that agents can implement to
+// expose input/output JSON schemas for structured tool integration.
+type Schemaer interface {
+	InputSchema() *jsonschema.Schema
+	OutputSchema() *jsonschema.Schema
+}
+
 // llmAgent is the default Agent implementation backed by an LLM provider.
 type llmAgent struct {
 	name           string
 	description    string
+	inputSchema    *jsonschema.Schema
+	outputSchema   *jsonschema.Schema
 	hooks          []hook.Hook
 	tools          []tools.Tool
 	resolver       tools.Resolver
@@ -56,6 +66,12 @@ func (a *llmAgent) Name() string { return a.name }
 
 // Description returns a brief description of the agent's purpose and capabilities.
 func (a *llmAgent) Description() string { return a.description }
+
+// InputSchema returns the JSON schema for the agent's input.
+func (a *llmAgent) InputSchema() *jsonschema.Schema { return a.inputSchema }
+
+// OutputSchema returns the JSON schema for the agent's output.
+func (a *llmAgent) OutputSchema() *jsonschema.Schema { return a.outputSchema }
 
 // Run implements the Agent interface.
 func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan event.Output, error) {
