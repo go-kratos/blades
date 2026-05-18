@@ -58,12 +58,12 @@ type Agent interface {
 
 `blades.NewAgent(name, opts...)` 返回默认 `llmAgent`。`llmAgent` 在根包内部实现 follow-up loop / step loop / tool wave 运行模型；用户不需要导入公开 `loop/` 包。通过 `WithHooks`、`WithPolicy`、`WithCompact`、`WithPrompt` 等 options 注入扩展能力；完全不同的 runtime 直接实现 `blades.Agent`。
 
-`event/` 文本糖通过构造函数提供：`event.NewPromptText(s string) Prompt` / `event.NewSteerText(s string) Steer`，无需独立事件类型。
+`event/` 构造函数提供多模态变参便利：`event.NewPrompt(parts ...any) Prompt` / `event.NewSteer(parts ...any) Steer` 接受 `string`（自动包装为 `content.Text`）以及任意 `content.Part` 实现，无需独立事件类型。
 
 `Run` 使用统一 channel 交互：输入 channel 承载 `event.Input`，返回的只读输出 channel 承载 `event.Output`。第二返回值只表示 Agent 无法启动或无法创建输出流；一旦 `Run` 成功返回 output channel，运行期错误也通过 `event.Error` 进入同一个输出流，最终发送 `event.Done` 后关闭 channel。
 
 ```go
-input <- event.NewPromptText("hello")
+input <- event.NewPrompt("hello")
 
 output, err := agent.Run(ctx, input)
 if err != nil {
@@ -149,7 +149,7 @@ type Output interface{ output() }
 
 `event` 中的多模态字段、`tools.Result.Parts`、`model.Message.Parts`、`model.Chunk.Parts` 全部直接使用 `content.Part`，三个协议包不再各自定义 Part。`content/` 不引入统一 `Metadata map[string]any`——业务扩展通过应用层嵌入业务结构体实现。
 
-文本输入用 `event.NewPromptText(s)` / `event.NewSteerText(s)` 构造函数返回 `Prompt` / `Steer`；多模态输入直接构造 `Prompt{Parts: []content.Part{...}}` / `Steer{Parts: ...}`。流式文本/思考输出走紧凑值类型 `event.TextDelta` / `event.ThinkingDelta`（hot path，避免 interface boxing）。其他多模态 part 当前只出现在最终 `TurnEnd.Parts`、`ToolEnd.Parts` 和 Session message 中；Blob 流式生命周期事件留给后续公开协议升级。
+文本和多模态输入都用 `event.NewPrompt(...)` / `event.NewSteer(...)` 构造函数返回 `Prompt` / `Steer`，可混合 string 与 `content.Part`（底层调用 `content.NewParts`）。流式文本/思考输出走紧凑值类型 `event.TextDelta` / `event.ThinkingDelta`（hot path，避免 interface boxing）。其他多模态 part 当前只出现在最终 `TurnEnd.Parts`、`ToolEnd.Parts` 和 Session message 中；Blob 流式生命周期事件留给后续公开协议升级。
 
 Agent Loop 在工具结果落点做轻量包装而非全 DTO 复制：`tools.Result{Parts: []content.Part}` → `event.ToolEnd.Parts` 直接复用同一切片，→ `model.Message.Parts` 中追加 `content.ToolResult{Parts: ...}` 同样直接复用。
 
@@ -234,7 +234,7 @@ blades/
 │   ├── event.go                Input（sealed：input()）, Output（sealed：output()）
 │   ├── control.go              Abort{Reason}, Pause{}, Resume{}（Input）
 │   ├── action.go               Action marker；LoopExit{Escalate}, Handoff{Agent}（作为 TurnEnd.Action）
-│   ├── input.go                Prompt{Parts []content.Part}, Steer{Parts []content.Part}, NewPromptText/NewSteerText 构造函数
+│   ├── input.go                Prompt{Parts []content.Part}, Steer{Parts []content.Part}, NewPrompt/NewSteer 构造函数
 │   ├── stream.go               TextDelta/ThinkingDelta（hot path，紧凑值类型）
 │   ├── tool.go                 ToolStart{ID, Name, Input}, ToolDelta{ID, Data}, ToolEnd{ID, Name, Parts, IsError}
 │   └── terminal.go             TurnEnd{Parts, StopReason, Usage, Err, Action}, Error{Err}, Done{}；StopReason/Usage 类型
@@ -408,8 +408,8 @@ contrib/*   -> model/ 或 tools/
 | 包 | 核心类型 | 示例 |
 |----|----------|------|
 | `blades` (root) | `Agent`, `RunningAgent`, `NewAgent`, `AgentOption`, `NewAgentTool`, `NewContext`/`FromContext`, `ContextWindow`, `BudgetError`, `ContextWindowFrom`, `Runner`/`Result`/`NewRunner`/`RunnerOption`（`Run`/`RunStream`/`RunLive`）, `WithModel`/`WithTools`/`WithToolsResolver`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithContextBudget`/`WithTokenCounter`/`WithPrompt`/`WithDescription` | `blades.Agent` |
-| `content` | `Part`（sealed marker：私有 `part()`），`Text`，`TextFromParts`，`FilePart{URI, MIME, Filename}`，`FileRefPart{ID, MIME}`，`DataPart{Bytes, MIME, Filename}`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.Text{Text: "hi"}` |
-| `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `ToolStart`, `ToolDelta`, `ToolEnd`, `Action`, `LoopExit{Escalate}`, `Handoff{Agent}`, `TurnEnd`（含 `Text()`）, `Error`, `Done`, `StopReason`, `Usage`；构造糖：`NewPromptText`, `NewSteerText` | `event.NewPromptText("hi")` |
+| `content` | `Part`（sealed marker：私有 `part()`），`Text`，`TextFromParts`，`NewParts(inputs ...any) []Part`，`FilePart{URI, MIME, Filename}`，`FileRefPart{ID, MIME}`，`DataPart{Bytes, MIME, Filename}`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.NewParts("hi", content.FilePart{...})` |
+| `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `ToolStart`, `ToolDelta`, `ToolEnd`, `Action`, `LoopExit{Escalate}`, `Handoff{Agent}`, `TurnEnd`（含 `Text()`）, `Error`, `Done`, `StopReason`, `Usage`；构造糖：`NewPrompt`, `NewSteer` | `event.NewPrompt("hi", content.DataPart{...})` |
 | `model` | `Message{Role, Parts []content.Part}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `Provider`(Name+Generate+Stream `iter.Seq2`), `TokenCounter`/`TokenCount`/`ApproxTokenCounter`, `EmbeddingProvider`, `Request{Model, System, Messages, Tools []tools.ToolSpec, Options}`, `Response{Message, StopReason, Usage}`, `Chunk{Parts, StopReason, Usage}`, `Option` sealed（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`/`ParallelToolCalls`）, `Usage`, `StopReason`, `Collect`, `MergeOptions` | `model.Provider` |
 | `tools` | `Tool`(Spec+Handle 两方法), `ToolSpec{Name, Description, InputSchema, OutputSchema}`, `Result{Parts []content.Part}`, `Resolver`(List+Resolve), `ToolFilter`, `ToolContext`(ID+Spec), `NewContext`/`FromContext`, `ErrLoopExit`/`ErrHandoff` | `tools.Tool` |
 | `prompt` | `Builder`(接口), `Section`(函数类型), `Static`/`Dynamic`/`System`/`Memory` 工厂, `New` | `prompt.Builder` |

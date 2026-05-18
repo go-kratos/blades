@@ -95,7 +95,7 @@ pipeline := flow.NewSequentialAgent(flow.SequentialConfig{
 })
 
 input := make(chan event.Input, 1)
-input <- event.NewPromptText("...")
+input <- event.NewPrompt("...")
 close(input)
 
 output, err := pipeline.Run(ctx, input)

@@ -121,7 +121,7 @@ func Abort(reason string) error { return &AbortError{Reason: reason} }
 - `AgentName` / `Turn` 用于在事件流中关联一轮执行；当前会话**不**通过 carrier 字段携带，统一由 `session.FromContext(ctx)` 读取（与 framework 的 ctx 三准则一致），避免同一信息在 ctx 与 carrier 上重复。
 - `*model.Request` / `*model.Response` 使用 v1 `model.Provider` 协议；Stream 路径下 Loop 消费 chunk 序列、发出增量事件，并在 step 完成后汇总为 `*model.Response` 再触发 `AfterModel`。
 - `tools.Tool` 使用 v1 两方法接口；如需工具名调用 `call.Tool.Spec().Name`，carrier 不再单独保留 `ToolName` 字段。
-- `event.Input` 使用 v1 文本由 `event.NewPromptText` / `event.NewSteerText` 构造，具体类型为 `event.Prompt` / `event.Steer`。
+- `event.Input` 使用 v1 文本由 `event.NewPrompt` / `event.NewSteer` 构造，具体类型为 `event.Prompt` / `event.Steer`。
 - `Parts` 直接使用 `content.Part`。
 - `Before/AfterModel` 即 model **step 边界**：一个 turn 可能包含多次 step（多轮 tool call），每个 step 对应一对 `BeforeModel` / `AfterModel`。当前 v1 不输出 `event.StepEnd`，`BeforeTurn` / `AfterTurn` 才是 turn 边界。
 

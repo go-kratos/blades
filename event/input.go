@@ -16,12 +16,14 @@ type Steer struct {
 
 func (Steer) input() {}
 
-// NewPromptText creates a Prompt with a single text part.
-func NewPromptText(s string) Prompt {
-	return Prompt{Parts: []content.Part{content.Text{Text: s}}}
+// NewPrompt creates a Prompt from variadic inputs.
+// Each input may be a string (auto-wrapped to content.Text) or any content.Part.
+func NewPrompt(parts ...any) Prompt {
+	return Prompt{Parts: content.NewParts(parts...)}
 }
 
-// NewSteerText creates a Steer with a single text part.
-func NewSteerText(s string) Steer {
-	return Steer{Parts: []content.Part{content.Text{Text: s}}}
+// NewSteer creates a Steer from variadic inputs.
+// Each input may be a string (auto-wrapped to content.Text) or any content.Part.
+func NewSteer(parts ...any) Steer {
+	return Steer{Parts: content.NewParts(parts...)}
 }

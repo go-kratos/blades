@@ -60,7 +60,7 @@ func TestRunnerRunReturnsFinalResult(t *testing.T) {
 		event.Done{},
 	}})
 
-	result, err := runner.Run(context.Background(), event.NewPromptText("hi"))
+	result, err := runner.Run(context.Background(), event.NewPrompt("hi"))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRunnerRunReturnsLastTurnEnd(t *testing.T) {
 		event.Done{},
 	}})
 
-	result, err := runner.Run(context.Background(), event.NewPromptText("hi"))
+	result, err := runner.Run(context.Background(), event.NewPrompt("hi"))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -127,7 +127,7 @@ func TestRunnerRunDrainsAfterRuntimeError(t *testing.T) {
 		close(outputs)
 	}()
 
-	result, err := runner.Run(context.Background(), event.NewPromptText("hi"))
+	result, err := runner.Run(context.Background(), event.NewPrompt("hi"))
 	if !errors.Is(err, first) {
 		t.Fatalf("Run() error = %v, want %v", err, first)
 	}
@@ -150,7 +150,7 @@ func TestRunnerRunReturnsRuntimeError(t *testing.T) {
 		event.Done{},
 	}})
 
-	result, err := runner.Run(context.Background(), event.NewPromptText("hi"))
+	result, err := runner.Run(context.Background(), event.NewPrompt("hi"))
 	if !errors.Is(err, want) {
 		t.Fatalf("Run() error = %v, want %v", err, want)
 	}
@@ -165,7 +165,7 @@ func TestRunnerRunReturnsStartError(t *testing.T) {
 	want := errors.New("start failed")
 	runner := NewRunner(runnerAgent{err: want})
 
-	result, err := runner.Run(context.Background(), event.NewPromptText("hi"))
+	result, err := runner.Run(context.Background(), event.NewPrompt("hi"))
 	if !errors.Is(err, want) {
 		t.Fatalf("Run() error = %v, want %v", err, want)
 	}
@@ -179,7 +179,7 @@ func TestRunnerRunRequiresTurnEnd(t *testing.T) {
 
 	runner := NewRunner(runnerAgent{outputs: []event.Output{event.Done{}}})
 
-	result, err := runner.Run(context.Background(), event.NewPromptText("hi"))
+	result, err := runner.Run(context.Background(), event.NewPrompt("hi"))
 	if !errors.Is(err, ErrNoResult) {
 		t.Fatalf("Run() error = %v, want %v", err, ErrNoResult)
 	}
@@ -201,7 +201,7 @@ func TestRunnerRunPreservesTurnErrorOnResult(t *testing.T) {
 		event.Done{},
 	}})
 
-	result, err := runner.Run(context.Background(), event.NewPromptText("hi"))
+	result, err := runner.Run(context.Background(), event.NewPrompt("hi"))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}

@@ -67,7 +67,7 @@ func main() {
 
     result, err := blades.NewRunner(agent).Run(
         context.Background(),
-        event.NewPromptText("What is the capital of France?"),
+        event.NewPrompt("What is the capital of France?"),
     )
     if err != nil {
         log.Fatal(err)
@@ -158,7 +158,7 @@ _ = writer
 应用需要增量输出时，可以使用 `Runner.RunStream`：
 
 ```go
-out, err := blades.NewRunner(agent).RunStream(ctx, event.NewPromptText("Write a haiku."))
+out, err := blades.NewRunner(agent).RunStream(ctx, event.NewPrompt("Write a haiku."))
 if err != nil {
     return err
 }

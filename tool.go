@@ -37,7 +37,7 @@ func (t *agentTool) Handle(ctx context.Context, input json.RawMessage) (*tools.R
 	}
 
 	in := make(chan event.Input, 1)
-	in <- event.NewPromptText(text)
+	in <- event.NewPrompt(text)
 	close(in)
 
 	output, err := t.agent.Run(ctx, in)

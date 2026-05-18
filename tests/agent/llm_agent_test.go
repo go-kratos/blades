@@ -47,7 +47,7 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	ctx, cancel := context.WithCancel(session.NewContext(context.Background(), sess))
 	defer cancel()
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("What is 123 * 456?")
+	inputs <- event.NewPrompt("What is 123 * 456?")
 
 	outputs, err := collectAgentOutputs(ctx, agent, inputs)
 	cancel()
@@ -109,7 +109,7 @@ func TestLLMAgentPromptBuilderCanReadLoopSessionFromContext(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("hello")
+	inputs <- event.NewPrompt("hello")
 	close(inputs)
 
 	_, err = collectAllAgentOutputs(context.Background(), agent, inputs)
@@ -145,7 +145,7 @@ func TestLLMAgentWithCompactUsesModelSummarizer(t *testing.T) {
 	))
 	ctx := session.NewContext(context.Background(), sess)
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("new")
+	inputs <- event.NewPrompt("new")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
@@ -196,7 +196,7 @@ func TestModelSummarizerCanUseSeparateProvider(t *testing.T) {
 	))
 	ctx := session.NewContext(context.Background(), sess)
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("new")
+	inputs <- event.NewPrompt("new")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
@@ -249,7 +249,7 @@ func TestLLMAgentInjectsRunningAgentIntoRuntimeExtensions(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("hello")
+	inputs <- event.NewPrompt("hello")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
@@ -293,7 +293,7 @@ func TestAgentToolSetsParentRunningAgentForSubAgent(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("hello")
+	inputs <- event.NewPrompt("hello")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
@@ -327,7 +327,7 @@ func TestLLMAgentInstructionsAndPromptsMergeInOptionOrder(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("hello")
+	inputs <- event.NewPrompt("hello")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
@@ -353,7 +353,7 @@ func TestLLMAgentPromptBuilderErrorEndsTurn(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("hello")
+	inputs <- event.NewPrompt("hello")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
@@ -394,7 +394,7 @@ func TestLLMAgentBeforeToolCanRewriteInput(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("calculate")
+	inputs <- event.NewPrompt("calculate")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
@@ -428,7 +428,7 @@ func TestLLMAgentAfterToolCanRewriteResult(t *testing.T) {
 	sess := session.NewSession()
 	ctx := session.NewContext(context.Background(), sess)
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("calculate")
+	inputs <- event.NewPrompt("calculate")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
@@ -470,7 +470,7 @@ func TestLLMAgentPolicyAskDoesNotExecuteTool(t *testing.T) {
 	sess := session.NewSession()
 	ctx := session.NewContext(context.Background(), sess)
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("run")
+	inputs <- event.NewPrompt("run")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
@@ -509,7 +509,7 @@ func TestLLMAgentExecutesToolBatchConcurrently(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("run")
+	inputs <- event.NewPrompt("run")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
@@ -547,7 +547,7 @@ func TestLLMAgentParallelToolStartsBeforeAnyEnd(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("run")
+	inputs <- event.NewPrompt("run")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
@@ -585,7 +585,7 @@ func TestLLMAgentParallelToolEndsInCompletionOrder(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("run")
+	inputs <- event.NewPrompt("run")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
@@ -625,7 +625,7 @@ func TestLLMAgentToolActionUsesSourceOrder(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("run")
+	inputs <- event.NewPrompt("run")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
@@ -641,7 +641,7 @@ func TestLLMAgentClosedInputDoesNotAbortActiveTurn(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText("start")
+	inputs <- event.NewPrompt("start")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
@@ -664,8 +664,8 @@ func TestLLMAgentQueuesPromptArrivingDuringActiveTurn(t *testing.T) {
 	sess := session.NewSession()
 	ctx := session.NewContext(context.Background(), sess)
 	inputs := make(chan event.Input, 2)
-	inputs <- event.NewPromptText("one")
-	inputs <- event.NewPromptText("two")
+	inputs <- event.NewPrompt("one")
+	inputs <- event.NewPrompt("two")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
@@ -699,8 +699,8 @@ func TestLLMAgentSteerContinuesCurrentTurn(t *testing.T) {
 	sess := session.NewSession()
 	ctx := session.NewContext(context.Background(), sess)
 	inputs := make(chan event.Input, 2)
-	inputs <- event.NewPromptText("start")
-	inputs <- event.NewSteerText("revise")
+	inputs <- event.NewPrompt("start")
+	inputs <- event.NewSteer("revise")
 	close(inputs)
 
 	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
@@ -745,9 +745,9 @@ func TestLLMAgentSteerDuringToolWaveContinuesCurrentTurn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(session.NewContext(context.Background(), sess), time.Second)
 	defer cancel()
 	inputs := make(chan event.Input, 2)
-	inputs <- event.NewPromptText("start")
+	inputs <- event.NewPrompt("start")
 
-	outputs, err := collectAllAgentOutputsWithToolStartInput(ctx, agent, inputs, "block-1", event.NewSteerText("revise"), func() {
+	outputs, err := collectAllAgentOutputsWithToolStartInput(ctx, agent, inputs, "block-1", event.NewSteer("revise"), func() {
 		close(releaseTool)
 	})
 	assert.NoError(t, err)
@@ -797,9 +797,9 @@ func TestLLMAgentPromptDuringToolWaveStartsNextTurn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(session.NewContext(context.Background(), sess), time.Second)
 	defer cancel()
 	inputs := make(chan event.Input, 2)
-	inputs <- event.NewPromptText("start")
+	inputs <- event.NewPrompt("start")
 
-	outputs, err := collectAllAgentOutputsWithToolStartInput(ctx, agent, inputs, "block-1", event.NewPromptText("next"), func() {
+	outputs, err := collectAllAgentOutputsWithToolStartInput(ctx, agent, inputs, "block-1", event.NewPrompt("next"), func() {
 		close(releaseTool)
 	})
 	assert.NoError(t, err)
@@ -839,8 +839,8 @@ func TestLLMAgentAbortOnlyEndsCurrentTurn(t *testing.T) {
 	assert.NoError(t, err)
 
 	inputs := make(chan event.Input, 3)
-	inputs <- event.NewPromptText("one")
-	inputs <- event.NewPromptText("two")
+	inputs <- event.NewPrompt("one")
+	inputs <- event.NewPrompt("two")
 	inputs <- event.Abort{Reason: "stop current"}
 	close(inputs)
 
@@ -874,7 +874,7 @@ func collectAgentOutputs(ctx context.Context, agent blades.Agent, inputs <-chan 
 
 func promptInputs(text string) <-chan event.Input {
 	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPromptText(text)
+	inputs <- event.NewPrompt(text)
 	close(inputs)
 	return inputs
 }

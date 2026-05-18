@@ -100,15 +100,15 @@ type Pause struct{}
 type Resume struct{}
 ```
 
-文本构造只提供函数糖：
+输入构造函数接受 `string`（自动包装为 `content.Text`）和任意 `content.Part`：
 
 ```go
-func NewPromptText(s string) Prompt {
-    return Prompt{Parts: []content.Part{content.Text{Text: s}}}
+func NewPrompt(parts ...any) Prompt {
+    return Prompt{Parts: content.NewParts(parts...)}
 }
 
-func NewSteerText(s string) Steer {
-    return Steer{Parts: []content.Part{content.Text{Text: s}}}
+func NewSteer(parts ...any) Steer {
+    return Steer{Parts: content.NewParts(parts...)}
 }
 ```
 
