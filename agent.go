@@ -38,8 +38,9 @@ type llmAgent struct {
 // NewAgent creates a new default LLM-backed Agent.
 func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 	a := &llmAgent{
-		name:         name,
-		tokenCounter: model.ApproxTokenCounter{},
+		name:          name,
+		tokenCounter:  model.ApproxTokenCounter{},
+		contextWindow: model.ContextWindow{MaxTokens: 128_000, OutputTokens: 8_192},
 	}
 	for _, opt := range opts {
 		opt(a)

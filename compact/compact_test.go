@@ -163,12 +163,3 @@ func toolResultMessage(id, text string) *model.Message {
 		}},
 	}
 }
-
-func toolResultText(msg *model.Message) string {
-	for _, part := range msg.Parts {
-		if result, ok := part.(content.ToolResult); ok {
-			return content.TextFromParts(result.Parts)
-		}
-	}
-	return ""
-}

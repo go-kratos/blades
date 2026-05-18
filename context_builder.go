@@ -51,11 +51,11 @@ func (b contextBuilder) compactIfNeeded(ctx context.Context, msgs []*model.Messa
 	}
 	threshold := b.agent.contextWindow.Threshold()
 	if threshold > 0 {
-		tokens, err := countMessagesTokens(ctx, b.agent.tokenCounter, msgs)
+		count, err := b.agent.tokenCounter.CountTokens(ctx, &model.Request{Messages: msgs})
 		if err != nil {
 			return nil, err
 		}
-		if tokens <= threshold {
+		if count.Total() <= threshold {
 			return msgs, nil
 		}
 	}
@@ -89,28 +89,4 @@ func specsFromTools(allTools []tools.Tool) []tools.ToolSpec {
 		toolSpecs = append(toolSpecs, tool.Spec())
 	}
 	return toolSpecs
-}
-
-func normalizeUsage(c model.TokenCount) model.TokenCount {
-	if c.Input == 0 {
-		c.Input = c.Total()
-	}
-	return c
-}
-
-func countMessagesTokens(ctx context.Context, counter model.TokenCounter, msgs []*model.Message) (int64, error) {
-	if counter == nil {
-		counter = model.ApproxTokenCounter{}
-	}
-	count, err := counter.CountTokens(ctx, &model.Request{Messages: msgs})
-	if err != nil {
-		return 0, err
-	}
-	if count.HasSegments() {
-		return count.Messages, nil
-	}
-	if count.Messages > 0 {
-		return count.Messages, nil
-	}
-	return count.Total(), nil
 }

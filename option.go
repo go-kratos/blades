@@ -68,9 +68,9 @@ func WithContextWindow(w model.ContextWindow) AgentOption {
 	}
 }
 
-// WithTokenCounter sets the request-level token counter used for context stats
-// and budget enforcement. When nil, the Agent uses the default approximate
-// counter.
+// WithTokenCounter sets the request-level token counter used for context
+// stats and compaction threshold checks. When nil, the Agent uses the
+// default approximate counter.
 func WithTokenCounter(counter model.TokenCounter) AgentOption {
 	return func(a *llmAgent) {
 		a.tokenCounter = counter

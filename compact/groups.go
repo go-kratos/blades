@@ -93,15 +93,3 @@ func retainLastMessages(groups []messageGroup, maxMessages int) int {
 	}
 	return start
 }
-
-func isGroupBoundary(groups []messageGroup, index int) bool {
-	if index == 0 {
-		return true
-	}
-	for _, group := range groups {
-		if group.start == index || group.end == index {
-			return true
-		}
-	}
-	return false
-}

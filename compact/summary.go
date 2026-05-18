@@ -38,6 +38,13 @@ func WithTokenCounter(tc model.TokenCounter) SummarizeOption {
 	}
 }
 
+// WithMaxSummaryTokens sets the maximum token budget for the generated summary.
+func WithMaxSummaryTokens(n int64) SummarizeOption {
+	return func(s *summarizeCompactor) {
+		s.maxSummaryTokens = n
+	}
+}
+
 // NewSummarize creates a compactor that summarizes older messages and keeps
 // recent ones verbatim. On each Compact call it summarizes everything before
 // the recent window and returns [summaryMsg, ...recentMsgs].
@@ -54,6 +61,7 @@ func NewSummarize(opts ...SummarizeOption) Compactor {
 type summarizeCompactor struct {
 	keepRecentMessages int
 	keepRecentTokens   int64
+	maxSummaryTokens   int64
 	counter            model.TokenCounter
 	summarizer         Summarizer
 }
@@ -83,7 +91,10 @@ func (s *summarizeCompactor) Compact(ctx context.Context, req Request) ([]*model
 		return recentMsgs, nil
 	}
 
-	summary, err := s.summarizer.Summarize(ctx, SummaryRequest{Messages: toSummarize})
+	summary, err := s.summarizer.Summarize(ctx, SummaryRequest{
+		Messages:  toSummarize,
+		MaxTokens: s.maxSummaryTokens,
+	})
 	if err != nil {
 		return nil, err
 	}

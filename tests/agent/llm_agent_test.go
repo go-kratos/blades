@@ -127,6 +127,7 @@ func TestLLMAgentWithCompactUsesModelSummarizer(t *testing.T) {
 		"assistant",
 		blades.WithModel(provider),
 		blades.WithTools(testtools.NewCalculateTool()),
+		blades.WithContextWindow(model.ContextWindow{}),
 		blades.WithPrompt(prompt.Section(func(context.Context) ([]content.Part, error) {
 			promptCalls++
 			return []content.Part{content.Text{Text: "main prompt"}}, nil
@@ -182,6 +183,7 @@ func TestModelSummarizerCanUseSeparateProvider(t *testing.T) {
 	agent, err := blades.NewAgent(
 		"assistant",
 		blades.WithModel(mainProvider),
+		blades.WithContextWindow(model.ContextWindow{}),
 		blades.WithCompact(compact.NewSummarize(
 			compact.WithKeepRecentMessages(1),
 			compact.WithSummarizer(compact.NewModelSummarizer(summaryProvider)),
