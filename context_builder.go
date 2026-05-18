@@ -2,7 +2,6 @@ package blades
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/go-kratos/blades/compact"
 	"github.com/go-kratos/blades/content"
@@ -23,14 +22,9 @@ func (b contextBuilder) Build(ctx context.Context) (*model.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-	if b.agent.compactor != nil {
-		msgs, err = b.agent.compactor.Compact(ctx, compact.Request{
-			Messages:     msgs,
-			TokenCounter: b.agent.tokenCounter,
-		})
-		if err != nil {
-			return nil, err
-		}
+	msgs, err = b.compactIfNeeded(ctx, msgs)
+	if err != nil {
+		return nil, err
 	}
 
 	systemParts, err := buildSystemParts(ctx, b.agent.promptBuilders)
@@ -42,33 +36,33 @@ func (b contextBuilder) Build(ctx context.Context) (*model.Request, error) {
 		return nil, err
 	}
 
-	toolSpecs := specsFromTools(b.allTools)
 	req := &model.Request{
 		Model:    b.agent.provider.Name(),
+		Tools:    specsFromTools(b.allTools),
 		System:   system,
 		Messages: msgs,
-		Tools:    toolSpecs,
-	}
-	if err := b.enforceBudget(ctx, req); err != nil {
-		return nil, err
 	}
 	return req, nil
 }
 
-func (b contextBuilder) enforceBudget(ctx context.Context, req *model.Request) error {
-	budget := b.agent.contextBudget
-	if budget == (model.TokenCount{}) {
-		return nil // no budget configured
+func (b contextBuilder) compactIfNeeded(ctx context.Context, msgs []*model.Message) ([]*model.Message, error) {
+	if b.agent.compactor == nil {
+		return msgs, nil
 	}
-	if b.agent.tokenCounter == nil {
-		return nil
+	threshold := b.agent.contextWindow.Threshold()
+	if threshold > 0 {
+		tokens, err := countMessagesTokens(ctx, b.agent.tokenCounter, msgs)
+		if err != nil {
+			return nil, err
+		}
+		if tokens <= threshold {
+			return msgs, nil
+		}
 	}
-	usage, err := b.agent.tokenCounter.CountTokens(ctx, req)
-	if err != nil {
-		return fmt.Errorf("blades: count model request tokens: %w", err)
-	}
-	usage = normalizeUsage(usage)
-	return checkBudget(budget, usage)
+	return b.agent.compactor.Compact(ctx, compact.Request{
+		Messages:     msgs,
+		TokenCounter: b.agent.tokenCounter,
+	})
 }
 
 func buildSystemParts(ctx context.Context, builders []prompt.Builder) ([]content.Part, error) {
@@ -102,4 +96,21 @@ func normalizeUsage(c model.TokenCount) model.TokenCount {
 		c.Input = c.Total()
 	}
 	return c
+}
+
+func countMessagesTokens(ctx context.Context, counter model.TokenCounter, msgs []*model.Message) (int64, error) {
+	if counter == nil {
+		counter = model.ApproxTokenCounter{}
+	}
+	count, err := counter.CountTokens(ctx, &model.Request{Messages: msgs})
+	if err != nil {
+		return 0, err
+	}
+	if count.HasSegments() {
+		return count.Messages, nil
+	}
+	if count.Messages > 0 {
+		return count.Messages, nil
+	}
+	return count.Total(), nil
 }

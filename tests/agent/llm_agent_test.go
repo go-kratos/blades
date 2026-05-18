@@ -23,7 +23,6 @@ import (
 	"github.com/go-kratos/blades/tests/testtools"
 	"github.com/go-kratos/blades/tools"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestLLMAgentExecutesCalculateTool(t *testing.T) {
@@ -210,30 +209,6 @@ func TestModelSummarizerCanUseSeparateProvider(t *testing.T) {
 	if assert.Len(t, requests, 1) {
 		assert.Contains(t, textFromParts(requests[0].Messages[0].Parts), "override summary")
 	}
-}
-
-func TestLLMAgentRechecksContextBudgetAfterBeforeModelHook(t *testing.T) {
-	provider := dummyprovider.NewProvider(dummyprovider.TextResponse("ok"))
-	agent, err := blades.NewAgent(
-		"assistant",
-		blades.WithModel(provider),
-		blades.WithContextBudget(model.TokenCount{System: 4}),
-		blades.WithTokenCounter(model.TokenCounterFunc(countRequestTokens)),
-		blades.WithHooks(&mutateSystemHook{system: "too long"}),
-		blades.WithPrompt(prompt.Text("ok")),
-	)
-	assert.NoError(t, err)
-
-	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("hello"))
-	assert.NoError(t, err)
-	turnEnd, ok := lastTurnEnd(outputs)
-	assert.True(t, ok)
-	require.Error(t, turnEnd.Err)
-
-	var budgetErr *blades.BudgetError
-	require.True(t, errors.As(turnEnd.Err, &budgetErr))
-	assert.Equal(t, "system", budgetErr.Segment)
-	assert.Equal(t, 0, provider.CallCount())
 }
 
 func TestLLMAgentInjectsRunningAgentIntoRuntimeExtensions(t *testing.T) {

@@ -2,7 +2,6 @@ package blades
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/go-kratos/blades/compact"
@@ -19,7 +18,6 @@ func TestContextBuilderCompactsThenBuildsPromptAndStats(t *testing.T) {
 		testTextMessage(model.RoleUser, "old"),
 		testTextMessage(model.RoleAssistant, "recent"),
 	))
-	budget := model.TokenCount{System: 100, Messages: 100}
 	var compactCounterOK bool
 	agent := &llmAgent{
 		provider: testProvider{name: "test-model"},
@@ -27,12 +25,12 @@ func TestContextBuilderCompactsThenBuildsPromptAndStats(t *testing.T) {
 			compactCounterOK = req.TokenCounter != nil
 			return req.Messages[1:], nil
 		}),
+		contextWindow: model.ContextWindow{MaxTokens: 100, OutputTokens: 10},
 		promptBuilders: []prompt.Builder{
 			prompt.Section(func(ctx context.Context) ([]content.Part, error) {
 				return []content.Part{content.Text{Text: "system"}}, nil
 			}),
 		},
-		contextBudget: budget,
 		tokenCounter: model.TokenCounterFunc(func(_ context.Context, req *model.Request) (model.TokenCount, error) {
 			return model.TokenCount{
 				System:   int64(len(req.System)),
@@ -49,31 +47,6 @@ func TestContextBuilderCompactsThenBuildsPromptAndStats(t *testing.T) {
 	require.Len(t, req.Messages, 1)
 	assert.Equal(t, "recent", content.TextFromParts(req.Messages[0].Parts))
 	assert.True(t, compactCounterOK)
-}
-
-func TestEnforceContextBudgetReturnsBudgetError(t *testing.T) {
-	budget := model.TokenCount{System: 3}
-	usage := model.TokenCount{System: int64(len("too long"))}
-	err := checkBudget(budget, usage)
-	require.Error(t, err)
-
-	var budgetErr *BudgetError
-	require.True(t, errors.As(err, &budgetErr))
-	assert.Equal(t, "system", budgetErr.Segment)
-	assert.Equal(t, int64(3), budgetErr.Limit)
-	assert.Equal(t, int64(len("too long")), budgetErr.Actual)
-}
-
-func TestEnforceContextBudgetRequiresSegmentBreakdown(t *testing.T) {
-	budget := model.TokenCount{System: 3}
-	usage := model.TokenCount{Input: 2}
-	err := checkBudget(budget, usage)
-	require.Error(t, err)
-
-	var budgetErr *BudgetError
-	require.True(t, errors.As(err, &budgetErr))
-	assert.Equal(t, "system", budgetErr.Segment)
-	assert.True(t, budgetErr.Unavailable)
 }
 
 type testProvider struct {

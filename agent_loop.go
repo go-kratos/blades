@@ -280,11 +280,6 @@ func (l *agentLoop) runStep() (*model.Response, error) {
 		}
 	}
 
-	// Re-check budget after hooks may have mutated the request
-	if err := l.enforceBudget(l.ctx, req); err != nil {
-		return nil, err
-	}
-
 	resp, err := l.streamStep(l.ctx, req)
 	if err != nil {
 		for _, h := range l.agent.hooks {
@@ -308,14 +303,6 @@ func (l *agentLoop) buildRequest(ctx context.Context) (*model.Request, error) {
 		sess:     l.sess,
 		allTools: l.allTools,
 	}.Build(ctx)
-}
-
-func (l *agentLoop) enforceBudget(ctx context.Context, req *model.Request) error {
-	usage, err := l.agent.tokenCounter.CountTokens(ctx, req)
-	if err != nil {
-		return err
-	}
-	return checkBudget(l.agent.contextBudget, normalizeUsage(usage))
 }
 
 func (l *agentLoop) streamStep(ctx context.Context, req *model.Request) (*model.Response, error) {
