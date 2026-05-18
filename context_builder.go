@@ -18,32 +18,28 @@ type contextBuilder struct {
 	allTools []tools.Tool
 }
 
-func (b contextBuilder) Build(ctx context.Context) (*model.Request, ContextWindow, error) {
-	w := ContextWindow{Budget: b.agent.contextBudget}
-	ctx = withContextWindow(ctx, w)
-
+func (b contextBuilder) Build(ctx context.Context) (*model.Request, error) {
 	msgs, err := b.sess.Messages(ctx)
 	if err != nil {
-		return nil, ContextWindow{}, err
+		return nil, err
 	}
-	w.MessagesBefore = len(msgs)
 	if b.agent.compactor != nil {
 		msgs, err = b.agent.compactor.Compact(ctx, compact.Request{
 			Messages:     msgs,
 			TokenCounter: b.agent.tokenCounter,
 		})
 		if err != nil {
-			return nil, ContextWindow{}, err
+			return nil, err
 		}
 	}
 
 	systemParts, err := buildSystemParts(ctx, b.agent.promptBuilders)
 	if err != nil {
-		return nil, ContextWindow{}, err
+		return nil, err
 	}
 	system, err := prompt.JoinText(systemParts)
 	if err != nil {
-		return nil, ContextWindow{}, err
+		return nil, err
 	}
 
 	toolSpecs := specsFromTools(b.allTools)
@@ -53,18 +49,26 @@ func (b contextBuilder) Build(ctx context.Context) (*model.Request, ContextWindo
 		Messages: msgs,
 		Tools:    toolSpecs,
 	}
-	w.MessagesAfter = len(req.Messages)
-	if b.agent.tokenCounter != nil {
-		usage, err := b.agent.tokenCounter.CountTokens(ctx, req)
-		if err != nil {
-			return nil, ContextWindow{}, fmt.Errorf("blades: count model request tokens: %w", err)
-		}
-		w.Usage = normalizeUsage(usage)
+	if err := b.enforceBudget(ctx, req); err != nil {
+		return nil, err
 	}
-	if err := w.Enforce(); err != nil {
-		return nil, ContextWindow{}, err
+	return req, nil
+}
+
+func (b contextBuilder) enforceBudget(ctx context.Context, req *model.Request) error {
+	budget := b.agent.contextBudget
+	if budget == (model.TokenCount{}) {
+		return nil // no budget configured
 	}
-	return req, w, nil
+	if b.agent.tokenCounter == nil {
+		return nil
+	}
+	usage, err := b.agent.tokenCounter.CountTokens(ctx, req)
+	if err != nil {
+		return fmt.Errorf("blades: count model request tokens: %w", err)
+	}
+	usage = normalizeUsage(usage)
+	return checkBudget(budget, usage)
 }
 
 func buildSystemParts(ctx context.Context, builders []prompt.Builder) ([]content.Part, error) {

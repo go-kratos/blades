@@ -20,19 +20,15 @@ func TestContextBuilderCompactsThenBuildsPromptAndStats(t *testing.T) {
 		testTextMessage(model.RoleAssistant, "recent"),
 	))
 	budget := model.TokenCount{System: 100, Messages: 100}
-	var compactWindow ContextWindow
 	var compactCounterOK bool
-	var promptWindow ContextWindow
 	agent := &llmAgent{
 		provider: testProvider{name: "test-model"},
 		compactor: compact.CompactorFunc(func(ctx context.Context, req compact.Request) ([]*model.Message, error) {
-			compactWindow, _ = ContextWindowFrom(ctx)
 			compactCounterOK = req.TokenCounter != nil
 			return req.Messages[1:], nil
 		}),
 		promptBuilders: []prompt.Builder{
 			prompt.Section(func(ctx context.Context) ([]content.Part, error) {
-				promptWindow, _ = ContextWindowFrom(ctx)
 				return []content.Part{content.Text{Text: "system"}}, nil
 			}),
 		},
@@ -45,29 +41,20 @@ func TestContextBuilderCompactsThenBuildsPromptAndStats(t *testing.T) {
 		}),
 	}
 
-	req, w, err := contextBuilder{agent: agent, sess: sess}.Build(context.Background())
+	req, err := contextBuilder{agent: agent, sess: sess}.Build(context.Background())
 	require.NoError(t, err)
 
 	assert.Equal(t, "test-model", req.Model)
 	assert.Equal(t, "system", req.System)
 	require.Len(t, req.Messages, 1)
 	assert.Equal(t, "recent", content.TextFromParts(req.Messages[0].Parts))
-	assert.Equal(t, budget, compactWindow.Budget)
-	assert.Equal(t, compactWindow.Budget, promptWindow.Budget)
 	assert.True(t, compactCounterOK)
-	assert.Equal(t, int64(len("system")), w.Usage.System)
-	assert.Equal(t, int64(len("recent")), w.Usage.Messages)
-	assert.Equal(t, int64(len("system")+len("recent")), w.Usage.Input)
-	assert.Equal(t, 2, w.MessagesBefore)
-	assert.Equal(t, 1, w.MessagesAfter)
 }
 
 func TestEnforceContextBudgetReturnsBudgetError(t *testing.T) {
-	w := ContextWindow{
-		Budget: model.TokenCount{System: 3},
-		Usage:  model.TokenCount{System: int64(len("too long"))},
-	}
-	err := w.Enforce()
+	budget := model.TokenCount{System: 3}
+	usage := model.TokenCount{System: int64(len("too long"))}
+	err := checkBudget(budget, usage)
 	require.Error(t, err)
 
 	var budgetErr *BudgetError
@@ -78,11 +65,9 @@ func TestEnforceContextBudgetReturnsBudgetError(t *testing.T) {
 }
 
 func TestEnforceContextBudgetRequiresSegmentBreakdown(t *testing.T) {
-	w := ContextWindow{
-		Budget: model.TokenCount{System: 3},
-		Usage:  model.TokenCount{Input: 2},
-	}
-	err := w.Enforce()
+	budget := model.TokenCount{System: 3}
+	usage := model.TokenCount{Input: 2}
+	err := checkBudget(budget, usage)
 	require.Error(t, err)
 
 	var budgetErr *BudgetError

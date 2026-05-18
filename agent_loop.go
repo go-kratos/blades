@@ -269,41 +269,32 @@ func (l *agentLoop) endTurn(turn *hook.Turn, result turnState, err error) {
 }
 
 func (l *agentLoop) runStep() (*model.Response, error) {
-	req, w, err := l.buildRequest(l.ctx)
+	req, err := l.buildRequest(l.ctx)
 	if err != nil {
 		return nil, err
 	}
-	ctx := withContextWindow(l.ctx, w)
 
 	for _, h := range l.agent.hooks {
-		if err := h.BeforeModel(ctx, req); err != nil {
+		if err := h.BeforeModel(l.ctx, req); err != nil {
 			return nil, err
 		}
 	}
 
-	// Re-check after hooks may have mutated the request
-	if l.agent.tokenCounter != nil {
-		usage, err := l.agent.tokenCounter.CountTokens(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-		w.Usage = normalizeUsage(usage)
-		if err := w.Enforce(); err != nil {
-			return nil, err
-		}
-		ctx = withContextWindow(ctx, w)
+	// Re-check budget after hooks may have mutated the request
+	if err := l.enforceBudget(l.ctx, req); err != nil {
+		return nil, err
 	}
 
-	resp, err := l.streamStep(ctx, req)
+	resp, err := l.streamStep(l.ctx, req)
 	if err != nil {
 		for _, h := range l.agent.hooks {
-			_ = h.AfterModel(ctx, req, nil, err)
+			_ = h.AfterModel(l.ctx, req, nil, err)
 		}
 		return nil, err
 	}
 
 	for _, h := range l.agent.hooks {
-		if err := h.AfterModel(ctx, req, resp, nil); err != nil {
+		if err := h.AfterModel(l.ctx, req, resp, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -311,12 +302,20 @@ func (l *agentLoop) runStep() (*model.Response, error) {
 	return resp, nil
 }
 
-func (l *agentLoop) buildRequest(ctx context.Context) (*model.Request, ContextWindow, error) {
+func (l *agentLoop) buildRequest(ctx context.Context) (*model.Request, error) {
 	return contextBuilder{
 		agent:    l.agent,
 		sess:     l.sess,
 		allTools: l.allTools,
 	}.Build(ctx)
+}
+
+func (l *agentLoop) enforceBudget(ctx context.Context, req *model.Request) error {
+	usage, err := l.agent.tokenCounter.CountTokens(ctx, req)
+	if err != nil {
+		return err
+	}
+	return checkBudget(l.agent.contextBudget, normalizeUsage(usage))
 }
 
 func (l *agentLoop) streamStep(ctx context.Context, req *model.Request) (*model.Response, error) {

@@ -1,7 +1,7 @@
 ---
 type: design
 title: Context Management
-date: 2026-05-16
+date: 2026-05-18
 status: current
 parent: design-agent-framework.md
 related: [design-event-agent-loop.md, design-compact.md, design-memory.md, design-prompt.md]
@@ -12,7 +12,7 @@ tags: [agentos, context, compact, memory, budget]
 
 ## Overview
 
-Context management is part of the root `blades` default Agent runtime. It is the request-view assembly layer between `session`, `compact`, `prompt`, `memory`, `tools`, and `model.Request`. It does not own long-term state and does not replace those packages. Its job is to build one model-call view, expose budget intent while building it, and report segmented token stats after it is assembled.
+Context management is part of the root `blades` default Agent runtime. It is the request-view assembly layer between `session`, `compact`, `prompt`, `memory`, `tools`, and `model.Request`. It does not own long-term state and does not replace those packages. Its job is to build one model-call view and enforce budget limits.
 
 The default Agent Loop uses a private root `contextBuilder` for each model step. Applications configure budget coordination through:
 
@@ -30,19 +30,10 @@ If no counter is provided explicitly, the default Agent falls back to `model.App
 
 ## API
 
-Root API — single unified context value:
+Budget enforcement is internal to `contextBuilder`. The public API is:
 
 ```go
-type ContextWindow struct {
-    Budget         model.TokenCount  // 上限（零值 = 不限制）
-    Usage          model.TokenCount  // 实际计数
-    MessagesBefore int               // compaction 前消息数
-    MessagesAfter  int               // compaction 后消息数
-}
-
-// Enforce checks that Usage does not exceed any non-zero Budget limit.
-func (w ContextWindow) Enforce() error
-
+// BudgetError reports that an assembled request segment exceeds its budget.
 type BudgetError struct {
     Segment     string
     Limit       int64
@@ -50,8 +41,7 @@ type BudgetError struct {
     Unavailable bool
 }
 
-// ContextWindowFrom retrieves the context window from ctx.
-func ContextWindowFrom(ctx context.Context) (ContextWindow, bool)
+func (e *BudgetError) Error() string
 ```
 
 Request token counting belongs to `model/`:
@@ -81,54 +71,44 @@ The counter is deliberately request-view oriented rather than message-only, beca
 
 The private root context builder assembles requests in a fixed order:
 
-1. Create `ContextWindow{Budget: agent.contextBudget}` and inject into context.
-2. Read `Session.Messages(ctx)` as the full append-only transcript.
-3. Call `Compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})` on the messages segment only.
-4. Build prompt sections into `model.Request.System`; `prompt.Memory` recall happens here.
-5. Render tool specs into `model.Request.Tools`.
-6. Count tokens via `TokenCounter.CountTokens(ctx, req)` and populate `ContextWindow.Usage`.
-7. Call `ContextWindow.Enforce()` to check budget limits.
-8. Return `*model.Request` and `ContextWindow`.
+1. Read `Session.Messages(ctx)` as the full append-only transcript.
+2. Call `Compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})` on the messages segment only.
+3. Build prompt sections into `model.Request.System`; `prompt.Memory` recall happens here.
+4. Render tool specs into `model.Request.Tools`.
+5. Assemble `model.Request` and check budget limits.
+6. Return `*model.Request` or `BudgetError`.
 
-The default loop attaches `ContextWindow` to the context used for `BeforeModel`. Since `BeforeModel` hooks may mutate `*model.Request`, the loop recomputes stats and enforces budget after all `BeforeModel` hooks finish; the provider call and `AfterModel` receive the final stats.
+The default loop calls `contextBuilder.Build()` to get the request. Since `BeforeModel` hooks may mutate `*model.Request`, the loop re-checks budget after all `BeforeModel` hooks finish; the provider call and `AfterModel` receive the final request.
 
 `Input` can be enforced whenever the counter returns total input usage. Segment budgets (`System`, `Messages`, `Tools`) require `TokenCount.HasSegments()`; otherwise enforcement fails with `BudgetError{Unavailable: true}` instead of silently accepting an unchecked budget.
 
 ## Design Principles
 
-### One Concept, One Type
+### Budget Enforcement is Internal
 
-`ContextWindow` unifies budget configuration and runtime observation:
-- **Budget** is the upper limit (zero = no limit)
-- **Usage** is the actual measured count
-- Both use the same `model.TokenCount` shape
+`contextBuilder` is a private type. Budget enforcement happens during `Build()` and again after `BeforeModel` hooks. The result is either a valid `*model.Request` or a `BudgetError`. Hooks and the provider never see an invalid request.
 
-This eliminates the redundancy between the old `ContextBudget` and `model.TokenCount` structs.
+### Compact and Agent Budget are Independent
 
-### Single Context Value
+- **Compact budget** (`compact.WithMessagesBudget(n)`) is a soft trigger: "start summarizing when messages exceed N tokens"
+- **Agent budget** (`blades.WithContextBudget(tc)`) is a hard limit: "reject any request that exceeds these limits"
 
-Instead of separate `ContextInfo` (pre-assembly) and `ContextStats` (post-assembly) context values, there is one `ContextWindow` that progressively enriches:
-- Build starts: `Budget` is set, `Usage` is zero
-- After counting: `Usage` is populated
-- Hooks and provider see the complete `ContextWindow`
+These serve different purposes and are configured separately. Compact has its own internal budget logic; Agent budget is enforced at the request assembly boundary.
 
-### Extensible Enforcement
+### Session is the Single Message Store
 
-The `Enforce()` method iterates over all segments uniformly. Adding a new segment requires only:
-1. Add a field to `model.TokenCount`
-2. Add a check case in `Enforce()`
+- `contextBuilder` reads from `session.Messages(ctx)`
+- `Compactor` transforms messages but does not write to session
+- `agentLoop.commitStep()` writes the final turn to session
+- This keeps session as the append-only source of truth
 
-No manual field-by-field comparison code.
+### No Context Value Injection
 
-## Memory And Compact
+Budget enforcement does not inject `ContextWindow` into context. Hooks receive `*model.Request` directly, which contains all the information they need. This simplifies the API and avoids unnecessary context pollution.
 
-Memory and compact remain decoupled:
+## Error Semantics
 
-- Memory recall enters `Request.System` through prompt sections.
-- Compact transforms only `Request.Messages`.
-- Root context management coordinates budget visibility and stats, but it does not let compact inspect or trim memory.
-
-Applications that need adaptive memory recall should read `blades.ContextWindowFrom(ctx)` in the memory query function and choose `memory.Query.Limit` or backend-specific filters accordingly. If system memory exceeds `ContextWindow.Budget.System`, the root context builder returns `BudgetError`; it does not silently drop memory entries.
+Budget enforcement is fail-fast and runs after `BeforeModel` mutations so the checked request matches the provider request. `BudgetError` reports the segment, limit, actual estimate when available, and whether segment breakdown was unavailable. The Agent Loop surfaces that error through the normal `event.TurnEnd.Err` / `event.Error` path.
 
 ## Summary Requests
 
@@ -141,8 +121,4 @@ compact.NewBlockSummarize(
     compact.WithSummarizer(compact.NewModelSummarizer(summaryProvider)),
 )
 ```
-
-## Error Semantics
-
-Budget enforcement is fail-fast and runs after `BeforeModel` mutations so the checked request matches the provider request. `BudgetError` reports the segment, limit, actual estimate when available, and whether segment breakdown was unavailable. The Agent Loop surfaces that error through the normal `event.TurnEnd.Err` / `event.Error` path.
 
