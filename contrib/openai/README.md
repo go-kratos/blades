@@ -1,6 +1,6 @@
 # OpenAI Provider
 
-This package adapts OpenAI-compatible chat, image, and audio APIs to the Blades `model.Provider` protocol.
+This package adapts OpenAI-compatible chat, responses, image, and audio APIs to the Blades `model.Provider` protocol.
 
 ## Chat
 
@@ -39,6 +39,19 @@ for chunk, err := range provider.Stream(ctx, req) {
 ```
 
 `WithParallelToolCalls(false)` maps to OpenAI `parallel_tool_calls=false`. The Agent Loop does not read this option; it only executes the tool calls the model actually returns.
+
+## Responses
+
+```go
+provider := openai.NewResponses("gpt-5",
+    openai.WithResponsesAPIKey(os.Getenv("OPENAI_API_KEY")),
+    openai.WithResponsesParallelToolCalls(true),
+)
+
+resp, err := provider.Generate(ctx, req)
+```
+
+`NewResponses` uses the Responses API with Blades-managed full-history input by default. `WithResponsesPreviousResponseID` is available for explicit OpenAI server-side response chaining.
 
 ## Image
 
