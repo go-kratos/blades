@@ -2,13 +2,93 @@ package anthropic
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/model"
 )
+
+func TestStreamCollectsToolUseFromInputJSONDeltas(t *testing.T) {
+	t.Parallel()
+
+	var sse strings.Builder
+	writeSSEEvent(&sse, "message_start", `{"message":{"content":[],"id":"msg_1","model":"claude-test","role":"assistant","stop_reason":null,"stop_sequence":null,"type":"message","usage":{"input_tokens":1,"output_tokens":0}},"type":"message_start"}`)
+	writeSSEEvent(&sse, "content_block_start", `{"content_block":{"id":"toolu_1","input":{},"name":"read","type":"tool_use"},"index":0,"type":"content_block_start"}`)
+	writeSSEEvent(&sse, "content_block_delta", `{"delta":{"partial_json":"{\"path\": ","type":"input_json_delta"},"index":0,"type":"content_block_delta"}`)
+	writeSSEEvent(&sse, "content_block_delta", `{"delta":{"partial_json":"\"/tmp/file\"}","type":"input_json_delta"},"index":0,"type":"content_block_delta"}`)
+	writeSSEEvent(&sse, "content_block_stop", `{"index":0,"type":"content_block_stop"}`)
+	writeSSEEvent(&sse, "message_delta", `{"delta":{"stop_reason":"tool_use","stop_sequence":null},"type":"message_delta","usage":{"input_tokens":1,"output_tokens":5}}`)
+	writeSSEEvent(&sse, "message_stop", `{"type":"message_stop"}`)
+
+	provider := newTestProvider(t, sse.String())
+	var toolUse content.ToolUse
+	for chunk, err := range provider.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "read"}}}},
+	}) {
+		if err != nil {
+			t.Fatalf("Stream returned error: %v", err)
+		}
+		for _, part := range chunk.Parts {
+			if got, ok := part.(content.ToolUse); ok {
+				toolUse = got
+			}
+		}
+	}
+
+	if toolUse.ID != "toolu_1" {
+		t.Fatalf("tool use id = %q, want toolu_1", toolUse.ID)
+	}
+	if toolUse.Name != "read" {
+		t.Fatalf("tool use name = %q, want read", toolUse.Name)
+	}
+	var input map[string]string
+	if err := json.Unmarshal(toolUse.Input, &input); err != nil {
+		t.Fatalf("tool input = %s, unmarshal error = %v", string(toolUse.Input), err)
+	}
+	if got, want := input["path"], "/tmp/file"; got != want {
+		t.Fatalf("tool input path = %q, want %q", got, want)
+	}
+}
+
+func TestStreamReportsInvalidToolInputJSON(t *testing.T) {
+	t.Parallel()
+
+	var sse strings.Builder
+	writeSSEEvent(&sse, "message_start", `{"message":{"content":[],"id":"msg_1","model":"claude-test","role":"assistant","stop_reason":null,"stop_sequence":null,"type":"message","usage":{"input_tokens":1,"output_tokens":0}},"type":"message_start"}`)
+	writeSSEEvent(&sse, "content_block_start", `{"content_block":{"id":"toolu_1","input":{},"name":"read","type":"tool_use"},"index":0,"type":"content_block_start"}`)
+	writeSSEEvent(&sse, "content_block_delta", `{"delta":{"partial_json":"{\"path\": ","type":"input_json_delta"},"index":0,"type":"content_block_delta"}`)
+	writeSSEEvent(&sse, "content_block_stop", `{"index":0,"type":"content_block_stop"}`)
+	writeSSEEvent(&sse, "message_delta", `{"delta":{"stop_reason":"tool_use","stop_sequence":null},"type":"message_delta","usage":{"input_tokens":1,"output_tokens":5}}`)
+	writeSSEEvent(&sse, "message_stop", `{"type":"message_stop"}`)
+
+	provider := newTestProvider(t, sse.String())
+	var streamErr error
+	for _, err := range provider.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "read"}}}},
+	}) {
+		if err != nil {
+			streamErr = err
+			break
+		}
+	}
+	if streamErr == nil {
+		t.Fatal("Stream error = nil, want invalid tool input JSON error")
+	}
+	if got := streamErr.Error(); !strings.Contains(got, `invalid tool input JSON for tool "read" (toolu_1)`) ||
+		!strings.Contains(got, "unexpected end of JSON input") {
+		t.Fatalf("Stream error = %q, want invalid tool input JSON error", got)
+	}
+	if got := streamErr.Error(); strings.Contains(got, "error converting content block to JSON") ||
+		strings.Contains(got, "json.RawMessage") {
+		t.Fatalf("Stream error = %q, want Blades error without SDK marshal detail", got)
+	}
+}
 
 func TestToClaudeParamsAssistantRole(t *testing.T) {
 	t.Parallel()
@@ -241,4 +321,28 @@ func TestToClaudeParamsToolMessages(t *testing.T) {
 	if got, want := toolResultBlock["tool_use_id"], "toolu_123"; got != want {
 		t.Fatalf("tool_result tool_use_id = %v, want %v", got, want)
 	}
+}
+
+func newTestProvider(t *testing.T, sse string) model.Provider {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/messages" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("content-type", "text/event-stream")
+		_, _ = w.Write([]byte(sse))
+	}))
+	t.Cleanup(server.Close)
+
+	return NewModel("claude-test", WithBaseURL(server.URL), WithAPIKey("test-key"))
+}
+
+func writeSSEEvent(sb *strings.Builder, event string, data string) {
+	sb.WriteString("event: ")
+	sb.WriteString(event)
+	sb.WriteByte('\n')
+	sb.WriteString("data: ")
+	sb.WriteString(data)
+	sb.WriteString("\n\n")
 }

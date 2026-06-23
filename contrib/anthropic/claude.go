@@ -7,7 +7,6 @@ import (
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	sdkoption "github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/model"
 )
 
@@ -128,20 +127,28 @@ func (m *Claude) Stream(ctx context.Context, req *model.Request) iter.Seq2[*mode
 		}
 		streaming := m.client.Messages.NewStreaming(ctx, *params)
 		defer streaming.Close()
-		message := &anthropic.Message{}
+		accumulator := newStreamAccumulator()
 		for streaming.Next() {
 			event := streaming.Current()
-			if err := message.Accumulate(event); err != nil {
-				yield(nil, err)
-				return
-			}
 			switch ev := event.AsAny().(type) {
+			case anthropic.ContentBlockStartEvent:
+				accumulator.startContentBlock(ev)
 			case anthropic.ContentBlockDeltaEvent:
+				if err := accumulator.deltaContentBlock(ev); err != nil {
+					yield(nil, err)
+					return
+				}
 				chunk := convertStreamDeltaToChunk(ev)
 				if len(chunk.Parts) > 0 && !yield(chunk, nil) {
 					return
 				}
+			case anthropic.ContentBlockStopEvent:
+				if err := accumulator.stopContentBlock(ev); err != nil {
+					yield(nil, err)
+					return
+				}
 			case anthropic.MessageDeltaEvent:
+				accumulator.messageDelta(ev)
 				chunk := &model.Chunk{
 					StopReason: mapClaudeStopReason(ev.Delta.StopReason),
 					Usage: &model.Usage{
@@ -158,21 +165,9 @@ func (m *Claude) Stream(ctx context.Context, req *model.Request) iter.Seq2[*mode
 			yield(nil, err)
 			return
 		}
-		finalResponse, err := convertClaudeToBlades(message)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		if finalResponse.Message != nil {
-			var toolParts []content.Part
-			for _, part := range finalResponse.Message.Parts {
-				if _, ok := part.(content.ToolUse); ok {
-					toolParts = append(toolParts, part)
-				}
-			}
-			if len(toolParts) > 0 {
-				yield(&model.Chunk{Parts: toolParts, StopReason: finalResponse.StopReason}, nil)
-			}
+		toolParts := accumulator.toolParts()
+		if len(toolParts) > 0 {
+			yield(&model.Chunk{Parts: toolParts, StopReason: accumulator.stopReason}, nil)
 		}
 	}
 }

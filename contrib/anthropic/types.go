@@ -96,6 +96,104 @@ func convertStreamDeltaToChunk(event anthropic.ContentBlockDeltaEvent) *model.Ch
 	return chunk
 }
 
+// streamAccumulator avoids anthropic-sdk-go Message.Accumulate for now because
+// the SDK can marshal invalid json.RawMessage while accumulating streamed tool
+// input deltas. Remove this local path after the upstream issues are fixed:
+// https://github.com/anthropics/anthropic-sdk-go/issues/164
+// https://github.com/anthropics/anthropic-sdk-go/issues/255
+type streamAccumulator struct {
+	tools      map[int64]*streamToolAccumulator
+	toolOrder  []int64
+	stopReason model.StopReason
+}
+
+type streamToolAccumulator struct {
+	id       string
+	name     string
+	input    []byte
+	hasDelta bool
+	done     bool
+}
+
+func newStreamAccumulator() *streamAccumulator {
+	return &streamAccumulator{
+		tools:      make(map[int64]*streamToolAccumulator),
+		stopReason: model.StopEnd,
+	}
+}
+
+func (a *streamAccumulator) startContentBlock(event anthropic.ContentBlockStartEvent) {
+	block, ok := event.ContentBlock.AsAny().(anthropic.ToolUseBlock)
+	if !ok {
+		return
+	}
+	input := append([]byte(nil), block.Input...)
+	if len(input) == 0 {
+		input = []byte("{}")
+	}
+	a.tools[event.Index] = &streamToolAccumulator{
+		id:    block.ID,
+		name:  block.Name,
+		input: input,
+	}
+	a.toolOrder = append(a.toolOrder, event.Index)
+}
+
+func (a *streamAccumulator) deltaContentBlock(event anthropic.ContentBlockDeltaEvent) error {
+	delta, ok := event.Delta.AsAny().(anthropic.InputJSONDelta)
+	if !ok || delta.PartialJSON == "" {
+		return nil
+	}
+	block, ok := a.tools[event.Index]
+	if !ok {
+		return nil
+	}
+	if !block.hasDelta && string(block.input) == "{}" {
+		block.input = []byte(delta.PartialJSON)
+		block.hasDelta = true
+		return nil
+	}
+	block.input = append(block.input, []byte(delta.PartialJSON)...)
+	block.hasDelta = true
+	return nil
+}
+
+func (a *streamAccumulator) stopContentBlock(event anthropic.ContentBlockStopEvent) error {
+	block, ok := a.tools[event.Index]
+	if !ok {
+		return nil
+	}
+	if len(block.input) == 0 {
+		block.input = []byte("{}")
+	}
+	var decoded any
+	if err := json.Unmarshal(block.input, &decoded); err != nil {
+		return fmt.Errorf("invalid tool input JSON for tool %q (%s): %w", block.name, block.id, err)
+	}
+	block.done = true
+	return nil
+}
+
+func (a *streamAccumulator) messageDelta(event anthropic.MessageDeltaEvent) {
+	a.stopReason = mapClaudeStopReason(event.Delta.StopReason)
+}
+
+func (a *streamAccumulator) toolParts() []content.Part {
+	parts := make([]content.Part, 0, len(a.toolOrder))
+	for _, index := range a.toolOrder {
+		block := a.tools[index]
+		if block == nil || !block.done {
+			continue
+		}
+		parts = append(parts, content.ToolUse{
+			ID:    block.id,
+			Name:  block.name,
+			Input: json.RawMessage(append([]byte(nil), block.input...)),
+		})
+	}
+	return parts
+}
+
 func mapClaudeStopReason(reason anthropic.StopReason) model.StopReason {
 	switch reason {
 	case anthropic.StopReasonToolUse:

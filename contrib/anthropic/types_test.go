@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
@@ -118,6 +119,74 @@ func TestConvertClaudeToBladesTextAndToolUse(t *testing.T) {
 	}
 }
 
+func TestStreamAccumulatorCollectsToolUseInputJSONDeltas(t *testing.T) {
+	t.Parallel()
+
+	accumulator := newStreamAccumulator()
+	accumulator.startContentBlock(decodeContentBlockStartEvent(t, `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"read","input":{}}}`))
+	if err := accumulator.deltaContentBlock(decodeContentBlockDeltaEvent(t, `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\": "}}`)); err != nil {
+		t.Fatalf("deltaContentBlock returned error: %v", err)
+	}
+	if err := accumulator.deltaContentBlock(decodeContentBlockDeltaEvent(t, `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"/tmp/file\"}"}}`)); err != nil {
+		t.Fatalf("deltaContentBlock returned error: %v", err)
+	}
+	if err := accumulator.stopContentBlock(decodeContentBlockStopEvent(t, `{"type":"content_block_stop","index":0}`)); err != nil {
+		t.Fatalf("stopContentBlock returned error: %v", err)
+	}
+	accumulator.messageDelta(decodeMessageDeltaEvent(t, `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"input_tokens":1,"output_tokens":5}}`))
+
+	if got, want := accumulator.stopReason, model.StopToolUse; got != want {
+		t.Fatalf("stop reason = %q, want %q", got, want)
+	}
+	parts := accumulator.toolParts()
+	if got, want := len(parts), 1; got != want {
+		t.Fatalf("tool parts len = %d, want %d", got, want)
+	}
+	toolUse, ok := parts[0].(content.ToolUse)
+	if !ok {
+		t.Fatalf("part type = %T, want content.ToolUse", parts[0])
+	}
+	if got, want := toolUse.ID, "toolu_1"; got != want {
+		t.Fatalf("tool id = %q, want %q", got, want)
+	}
+	if got, want := toolUse.Name, "read"; got != want {
+		t.Fatalf("tool name = %q, want %q", got, want)
+	}
+	var input map[string]string
+	if err := json.Unmarshal(toolUse.Input, &input); err != nil {
+		t.Fatalf("tool input = %s, unmarshal error = %v", string(toolUse.Input), err)
+	}
+	if got, want := input["path"], "/tmp/file"; got != want {
+		t.Fatalf("tool input path = %q, want %q", got, want)
+	}
+}
+
+func TestStreamAccumulatorReportsInvalidToolInputJSON(t *testing.T) {
+	t.Parallel()
+
+	accumulator := newStreamAccumulator()
+	accumulator.startContentBlock(decodeContentBlockStartEvent(t, `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"read","input":{}}}`))
+	if err := accumulator.deltaContentBlock(decodeContentBlockDeltaEvent(t, `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\": "}}`)); err != nil {
+		t.Fatalf("deltaContentBlock returned error: %v", err)
+	}
+
+	err := accumulator.stopContentBlock(decodeContentBlockStopEvent(t, `{"type":"content_block_stop","index":0}`))
+	if err == nil {
+		t.Fatal("stopContentBlock error = nil, want invalid tool input JSON error")
+	}
+	if got := err.Error(); !strings.Contains(got, `invalid tool input JSON for tool "read" (toolu_1)`) ||
+		!strings.Contains(got, "unexpected end of JSON input") {
+		t.Fatalf("stopContentBlock error = %q, want invalid tool input JSON error", got)
+	}
+	if got := err.Error(); strings.Contains(got, "error converting content block to JSON") ||
+		strings.Contains(got, "json.RawMessage") {
+		t.Fatalf("stopContentBlock error = %q, want Blades error without SDK marshal detail", got)
+	}
+	if got := len(accumulator.toolParts()); got != 0 {
+		t.Fatalf("tool parts len = %d, want 0 after invalid JSON", got)
+	}
+}
+
 func decodeAnthropicMessage(t *testing.T, data string) *anthropicSDK.Message {
 	t.Helper()
 
@@ -126,4 +195,58 @@ func decodeAnthropicMessage(t *testing.T, data string) *anthropicSDK.Message {
 		t.Fatalf("unmarshal anthropic message: %v", err)
 	}
 	return &message
+}
+
+func decodeStreamEvent(t *testing.T, data string) anthropicSDK.MessageStreamEventUnion {
+	t.Helper()
+
+	var event anthropicSDK.MessageStreamEventUnion
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		t.Fatalf("unmarshal anthropic stream event: %v", err)
+	}
+	return event
+}
+
+func decodeContentBlockStartEvent(t *testing.T, data string) anthropicSDK.ContentBlockStartEvent {
+	t.Helper()
+
+	event := decodeStreamEvent(t, data)
+	startEvent, ok := event.AsAny().(anthropicSDK.ContentBlockStartEvent)
+	if !ok {
+		t.Fatalf("event type = %T, want anthropic.ContentBlockStartEvent", event.AsAny())
+	}
+	return startEvent
+}
+
+func decodeContentBlockDeltaEvent(t *testing.T, data string) anthropicSDK.ContentBlockDeltaEvent {
+	t.Helper()
+
+	event := decodeStreamEvent(t, data)
+	deltaEvent, ok := event.AsAny().(anthropicSDK.ContentBlockDeltaEvent)
+	if !ok {
+		t.Fatalf("event type = %T, want anthropic.ContentBlockDeltaEvent", event.AsAny())
+	}
+	return deltaEvent
+}
+
+func decodeContentBlockStopEvent(t *testing.T, data string) anthropicSDK.ContentBlockStopEvent {
+	t.Helper()
+
+	event := decodeStreamEvent(t, data)
+	stopEvent, ok := event.AsAny().(anthropicSDK.ContentBlockStopEvent)
+	if !ok {
+		t.Fatalf("event type = %T, want anthropic.ContentBlockStopEvent", event.AsAny())
+	}
+	return stopEvent
+}
+
+func decodeMessageDeltaEvent(t *testing.T, data string) anthropicSDK.MessageDeltaEvent {
+	t.Helper()
+
+	event := decodeStreamEvent(t, data)
+	deltaEvent, ok := event.AsAny().(anthropicSDK.MessageDeltaEvent)
+	if !ok {
+		t.Fatalf("event type = %T, want anthropic.MessageDeltaEvent", event.AsAny())
+	}
+	return deltaEvent
 }
