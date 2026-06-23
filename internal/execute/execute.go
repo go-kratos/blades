@@ -3,6 +3,7 @@ package execute
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/event"
@@ -20,23 +21,25 @@ type Result struct {
 
 // Runtime normalizes tool invocation details without owning Agent Loop events.
 type Runtime struct {
-	tools  map[string]tools.Tool
-	policy policy.Policy
+	mu       *sync.Mutex
+	tools    map[string]tools.Tool
+	resolver tools.Resolver
+	policy   policy.Policy
 }
 
 // NewRuntime creates a tool execution runtime for a resolved tool set.
-func NewRuntime(allTools []tools.Tool, p policy.Policy) Runtime {
-	return Runtime{tools: toolsByName(allTools), policy: p}
+func NewRuntime(allTools []tools.Tool, resolver tools.Resolver, p policy.Policy) Runtime {
+	return Runtime{mu: &sync.Mutex{}, tools: toolsByName(allTools), resolver: resolver, policy: p}
 }
 
 // Tool returns a resolved tool by name.
-func (r Runtime) Tool(name string) tools.Tool {
-	return r.tools[name]
+func (r Runtime) Tool(ctx context.Context, name string) tools.Tool {
+	return r.resolveTool(ctx, name)
 }
 
 // Call executes one tool call with policy checks and normalized errors.
 func (r Runtime) Call(ctx context.Context, call content.ToolUse) Result {
-	return executeSingle(ctx, call, r.tools, r.policy)
+	return r.executeSingle(ctx, call)
 }
 
 // ExtractToolUses extracts ToolUse parts from an assistant message.
@@ -56,14 +59,40 @@ func ExtractToolUses(msg *model.Message) []content.ToolUse {
 func toolsByName(allTools []tools.Tool) map[string]tools.Tool {
 	toolMap := make(map[string]tools.Tool, len(allTools))
 	for _, t := range allTools {
+		if t == nil {
+			continue
+		}
 		toolMap[t.Spec().Name] = t
 	}
 	return toolMap
 }
 
-func executeSingle(ctx context.Context, call content.ToolUse, toolMap map[string]tools.Tool, p policy.Policy) Result {
-	tool, ok := toolMap[call.Name]
-	if !ok {
+func (r Runtime) resolveTool(ctx context.Context, name string) tools.Tool {
+	r.mu.Lock()
+	tool := r.tools[name]
+	r.mu.Unlock()
+	if tool != nil {
+		return tool
+	}
+	if r.resolver == nil {
+		return nil
+	}
+	tool, err := r.resolver.Resolve(ctx, name)
+	if err != nil || tool == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tools[name] = tool
+	if specName := tool.Spec().Name; specName != "" {
+		r.tools[specName] = tool
+	}
+	return tool
+}
+
+func (r Runtime) executeSingle(ctx context.Context, call content.ToolUse) Result {
+	tool := r.resolveTool(ctx, call.Name)
+	if tool == nil {
 		err := errors.New("tool not found: " + call.Name)
 		return Result{
 			ToolResult: content.ToolResult{ID: call.ID, Name: call.Name, Parts: []content.Part{content.Text{Text: "tool not found: " + call.Name}}, IsError: true},
@@ -72,8 +101,8 @@ func executeSingle(ctx context.Context, call content.ToolUse, toolMap map[string
 	}
 
 	input := call.Input
-	if p != nil {
-		decision, err := p.Check(ctx, policy.ToolRequest{Tool: tool, Input: input})
+	if r.policy != nil {
+		decision, err := r.policy.Check(ctx, policy.ToolRequest{Tool: tool, Input: input})
 		if err != nil {
 			return toolErrorResult(call, err.Error(), err)
 		}

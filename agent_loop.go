@@ -340,7 +340,7 @@ func (l *agentLoop) streamStep(ctx context.Context, req *model.Request) (*model.
 }
 
 func (l *agentLoop) executeToolWave(calls []content.ToolUse) (*model.Message, event.Action, error) {
-	runtime := execute.NewRuntime(l.allTools, l.agent.policy)
+	runtime := execute.NewRuntime(l.allTools, l.agent.resolver, l.agent.policy)
 	executableCalls, err := l.prepareToolCalls(runtime, calls)
 	if err != nil {
 		return nil, nil, err
@@ -362,7 +362,7 @@ func (l *agentLoop) prepareToolCalls(runtime execute.Runtime, calls []content.To
 			ID:        call.ID,
 			AgentName: l.agent.name,
 			Turn:      l.turnNum,
-			Tool:      runtime.Tool(call.Name),
+			Tool:      runtime.Tool(l.ctx, call.Name),
 			Input:     call.Input,
 		}
 		for _, h := range l.agent.hooks {
@@ -423,7 +423,7 @@ func (l *agentLoop) finalizeToolResult(runtime execute.Runtime, call content.Too
 		ID:        call.ID,
 		AgentName: l.agent.name,
 		Turn:      l.turnNum,
-		Tool:      runtime.Tool(call.Name),
+		Tool:      runtime.Tool(l.ctx, call.Name),
 		Input:     call.Input,
 	}
 	for _, h := range l.agent.hooks {

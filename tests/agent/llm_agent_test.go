@@ -87,6 +87,53 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	}
 }
 
+func TestLLMAgentResolvesToolUseNotListedUpfront(t *testing.T) {
+	const deferredName = "mcp__time__get_current_time"
+	provider := newCaptureProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.ToolUse("call-deferred", deferredName, json.RawMessage(`{"timezone":"Asia/Shanghai"}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+		dummyprovider.TextResponse("done"),
+	)
+	resolver := &deferredToolResolver{
+		visible: []tools.Tool{
+			staticTextTool{name: "tool_search", description: "Search deferred tools", result: "found"},
+		},
+		byName: map[string]tools.Tool{
+			deferredName: staticTextTool{name: deferredName, description: "Get current time", result: "2026-06-23T12:00:00+08:00"},
+		},
+	}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithToolsResolver(resolver),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPrompt("what time is it?")
+	close(inputs)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+
+	requests := provider.Requests()
+	if assert.Len(t, requests, 2) {
+		if assert.Len(t, requests[0].Tools, 1) {
+			assert.Equal(t, "tool_search", requests[0].Tools[0].Name)
+		}
+	}
+	toolEnd, ok := findToolEnd(outputs, "call-deferred")
+	assert.True(t, ok)
+	assert.Equal(t, deferredName, toolEnd.Name)
+	assert.False(t, toolEnd.IsError)
+	assert.Equal(t, "2026-06-23T12:00:00+08:00", textFromParts(toolEnd.Parts))
+	assert.Equal(t, 1, resolver.ResolveCalls(deferredName))
+}
+
 func TestLLMAgentPromptBuilderCanReadLoopSessionFromContext(t *testing.T) {
 	provider := dummyprovider.NewProvider(dummyprovider.TextResponse("ok"))
 	capture := &requestCaptureHook{}
@@ -1136,6 +1183,51 @@ func (h *requestCaptureHook) System() string {
 type recordingTool struct {
 	mu    sync.Mutex
 	calls int
+}
+
+type deferredToolResolver struct {
+	mu      sync.Mutex
+	visible []tools.Tool
+	byName  map[string]tools.Tool
+	calls   map[string]int
+}
+
+func (r *deferredToolResolver) List(context.Context) ([]tools.Tool, error) {
+	return append([]tools.Tool(nil), r.visible...), nil
+}
+
+func (r *deferredToolResolver) Resolve(_ context.Context, name string) (tools.Tool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.calls == nil {
+		r.calls = make(map[string]int)
+	}
+	r.calls[name]++
+	tool := r.byName[name]
+	if tool == nil {
+		return nil, fmt.Errorf("tool not found: %s", name)
+	}
+	return tool, nil
+}
+
+func (r *deferredToolResolver) ResolveCalls(name string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls[name]
+}
+
+type staticTextTool struct {
+	name        string
+	description string
+	result      string
+}
+
+func (t staticTextTool) Spec() tools.ToolSpec {
+	return tools.ToolSpec{Name: t.name, Description: t.description}
+}
+
+func (t staticTextTool) Handle(context.Context, json.RawMessage) (*tools.Result, error) {
+	return tools.TextResult(t.result), nil
 }
 
 func (t *recordingTool) Spec() tools.ToolSpec {
