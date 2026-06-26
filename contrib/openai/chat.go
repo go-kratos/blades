@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 	"strings"
 
@@ -133,9 +134,14 @@ func (m *chatModel) Stream(ctx context.Context, req *model.Request) iter.Seq2[*m
 		}
 		streaming := m.client.Chat.Completions.NewStreaming(ctx, params)
 		defer streaming.Close()
+		accumulator := newChatStreamAccumulator()
 		for streaming.Next() {
 			chunk := streaming.Current()
-			converted := chunkToModelChunk(chunk)
+			converted, err := accumulator.addChunk(chunk)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
 			if len(converted.Parts) == 0 && converted.StopReason == "" && converted.Usage == nil {
 				continue
 			}
@@ -402,6 +408,73 @@ func choiceToResponse(cc *openai.ChatCompletion) (*model.Response, error) {
 	return resp, nil
 }
 
+type chatStreamAccumulator struct {
+	sdk              openai.ChatCompletionAccumulator
+	emittedToolCalls map[chatToolCallKey]struct{}
+}
+
+type chatToolCallKey struct {
+	choiceIndex int64
+	toolIndex   int
+}
+
+func newChatStreamAccumulator() *chatStreamAccumulator {
+	return &chatStreamAccumulator{
+		emittedToolCalls: make(map[chatToolCallKey]struct{}),
+	}
+}
+
+func (a *chatStreamAccumulator) addChunk(chunk openai.ChatCompletionChunk) (*model.Chunk, error) {
+	if !a.sdk.AddChunk(chunk) {
+		return nil, errors.New("openai/chat: could not accumulate stream chunk")
+	}
+
+	converted := chunkToModelChunk(chunk)
+	for _, choice := range chunk.Choices {
+		if mapOpenAIStopReason(choice.FinishReason) != model.StopToolUse {
+			continue
+		}
+		parts, err := a.toolParts(choice.Index)
+		if err != nil {
+			return nil, err
+		}
+		converted.Parts = append(converted.Parts, parts...)
+	}
+	return converted, nil
+}
+
+func (a *chatStreamAccumulator) toolParts(choiceIndex int64) ([]content.Part, error) {
+	if choiceIndex < 0 || int(choiceIndex) >= len(a.sdk.Choices) {
+		return nil, nil
+	}
+	choice := a.sdk.Choices[choiceIndex]
+	parts := make([]content.Part, 0, len(choice.Message.ToolCalls))
+	for i, call := range choice.Message.ToolCalls {
+		key := chatToolCallKey{choiceIndex: choiceIndex, toolIndex: i}
+		if _, ok := a.emittedToolCalls[key]; ok {
+			continue
+		}
+		if call.Function.Name == "" {
+			continue
+		}
+		input := []byte(call.Function.Arguments)
+		if len(input) == 0 {
+			input = []byte("{}")
+		}
+		var decoded any
+		if err := json.Unmarshal(input, &decoded); err != nil {
+			return nil, fmt.Errorf("openai/chat: invalid tool input JSON for tool %q (%s): %w", call.Function.Name, call.ID, err)
+		}
+		parts = append(parts, content.ToolUse{
+			ID:    call.ID,
+			Name:  call.Function.Name,
+			Input: json.RawMessage(append([]byte(nil), input...)),
+		})
+		a.emittedToolCalls[key] = struct{}{}
+	}
+	return parts, nil
+}
+
 func chunkToModelChunk(chunk openai.ChatCompletionChunk) *model.Chunk {
 	converted := &model.Chunk{}
 	if chunk.Usage.PromptTokens != 0 || chunk.Usage.CompletionTokens != 0 {
@@ -416,16 +489,6 @@ func chunkToModelChunk(chunk openai.ChatCompletionChunk) *model.Chunk {
 		}
 		if choice.FinishReason != "" {
 			converted.StopReason = mapOpenAIStopReason(choice.FinishReason)
-		}
-		for _, call := range choice.Delta.ToolCalls {
-			if call.ID == "" && call.Function.Name == "" && call.Function.Arguments == "" {
-				continue
-			}
-			converted.Parts = append(converted.Parts, content.ToolUse{
-				ID:    call.ID,
-				Name:  call.Function.Name,
-				Input: json.RawMessage(call.Function.Arguments),
-			})
 		}
 	}
 	return converted
