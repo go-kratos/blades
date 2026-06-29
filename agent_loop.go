@@ -197,6 +197,7 @@ func (l *agentLoop) runTurnStep(state *turnState) (bool, error) {
 		return false, err
 	}
 	state.recordResponse(resp)
+	l.output <- convert.ResponseToAssistantMessageEnd(resp)
 
 	toolUses := execute.ExtractToolUses(resp.Message)
 	if len(toolUses) > 0 {

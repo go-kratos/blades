@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -33,8 +34,12 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 				dummyprovider.ToolUse("calc-1", "calculate", json.RawMessage(`{"expression":"123 * 456"}`)),
 			},
 			dummyprovider.WithStopReason(model.StopToolUse),
+			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 10, OutputTokens: 3}),
 		),
-		dummyprovider.TextResponse("The result is 56088."),
+		dummyprovider.TextResponse(
+			"The result is 56088.",
+			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 20, OutputTokens: 4}),
+		),
 	)
 	agent, err := blades.NewAgent(
 		"calculator",
@@ -60,10 +65,28 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	assert.Equal(t, "123 * 456 = 56088", textFromParts(toolEnd.Parts))
 	assert.Equal(t, 1, countToolStarts(outputs, "calc-1"))
 
+	messageEnds := assistantMessageEnds(outputs)
+	if assert.Len(t, messageEnds, 2) {
+		assert.Equal(t, event.StopToolUse, messageEnds[0].StopReason)
+		assert.Equal(t, int64(10), messageEnds[0].Usage.InputTokens)
+		assert.Equal(t, int64(3), messageEnds[0].Usage.OutputTokens)
+		assert.Equal(t, "Let me calculate that.", messageEnds[0].Text())
+		assert.Equal(t, event.StopEnd, messageEnds[1].StopReason)
+		assert.Equal(t, int64(20), messageEnds[1].Usage.InputTokens)
+		assert.Equal(t, int64(4), messageEnds[1].Usage.OutputTokens)
+		assert.Equal(t, "The result is 56088.", messageEnds[1].Text())
+	}
+	messageEndIndex := outputIndex(outputs, event.AssistantMessageEnd{})
+	toolStartIndex := outputIndex(outputs, event.ToolStart{})
+	assert.NotEqual(t, -1, messageEndIndex)
+	assert.NotEqual(t, -1, toolStartIndex)
+	assert.Less(t, messageEndIndex, toolStartIndex)
+
 	turnEnd, ok := lastTurnEnd(outputs)
 	assert.True(t, ok)
 	assert.Equal(t, event.StopEnd, turnEnd.StopReason)
 	assert.Equal(t, "The result is 56088.", textFromParts(turnEnd.Parts))
+	assert.Equal(t, event.Usage{InputTokens: 30, OutputTokens: 7}, turnEnd.Usage)
 	assert.Equal(t, 2, provider.CallCount())
 
 	messages, err := sess.Messages(ctx)
@@ -1006,6 +1029,26 @@ func lastTurnEnd(outputs []event.Output) (event.TurnEnd, bool) {
 		}
 	}
 	return turnEnd, found
+}
+
+func assistantMessageEnds(outputs []event.Output) []event.AssistantMessageEnd {
+	var messageEnds []event.AssistantMessageEnd
+	for _, output := range outputs {
+		messageEnd, ok := output.(event.AssistantMessageEnd)
+		if ok {
+			messageEnds = append(messageEnds, messageEnd)
+		}
+	}
+	return messageEnds
+}
+
+func outputIndex(outputs []event.Output, target event.Output) int {
+	for i, output := range outputs {
+		if reflect.TypeOf(output) == reflect.TypeOf(target) {
+			return i
+		}
+	}
+	return -1
 }
 
 func turnEnds(outputs []event.Output) []event.TurnEnd {

@@ -23,6 +23,26 @@ func ChunkToOutputs(chunk *model.Chunk) []event.Output {
 	return outputs
 }
 
+// ResponseToAssistantMessageEnd converts a model.Response into an
+// AssistantMessageEnd event.
+func ResponseToAssistantMessageEnd(resp *model.Response) event.AssistantMessageEnd {
+	var parts []content.Part
+	var stopReason model.StopReason
+	var usage model.Usage
+	if resp != nil && resp.Message != nil {
+		parts = resp.Message.Parts
+	}
+	if resp != nil {
+		stopReason = resp.StopReason
+		usage = resp.Usage
+	}
+	return event.AssistantMessageEnd{
+		Parts:      parts,
+		StopReason: event.StopReason(stopReason),
+		Usage:      event.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens},
+	}
+}
+
 // ResponseToTurnEnd converts a model.Response into a TurnEnd event.
 func ResponseToTurnEnd(resp *model.Response) event.TurnEnd {
 	var parts []content.Part
