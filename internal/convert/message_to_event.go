@@ -33,5 +33,6 @@ func ResponseToTurnEnd(resp *model.Response) event.TurnEnd {
 		Parts:      parts,
 		StopReason: event.StopReason(resp.StopReason),
 		Usage:      event.Usage{InputTokens: resp.Usage.InputTokens, OutputTokens: resp.Usage.OutputTokens},
+		ResponseID: resp.ResponseID,
 	}
 }

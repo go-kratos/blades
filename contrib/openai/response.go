@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/model"
+	bladessession "github.com/go-kratos/blades/session"
 	"github.com/go-kratos/blades/tools"
 	openai "github.com/openai/openai-go/v3"
 	sdkoption "github.com/openai/openai-go/v3/option"
@@ -19,6 +20,10 @@ import (
 )
 
 var ErrResponseRequestNil = errors.New("openai/response: request is nil")
+
+// PreviousResponseIDStateKey is the Blades session state key used to provide a
+// dynamic OpenAI Responses API previous_response_id for the next request.
+const PreviousResponseIDStateKey = "openai.previous_response_id"
 
 type ResponsesConfig struct {
 	BaseURL            string
@@ -126,7 +131,7 @@ func (m *responseModel) Name() string {
 
 // Generate executes a non-streaming Responses API request.
 func (m *responseModel) Generate(ctx context.Context, req *model.Request) (*model.Response, error) {
-	params, err := m.toResponseParams(false, req)
+	params, err := m.toResponseParams(ctx, false, req)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +145,7 @@ func (m *responseModel) Generate(ctx context.Context, req *model.Request) (*mode
 // Stream streams Responses API events as model chunks.
 func (m *responseModel) Stream(ctx context.Context, req *model.Request) iter.Seq2[*model.Chunk, error] {
 	return func(yield func(*model.Chunk, error) bool) {
-		params, err := m.toResponseParams(true, req)
+		params, err := m.toResponseParams(ctx, true, req)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -171,7 +176,7 @@ func (m *responseModel) Stream(ctx context.Context, req *model.Request) iter.Seq
 }
 
 // toResponseParams converts a generic model request into Responses API params.
-func (m *responseModel) toResponseParams(_ bool, req *model.Request) (responses.ResponseNewParams, error) {
+func (m *responseModel) toResponseParams(ctx context.Context, _ bool, req *model.Request) (responses.ResponseNewParams, error) {
 	if req == nil {
 		return responses.ResponseNewParams{}, ErrResponseRequestNil
 	}
@@ -204,14 +209,23 @@ func (m *responseModel) toResponseParams(_ bool, req *model.Request) (responses.
 	if m.config.Store != nil {
 		params.Store = param.NewOpt(*m.config.Store)
 	}
-	if m.config.PreviousResponseID != "" {
-		params.PreviousResponseID = param.NewOpt(m.config.PreviousResponseID)
+	if previousResponseID := m.previousResponseID(ctx); previousResponseID != "" {
+		params.PreviousResponseID = param.NewOpt(previousResponseID)
 	}
 	if len(m.config.ExtraFields) > 0 {
 		params.SetExtraFields(m.config.ExtraFields)
 	}
 	applyResponseOptions(&params, model.MergeOptions(m.config.ModelOptions, req.Options))
 	return params, nil
+}
+
+func (m *responseModel) previousResponseID(ctx context.Context) string {
+	if sess, ok := bladessession.FromContext(ctx); ok && sess != nil {
+		if id, ok := sess.State()[PreviousResponseIDStateKey].(string); ok && id != "" {
+			return id
+		}
+	}
+	return m.config.PreviousResponseID
 }
 
 func applyResponseOptions(params *responses.ResponseNewParams, opts []model.Option) {
@@ -407,6 +421,7 @@ func responseToModelResponse(resp *responses.Response) (*model.Response, error) 
 		Message:    &model.Message{Role: model.RoleAssistant, Parts: parts},
 		StopReason: responseStopReason(*resp),
 		Usage:      responseUsageToModel(resp.Usage),
+		ResponseID: resp.ID,
 	}, nil
 }
 
@@ -425,6 +440,17 @@ func responseOutputToParts(items []responses.ResponseOutputItemUnion) ([]content
 					if c.Refusal != "" {
 						parts = append(parts, content.Text{Text: c.Refusal})
 					}
+				}
+			}
+		case "reasoning":
+			for _, c := range item.Content {
+				if c.Type == "reasoning_text" && c.Text != "" {
+					parts = append(parts, content.Thinking{Text: c.Text})
+				}
+			}
+			for _, summary := range item.Summary {
+				if summary.Text != "" {
+					parts = append(parts, content.Thinking{Text: summary.Text})
 				}
 			}
 		case "function_call":
@@ -448,6 +474,11 @@ func responseStreamEventToChunk(event responses.ResponseStreamEventUnion, seenTo
 			return nil, nil
 		}
 		return &model.Chunk{Parts: []content.Part{content.Text{Text: event.Delta}}}, nil
+	case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
+		if event.Delta == "" {
+			return nil, nil
+		}
+		return &model.Chunk{Parts: []content.Part{content.Thinking{Text: event.Delta}}}, nil
 	case "response.function_call_arguments.done":
 		return nil, nil
 	case "response.output_item.done":
@@ -483,6 +514,7 @@ func responseStreamEventToChunk(event responses.ResponseStreamEventUnion, seenTo
 		return &model.Chunk{
 			StopReason: stopReason,
 			Usage:      responseUsagePtrToModel(resp.Usage),
+			ResponseID: resp.ID,
 		}, nil
 	case "response.incomplete":
 		resp := event.Response
@@ -493,6 +525,7 @@ func responseStreamEventToChunk(event responses.ResponseStreamEventUnion, seenTo
 		return &model.Chunk{
 			StopReason: stopReason,
 			Usage:      responseUsagePtrToModel(resp.Usage),
+			ResponseID: resp.ID,
 		}, nil
 	case "response.failed":
 		resp := event.Response

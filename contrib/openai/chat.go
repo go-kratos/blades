@@ -411,6 +411,9 @@ func chunkToModelChunk(chunk openai.ChatCompletionChunk) *model.Chunk {
 		}
 	}
 	for _, choice := range chunk.Choices {
+		if reasoningText := extraStringField(choice.Delta.RawJSON(), "reasoning_text"); reasoningText != "" {
+			converted.Parts = append(converted.Parts, content.Thinking{Text: reasoningText})
+		}
 		if choice.Delta.Content != "" {
 			converted.Parts = append(converted.Parts, content.Text{Text: choice.Delta.Content})
 		}
@@ -429,6 +432,25 @@ func chunkToModelChunk(chunk openai.ChatCompletionChunk) *model.Chunk {
 		}
 	}
 	return converted
+}
+
+func extraStringField(raw string, name string) string {
+	if raw == "" {
+		return ""
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return ""
+	}
+	value := fields[name]
+	if len(value) == 0 || string(value) == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(value, &text); err != nil {
+		return ""
+	}
+	return text
 }
 
 func mapOpenAIStopReason(reason string) model.StopReason {

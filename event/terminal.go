@@ -24,6 +24,7 @@ type TurnEnd struct {
 	Parts      []content.Part
 	StopReason StopReason
 	Usage      Usage
+	ResponseID string
 	Err        error
 	Action     Action
 }

@@ -38,6 +38,35 @@ func TestToChatCompletionParamsAssistantRole(t *testing.T) {
 	}
 }
 
+func TestChunkToModelChunkMapsReasoningText(t *testing.T) {
+	t.Parallel()
+
+	var chunk openaisdk.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(`{
+		"id":"chatcmpl-reasoning",
+		"object":"chat.completion.chunk",
+		"created":1,
+		"model":"qwen-test",
+		"choices":[
+			{"index":0,"delta":{"role":"assistant","content":null,"reasoning_text":"先判断聊天上下文"}}
+		]
+	}`), &chunk); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+
+	got := chunkToModelChunk(chunk)
+	if len(got.Parts) != 1 {
+		t.Fatalf("len(Parts) = %d, want 1", len(got.Parts))
+	}
+	thinking, ok := got.Parts[0].(content.Thinking)
+	if !ok {
+		t.Fatalf("Parts[0] = %T, want content.Thinking", got.Parts[0])
+	}
+	if thinking.Text != "先判断聊天上下文" {
+		t.Fatalf("Thinking text = %q", thinking.Text)
+	}
+}
+
 func TestToChatCompletionParamsParallelToolCalls(t *testing.T) {
 	t.Parallel()
 

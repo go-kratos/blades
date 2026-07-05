@@ -254,6 +254,7 @@ func (l *agentLoop) endTurn(turn *hook.Turn, result turnState, err error) {
 		Parts:      result.parts,
 		StopReason: result.stopReason,
 		Usage:      result.usage,
+		ResponseID: result.responseID,
 		Err:        err,
 		Action:     result.action,
 	}
@@ -310,6 +311,7 @@ func (l *agentLoop) streamStep(ctx context.Context, req *model.Request) (*model.
 		parts      []content.Part
 		stopReason model.StopReason
 		usage      model.Usage
+		responseID string
 	)
 
 	for chunk, err := range l.agent.provider.Stream(ctx, req) {
@@ -330,12 +332,16 @@ func (l *agentLoop) streamStep(ctx context.Context, req *model.Request) (*model.
 			usage.InputTokens += chunk.Usage.InputTokens
 			usage.OutputTokens += chunk.Usage.OutputTokens
 		}
+		if chunk.ResponseID != "" {
+			responseID = chunk.ResponseID
+		}
 	}
 
 	return &model.Response{
 		Message:    &model.Message{Role: model.RoleAssistant, Parts: parts},
 		StopReason: stopReason,
 		Usage:      usage,
+		ResponseID: responseID,
 	}, nil
 }
 

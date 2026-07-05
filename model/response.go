@@ -7,6 +7,7 @@ type Response struct {
 	Message    *Message
 	StopReason StopReason
 	Usage      Usage
+	ResponseID string
 }
 
 // Chunk is an incremental frame from a streaming model call.
@@ -14,4 +15,5 @@ type Chunk struct {
 	Parts      []content.Part
 	StopReason StopReason
 	Usage      *Usage
+	ResponseID string
 }

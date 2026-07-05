@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/model"
+	bladessession "github.com/go-kratos/blades/session"
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/openai/openai-go/v3/responses"
@@ -21,7 +22,7 @@ func TestToResponseParamsMapsRequest(t *testing.T) {
 	maxTokens := 64
 	temperature := 0.2
 	provider := NewResponses("gpt-test", WithResponsesParallelToolCalls(false)).(*responseModel)
-	params, err := provider.toResponseParams(false, &model.Request{
+	params, err := provider.toResponseParams(context.Background(), false, &model.Request{
 		System: "system",
 		Messages: []*model.Message{
 			{
@@ -101,10 +102,33 @@ func TestToResponseParamsMapsRequest(t *testing.T) {
 	}
 }
 
+func TestToResponseParamsUsesPreviousResponseIDFromSessionState(t *testing.T) {
+	t.Parallel()
+
+	sess := bladessession.NewSession(bladessession.WithState(map[string]any{
+		PreviousResponseIDStateKey: "resp_from_state",
+	}))
+	ctx := bladessession.NewContext(context.Background(), sess)
+	provider := NewResponses("gpt-test", WithResponsesPreviousResponseID("resp_from_config")).(*responseModel)
+
+	params, err := provider.toResponseParams(ctx, false, &model.Request{
+		Messages: []*model.Message{
+			{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("toResponseParams returned error: %v", err)
+	}
+	if got := params.PreviousResponseID.Value; got != "resp_from_state" {
+		t.Fatalf("previous response id = %q, want resp_from_state", got)
+	}
+}
+
 func TestResponseToModelResponseReturnsTextAndToolUses(t *testing.T) {
 	t.Parallel()
 
 	resp, err := responseToModelResponse(&responses.Response{
+		ID:     "resp_non_stream",
 		Status: responses.ResponseStatusCompleted,
 		Usage:  responses.ResponseUsage{InputTokens: 3, OutputTokens: 4},
 		Output: []responses.ResponseOutputItemUnion{
@@ -128,6 +152,9 @@ func TestResponseToModelResponseReturnsTextAndToolUses(t *testing.T) {
 	if got, want := resp.StopReason, model.StopToolUse; got != want {
 		t.Fatalf("stop reason = %q, want %q", got, want)
 	}
+	if got, want := resp.ResponseID, "resp_non_stream"; got != want {
+		t.Fatalf("response id = %q, want %q", got, want)
+	}
 	if got, want := resp.Usage.InputTokens, int64(3); got != want {
 		t.Fatalf("input tokens = %d, want %d", got, want)
 	}
@@ -150,6 +177,52 @@ func TestResponseToModelResponseReturnsTextAndToolUses(t *testing.T) {
 	}
 	if got, want := string(toolUse.Input), `{"q":"blades"}`; got != want {
 		t.Fatalf("tool input = %q, want %q", got, want)
+	}
+}
+
+func TestResponseToModelResponseReturnsReasoningAsThinking(t *testing.T) {
+	t.Parallel()
+
+	resp, err := responseToModelResponse(&responses.Response{
+		ID:     "resp_reasoning",
+		Status: responses.ResponseStatusCompleted,
+		Output: []responses.ResponseOutputItemUnion{
+			{
+				Type: "reasoning",
+				Content: []responses.ResponseOutputMessageContentUnion{
+					{Type: "reasoning_text", Text: "先看本轮目标"},
+				},
+				Summary: []responses.ResponseReasoningItemSummary{
+					{Text: "目标是自然推进群聊"},
+				},
+			},
+			{
+				Type: "message",
+				Content: []responses.ResponseOutputMessageContentUnion{
+					{Type: "output_text", Text: "hello"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("responseToModelResponse returned error: %v", err)
+	}
+	if len(resp.Message.Parts) != 3 {
+		t.Fatalf("parts = %#v, want reasoning, summary, text", resp.Message.Parts)
+	}
+	thinking, ok := resp.Message.Parts[0].(content.Thinking)
+	if !ok {
+		t.Fatalf("part type = %T, want content.Thinking", resp.Message.Parts[0])
+	}
+	if got, want := thinking.Text, "先看本轮目标"; got != want {
+		t.Fatalf("thinking text = %q, want %q", got, want)
+	}
+	summary, ok := resp.Message.Parts[1].(content.Thinking)
+	if !ok {
+		t.Fatalf("summary part type = %T, want content.Thinking", resp.Message.Parts[1])
+	}
+	if got, want := summary.Text, "目标是自然推进群聊"; got != want {
+		t.Fatalf("summary thinking text = %q, want %q", got, want)
 	}
 }
 
@@ -200,6 +273,36 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 	}
 	if got, want := text.Text, "hi"; got != want {
 		t.Fatalf("text delta = %q, want %q", got, want)
+	}
+
+	chunk, err = responseStreamEventToChunk(responses.ResponseStreamEventUnion{
+		Type:  "response.reasoning_text.delta",
+		Delta: "先判断",
+	}, seen)
+	if err != nil {
+		t.Fatalf("responseStreamEventToChunk reasoning delta returned error: %v", err)
+	}
+	thinking, ok := chunk.Parts[0].(content.Thinking)
+	if !ok {
+		t.Fatalf("part type = %T, want content.Thinking", chunk.Parts[0])
+	}
+	if got, want := thinking.Text, "先判断"; got != want {
+		t.Fatalf("thinking delta = %q, want %q", got, want)
+	}
+
+	chunk, err = responseStreamEventToChunk(responses.ResponseStreamEventUnion{
+		Type:  "response.reasoning_summary_text.delta",
+		Delta: "目标检查",
+	}, seen)
+	if err != nil {
+		t.Fatalf("responseStreamEventToChunk reasoning summary delta returned error: %v", err)
+	}
+	thinking, ok = chunk.Parts[0].(content.Thinking)
+	if !ok {
+		t.Fatalf("summary part type = %T, want content.Thinking", chunk.Parts[0])
+	}
+	if got, want := thinking.Text, "目标检查"; got != want {
+		t.Fatalf("summary thinking delta = %q, want %q", got, want)
 	}
 
 	chunk, err = responseStreamEventToChunk(responses.ResponseStreamEventUnion{
@@ -259,6 +362,7 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 	chunk, err = responseStreamEventToChunk(responses.ResponseStreamEventUnion{
 		Type: "response.completed",
 		Response: responses.Response{
+			ID:     "resp_stream",
 			Status: responses.ResponseStatusCompleted,
 			Usage:  responses.ResponseUsage{InputTokens: 5, OutputTokens: 6},
 		},
@@ -268,6 +372,9 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 	}
 	if got, want := chunk.StopReason, model.StopToolUse; got != want {
 		t.Fatalf("completed stop reason = %q, want %q", got, want)
+	}
+	if got, want := chunk.ResponseID, "resp_stream"; got != want {
+		t.Fatalf("completed response id = %q, want %q", got, want)
 	}
 	if chunk.Usage == nil {
 		t.Fatal("usage is nil, want token usage")

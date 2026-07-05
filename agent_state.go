@@ -10,6 +10,7 @@ type turnState struct {
 	parts      []content.Part
 	stopReason event.StopReason
 	usage      event.Usage
+	responseID string
 	action     event.Action
 }
 
@@ -20,6 +21,9 @@ func newTurnState() turnState {
 func (s *turnState) recordResponse(resp *model.Response) {
 	s.usage.InputTokens += resp.Usage.InputTokens
 	s.usage.OutputTokens += resp.Usage.OutputTokens
+	if resp.ResponseID != "" {
+		s.responseID = resp.ResponseID
+	}
 	if resp.Message != nil {
 		s.parts = resp.Message.Parts
 	}
