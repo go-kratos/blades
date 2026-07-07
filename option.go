@@ -55,6 +55,15 @@ func WithHooks(h ...hook.Hook) AgentOption {
 	}
 }
 
+// WithAssistantMessageEnd configures whether the agent emits
+// event.AssistantMessageEnd after each model response. It is disabled by
+// default.
+func WithAssistantMessageEnd(enabled bool) AgentOption {
+	return func(a *llmAgent) {
+		a.sendAssistantMessageEnd = enabled
+	}
+}
+
 // WithCompact sets the context compactor.
 func WithCompact(c compact.Compactor) AgentOption {
 	return func(a *llmAgent) {
