@@ -380,7 +380,7 @@ func toResponseTools(toolSpecs []tools.ToolSpec) ([]responses.ToolUnionParam, er
 		if spec.InputSchema != nil {
 			schema = schemaToMap(spec.InputSchema)
 		}
-		fn := responses.ToolParamOfFunction(spec.Name, schema, true)
+		fn := responses.ToolParamOfFunction(spec.Name, schema, false)
 		if spec.Description != "" && fn.OfFunction != nil {
 			fn.OfFunction.Description = param.NewOpt(spec.Description)
 		}
