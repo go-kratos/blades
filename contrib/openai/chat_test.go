@@ -10,6 +10,7 @@ import (
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/model"
 	openaisdk "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/respjson"
 )
 
 func TestToChatCompletionParamsAssistantRole(t *testing.T) {
@@ -333,6 +334,32 @@ func TestChunkChoiceToResponseReturnsStopReasonOnlyForToolCallDeltas(t *testing.
 	}
 	if len(chunk.Parts) != 0 {
 		t.Fatalf("parts length = %d, want 0", len(chunk.Parts))
+	}
+}
+
+func TestChunkToModelChunkReturnsThinkingForReasoningContentExtraField(t *testing.T) {
+	t.Parallel()
+
+	delta := openaisdk.ChatCompletionChunkChoiceDelta{}
+	delta.JSON.ExtraFields = map[string]respjson.Field{
+		"reasoning_content": respjson.NewField(`"User"`),
+	}
+
+	chunk := chunkToModelChunk(openaisdk.ChatCompletionChunk{
+		Choices: []openaisdk.ChatCompletionChunkChoice{{Delta: delta}},
+	})
+	if got, want := len(chunk.Parts), 1; got != want {
+		t.Fatalf("parts length = %d, want %d", got, want)
+	}
+	thinking, ok := chunk.Parts[0].(content.Thinking)
+	if !ok {
+		t.Fatalf("part type = %T, want content.Thinking", chunk.Parts[0])
+	}
+	if got, want := thinking.Text, "User"; got != want {
+		t.Fatalf("thinking text = %q, want %q", got, want)
+	}
+	if chunk.StopReason != "" {
+		t.Fatalf("stop reason = %q, want empty", chunk.StopReason)
 	}
 }
 
