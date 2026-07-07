@@ -498,11 +498,13 @@ func chunkToModelChunk(chunk openai.ChatCompletionChunk) *model.Chunk {
 }
 
 func reasoningContentFromDelta(delta openai.ChatCompletionChunkChoiceDelta) string {
-	if field, ok := delta.JSON.ExtraFields["reasoning_content"]; ok && field.Valid() {
-		var text string
-		if err := json.Unmarshal([]byte(field.Raw()), &text); err == nil {
-			return text
-		}
+	field, ok := delta.JSON.ExtraFields["reasoning_content"]
+	if !ok || field.Raw() == "" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal([]byte(field.Raw()), &text); err == nil {
+		return text
 	}
 	return ""
 }
