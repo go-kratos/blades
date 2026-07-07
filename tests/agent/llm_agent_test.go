@@ -65,22 +65,7 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	assert.Equal(t, "123 * 456 = 56088", textFromParts(toolEnd.Parts))
 	assert.Equal(t, 1, countToolStarts(outputs, "calc-1"))
 
-	messageEnds := assistantMessageEnds(outputs)
-	if assert.Len(t, messageEnds, 2) {
-		assert.Equal(t, event.StopToolUse, messageEnds[0].StopReason)
-		assert.Equal(t, int64(10), messageEnds[0].Usage.InputTokens)
-		assert.Equal(t, int64(3), messageEnds[0].Usage.OutputTokens)
-		assert.Equal(t, "Let me calculate that.", messageEnds[0].Text())
-		assert.Equal(t, event.StopEnd, messageEnds[1].StopReason)
-		assert.Equal(t, int64(20), messageEnds[1].Usage.InputTokens)
-		assert.Equal(t, int64(4), messageEnds[1].Usage.OutputTokens)
-		assert.Equal(t, "The result is 56088.", messageEnds[1].Text())
-	}
-	messageEndIndex := outputIndex(outputs, event.AssistantMessageEnd{})
-	toolStartIndex := outputIndex(outputs, event.ToolStart{})
-	assert.NotEqual(t, -1, messageEndIndex)
-	assert.NotEqual(t, -1, toolStartIndex)
-	assert.Less(t, messageEndIndex, toolStartIndex)
+	assert.Empty(t, assistantMessageEnds(outputs))
 
 	turnEnd, ok := lastTurnEnd(outputs)
 	assert.True(t, ok)
@@ -108,6 +93,53 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 		assert.Equal(t, model.RoleAssistant, calls[1][0].Role)
 		assert.Equal(t, model.RoleTool, calls[1][1].Role)
 	}
+}
+
+func TestLLMAgentAssistantMessageEndOptIn(t *testing.T) {
+	provider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.Text("Let me calculate that."),
+				dummyprovider.ToolUse("calc-1", "calculate", json.RawMessage(`{"expression":"123 * 456"}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 10, OutputTokens: 3}),
+		),
+		dummyprovider.TextResponse(
+			"The result is 56088.",
+			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 20, OutputTokens: 4}),
+		),
+	)
+	agent, err := blades.NewAgent(
+		"calculator",
+		blades.WithModel(provider),
+		blades.WithTools(testtools.NewCalculateTool()),
+		blades.WithAssistantMessageEnd(true),
+	)
+	assert.NoError(t, err)
+
+	inputs := make(chan event.Input, 1)
+	inputs <- event.NewPrompt("What is 123 * 456?")
+
+	outputs, err := collectAgentOutputs(context.Background(), agent, inputs)
+	assert.NoError(t, err)
+
+	messageEnds := assistantMessageEnds(outputs)
+	if assert.Len(t, messageEnds, 2) {
+		assert.Equal(t, event.StopToolUse, messageEnds[0].StopReason)
+		assert.Equal(t, int64(10), messageEnds[0].Usage.InputTokens)
+		assert.Equal(t, int64(3), messageEnds[0].Usage.OutputTokens)
+		assert.Equal(t, "Let me calculate that.", messageEnds[0].Text())
+		assert.Equal(t, event.StopEnd, messageEnds[1].StopReason)
+		assert.Equal(t, int64(20), messageEnds[1].Usage.InputTokens)
+		assert.Equal(t, int64(4), messageEnds[1].Usage.OutputTokens)
+		assert.Equal(t, "The result is 56088.", messageEnds[1].Text())
+	}
+	messageEndIndex := outputIndex(outputs, event.AssistantMessageEnd{})
+	toolStartIndex := outputIndex(outputs, event.ToolStart{})
+	assert.NotEqual(t, -1, messageEndIndex)
+	assert.NotEqual(t, -1, toolStartIndex)
+	assert.Less(t, messageEndIndex, toolStartIndex)
 }
 
 func TestLLMAgentResolvesToolUseNotListedUpfront(t *testing.T) {

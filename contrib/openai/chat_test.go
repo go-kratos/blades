@@ -336,6 +336,44 @@ func TestChunkChoiceToResponseReturnsStopReasonOnlyForToolCallDeltas(t *testing.
 	}
 }
 
+func TestChunkToModelChunkReturnsThinkingForReasoningContentExtraField(t *testing.T) {
+	t.Parallel()
+
+	var raw openaisdk.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(`{
+		"choices": [{
+			"delta": {
+				"content": "",
+				"reasoning_content": "用户",
+				"role": "assistant"
+			},
+			"finish_reason": null,
+			"index": 0
+		}],
+		"created": 1783421753,
+		"id": "chatcmpl-86a9d2daec7447229439d47abb485568",
+		"model": "moonshotai/kimi-k2.5-cache",
+		"object": "chat.completion.chunk"
+	}`), &raw); err != nil {
+		t.Fatalf("unmarshal chunk: %v", err)
+	}
+
+	chunk := chunkToModelChunk(raw)
+	if got, want := len(chunk.Parts), 1; got != want {
+		t.Fatalf("parts length = %d, want %d", got, want)
+	}
+	thinking, ok := chunk.Parts[0].(content.Thinking)
+	if !ok {
+		t.Fatalf("part type = %T, want content.Thinking", chunk.Parts[0])
+	}
+	if got, want := thinking.Text, "用户"; got != want {
+		t.Fatalf("thinking text = %q, want %q", got, want)
+	}
+	if chunk.StopReason != "" {
+		t.Fatalf("stop reason = %q, want empty", chunk.StopReason)
+	}
+}
+
 func TestGenerateRejectsNilRequest(t *testing.T) {
 	t.Parallel()
 
