@@ -461,11 +461,11 @@ func (l *agentLoop) consumeStepBoundaryInputs(state *turnState) (stepBoundaryRes
 		return stepBoundaryResult{}, err
 	}
 	if len(drained.steering) > 0 {
-		msgs := make([]*model.Message, 0, len(drained.steering))
+		parts := make([]content.Part, 0, len(drained.steering))
 		for _, steer := range drained.steering {
-			msgs = append(msgs, convert.SteerToMessage(steer))
+			parts = append(parts, steer.Parts...)
 		}
-		if err := l.sess.Append(l.ctx, msgs...); err != nil {
+		if err := l.sess.AppendUser(l.ctx, parts...); err != nil {
 			return stepBoundaryResult{}, err
 		}
 	}

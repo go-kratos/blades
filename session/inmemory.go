@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/model"
 	"github.com/google/uuid"
 )
@@ -98,6 +99,26 @@ func (s *inMemorySession) Append(_ context.Context, msgs ...*model.Message) erro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.messages = append(s.messages, msgs...)
+	return nil
+}
+
+func (s *inMemorySession) AppendUser(_ context.Context, parts ...content.Part) error {
+	if len(parts) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n := len(s.messages); n > 0 && s.messages[n-1].Role == model.RoleUser {
+		last := s.messages[n-1]
+		merged := make([]content.Part, 0, len(last.Parts)+len(parts))
+		merged = append(merged, last.Parts...)
+		merged = append(merged, parts...)
+		// Rebuild the message rather than mutating the existing Parts slice,
+		// so any copy a caller already holds from Messages stays intact.
+		s.messages[n-1] = &model.Message{Role: model.RoleUser, Parts: content.Coalesce(merged)}
+		return nil
+	}
+	s.messages = append(s.messages, &model.Message{Role: model.RoleUser, Parts: content.Coalesce(parts)})
 	return nil
 }
 

@@ -876,6 +876,66 @@ func TestLLMAgentSteerDuringToolWaveContinuesCurrentTurn(t *testing.T) {
 	}
 }
 
+func TestLLMAgentMultipleSteersDuringToolWaveMergeIntoOneMessage(t *testing.T) {
+	releaseTool := make(chan struct{})
+	provider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				dummyprovider.ToolUse("block-1", "block", json.RawMessage(`{}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+		dummyprovider.TextResponse("final"),
+	)
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(blockingTool{name: "block", release: releaseTool}),
+	)
+	assert.NoError(t, err)
+
+	sess := session.NewSession()
+	ctx, cancel := context.WithTimeout(session.NewContext(context.Background(), sess), time.Second)
+	defer cancel()
+	inputs := make(chan event.Input, 3)
+	inputs <- event.NewPrompt("start")
+
+	outputs, err := agent.Run(ctx, inputs)
+	assert.NoError(t, err)
+
+	var collected []event.Output
+	sent := false
+	for output := range outputs {
+		collected = append(collected, output)
+		toolStart, ok := output.(event.ToolStart)
+		if !ok || toolStart.ID != "block-1" || sent {
+			continue
+		}
+		// Queue two steers at the same step boundary; they must merge.
+		inputs <- event.NewSteer("revise once")
+		inputs <- event.NewSteer(" and twice")
+		close(inputs)
+		close(releaseTool)
+		sent = true
+	}
+
+	turns := turnEnds(collected)
+	if assert.Len(t, turns, 1) {
+		assert.Equal(t, "final", textFromParts(turns[0].Parts))
+	}
+
+	messages, err := sess.Messages(ctx)
+	assert.NoError(t, err)
+	if assert.Len(t, messages, 5) {
+		assert.Equal(t, model.RoleTool, messages[2].Role)
+		// Both steers collapse into a single trailing user message.
+		assert.Equal(t, model.RoleUser, messages[3].Role)
+		assert.Len(t, messages[3].Parts, 1)
+		assert.Equal(t, "revise once and twice", textFromParts(messages[3].Parts))
+		assert.Equal(t, model.RoleAssistant, messages[4].Role)
+	}
+}
+
 func TestLLMAgentPromptDuringToolWaveStartsNextTurn(t *testing.T) {
 	releaseTool := make(chan struct{})
 	provider := dummyprovider.NewProvider(
@@ -1541,6 +1601,28 @@ func (s *recordingSession) Append(_ context.Context, msgs ...*model.Message) err
 	call := make([]*model.Message, len(msgs))
 	copy(call, msgs)
 	s.calls = append(s.calls, call)
+	return nil
+}
+
+func (s *recordingSession) AppendUser(_ context.Context, parts ...content.Part) error {
+	if len(parts) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n := len(s.messages); n > 0 && s.messages[n-1].Role == model.RoleUser {
+		last := s.messages[n-1]
+		merged := make([]content.Part, 0, len(last.Parts)+len(parts))
+		merged = append(merged, last.Parts...)
+		merged = append(merged, parts...)
+		msg := &model.Message{Role: model.RoleUser, Parts: content.Coalesce(merged)}
+		s.messages[n-1] = msg
+		s.calls = append(s.calls, []*model.Message{msg})
+		return nil
+	}
+	msg := &model.Message{Role: model.RoleUser, Parts: content.Coalesce(parts)}
+	s.messages = append(s.messages, msg)
+	s.calls = append(s.calls, []*model.Message{msg})
 	return nil
 }
 
