@@ -436,6 +436,22 @@ func responseOutputToParts(items []responses.ResponseOutputItemUnion) ([]content
 				Name:  item.Name,
 				Input: json.RawMessage(item.Arguments),
 			})
+		case "reasoning":
+			reasoning := item.AsReasoning()
+			for _, c := range reasoning.Content {
+				if c.Text != "" {
+					parts = append(parts, content.Thinking{Text: c.Text})
+				}
+			}
+			summary := reasoning.Summary
+			if len(summary) == 0 {
+				summary = item.Summary
+			}
+			for _, s := range summary {
+				if s.Text != "" {
+					parts = append(parts, content.Thinking{Text: s.Text})
+				}
+			}
 		}
 	}
 	return parts, nil
@@ -448,6 +464,11 @@ func responseStreamEventToChunk(event responses.ResponseStreamEventUnion, seenTo
 			return nil, nil
 		}
 		return &model.Chunk{Parts: []content.Part{content.Text{Text: event.Delta}}}, nil
+	case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
+		if event.Delta == "" {
+			return nil, nil
+		}
+		return &model.Chunk{Parts: []content.Part{content.Thinking{Text: event.Delta}}}, nil
 	case "response.function_call_arguments.done":
 		return nil, nil
 	case "response.output_item.done":

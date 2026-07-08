@@ -153,6 +153,44 @@ func TestResponseToModelResponseReturnsTextAndToolUses(t *testing.T) {
 	}
 }
 
+func TestResponseToModelResponseReturnsReasoningAsThinking(t *testing.T) {
+	t.Parallel()
+
+	var apiResponse responses.Response
+	if err := json.Unmarshal([]byte(`{
+		"status": "completed",
+		"output": [{
+			"type": "reasoning",
+			"id": "rs_1",
+			"content": [{"type": "reasoning_text", "text": "raw reasoning text"}],
+			"summary": [{"type": "summary_text", "text": "reasoning summary"}]
+		}]
+	}`), &apiResponse); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	resp, err := responseToModelResponse(&apiResponse)
+	if err != nil {
+		t.Fatalf("responseToModelResponse returned error: %v", err)
+	}
+	if len(resp.Message.Parts) != 2 {
+		t.Fatalf("parts count = %d, want 2", len(resp.Message.Parts))
+	}
+	first, ok := resp.Message.Parts[0].(content.Thinking)
+	if !ok {
+		t.Fatalf("part[0] type = %T, want content.Thinking", resp.Message.Parts[0])
+	}
+	if got, want := first.Text, "raw reasoning text"; got != want {
+		t.Fatalf("thinking text = %q, want %q", got, want)
+	}
+	second, ok := resp.Message.Parts[1].(content.Thinking)
+	if !ok {
+		t.Fatalf("part[1] type = %T, want content.Thinking", resp.Message.Parts[1])
+	}
+	if got, want := second.Text, "reasoning summary"; got != want {
+		t.Fatalf("thinking summary = %q, want %q", got, want)
+	}
+}
+
 func TestResponseToModelResponseMapsIncompleteReasons(t *testing.T) {
 	t.Parallel()
 
@@ -200,6 +238,36 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 	}
 	if got, want := text.Text, "hi"; got != want {
 		t.Fatalf("text delta = %q, want %q", got, want)
+	}
+
+	chunk, err = responseStreamEventToChunk(responses.ResponseStreamEventUnion{
+		Type:  "response.reasoning_text.delta",
+		Delta: "think",
+	}, seen)
+	if err != nil {
+		t.Fatalf("responseStreamEventToChunk reasoning delta returned error: %v", err)
+	}
+	thinking, ok := chunk.Parts[0].(content.Thinking)
+	if !ok {
+		t.Fatalf("part type = %T, want content.Thinking", chunk.Parts[0])
+	}
+	if got, want := thinking.Text, "think"; got != want {
+		t.Fatalf("thinking delta = %q, want %q", got, want)
+	}
+
+	chunk, err = responseStreamEventToChunk(responses.ResponseStreamEventUnion{
+		Type:  "response.reasoning_summary_text.delta",
+		Delta: "summary",
+	}, seen)
+	if err != nil {
+		t.Fatalf("responseStreamEventToChunk reasoning summary delta returned error: %v", err)
+	}
+	thinking, ok = chunk.Parts[0].(content.Thinking)
+	if !ok {
+		t.Fatalf("part type = %T, want content.Thinking", chunk.Parts[0])
+	}
+	if got, want := thinking.Text, "summary"; got != want {
+		t.Fatalf("thinking summary delta = %q, want %q", got, want)
 	}
 
 	chunk, err = responseStreamEventToChunk(responses.ResponseStreamEventUnion{
