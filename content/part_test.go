@@ -73,3 +73,80 @@ func TestNewParts(t *testing.T) {
 		})
 	}
 }
+
+func TestCoalesce(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		parts []Part
+		want  []Part
+	}{
+		{
+			name:  "nil",
+			parts: nil,
+			want:  nil,
+		},
+		{
+			name:  "adjacent text merged",
+			parts: []Part{Text{Text: "Hel"}, Text{Text: "lo, "}, Text{Text: "world"}},
+			want:  []Part{Text{Text: "Hello, world"}},
+		},
+		{
+			name: "text runs split by tool use",
+			parts: []Part{
+				Text{Text: "run "},
+				Text{Text: "this"},
+				ToolUse{ID: "t1", Name: "bash"},
+				Text{Text: "done "},
+				Text{Text: "ok"},
+			},
+			want: []Part{
+				Text{Text: "run this"},
+				ToolUse{ID: "t1", Name: "bash"},
+				Text{Text: "done ok"},
+			},
+		},
+		{
+			name: "thinking merged when signature equal",
+			parts: []Part{
+				Thinking{Text: "step ", Signature: []byte("sig")},
+				Thinking{Text: "one", Signature: []byte("sig")},
+			},
+			want: []Part{Thinking{Text: "step one", Signature: []byte("sig")}},
+		},
+		{
+			name: "thinking not merged across signatures",
+			parts: []Part{
+				Thinking{Text: "a", Signature: []byte("sig1")},
+				Thinking{Text: "b", Signature: []byte("sig2")},
+			},
+			want: []Part{
+				Thinking{Text: "a", Signature: []byte("sig1")},
+				Thinking{Text: "b", Signature: []byte("sig2")},
+			},
+		},
+		{
+			name: "mixed thinking and text",
+			parts: []Part{
+				Thinking{Text: "hm", Signature: []byte("s")},
+				Text{Text: "he"},
+				Text{Text: "llo"},
+			},
+			want: []Part{
+				Thinking{Text: "hm", Signature: []byte("s")},
+				Text{Text: "hello"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := Coalesce(tt.parts)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Coalesce() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}

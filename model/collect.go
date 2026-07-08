@@ -30,7 +30,7 @@ func Collect(seq iter.Seq2[*Chunk, error]) (*Response, error) {
 		}
 	}
 	return &Response{
-		Message:    &Message{Role: RoleAssistant, Parts: parts},
+		Message:    &Message{Role: RoleAssistant, Parts: content.Coalesce(parts)},
 		StopReason: stopReason,
 		Usage:      usage,
 	}, nil

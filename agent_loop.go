@@ -336,7 +336,7 @@ func (l *agentLoop) streamStep(ctx context.Context, req *model.Request) (*model.
 	}
 
 	return &model.Response{
-		Message:    &model.Message{Role: model.RoleAssistant, Parts: parts},
+		Message:    &model.Message{Role: model.RoleAssistant, Parts: content.Coalesce(parts)},
 		StopReason: stopReason,
 		Usage:      usage,
 	}, nil
