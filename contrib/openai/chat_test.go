@@ -39,6 +39,46 @@ func TestToChatCompletionParamsAssistantRole(t *testing.T) {
 	}
 }
 
+func TestToChatCompletionParamsPreservesToolMessageTextParts(t *testing.T) {
+	t.Parallel()
+
+	provider := &chatModel{model: "gpt-test"}
+	req := &model.Request{
+		Messages: []*model.Message{
+			{
+				Role: model.RoleAssistant,
+				Parts: []content.Part{
+					content.ToolUse{ID: "call_1", Name: "lookup", Input: json.RawMessage(`{"q":"blades"}`)},
+				},
+			},
+			{
+				Role: model.RoleTool,
+				Parts: []content.Part{
+					content.ToolResult{ID: "call_1", Name: "lookup", Parts: []content.Part{content.Text{Text: "found"}}},
+					content.Text{Text: "Steering: only answer the time question."},
+				},
+			},
+		},
+	}
+	params, err := provider.toChatCompletionParams(false, req)
+	if err != nil {
+		t.Fatalf("toChatCompletionParams returned error: %v", err)
+	}
+
+	payload, err := json.Marshal(params.Messages)
+	if err != nil {
+		t.Fatalf("marshal params messages: %v", err)
+	}
+	toolIndex := bytes.Index(payload, []byte(`"role":"tool"`))
+	userIndex := bytes.Index(payload, []byte(`"role":"user"`))
+	if toolIndex < 0 || userIndex < 0 || userIndex < toolIndex {
+		t.Fatalf("payload should contain tool output followed by user steering: %s", payload)
+	}
+	if !bytes.Contains(payload, []byte(`Steering: only answer the time question.`)) {
+		t.Fatalf("payload missing steering text: %s", payload)
+	}
+}
+
 func TestToChatCompletionParamsParallelToolCalls(t *testing.T) {
 	t.Parallel()
 

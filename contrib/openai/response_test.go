@@ -42,6 +42,7 @@ func TestToResponseParamsMapsRequest(t *testing.T) {
 				Role: model.RoleTool,
 				Parts: []content.Part{
 					content.ToolResult{ID: "call_1", Name: "lookup", Parts: []content.Part{content.Text{Text: "found"}}},
+					content.Text{Text: "Steering: only answer the time question."},
 				},
 			},
 		},
@@ -86,6 +87,7 @@ func TestToResponseParamsMapsRequest(t *testing.T) {
 		[]byte(`"type":"function_call"`),
 		[]byte(`"type":"function_call_output"`),
 		[]byte(`"call_id":"call_1"`),
+		[]byte(`Steering: only answer the time question.`),
 		[]byte(`"parallel_tool_calls":false`),
 		[]byte(`"max_output_tokens":64`),
 		[]byte(`"temperature":0.2`),

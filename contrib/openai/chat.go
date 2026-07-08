@@ -297,12 +297,16 @@ func toAssistantMessage(parts []content.Part) openai.ChatCompletionMessageParamU
 
 func toToolMessages(parts []content.Part) []openai.ChatCompletionMessageParamUnion {
 	var messages []openai.ChatCompletionMessageParamUnion
+	var userParts []content.Part
 	for _, part := range parts {
-		result, ok := part.(content.ToolResult)
-		if !ok {
+		if result, ok := part.(content.ToolResult); ok {
+			messages = append(messages, openai.ToolMessage(textFromParts(result.Parts), result.ID))
 			continue
 		}
-		messages = append(messages, openai.ToolMessage(textFromParts(result.Parts), result.ID))
+		userParts = append(userParts, part)
+	}
+	if contentParts := toContentParts(userParts); len(contentParts) > 0 {
+		messages = append(messages, openai.UserMessage(contentParts))
 	}
 	return messages
 }

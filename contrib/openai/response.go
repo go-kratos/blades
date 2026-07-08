@@ -285,12 +285,20 @@ func toResponseInputItems(msg *model.Message) ([]responses.ResponseInputItemUnio
 			}
 		}
 	case model.RoleTool:
+		var userParts []content.Part
 		for _, part := range msg.Parts {
-			result, ok := part.(content.ToolResult)
-			if !ok {
+			if result, ok := part.(content.ToolResult); ok {
+				items = append(items, responses.ResponseInputItemParamOfFunctionCallOutput(result.ID, textFromParts(result.Parts)))
 				continue
 			}
-			items = append(items, responses.ResponseInputItemParamOfFunctionCallOutput(result.ID, textFromParts(result.Parts)))
+			userParts = append(userParts, part)
+		}
+		contentParts, err := toResponseInputContent(userParts)
+		if err != nil {
+			return nil, err
+		}
+		if len(contentParts) > 0 {
+			items = append(items, responses.ResponseInputItemParamOfMessage(contentParts, responses.EasyInputMessageRoleUser))
 		}
 	case model.RoleUser:
 		fallthrough
