@@ -863,16 +863,17 @@ func TestLLMAgentSteerDuringToolWaveContinuesCurrentTurn(t *testing.T) {
 
 	messages, err := sess.Messages(ctx)
 	assert.NoError(t, err)
-	if assert.Len(t, messages, 5) {
+	if assert.Len(t, messages, 4) {
 		assert.Equal(t, model.RoleUser, messages[0].Role)
 		assert.Equal(t, model.RoleAssistant, messages[1].Role)
+		// The steer merges into the trailing tool message, keeping its tool role
+		// while carrying both the tool result and the steer content.
 		assert.Equal(t, model.RoleTool, messages[2].Role)
-		assert.Equal(t, model.RoleUser, messages[3].Role)
-		assert.Equal(t, model.RoleAssistant, messages[4].Role)
+		assert.Equal(t, model.RoleAssistant, messages[3].Role)
 		assert.Equal(t, "start", textFromParts(messages[0].Parts))
 		assert.Equal(t, "released", toolResultText(messages[2].Parts))
-		assert.Equal(t, "revise", textFromParts(messages[3].Parts))
-		assert.Equal(t, "final", textFromParts(messages[4].Parts))
+		assert.Equal(t, "revise", textFromParts(messages[2].Parts))
+		assert.Equal(t, "final", textFromParts(messages[3].Parts))
 	}
 }
 
@@ -911,7 +912,8 @@ func TestLLMAgentMultipleSteersDuringToolWavePreserveContentParts(t *testing.T) 
 		if !ok || toolStart.ID != "block-1" || sent {
 			continue
 		}
-		// Queue two steers at the same step boundary; they stay one message with separate parts.
+		// Queue two steers at the same step boundary; they merge into the trailing
+		// tool message with separate parts.
 		inputs <- event.NewSteer("revise once")
 		inputs <- event.NewSteer(" and twice")
 		close(inputs)
@@ -926,13 +928,13 @@ func TestLLMAgentMultipleSteersDuringToolWavePreserveContentParts(t *testing.T) 
 
 	messages, err := sess.Messages(ctx)
 	assert.NoError(t, err)
-	if assert.Len(t, messages, 5) {
+	if assert.Len(t, messages, 4) {
+		// Both steers merge into the trailing tool message, keeping its tool role
+		// and preserving each content part alongside the tool result.
 		assert.Equal(t, model.RoleTool, messages[2].Role)
-		// Both steers become one trailing user message, preserving each content part.
-		assert.Equal(t, model.RoleUser, messages[3].Role)
-		assert.Len(t, messages[3].Parts, 2)
-		assert.Equal(t, "revise once and twice", textFromParts(messages[3].Parts))
-		assert.Equal(t, model.RoleAssistant, messages[4].Role)
+		assert.Len(t, messages[2].Parts, 3)
+		assert.Equal(t, "revise once and twice", textFromParts(messages[2].Parts))
+		assert.Equal(t, model.RoleAssistant, messages[3].Role)
 	}
 }
 

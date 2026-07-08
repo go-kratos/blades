@@ -108,15 +108,19 @@ func (s *inMemorySession) AppendUser(_ context.Context, parts ...content.Part) e
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if n := len(s.messages); n > 0 && s.messages[n-1].Role == model.RoleUser {
-		last := s.messages[n-1]
-		merged := make([]content.Part, 0, len(last.Parts)+len(parts))
-		merged = append(merged, last.Parts...)
-		merged = append(merged, parts...)
-		// Rebuild the message rather than mutating the existing Parts slice,
-		// so any copy a caller already holds from Messages stays intact.
-		s.messages[n-1] = &model.Message{Role: model.RoleUser, Parts: merged}
-		return nil
+	if n := len(s.messages); n > 0 {
+		if last := s.messages[n-1]; last.Role == model.RoleUser || last.Role == model.RoleTool {
+			merged := make([]content.Part, 0, len(last.Parts)+len(parts))
+			merged = append(merged, last.Parts...)
+			merged = append(merged, parts...)
+			// Rebuild the message rather than mutating the existing Parts slice,
+			// so any copy a caller already holds from Messages stays intact.
+			// Preserve the target role: merging into a RoleTool message keeps it
+			// RoleTool so provider adapters still split tool results out and emit
+			// the appended parts as trailing user content.
+			s.messages[n-1] = &model.Message{Role: last.Role, Parts: merged}
+			return nil
+		}
 	}
 	s.messages = append(s.messages, &model.Message{Role: model.RoleUser, Parts: parts})
 	return nil

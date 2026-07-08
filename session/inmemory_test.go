@@ -55,13 +55,16 @@ func TestAppendUser(t *testing.T) {
 			}},
 		},
 		{
-			name: "does not merge into trailing tool message",
+			name: "merges into trailing tool message and keeps tool role",
 			initial: []*model.Message{
 				{Role: model.RoleTool, Parts: []content.Part{content.ToolResult{ID: "call_1"}}},
 			},
-			parts:    []content.Part{content.Text{Text: "steer"}},
-			wantLen:  2,
-			wantLast: &model.Message{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "steer"}}},
+			parts:   []content.Part{content.Text{Text: "steer"}},
+			wantLen: 1,
+			wantLast: &model.Message{Role: model.RoleTool, Parts: []content.Part{
+				content.ToolResult{ID: "call_1"},
+				content.Text{Text: "steer"},
+			}},
 		},
 		{
 			name: "does not merge into trailing assistant message",
