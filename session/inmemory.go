@@ -115,10 +115,10 @@ func (s *inMemorySession) AppendUser(_ context.Context, parts ...content.Part) e
 		merged = append(merged, parts...)
 		// Rebuild the message rather than mutating the existing Parts slice,
 		// so any copy a caller already holds from Messages stays intact.
-		s.messages[n-1] = &model.Message{Role: model.RoleUser, Parts: content.Coalesce(merged)}
+		s.messages[n-1] = &model.Message{Role: model.RoleUser, Parts: merged}
 		return nil
 	}
-	s.messages = append(s.messages, &model.Message{Role: model.RoleUser, Parts: content.Coalesce(parts)})
+	s.messages = append(s.messages, &model.Message{Role: model.RoleUser, Parts: parts})
 	return nil
 }
 

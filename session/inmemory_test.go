@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/go-kratos/blades/content"
@@ -46,9 +47,12 @@ func TestAppendUser(t *testing.T) {
 			initial: []*model.Message{
 				{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello"}}},
 			},
-			parts:    []content.Part{content.Text{Text: " world"}},
-			wantLen:  1,
-			wantLast: &model.Message{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello world"}}},
+			parts:   []content.Part{content.Text{Text: " world"}},
+			wantLen: 1,
+			wantLast: &model.Message{Role: model.RoleUser, Parts: []content.Part{
+				content.Text{Text: "hello"},
+				content.Text{Text: " world"},
+			}},
 		},
 		{
 			name: "does not merge into trailing tool message",
@@ -101,7 +105,7 @@ func TestAppendUser(t *testing.T) {
 	}
 }
 
-func TestAppendUserMergesMultipleSteers(t *testing.T) {
+func TestAppendUserPreservesMultipleSteerParts(t *testing.T) {
 	t.Parallel()
 	sess := NewSession()
 	ctx := context.Background()
@@ -118,8 +122,8 @@ func TestAppendUserMergesMultipleSteers(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("message count = %d, want 1", len(msgs))
 	}
-	if got := textParts(msgs[0]); len(got) != 1 || got[0] != "first second" {
-		t.Fatalf("merged text = %v, want [\"first second\"]", got)
+	if got, want := textParts(msgs[0]), []string{"first", " second"}; !slices.Equal(got, want) {
+		t.Fatalf("text parts = %v, want %v", got, want)
 	}
 }
 

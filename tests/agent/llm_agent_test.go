@@ -876,7 +876,7 @@ func TestLLMAgentSteerDuringToolWaveContinuesCurrentTurn(t *testing.T) {
 	}
 }
 
-func TestLLMAgentMultipleSteersDuringToolWaveMergeIntoOneMessage(t *testing.T) {
+func TestLLMAgentMultipleSteersDuringToolWavePreserveContentParts(t *testing.T) {
 	releaseTool := make(chan struct{})
 	provider := dummyprovider.NewProvider(
 		dummyprovider.AssistantResponse(
@@ -911,7 +911,7 @@ func TestLLMAgentMultipleSteersDuringToolWaveMergeIntoOneMessage(t *testing.T) {
 		if !ok || toolStart.ID != "block-1" || sent {
 			continue
 		}
-		// Queue two steers at the same step boundary; they must merge.
+		// Queue two steers at the same step boundary; they stay one message with separate parts.
 		inputs <- event.NewSteer("revise once")
 		inputs <- event.NewSteer(" and twice")
 		close(inputs)
@@ -928,9 +928,9 @@ func TestLLMAgentMultipleSteersDuringToolWaveMergeIntoOneMessage(t *testing.T) {
 	assert.NoError(t, err)
 	if assert.Len(t, messages, 5) {
 		assert.Equal(t, model.RoleTool, messages[2].Role)
-		// Both steers collapse into a single trailing user message.
+		// Both steers become one trailing user message, preserving each content part.
 		assert.Equal(t, model.RoleUser, messages[3].Role)
-		assert.Len(t, messages[3].Parts, 1)
+		assert.Len(t, messages[3].Parts, 2)
 		assert.Equal(t, "revise once and twice", textFromParts(messages[3].Parts))
 		assert.Equal(t, model.RoleAssistant, messages[4].Role)
 	}
