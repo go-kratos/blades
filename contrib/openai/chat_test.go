@@ -4,13 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/model"
 	openaisdk "github.com/openai/openai-go/v3"
+	sdkoption "github.com/openai/openai-go/v3/option"
 )
+
+type httpClientFunc func(*http.Request) (*http.Response, error)
+
+func (f httpClientFunc) Do(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestToChatCompletionParamsAssistantRole(t *testing.T) {
 	t.Parallel()
@@ -411,6 +420,79 @@ func TestChunkToModelChunkReturnsThinkingForReasoningContentExtraField(t *testin
 	}
 	if chunk.StopReason != "" {
 		t.Fatalf("stop reason = %q, want empty", chunk.StopReason)
+	}
+}
+
+func TestChatStreamEmitsThinkingForReasoningDelta(t *testing.T) {
+	t.Parallel()
+
+	const stream = `data: {"choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":null,"index":0,"logprobs":null}],"created":1783601564,"id":"chatcmpl-58d4b34b-e4ba-4f5c-8a53-480d48572c2a","model":"deepseek-v4-pro","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"reasoning":"The"},"finish_reason":null,"index":0,"logprobs":null}],"created":1783601564,"id":"chatcmpl-58d4b34b-e4ba-4f5c-8a53-480d48572c2a","model":"deepseek-v4-pro","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"reasoning":" web"},"finish_reason":null,"index":0,"logprobs":null}],"created":1783601564,"id":"chatcmpl-58d4b34b-e4ba-4f5c-8a53-480d48572c2a","model":"deepseek-v4-pro","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"content":" result"},"finish_reason":null,"index":0,"logprobs":null}],"created":1783601564,"id":"chatcmpl-58d4b34b-e4ba-4f5c-8a53-480d48572c2a","model":"deepseek-v4-pro","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop","index":0,"logprobs":null}],"created":1783601564,"id":"chatcmpl-58d4b34b-e4ba-4f5c-8a53-480d48572c2a","model":"deepseek-v4-pro","object":"chat.completion.chunk"}
+
+data: [DONE]
+
+`
+	client := httpClientFunc(func(r *http.Request) (*http.Response, error) {
+		if got, want := r.URL.Path, "/v1/chat/completions"; got != want {
+			t.Errorf("request path = %q, want %q", got, want)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(stream)),
+			Request:    r,
+		}, nil
+	})
+
+	provider := NewChat(
+		"deepseek-v4-pro",
+		WithBaseURL("https://example.test/v1"),
+		WithAPIKey("test-key"),
+		WithRequestOptions(sdkoption.WithHTTPClient(client)),
+	)
+	var (
+		parts      []content.Part
+		stopReason model.StopReason
+	)
+	for chunk, err := range provider.Stream(context.Background(), &model.Request{}) {
+		if err != nil {
+			t.Fatalf("Stream returned error: %v", err)
+		}
+		parts = append(parts, chunk.Parts...)
+		if chunk.StopReason != "" {
+			stopReason = chunk.StopReason
+		}
+	}
+
+	if got, want := len(parts), 3; got != want {
+		t.Fatalf("parts length = %d, want %d", got, want)
+	}
+	for i, want := range []string{"The", " web"} {
+		thinking, ok := parts[i].(content.Thinking)
+		if !ok {
+			t.Fatalf("part[%d] type = %T, want content.Thinking", i, parts[i])
+		}
+		if got := thinking.Text; got != want {
+			t.Fatalf("part[%d] thinking text = %q, want %q", i, got, want)
+		}
+	}
+	text, ok := parts[2].(content.Text)
+	if !ok {
+		t.Fatalf("part[2] type = %T, want content.Text", parts[2])
+	}
+	if got, want := text.Text, " result"; got != want {
+		t.Fatalf("text = %q, want %q", got, want)
+	}
+	if got, want := stopReason, model.StopEnd; got != want {
+		t.Fatalf("stop reason = %q, want %q", got, want)
 	}
 }
 

@@ -502,13 +502,15 @@ func chunkToModelChunk(chunk openai.ChatCompletionChunk) *model.Chunk {
 }
 
 func reasoningContentFromDelta(delta openai.ChatCompletionChunkChoiceDelta) string {
-	field, ok := delta.JSON.ExtraFields["reasoning_content"]
-	if !ok || field.Raw() == "" {
-		return ""
-	}
-	var text string
-	if err := json.Unmarshal([]byte(field.Raw()), &text); err == nil {
-		return text
+	for _, name := range []string{"reasoning_content", "reasoning"} {
+		field, ok := delta.JSON.ExtraFields[name]
+		if !ok || field.Raw() == "" {
+			continue
+		}
+		var text string
+		if err := json.Unmarshal([]byte(field.Raw()), &text); err == nil && text != "" {
+			return text
+		}
 	}
 	return ""
 }
