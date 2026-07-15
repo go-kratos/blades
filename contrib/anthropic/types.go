@@ -1,8 +1,10 @@
 package anthropic
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/go-kratos/blades/content"
@@ -23,6 +25,14 @@ func convertPartsToContent(parts []content.Part) []anthropic.ContentBlockParamUn
 			out = append(out, anthropic.NewToolUseBlock(p.ID, decodeToolInput(p.Input), p.Name))
 		case content.ToolResult:
 			out = append(out, anthropic.NewToolResultBlock(p.ID, textFromParts(p.Parts), p.IsError))
+		case content.FilePart:
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(p.MIME)), "image/") {
+				out = append(out, anthropic.NewImageBlock(anthropic.URLImageSourceParam{URL: p.URI}))
+			}
+		case content.DataPart:
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(p.MIME)), "image/") {
+				out = append(out, anthropic.NewImageBlockBase64(p.MIME, base64.StdEncoding.EncodeToString(p.Bytes)))
+			}
 		}
 	}
 	return out

@@ -114,6 +114,37 @@ func TestToClaudeParamsAssistantRole(t *testing.T) {
 	}
 }
 
+func TestToClaudeParamsImageParts(t *testing.T) {
+	t.Parallel()
+
+	provider := &Claude{model: "claude-test"}
+	params, err := provider.toClaudeParams(&model.Request{
+		Messages: []*model.Message{{
+			Role: model.RoleUser,
+			Parts: []content.Part{
+				content.Text{Text: "describe these images"},
+				content.DataPart{Bytes: []byte("inline image"), MIME: "image/png", Filename: "inline.png"},
+				content.FilePart{URI: "https://files.example/remote.webp", MIME: "image/webp", Filename: "remote.webp"},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("toClaudeParams returned error: %v", err)
+	}
+	payload, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	for _, want := range [][]byte{
+		[]byte(`{"source":{"data":"aW5saW5lIGltYWdl","media_type":"image/png","type":"base64"},"type":"image"}`),
+		[]byte(`{"source":{"url":"https://files.example/remote.webp","type":"url"},"type":"image"}`),
+	} {
+		if !bytes.Contains(payload, want) {
+			t.Fatalf("image block %s missing from payload: %s", want, payload)
+		}
+	}
+}
+
 func TestToClaudeParamsParallelToolCalls(t *testing.T) {
 	t.Parallel()
 
