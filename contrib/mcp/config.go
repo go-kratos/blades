@@ -3,6 +3,8 @@ package mcp
 import (
 	"fmt"
 	"time"
+
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // TransportType defines the communication method for MCP servers.
@@ -37,6 +39,8 @@ type ClientConfig struct {
 	Endpoint string
 	// Headers are custom HTTP headers to include in requests
 	Headers map[string]string
+	// SendingMiddleware intercepts outgoing MCP requests and notifications.
+	SendingMiddleware []sdkmcp.Middleware
 	// Timeout is the request timeout duration
 	Timeout time.Duration
 }
