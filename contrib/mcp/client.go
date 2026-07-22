@@ -41,6 +41,7 @@ func NewClient(config ClientConfig) (*Client, error) {
 		Name:    config.Name,
 		Version: "dev",
 	}, nil)
+	client.AddSendingMiddleware(config.SendingMiddleware...)
 	c := &Client{
 		config: config,
 		client: client,
