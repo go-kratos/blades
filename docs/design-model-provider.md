@@ -26,7 +26,7 @@ tags: [agentos, model, provider, protocol]
 - Provider 接口由 *stream-only* 调整为 **`Generate` + `Stream`** 双方法并列，与各 provider 原生 SDK 直接对齐，同步路径无需经 `Collect` 累加。
 - token 计数从 `Provider` 抽离为独立的 **`TokenCounter` 接口**，由调用方显式注入；返回 `TokenCount` 而非裸 `int`，并提供 provider-agnostic `ApproxTokenCounter` 作为默认粗估。
 - `Response` 拆分为两个类型：**`Response`（同步终态）** 与 **`Chunk`（流式增量帧）**，避免一种类型承担两种语义。
-- `Message` 收敛为 **protocol-only**（仅 `Role` + `Parts`），`Status` / `FinishReason` / `TokenUsage` 等运行时字段移到 `Response`/`Chunk` 上。
+- `Message` 收敛为 **protocol-only**（`Role` + `Parts` + provider 归属 `Metadata`），`Status` / `FinishReason` / `TokenUsage` 等运行时字段移到 `Response`/`Chunk` 上。
 - `Chunk` 复用 `content.Part`：流式增量直接是 `[]content.Part`，不引入独立的 *Delta* 变体。
 - `Request.System` 简化为 `string`（不再用 `[]*SystemBlock`）；引入 `Request.Options` sealed Option 列表承载 cache / reasoning / response_format / sampling / parallel tool calls 等 provider hints，adapter 选择性应用。
 
@@ -269,8 +269,15 @@ func Collect(seq iter.Seq2[*Chunk, error]) (*Response, error)
 
 ```go
 type Message struct {
-    Role  Role
-    Parts []content.Part
+    Role     Role
+    Parts    []content.Part
+    Metadata MessageMetadata
+}
+
+type MessageMetadata struct {
+    Provider string
+    API      string
+    Model    string
 }
 
 type Role string
@@ -285,7 +292,8 @@ const (
 约束：
 
 - 仅保留三种角色：用户、助手、工具。系统内容统一走 `Request.System`。
-- Message **不携带运行状态**：没有 `Status` / `FinishReason` / `TokenUsage` / `Actions` / `Metadata`。这些信息：
+- `Message.Metadata` 预留 `Provider` / `API` / `Model` 三个归属字段；当前只定义载荷形态，具体填充策略后续决定。
+- Message **不携带运行状态或任意业务 metadata**：没有 `Status` / `FinishReason` / `TokenUsage` / `Actions`。这些信息：
   - 生成态归 `Response` / `Chunk`；
   - 业务态（author、invocationId、metadata）归 `event/` 与上层 session；
   - compact 与 session 重放只需要 protocol-only 的 Message。
