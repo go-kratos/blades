@@ -119,6 +119,26 @@ func TestConvertClaudeToBladesTextAndToolUse(t *testing.T) {
 	}
 }
 
+func TestConvertStreamDeltaToChunkPreservesThinkingSignature(t *testing.T) {
+	t.Parallel()
+
+	event := decodeContentBlockDeltaEvent(t, `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"opaque-provider-signature"}}`)
+	chunk := convertStreamDeltaToChunk(event)
+	if got, want := len(chunk.Parts), 1; got != want {
+		t.Fatalf("parts len = %d, want %d", got, want)
+	}
+	thinking, ok := chunk.Parts[0].(content.Thinking)
+	if !ok {
+		t.Fatalf("part type = %T, want content.Thinking", chunk.Parts[0])
+	}
+	if got, want := thinking.Text, ""; got != want {
+		t.Fatalf("thinking text = %q, want %q", got, want)
+	}
+	if got, want := string(thinking.Signature), "opaque-provider-signature"; got != want {
+		t.Fatalf("thinking signature = %q, want %q", got, want)
+	}
+}
+
 func TestStreamAccumulatorCollectsToolUseInputJSONDeltas(t *testing.T) {
 	t.Parallel()
 

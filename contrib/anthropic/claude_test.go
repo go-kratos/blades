@@ -56,6 +56,66 @@ func TestStreamCollectsToolUseFromInputJSONDeltas(t *testing.T) {
 	}
 }
 
+func TestStreamPreservesThinkingSignatureForToolUseReplay(t *testing.T) {
+	t.Parallel()
+
+	var sse strings.Builder
+	writeSSEEvent(&sse, "message_start", `{"message":{"content":[],"id":"msg_1","model":"claude-test","role":"assistant","stop_reason":null,"stop_sequence":null,"type":"message","usage":{"input_tokens":1,"output_tokens":0}},"type":"message_start"}`)
+	writeSSEEvent(&sse, "content_block_start", `{"content_block":{"thinking":"","type":"thinking"},"index":0,"type":"content_block_start"}`)
+	writeSSEEvent(&sse, "content_block_delta", `{"delta":{"thinking":"Need ","type":"thinking_delta"},"index":0,"type":"content_block_delta"}`)
+	writeSSEEvent(&sse, "content_block_delta", `{"delta":{"thinking":"a tool.","type":"thinking_delta"},"index":0,"type":"content_block_delta"}`)
+	writeSSEEvent(&sse, "content_block_delta", `{"delta":{"signature":"opaque-provider-signature","type":"signature_delta"},"index":0,"type":"content_block_delta"}`)
+	writeSSEEvent(&sse, "content_block_stop", `{"index":0,"type":"content_block_stop"}`)
+	writeSSEEvent(&sse, "content_block_start", `{"content_block":{"id":"toolu_1","input":{},"name":"read","type":"tool_use"},"index":1,"type":"content_block_start"}`)
+	writeSSEEvent(&sse, "content_block_delta", `{"delta":{"partial_json":"{\"path\":\"/tmp/file\"}","type":"input_json_delta"},"index":1,"type":"content_block_delta"}`)
+	writeSSEEvent(&sse, "content_block_stop", `{"index":1,"type":"content_block_stop"}`)
+	writeSSEEvent(&sse, "message_delta", `{"delta":{"stop_reason":"tool_use","stop_sequence":null},"type":"message_delta","usage":{"input_tokens":1,"output_tokens":5}}`)
+	writeSSEEvent(&sse, "message_stop", `{"type":"message_stop"}`)
+
+	provider := newTestProvider(t, sse.String())
+	var streamedParts []content.Part
+	for chunk, err := range provider.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "read"}}}},
+	}) {
+		if err != nil {
+			t.Fatalf("Stream returned error: %v", err)
+		}
+		streamedParts = append(streamedParts, chunk.Parts...)
+	}
+
+	parts := content.Coalesce(streamedParts)
+	if got, want := len(parts), 2; got != want {
+		t.Fatalf("coalesced parts len = %d, want %d: %#v", got, want, parts)
+	}
+	thinking, ok := parts[0].(content.Thinking)
+	if !ok {
+		t.Fatalf("first part type = %T, want content.Thinking", parts[0])
+	}
+	if got, want := thinking.Text, "Need a tool."; got != want {
+		t.Fatalf("thinking text = %q, want %q", got, want)
+	}
+	if got, want := string(thinking.Signature), "opaque-provider-signature"; got != want {
+		t.Fatalf("thinking signature = %q, want %q", got, want)
+	}
+	if _, ok := parts[1].(content.ToolUse); !ok {
+		t.Fatalf("second part type = %T, want content.ToolUse", parts[1])
+	}
+
+	params, err := provider.(*Claude).toClaudeParams(&model.Request{
+		Messages: []*model.Message{{Role: model.RoleAssistant, Parts: parts}},
+	})
+	if err != nil {
+		t.Fatalf("toClaudeParams returned error: %v", err)
+	}
+	payload, err := json.Marshal(params.Messages)
+	if err != nil {
+		t.Fatalf("marshal replay messages: %v", err)
+	}
+	if !bytes.Contains(payload, []byte(`"signature":"opaque-provider-signature"`)) {
+		t.Fatalf("thinking signature missing from replay payload: %s", payload)
+	}
+}
+
 func TestStreamReportsInvalidToolInputJSON(t *testing.T) {
 	t.Parallel()
 

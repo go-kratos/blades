@@ -127,6 +127,30 @@ func TestCoalesce(t *testing.T) {
 			},
 		},
 		{
+			name: "unsigned thinking finalized by signature delta",
+			parts: []Part{
+				Thinking{Text: "step "},
+				Thinking{Text: "one"},
+				Thinking{Signature: []byte("sig")},
+			},
+			want: []Part{
+				Thinking{Text: "step one", Signature: []byte("sig")},
+			},
+		},
+		{
+			name: "unsigned thinking starts a new signed block",
+			parts: []Part{
+				Thinking{Text: "first", Signature: []byte("sig1")},
+				Thinking{Text: "second "},
+				Thinking{Text: "block"},
+				Thinking{Signature: []byte("sig2")},
+			},
+			want: []Part{
+				Thinking{Text: "first", Signature: []byte("sig1")},
+				Thinking{Text: "second block", Signature: []byte("sig2")},
+			},
+		},
+		{
 			name: "mixed thinking and text",
 			parts: []Part{
 				Thinking{Text: "hm", Signature: []byte("s")},

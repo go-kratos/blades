@@ -15,8 +15,11 @@ type Part interface {
 // compact so downstream requests carry one block per contiguous run.
 //
 // Adjacent Text parts are concatenated. Adjacent Thinking parts are
-// concatenated only when their Signatures are equal, so verified reasoning
-// blocks are never fused across signature boundaries. All other parts, and any
+// concatenated when their Signatures are equal. An unsigned Thinking run is
+// also finalized by a following signed fragment because some providers stream
+// reasoning text before its verification signature. Once a run is signed, a
+// following unsigned fragment starts a new block, so verified reasoning blocks
+// are never fused across signature boundaries. All other parts, and any
 // non-adjacent runs, are preserved in order.
 func Coalesce(parts []Part) []Part {
 	if len(parts) == 0 {
@@ -34,9 +37,15 @@ func Coalesce(parts []Part) []Part {
 			}
 		case Thinking:
 			if len(out) > 0 {
-				if prev, ok := out[len(out)-1].(Thinking); ok && bytes.Equal(prev.Signature, p.Signature) {
-					out[len(out)-1] = Thinking{Text: prev.Text + p.Text, Signature: prev.Signature}
-					continue
+				if prev, ok := out[len(out)-1].(Thinking); ok {
+					switch {
+					case bytes.Equal(prev.Signature, p.Signature):
+						out[len(out)-1] = Thinking{Text: prev.Text + p.Text, Signature: prev.Signature}
+						continue
+					case len(prev.Signature) == 0 && len(p.Signature) > 0:
+						out[len(out)-1] = Thinking{Text: prev.Text + p.Text, Signature: p.Signature}
+						continue
+					}
 				}
 			}
 		}

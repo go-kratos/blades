@@ -102,6 +102,8 @@ func convertStreamDeltaToChunk(event anthropic.ContentBlockDeltaEvent) *model.Ch
 		chunk.Parts = append(chunk.Parts, content.Text{Text: delta.Text})
 	case anthropic.ThinkingDelta:
 		chunk.Parts = append(chunk.Parts, content.Thinking{Text: delta.Thinking})
+	case anthropic.SignatureDelta:
+		chunk.Parts = append(chunk.Parts, content.Thinking{Signature: []byte(delta.Signature)})
 	}
 	return chunk
 }
