@@ -102,7 +102,7 @@ Session 与 compaction **完全解耦**：
   1. `msgs, _ := session.Messages(ctx)`
   2. `view, err := compactor.Compact(ctx, compact.Request{Messages: msgs, TokenCounter: counter})`  // 纯变换，不副作用；Compactor 自身决定是否短路
   3. 用 `view` 组装 `model.Request` 调用 provider
-  4. provider 返回的 final assistant 消息与本 step 的全部 tool 结果作为一个语义组通过一次 `Append` 写回 Session（仍然是完整原始消息，不是压缩后的视图）
+  4. provider 返回的 assistant 消息与本 turn 的全部 tool 结果作为一个语义组通过一次 `Append` 写回 Session（仍然是完整原始消息，不是压缩后的视图）
 - compactor 的滚动状态（如 summarize 的 `offset` / `summaryContent`）通过 `Session.State()` 持久化，避免每轮重算。参见 [design-compact.md](design-compact.md) §3。
 
 ### 为什么 append-only 是增量压缩的前提
@@ -170,7 +170,7 @@ Session core 不提供 Manager 抽象。常见做法由应用层组合：
 
 - **单实例内**：`Append` / `Messages` 串行可见；并发安全由实现自身保证（`sessionInMemory` 使用并发容器；远程后端可用 mutex 或追加日志）。
 - **跨进程**：core 不规定一致性级别。具体后端在自身文档中声明（last-write-wins 不适用，因为没有覆盖语义；纯追加场景下后端通常实现"顺序追加 + 单调读"）。
-- **推荐使用模式**：以 step 为原子单元写入——turn 起始 `Append(ctx, userMsg)`；每个 model step + tool wave 完成后 `Append(ctx, assistantMsg, toolMsg)` 一次性写入语义组（参见 [design-event-agent-loop.md](design-event-agent-loop.md) §9）；compaction 不写回 Session（参见 §4）；不要把这些操作拆成长事务。
+- **推荐使用模式**：以 turn 为原子单元写入——有输入的 turn 起始时 `Append(ctx, userMsg)`（纯工具续接 turn 无 user message）；本 turn 唯一一次 primary model call + tool wave 完成后 `Append(ctx, assistantMsg, toolMsg)` 一次性写入语义组（参见 [design-event-agent-loop.md](design-event-agent-loop.md) §9）；compaction 不写回 Session（参见 §4）；不要把这些操作拆成长事务。
 - 应用层可基于 `State()` 或后端自身字段实现版本号、租约、乐观锁，core 不内置。
 
 

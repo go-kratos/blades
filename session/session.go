@@ -14,7 +14,7 @@ type Session interface {
 	State() map[string]any
 	SetState(key string, value any)
 	Append(ctx context.Context, msgs ...*model.Message) error
-	// AppendUser merges parts into the last message when it is a RoleUser or
+	// AppendUser merges steering parts into the last message when it is a RoleUser or
 	// RoleTool message, otherwise appends a new RoleUser message. Merging into a
 	// trailing RoleTool message keeps that message's role, so its tool results and
 	// the appended parts stay in one message and provider adapters still emit the

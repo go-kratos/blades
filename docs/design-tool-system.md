@@ -204,7 +204,7 @@ func (e *ErrHandoff) Error() string { return "tools: handoff to " + e.Agent }
 
 `tools/` 不决定工具何时执行、是否并发、如何取消、如何把结果写回 provider 消息。当前 v1 的默认编排由根包 `llmAgent` 内部的 tool wave 完成；它不是公开可替换的 `ToolExecutor` 接口。需要完全改写编排语义时，应实现一个自定义 `blades.Agent`。
 
-工具批次是否出现多个调用由模型/provider 决定，不由本地 `tools` 包配置。默认 Loop 对同一 assistant message 中的 tool wave 采用固定语义：`ToolStart` 按 assistant 源顺序发出，实际 `Handle` 并发执行，`ToolEnd` 按完成顺序发出，`content.ToolResult` 按 assistant 源顺序写回 Session。多个工具同时返回控制信号时，`TurnEnd.Action` 取 assistant 源顺序的第一个 action，保证确定性。
+工具批次是否出现多个调用由模型/provider 决定，不由本地 `tools` 包配置。默认 Loop 对同一 assistant message 中的 tool wave 采用固定语义：`ToolStart` 按 assistant 源顺序发出，实际 `Handle` 并发执行，`ToolEnd` 按完成顺序发出，全部 `ToolEnd` 之后输出 call-local `AssistantMessageEnd`，再输出对应 `TurnEnd`；`content.ToolResult` 按 assistant 源顺序写回 Session。多个工具同时返回控制信号时，`TurnEnd.Action` 取 assistant 源顺序的第一个 action，保证确定性。
 
 默认 tool wave 负责：
 

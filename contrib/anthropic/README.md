@@ -48,7 +48,7 @@ When used through `blades.NewAgent`, the Agent Loop handles this cycle:
 2. collect `content.ToolUse` parts from the assistant message;
 3. execute the returned tool wave concurrently;
 4. append ordered `content.ToolResult` parts to the session;
-5. continue with the next model step.
+5. end the current turn and continue with the next turn/model call.
 
 `WithParallelToolCalls(false)` maps to Claude `tool_choice.auto.disable_parallel_tool_use=true`. The Agent Loop does not inspect this option; it executes the tool wave returned by the model.
 
