@@ -208,7 +208,7 @@ func (Deny) BeforeTool(ctx context.Context, call *hook.ToolCall) error {
 |---|---|
 | `BeforeTurn` | 跳过本 turn 的 primary model call / tool wave，直接进 `TurnEnd` |
 | `BeforeModel` | 跳过本 turn 的 provider 调用（不发请求），直接结束 turn |
-| `AfterModel` | 不再触发后续 tool wave 或下一个 turn，当前 turn 提前结束；已成功汇总的 response 仍输出 `AssistantMessageEnd` |
+| `AfterModel` | 不再触发后续 tool wave 或下一个 turn，丢弃已汇总的 response，且不输出 `AssistantMessageEnd` |
 | `BeforeTool` | 不执行当前 tool wave，turn 以 abort 收尾；若要给模型反馈可反思的工具拒绝结果，应使用 `policy.Policy` 的 `Deny` |
 | `AfterTool` | 不把当前 tool result 反馈给模型，turn 以 abort 收尾 |
 | `AfterTurn` | 当前 v1 忽略返回错误；无法回滚已发出事件或已提交 Session 的消息 |

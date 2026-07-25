@@ -172,7 +172,7 @@ type ToolEnd struct {
 
 `ToolStart` 只在默认 tool wave 实际调度某个工具调用时发出。Provider stream 中的 `content.ToolUse` 是 assistant message 的一部分，Loop 会收集它来决定是否进入 tool wave，但不会把它转换成 `ToolStart`，避免"模型提出调用"和"运行时开始处理"两类事件混淆。默认 Loop 不提供本地顺序/并行开关：同一 assistant message 中的 tool wave 固定按源顺序发出 `ToolStart`，实际 `Handle` 并发执行，`ToolEnd` 按完成顺序发出，而写回模型上下文的 `content.ToolResult` 仍保持 assistant 源顺序。若 provider 通过选项约束模型一次最多返回一个 tool use，这个 wave 自然退化为单工具调用。`ToolEnd.Parts` 直接复用 `tools.Result{Parts []content.Part}`，再包装为 `content.ToolResult` 写回模型上下文；若 policy deny / ask / error 在 `ToolStart` 后阻止了 `Tool.Handle`，对应 `ToolEnd` 会带 `IsError=true`。
 
-每个成功汇总的 primary `model.Provider.Stream` 响应都必须输出一个 `AssistantMessageEnd`：
+每个成功汇总且被全部 `AfterModel` hook 接受的 primary `model.Provider.Stream` 响应都必须输出一个 `AssistantMessageEnd`：
 
 ```go
 type AssistantMessageEnd struct {
@@ -182,7 +182,7 @@ type AssistantMessageEnd struct {
 }
 ```
 
-它是 LLM call-local 的响应与 usage 记账事件，不跨 turn 聚合。事件刻意延迟到该响应触发的整个 tool wave 完成之后：有工具时固定顺序为 `ToolEnd`（wave 中的全部调用）→ `AssistantMessageEnd` → `TurnEnd`；无工具时为 `AssistantMessageEnd` → `TurnEnd`。因此消费者在收到 `AssistantMessageEnd` 时，既能记录本次 primary LLM call 的 usage，也能确定它触发的工具批次已经结束。Provider stream 未能汇总出完整 response 时不发出该事件；compact summarizer 等内部 `Generate` 调用也不进入用户事件流。
+它是 LLM call-local 的响应与 usage 记账事件，不跨 turn 聚合。事件刻意延迟到该响应触发的整个 tool wave 完成之后：有工具时固定顺序为 `ToolEnd`（wave 中的全部调用）→ `AssistantMessageEnd` → `TurnEnd`；无工具时为 `AssistantMessageEnd` → `TurnEnd`。因此消费者在收到 `AssistantMessageEnd` 时，既能记录本次 primary LLM call 的 usage，也能确定它触发的工具批次已经结束。Provider stream 未能汇总出完整 response，或任一 `AfterModel` hook 返回错误时，不发出该事件；compact summarizer 等内部 `Generate` 调用也不进入用户事件流。
 
 工具控制信号在当前公开 API 中通过 `TurnEnd.Action` 聚合给 flow 层：
 
@@ -280,7 +280,7 @@ type Agent interface {
 4. 消费 provider stream，将文本与思考增量转为 `event.Output`；多模态 part 和 tool use 保留在最终 assistant message 中，tool use 只用于触发 tool wave。
 5. 触发 `Hook.AfterModel`。
 6. 若存在 tool use，先按 assistant 源顺序触发 `Hook.BeforeTool` 完成输入改写；随后同一 assistant message 中的 tool wave 并发执行，并由 Agent Loop 在每次调用真正调度 / 完成时发出 `ToolStart` / `ToolEnd`；识别 `ErrLoopExit` / `ErrHandoff` sentinel，并记录到 `TurnEnd.Action`。是否允许模型一次返回多个 tool use 由 provider 选项控制。
-7. 在全部 `ToolEnd` 之后无条件输出本次成功 response 的 `AssistantMessageEnd`。它位于 Session commit 之前，因此即使后续持久化失败，消费者仍能记录已经完成的 LLM usage。
+7. 在全部 `ToolEnd` 之后输出被 `AfterModel` 接受的 response 对应的 `AssistantMessageEnd`。它位于 Session commit 之前，因此即使后续持久化失败，消费者仍能记录已经完成的 LLM usage。
 8. 将本 turn 的 `assistant` 消息与 tool wave 的 `tool` 结果消息合并为一个语义组，调用一次 `Session.Append(ctx, assistantMsg, toolMsg)`。
 9. 在 turn 边界非阻塞消费 input：`Steer` 合并后交给下一个 turn；`Prompt` 缓存为下一个 interaction 的 follow-up；`Abort` 结束当前 interaction；input channel close 不 abort 已开始的 interaction。
 10. 输出 call-local `TurnEnd`，再触发 `Hook.AfterTurn`。有 tool use 且无 abort/error/tool action 时开启工具续接 turn；无 tool use 时仅 active steering 会开启下一个 turn。`LoopExit` / `Handoff` 不进 `Session`（Session 只承载 `model.Message`）。

@@ -175,7 +175,7 @@ func TestLLMAgentProviderFailureHasNoAssistantMessageEnd(t *testing.T) {
 	assert.True(t, hasRuntimeError(outputs, dummyprovider.ErrNoResponses))
 }
 
-func TestLLMAgentAfterModelFailurePreservesAssistantMessageEnd(t *testing.T) {
+func TestLLMAgentAfterModelFailureDiscardsResponse(t *testing.T) {
 	want := errors.New("after model failed")
 	provider := dummyprovider.NewProvider(dummyprovider.TextResponse(
 		"completed",
@@ -190,14 +190,12 @@ func TestLLMAgentAfterModelFailurePreservesAssistantMessageEnd(t *testing.T) {
 
 	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("hello"))
 	assert.NoError(t, err)
-	messageEnds := assistantMessageEnds(outputs)
-	if assert.Len(t, messageEnds, 1) {
-		assert.Equal(t, "completed", messageEnds[0].Text())
-		assert.Equal(t, event.Usage{InputTokens: 4, OutputTokens: 2}, messageEnds[0].Usage)
-	}
+	assert.Empty(t, assistantMessageEnds(outputs))
 	turns := turnEnds(outputs)
 	if assert.Len(t, turns, 1) {
 		assert.ErrorIs(t, turns[0].Err, want)
+		assert.Empty(t, turns[0].Parts)
+		assert.Equal(t, event.Usage{}, turns[0].Usage)
 	}
 	assert.True(t, hasRuntimeError(outputs, want))
 }

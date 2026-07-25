@@ -184,10 +184,6 @@ func (l *agentLoop) runTurn(in turnInput) (turnOutcome, error) {
 
 	resp, err := l.runModelCall()
 	if err != nil {
-		if resp != nil {
-			state.recordResponse(resp)
-			l.emitAssistantMessageEnd(resp)
-		}
 		if hook.IsAbort(err) {
 			state.abort()
 		}
@@ -363,7 +359,7 @@ func (l *agentLoop) runModelCall() (*model.Response, error) {
 
 	for _, h := range l.agent.hooks {
 		if err := h.AfterModel(l.ctx, req, resp, nil); err != nil {
-			return resp, err
+			return nil, err
 		}
 	}
 
