@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"iter"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -53,9 +54,9 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	defer cancel()
 	inputs := make(chan event.Input, 1)
 	inputs <- event.NewPrompt("What is 123 * 456?")
+	close(inputs)
 
-	outputs, err := collectAgentOutputs(ctx, agent, inputs)
-	cancel()
+	outputs, err := collectAllAgentOutputs(ctx, agent, inputs)
 	assert.NoError(t, err)
 
 	toolEnd, ok := findToolEnd(outputs, "calc-1")
@@ -65,13 +66,33 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	assert.Equal(t, "123 * 456 = 56088", textFromParts(toolEnd.Parts))
 	assert.Equal(t, 1, countToolStarts(outputs, "calc-1"))
 
-	assert.Empty(t, assistantMessageEnds(outputs))
+	messageEnds := assistantMessageEnds(outputs)
+	if assert.Len(t, messageEnds, 2) {
+		assert.Equal(t, event.StopToolUse, messageEnds[0].StopReason)
+		assert.Equal(t, event.Usage{InputTokens: 10, OutputTokens: 3}, messageEnds[0].Usage)
+		assert.Equal(t, "Let me calculate that.", messageEnds[0].Text())
+		assert.Equal(t, event.StopEnd, messageEnds[1].StopReason)
+		assert.Equal(t, event.Usage{InputTokens: 20, OutputTokens: 4}, messageEnds[1].Usage)
+		assert.Equal(t, "The result is 56088.", messageEnds[1].Text())
+	}
 
-	turnEnd, ok := lastTurnEnd(outputs)
-	assert.True(t, ok)
-	assert.Equal(t, event.StopEnd, turnEnd.StopReason)
-	assert.Equal(t, "The result is 56088.", textFromParts(turnEnd.Parts))
-	assert.Equal(t, event.Usage{InputTokens: 30, OutputTokens: 7}, turnEnd.Usage)
+	turns := turnEnds(outputs)
+	if assert.Len(t, turns, 2) {
+		assert.Equal(t, event.StopToolUse, turns[0].StopReason)
+		assert.Equal(t, event.Usage{InputTokens: 10, OutputTokens: 3}, turns[0].Usage)
+		assert.Equal(t, "Let me calculate that.", turns[0].Text())
+		assert.Equal(t, event.StopEnd, turns[1].StopReason)
+		assert.Equal(t, event.Usage{InputTokens: 20, OutputTokens: 4}, turns[1].Usage)
+		assert.Equal(t, "The result is 56088.", turns[1].Text())
+	}
+	toolEndIndex := outputIndex(outputs, event.ToolEnd{})
+	messageEndIndex := outputIndex(outputs, event.AssistantMessageEnd{})
+	turnEndIndex := outputIndex(outputs, event.TurnEnd{})
+	assert.NotEqual(t, -1, toolEndIndex)
+	assert.NotEqual(t, -1, messageEndIndex)
+	assert.NotEqual(t, -1, turnEndIndex)
+	assert.Less(t, toolEndIndex, messageEndIndex)
+	assert.Less(t, messageEndIndex, turnEndIndex)
 	assert.Equal(t, 2, provider.CallCount())
 
 	messages, err := sess.Messages(ctx)
@@ -95,51 +116,88 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	}
 }
 
-func TestLLMAgentAssistantMessageEndOptIn(t *testing.T) {
+func TestLLMAgentTurnHooksWrapOneModelCall(t *testing.T) {
 	provider := dummyprovider.NewProvider(
-		dummyprovider.AssistantResponse(
-			[]content.Part{
-				dummyprovider.Text("Let me calculate that."),
-				dummyprovider.ToolUse("calc-1", "calculate", json.RawMessage(`{"expression":"123 * 456"}`)),
-			},
-			dummyprovider.WithStopReason(model.StopToolUse),
-			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 10, OutputTokens: 3}),
+		dummyprovider.ToolUseResponse(
+			"calc-1",
+			"calculate",
+			json.RawMessage(`{"expression":"1 + 1"}`),
+			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 10, OutputTokens: 2}),
 		),
 		dummyprovider.TextResponse(
-			"The result is 56088.",
-			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 20, OutputTokens: 4}),
+			"done",
+			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 20, OutputTokens: 3}),
 		),
 	)
+	capture := &turnLifecycleCapture{}
 	agent, err := blades.NewAgent(
 		"calculator",
 		blades.WithModel(provider),
 		blades.WithTools(testtools.NewCalculateTool()),
-		blades.WithAssistantMessageEnd(true),
+		blades.WithHooks(capture),
 	)
 	assert.NoError(t, err)
 
-	inputs := make(chan event.Input, 1)
-	inputs <- event.NewPrompt("What is 123 * 456?")
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("calculate"))
+	assert.NoError(t, err)
+	assert.Len(t, turnEnds(outputs), 2)
 
-	outputs, err := collectAgentOutputs(context.Background(), agent, inputs)
+	starts, ends, toolTurns := capture.Snapshot()
+	if assert.Len(t, starts, 2) {
+		assert.Equal(t, 1, starts[0].turn)
+		assert.IsType(t, event.Prompt{}, starts[0].input)
+		assert.Equal(t, 2, starts[1].turn)
+		assert.Nil(t, starts[1].input)
+	}
+	if assert.Len(t, ends, 2) {
+		assert.Equal(t, 1, ends[0].turn)
+		assert.Equal(t, model.StopToolUse, ends[0].stopReason)
+		assert.Equal(t, model.Usage{InputTokens: 10, OutputTokens: 2}, ends[0].usage)
+		assert.Equal(t, 2, ends[1].turn)
+		assert.Equal(t, model.StopEnd, ends[1].stopReason)
+		assert.Equal(t, model.Usage{InputTokens: 20, OutputTokens: 3}, ends[1].usage)
+	}
+	assert.Equal(t, []int{1}, toolTurns)
+}
+
+func TestLLMAgentProviderFailureHasNoAssistantMessageEnd(t *testing.T) {
+	agent, err := blades.NewAgent("assistant", blades.WithModel(dummyprovider.NewProvider()))
 	assert.NoError(t, err)
 
-	messageEnds := assistantMessageEnds(outputs)
-	if assert.Len(t, messageEnds, 2) {
-		assert.Equal(t, event.StopToolUse, messageEnds[0].StopReason)
-		assert.Equal(t, int64(10), messageEnds[0].Usage.InputTokens)
-		assert.Equal(t, int64(3), messageEnds[0].Usage.OutputTokens)
-		assert.Equal(t, "Let me calculate that.", messageEnds[0].Text())
-		assert.Equal(t, event.StopEnd, messageEnds[1].StopReason)
-		assert.Equal(t, int64(20), messageEnds[1].Usage.InputTokens)
-		assert.Equal(t, int64(4), messageEnds[1].Usage.OutputTokens)
-		assert.Equal(t, "The result is 56088.", messageEnds[1].Text())
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("hello"))
+	assert.NoError(t, err)
+	assert.Empty(t, assistantMessageEnds(outputs))
+
+	turns := turnEnds(outputs)
+	if assert.Len(t, turns, 1) {
+		assert.ErrorIs(t, turns[0].Err, dummyprovider.ErrNoResponses)
 	}
-	messageEndIndex := outputIndex(outputs, event.AssistantMessageEnd{})
-	toolStartIndex := outputIndex(outputs, event.ToolStart{})
-	assert.NotEqual(t, -1, messageEndIndex)
-	assert.NotEqual(t, -1, toolStartIndex)
-	assert.Less(t, messageEndIndex, toolStartIndex)
+	assert.True(t, hasRuntimeError(outputs, dummyprovider.ErrNoResponses))
+}
+
+func TestLLMAgentAfterModelFailureDiscardsResponse(t *testing.T) {
+	want := errors.New("after model failed")
+	provider := dummyprovider.NewProvider(dummyprovider.TextResponse(
+		"completed",
+		dummyprovider.WithResponseUsage(model.Usage{InputTokens: 4, OutputTokens: 2}),
+	))
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithHooks(afterModelErrorHook{err: want}),
+	)
+	assert.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("hello"))
+	assert.NoError(t, err)
+	assert.Empty(t, assistantMessageEnds(outputs))
+	turns := turnEnds(outputs)
+	if assert.Len(t, turns, 1) {
+		assert.ErrorIs(t, turns[0].Err, want)
+		assert.Empty(t, turns[0].Parts)
+		assert.Equal(t, event.Usage{}, turns[0].Usage)
+	}
+	assert.True(t, hasRuntimeError(outputs, want))
 }
 
 func TestLLMAgentResolvesToolUseNotListedUpfront(t *testing.T) {
@@ -158,7 +216,11 @@ func TestLLMAgentResolvesToolUseNotListedUpfront(t *testing.T) {
 			staticTextTool{name: "tool_search", description: "Search deferred tools", result: "found"},
 		},
 		byName: map[string]tools.Tool{
-			deferredName: staticTextTool{name: deferredName, description: "Get current time", result: "2026-06-23T12:00:00+08:00"},
+			deferredName: staticTextTool{
+				name:        deferredName,
+				description: "Get current time",
+				result:      "2026-06-23T12:00:00+08:00",
+			},
 		},
 	}
 	agent, err := blades.NewAgent(
@@ -360,9 +422,33 @@ func TestLLMAgentInjectsRunningAgentIntoRuntimeExtensions(t *testing.T) {
 	assert.True(t, ok)
 	assert.NoError(t, turnEnd.Err)
 
-	assertRunningAgentSnapshot(t, promptCapture.Snapshot(), "assistant", "main agent", false, "", "assistant")
-	assertRunningAgentSnapshot(t, hookCapture.Snapshot(), "assistant", "main agent", false, "", "assistant")
-	assertRunningAgentSnapshot(t, toolCapture.Snapshot(), "assistant", "main agent", false, "", "assistant")
+	assertRunningAgentSnapshot(
+		t,
+		promptCapture.Snapshot(),
+		"assistant",
+		"main agent",
+		false,
+		"",
+		"assistant",
+	)
+	assertRunningAgentSnapshot(
+		t,
+		hookCapture.Snapshot(),
+		"assistant",
+		"main agent",
+		false,
+		"",
+		"assistant",
+	)
+	assertRunningAgentSnapshot(
+		t,
+		toolCapture.Snapshot(),
+		"assistant",
+		"main agent",
+		false,
+		"",
+		"assistant",
+	)
 	assert.NoError(t, forkErr)
 	assert.Equal(t, "assistant-fork", forkName)
 	assert.Equal(t, "forked", forkDesc)
@@ -404,7 +490,40 @@ func TestAgentToolSetsParentRunningAgentForSubAgent(t *testing.T) {
 	assert.True(t, ok)
 	assert.NoError(t, turnEnd.Err)
 	assert.Equal(t, "main final", textFromParts(turnEnd.Parts))
-	assertRunningAgentSnapshot(t, subCapture.Snapshot(), "delegate", "sub agent", true, "main", "main")
+	assertRunningAgentSnapshot(
+		t,
+		subCapture.Snapshot(),
+		"delegate",
+		"sub agent",
+		true,
+		"main",
+		"main",
+	)
+}
+
+func TestAgentToolReturnsOnlyFinalTurnParts(t *testing.T) {
+	subProvider := dummyprovider.NewProvider(
+		dummyprovider.AssistantResponse(
+			[]content.Part{
+				content.Text{Text: "intermediate"},
+				dummyprovider.ToolUse("calc-1", "calculate", json.RawMessage(`{"expression":"1 + 1"}`)),
+			},
+			dummyprovider.WithStopReason(model.StopToolUse),
+		),
+		dummyprovider.TextResponse("final"),
+	)
+	sub, err := blades.NewAgent(
+		"delegate",
+		blades.WithModel(subProvider),
+		blades.WithTools(testtools.NewCalculateTool()),
+	)
+	assert.NoError(t, err)
+
+	result, err := blades.NewAgentTool(sub).Handle(context.Background(), json.RawMessage(`"calculate"`))
+	assert.NoError(t, err)
+	if assert.NotNil(t, result) {
+		assert.Equal(t, "final", textFromParts(result.Parts))
+	}
 }
 
 func TestRunningAgentFromContextMissing(t *testing.T) {
@@ -698,6 +817,13 @@ func TestLLMAgentParallelToolEndsInCompletionOrder(t *testing.T) {
 		"end:fast",
 		"end:slow",
 	}, toolLifecycle(outputs))
+	messageEndIndex := outputIndex(outputs, event.AssistantMessageEnd{})
+	assert.NotEqual(t, -1, messageEndIndex)
+	for i, output := range outputs {
+		if _, ok := output.(event.ToolEnd); ok {
+			assert.Less(t, i, messageEndIndex)
+		}
+	}
 
 	messages, err := sess.Messages(ctx)
 	assert.NoError(t, err)
@@ -790,7 +916,7 @@ func TestLLMAgentQueuesPromptArrivingDuringActiveTurn(t *testing.T) {
 	}
 }
 
-func TestLLMAgentSteerContinuesCurrentTurn(t *testing.T) {
+func TestLLMAgentSteerStartsNextTurn(t *testing.T) {
 	provider := dummyprovider.NewProvider(
 		dummyprovider.TextResponse("draft"),
 		dummyprovider.TextResponse("final"),
@@ -809,9 +935,11 @@ func TestLLMAgentSteerContinuesCurrentTurn(t *testing.T) {
 	assert.NoError(t, err)
 
 	turns := turnEnds(outputs)
-	if assert.Len(t, turns, 1) {
+	if assert.Len(t, turns, 2) {
+		assert.Equal(t, "draft", turns[0].Text())
 		assert.Equal(t, event.StopEnd, turns[0].StopReason)
-		assert.Equal(t, "final", textFromParts(turns[0].Parts))
+		assert.Equal(t, "final", turns[1].Text())
+		assert.Equal(t, event.StopEnd, turns[1].StopReason)
 	}
 	assert.Equal(t, 2, provider.CallCount())
 
@@ -825,7 +953,7 @@ func TestLLMAgentSteerContinuesCurrentTurn(t *testing.T) {
 	}
 }
 
-func TestLLMAgentSteerDuringToolWaveContinuesCurrentTurn(t *testing.T) {
+func TestLLMAgentSteerDuringToolWaveStartsNextTurn(t *testing.T) {
 	releaseTool := make(chan struct{})
 	provider := dummyprovider.NewProvider(
 		dummyprovider.AssistantResponse(
@@ -849,15 +977,23 @@ func TestLLMAgentSteerDuringToolWaveContinuesCurrentTurn(t *testing.T) {
 	inputs := make(chan event.Input, 2)
 	inputs <- event.NewPrompt("start")
 
-	outputs, err := collectAllAgentOutputsWithToolStartInput(ctx, agent, inputs, "block-1", event.NewSteer("revise"), func() {
-		close(releaseTool)
-	})
+	outputs, err := collectAllAgentOutputsWithToolStartInput(
+		ctx,
+		agent,
+		inputs,
+		"block-1",
+		event.NewSteer("revise"),
+		func() {
+			close(releaseTool)
+		},
+	)
 	assert.NoError(t, err)
 
 	turns := turnEnds(outputs)
-	if assert.Len(t, turns, 1) {
-		assert.Equal(t, event.StopEnd, turns[0].StopReason)
-		assert.Equal(t, "final", textFromParts(turns[0].Parts))
+	if assert.Len(t, turns, 2) {
+		assert.Equal(t, event.StopToolUse, turns[0].StopReason)
+		assert.Equal(t, event.StopEnd, turns[1].StopReason)
+		assert.Equal(t, "final", turns[1].Text())
 	}
 	assert.Equal(t, 2, provider.CallCount())
 
@@ -912,7 +1048,7 @@ func TestLLMAgentMultipleSteersDuringToolWavePreserveContentParts(t *testing.T) 
 		if !ok || toolStart.ID != "block-1" || sent {
 			continue
 		}
-		// Queue two steers at the same step boundary; they merge into the trailing
+		// Queue two steers at the same turn boundary; they merge into the trailing
 		// tool message with separate parts.
 		inputs <- event.NewSteer("revise once")
 		inputs <- event.NewSteer(" and twice")
@@ -922,8 +1058,9 @@ func TestLLMAgentMultipleSteersDuringToolWavePreserveContentParts(t *testing.T) 
 	}
 
 	turns := turnEnds(collected)
-	if assert.Len(t, turns, 1) {
-		assert.Equal(t, "final", textFromParts(turns[0].Parts))
+	if assert.Len(t, turns, 2) {
+		assert.Equal(t, event.StopToolUse, turns[0].StopReason)
+		assert.Equal(t, "final", turns[1].Text())
 	}
 
 	messages, err := sess.Messages(ctx)
@@ -938,7 +1075,7 @@ func TestLLMAgentMultipleSteersDuringToolWavePreserveContentParts(t *testing.T) 
 	}
 }
 
-func TestLLMAgentPromptDuringToolWaveStartsNextTurn(t *testing.T) {
+func TestLLMAgentPromptDuringToolWaveWaitsForNextInteraction(t *testing.T) {
 	releaseTool := make(chan struct{})
 	provider := dummyprovider.NewProvider(
 		dummyprovider.AssistantResponse(
@@ -963,17 +1100,25 @@ func TestLLMAgentPromptDuringToolWaveStartsNextTurn(t *testing.T) {
 	inputs := make(chan event.Input, 2)
 	inputs <- event.NewPrompt("start")
 
-	outputs, err := collectAllAgentOutputsWithToolStartInput(ctx, agent, inputs, "block-1", event.NewPrompt("next"), func() {
-		close(releaseTool)
-	})
+	outputs, err := collectAllAgentOutputsWithToolStartInput(
+		ctx,
+		agent,
+		inputs,
+		"block-1",
+		event.NewPrompt("next"),
+		func() {
+			close(releaseTool)
+		},
+	)
 	assert.NoError(t, err)
 
 	turns := turnEnds(outputs)
-	if assert.Len(t, turns, 2) {
-		assert.Equal(t, event.StopEnd, turns[0].StopReason)
-		assert.Equal(t, "first final", textFromParts(turns[0].Parts))
+	if assert.Len(t, turns, 3) {
+		assert.Equal(t, event.StopToolUse, turns[0].StopReason)
 		assert.Equal(t, event.StopEnd, turns[1].StopReason)
-		assert.Equal(t, "second final", textFromParts(turns[1].Parts))
+		assert.Equal(t, "first final", turns[1].Text())
+		assert.Equal(t, event.StopEnd, turns[2].StopReason)
+		assert.Equal(t, "second final", turns[2].Text())
 	}
 	assert.Equal(t, 3, provider.CallCount())
 
@@ -1020,22 +1165,6 @@ func TestLLMAgentAbortOnlyEndsCurrentTurn(t *testing.T) {
 	}
 }
 
-func collectAgentOutputs(ctx context.Context, agent blades.Agent, inputs <-chan event.Input) ([]event.Output, error) {
-	outputs, err := agent.Run(ctx, inputs)
-	if err != nil {
-		return nil, err
-	}
-
-	var collected []event.Output
-	for output := range outputs {
-		collected = append(collected, output)
-		if _, ok := output.(event.TurnEnd); ok {
-			return collected, nil
-		}
-	}
-	return collected, nil
-}
-
 func promptInputs(text string) <-chan event.Input {
 	inputs := make(chan event.Input, 1)
 	inputs <- event.NewPrompt(text)
@@ -1043,7 +1172,11 @@ func promptInputs(text string) <-chan event.Input {
 	return inputs
 }
 
-func collectAllAgentOutputs(ctx context.Context, agent blades.Agent, inputs <-chan event.Input) ([]event.Output, error) {
+func collectAllAgentOutputs(
+	ctx context.Context,
+	agent blades.Agent,
+	inputs <-chan event.Input,
+) ([]event.Output, error) {
 	outputs, err := agent.Run(ctx, inputs)
 	if err != nil {
 		return nil, err
@@ -1056,7 +1189,14 @@ func collectAllAgentOutputs(ctx context.Context, agent blades.Agent, inputs <-ch
 	return collected, nil
 }
 
-func collectAllAgentOutputsWithToolStartInput(ctx context.Context, agent blades.Agent, inputs chan event.Input, toolID string, in event.Input, release func()) ([]event.Output, error) {
+func collectAllAgentOutputsWithToolStartInput(
+	ctx context.Context,
+	agent blades.Agent,
+	inputs chan event.Input,
+	toolID string,
+	in event.Input,
+	release func(),
+) ([]event.Output, error) {
 	outputs, err := agent.Run(ctx, inputs)
 	if err != nil {
 		return nil, err
@@ -1136,6 +1276,15 @@ func assistantMessageEnds(outputs []event.Output) []event.AssistantMessageEnd {
 	return messageEnds
 }
 
+func hasRuntimeError(outputs []event.Output, want error) bool {
+	for _, output := range outputs {
+		if runtimeErr, ok := output.(event.Error); ok && errors.Is(runtimeErr.Err, want) {
+			return true
+		}
+	}
+	return false
+}
+
 func outputIndex(outputs []event.Output, target event.Output) int {
 	for i, output := range outputs {
 		if reflect.TypeOf(output) == reflect.TypeOf(target) {
@@ -1211,6 +1360,66 @@ func (h *rewriteToolResultHook) AfterTool(_ context.Context, _ *hook.ToolCall, r
 	return nil
 }
 
+type turnStartRecord struct {
+	turn  int
+	input event.Input
+}
+
+type turnEndRecord struct {
+	turn       int
+	stopReason model.StopReason
+	usage      model.Usage
+}
+
+type turnLifecycleCapture struct {
+	hook.Noop
+	mu        sync.Mutex
+	starts    []turnStartRecord
+	ends      []turnEndRecord
+	toolTurns []int
+}
+
+func (h *turnLifecycleCapture) BeforeTurn(_ context.Context, turn *hook.Turn) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.starts = append(h.starts, turnStartRecord{turn: turn.Turn, input: turn.Input})
+	return nil
+}
+
+func (h *turnLifecycleCapture) AfterTurn(_ context.Context, turn *hook.Turn, summary *hook.TurnSummary, _ error) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	record := turnEndRecord{
+		turn:       turn.Turn,
+		stopReason: summary.StopReason,
+		usage:      *summary.Usage,
+	}
+	h.ends = append(h.ends, record)
+	return nil
+}
+
+func (h *turnLifecycleCapture) BeforeTool(_ context.Context, call *hook.ToolCall) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.toolTurns = append(h.toolTurns, call.Turn)
+	return nil
+}
+
+func (h *turnLifecycleCapture) Snapshot() ([]turnStartRecord, []turnEndRecord, []int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.starts), slices.Clone(h.ends), slices.Clone(h.toolTurns)
+}
+
+type afterModelErrorHook struct {
+	hook.Noop
+	err error
+}
+
+func (h afterModelErrorHook) AfterModel(context.Context, *model.Request, *model.Response, error) error {
+	return h.err
+}
+
 type runningAgentSnapshot struct {
 	ok          bool
 	name        string
@@ -1255,7 +1464,15 @@ func snapshotRunningAgent(ctx context.Context) runningAgentSnapshot {
 	return snapshot
 }
 
-func assertRunningAgentSnapshot(t *testing.T, snapshot runningAgentSnapshot, name, description string, hasParent bool, parentName, rootName string) {
+func assertRunningAgentSnapshot(
+	t *testing.T,
+	snapshot runningAgentSnapshot,
+	name string,
+	description string,
+	hasParent bool,
+	parentName string,
+	rootName string,
+) {
 	t.Helper()
 	assert.True(t, snapshot.ok)
 	assert.Equal(t, name, snapshot.name)

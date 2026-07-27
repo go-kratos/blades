@@ -15,7 +15,7 @@ Blades 适合把 LLM Agent 当作普通 Go 组件嵌入应用：输入输出显�
 
 ## 为什么选择 Blades
 
-- **事件优先的运行时**：应用通过 `event.Input` 和 `event.Output` 与 Agent 交互，覆盖流式文本、工具生命周期、turn 结束、错误和 `Done` 等事件。
+- **事件优先的运行时**：应用通过 `event.Input` 和 `event.Output` 与 Agent 交互，覆盖流式文本、工具生命周期、call-local assistant 结束、turn 结束、错误和 `Done` 等事件。
 - **Provider 无关的核心**：OpenAI、Anthropic、Gemini、MCP 和可观测集成都放在 `contrib/`，根模块不依赖任何模型厂商 SDK。
 - **统一多模态协议**：`content.Part` 是 Event、模型消息和工具结果共享的内容 union。
 - **内置工具循环**：工具由 `tools.ToolSpec` 描述、由 `tools.Tool` 执行，可经过 policy 校验、hook 观测，并写回 session 历史。
@@ -96,7 +96,7 @@ type Agent interface {
 | 包 | 职责 |
 | --- | --- |
 | `content/` | 共享的多模态 `Part` union，覆盖 text、blob、thinking、tool use 和 tool result。 |
-| `event/` | 面向用户和应用层的输入输出事件，覆盖 prompt、steer、abort、streaming、tool、turn end、error 和 done。 |
+| `event/` | 面向用户和应用层的输入输出事件，覆盖 prompt、steer、abort、streaming、tool、assistant response end、turn end、error 和 done。 |
 | `model/` | 面向 Provider 的 request、message、chunk、response、usage、option 和 `model.Provider` 接口。 |
 | `tools/` | 工具 spec、执行接口、resolver/filter 辅助能力和 tool context。 |
 | `session/` | append-only 模型消息历史和 context helper。 |
@@ -129,6 +129,8 @@ provider := openai.NewChat("gpt-5",
 ```
 
 工具并发由模型输出驱动。如果 Provider 在同一个 assistant message 中返回多个 `content.ToolUse`，Agent loop 会并发执行这一批 tool wave。若希望模型每轮最多返回一个工具调用，可在 Provider 上配置，例如 `openai.WithParallelToolCalls(false)` 或 `anthropic.WithParallelToolCalls(false)`。
+
+每个 turn 精确对应一次 primary `Provider.Stream` 调用及其可选 tool wave。每个完整响应都强制输出携带 call-local usage 的 `event.AssistantMessageEnd`。有工具时顺序固定为全部 `ToolEnd` → `AssistantMessageEnd` → `TurnEnd`；无工具时为 `AssistantMessageEnd` → `TurnEnd`。
 
 ## 工具与 Agent
 
@@ -166,6 +168,8 @@ for e := range out {
     switch v := e.(type) {
     case event.TextDelta:
         fmt.Print(v.Text)
+    case event.AssistantMessageEnd:
+        log.Printf("本次调用 usage: %+v", v.Usage)
     case event.Error:
         return v.Err
     }

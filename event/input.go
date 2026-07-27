@@ -2,14 +2,14 @@ package event
 
 import "github.com/go-kratos/blades/content"
 
-// Prompt starts a new turn with the given content parts.
+// Prompt starts a new interaction with the given content parts.
 type Prompt struct {
 	Parts []content.Part
 }
 
 func (Prompt) input() {}
 
-// Steer injects additional context or correction into the current run.
+// Steer injects additional context or correction into the next turn.
 type Steer struct {
 	Parts []content.Part
 }

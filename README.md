@@ -15,7 +15,7 @@ The framework is designed for applications that need LLM agents as normal Go com
 
 ## Why Blades
 
-- **Event-first runtime**: applications interact with Agents through `event.Input` and `event.Output`, including streaming text, tool lifecycle events, turn endings, errors, and `Done`.
+- **Event-first runtime**: applications interact with Agents through `event.Input` and `event.Output`, including streaming text, tool lifecycle events, call-local assistant endings, turn endings, errors, and `Done`.
 - **Provider-neutral core**: OpenAI, Anthropic, Gemini, MCP, and observability integrations live in `contrib/`; the root module does not depend on provider SDKs.
 - **Multimodal protocol**: `content.Part` is the shared content union used by events, model messages, and tool results.
 - **Tool-ready Agent loop**: tools are described by `tools.ToolSpec`, executed by `tools.Tool`, filtered by policy, observed by hooks, and committed back into session history.
@@ -96,7 +96,7 @@ type Agent interface {
 | Package | Purpose |
 | --- | --- |
 | `content/` | Shared multimodal `Part` union for text, blobs, thinking, tool use, and tool results. |
-| `event/` | User-facing input and output events for prompts, steering, aborts, streaming, tools, turn endings, errors, and completion. |
+| `event/` | User-facing input and output events for prompts, steering, aborts, streaming, tools, assistant response endings, turn endings, errors, and completion. |
 | `model/` | Provider-facing requests, messages, chunks, responses, usage, options, and the `model.Provider` interface. |
 | `tools/` | Tool specs, execution interface, resolver/filter helpers, and tool context. |
 | `session/` | Append-only model message history and context helpers. |
@@ -129,6 +129,8 @@ provider := openai.NewChat("gpt-5",
 ```
 
 Tool concurrency is driven by model output. If a provider returns multiple `content.ToolUse` parts in one assistant message, the Agent loop executes that tool wave concurrently. To request at most one tool call per turn, configure the provider, for example `openai.WithParallelToolCalls(false)` or `anthropic.WithParallelToolCalls(false)`.
+
+Each turn corresponds to exactly one primary `Provider.Stream` call and its optional tool wave. Every response accepted by `AfterModel` emits a mandatory `event.AssistantMessageEnd` with call-local usage. With tools, the order is all `ToolEnd` events, then `AssistantMessageEnd`, then `TurnEnd`; without tools, it is `AssistantMessageEnd`, then `TurnEnd`.
 
 ## Tools And Agents
 
@@ -166,6 +168,8 @@ for e := range out {
     switch v := e.(type) {
     case event.TextDelta:
         fmt.Print(v.Text)
+    case event.AssistantMessageEnd:
+        log.Printf("call usage: %+v", v.Usage)
     case event.Error:
         return v.Err
     }

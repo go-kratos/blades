@@ -107,7 +107,7 @@ for out := range output {
 }
 ```
 
-默认桥接策略只在 `event.TurnEnd` 后把本轮最终内容作为下一段的 `event.Prompt`，**不**默认转发 `ToolStart` / `ToolDelta` / `ToolEnd` 等工具生命周期事件——这些事件属于用户可见输出，不应隐式变成下游 prompt。其它桥接需求由调用方显式提供：
+默认桥接策略会消费完中间 Agent 的输出流，并把最后一个 `event.TurnEnd` 的内容作为下一段的 `event.Prompt`。一个 interaction 含多个 per-call turn 时，中间的 `TurnEnd` 不会提前启动下游；`AssistantMessageEnd`、`ToolStart` / `ToolDelta` / `ToolEnd` 等生命周期事件也不会隐式变成下游 prompt。其它桥接需求由调用方显式提供：
 
 ```go
 type Bridge interface {
@@ -195,6 +195,6 @@ DeepAgent 仍然是一个普通 `blades.Agent`，可以再被 Sequential/Paralle
 1. **统一 Agent 接口**：所有原语都遵循 `Run(ctx, <-chan event.Input) (<-chan event.Output, error)`；组合的结果仍是一个普通 `blades.Agent`，可以无限嵌套。
 2. **统一构造风格**：所有原语用 `NewXxxAgent(XxxConfig{...})`，方便未来在不破坏调用方的情况下增加字段。
 3. **只组合 channel，不读取 Message**：`flow/` 不感知 `model.Message`、provider、session；复杂编排先放到应用层或 `contrib/`，不要把工作流语义塞进 flow。
-4. **桥接显式化**：Sequential 默认只透传 `event.TurnEnd` 的最终内容，工具生命周期事件不默认变成下游 prompt；其它桥接策略由调用方显式提供。
+4. **桥接显式化**：Sequential 默认消费完整输出流并只透传最后一个 `event.TurnEnd` 的内容；call/tool 生命周期事件不默认变成下游 prompt，其它桥接策略由调用方显式提供。
 5. **来源信息靠 `Name()`**：Parallel/Routing 都不给事件加 wrapper，调用方通过子 Agent 名字与 trace/hook 还原来源。
 6. **范围克制**：`flow/` 只做组合；后台运行、workspace、preset、复杂编排都放到应用层或 `contrib/`，避免根包膨胀。

@@ -26,7 +26,7 @@ type agentLoop struct {
 	turnNum int
 }
 
-// inputQueue separates current-turn steering from follow-up prompts.
+// inputQueue separates next-turn steering from follow-up prompts.
 type inputQueue struct {
 	ctx       context.Context
 	input     <-chan event.Input
@@ -34,14 +34,24 @@ type inputQueue struct {
 	closed    bool
 }
 
-type stepBoundaryInputs struct {
+type turnBoundaryInputs struct {
 	steering []event.Steer
 	aborted  bool
 }
 
-type stepBoundaryResult struct {
-	hasSteering bool
-	aborted     bool
+type turnBoundaryResult struct {
+	steering event.Input
+	aborted  bool
+}
+
+type turnInput struct {
+	input event.Input
+	merge bool
+}
+
+type turnOutcome struct {
+	continueNext bool
+	nextInput    turnInput
 }
 
 type toolWaveResult struct {
@@ -49,6 +59,25 @@ type toolWaveResult struct {
 	result execute.Result
 }
 
+// run drives the outer interaction loop:
+//
+//	run
+//	 |
+//	 v
+//	nextInteractionStart
+//	 |
+//	 | Prompt or idle Steer
+//	 v
+//	runInteraction
+//	 |
+//	 +--> runTurn: model call -> optional tool wave -> TurnEnd
+//	 |                                      |
+//	 +<-------------------------------------+
+//	          tool result or active Steer starts the next turn
+//
+// A Prompt received during an active interaction is queued for the next
+// interaction. Abort ends the current interaction. Each runTurn contains
+// exactly one primary model call and its resulting tool wave.
 func (l *agentLoop) run() {
 	defer func() {
 		l.output <- event.Done{}
@@ -56,7 +85,7 @@ func (l *agentLoop) run() {
 	}()
 
 	for {
-		in, ok, err := l.inputs.nextTurnStart()
+		in, ok, err := l.inputs.nextInteractionStart()
 		if err != nil {
 			l.output <- event.Error{Err: err}
 			return
@@ -64,7 +93,7 @@ func (l *agentLoop) run() {
 		if !ok {
 			return
 		}
-		if err := l.runTurn(in); err != nil {
+		if err := l.runInteraction(in); err != nil {
 			l.output <- event.Error{Err: err}
 			return
 		}
@@ -75,7 +104,7 @@ func newInputQueue(ctx context.Context, input <-chan event.Input) *inputQueue {
 	return &inputQueue{ctx: ctx, input: input}
 }
 
-func (q *inputQueue) nextTurnStart() (event.Input, bool, error) {
+func (q *inputQueue) nextInteractionStart() (event.Input, bool, error) {
 	for {
 		if prompt, ok := q.popFollowUp(); ok {
 			return prompt, true, nil
@@ -102,8 +131,8 @@ func (q *inputQueue) nextTurnStart() (event.Input, bool, error) {
 	}
 }
 
-func (q *inputQueue) drainStepBoundaryInputs() (stepBoundaryInputs, error) {
-	var drained stepBoundaryInputs
+func (q *inputQueue) drainTurnBoundaryInputs() (turnBoundaryInputs, error) {
+	var drained turnBoundaryInputs
 	for {
 		if q.closed {
 			return drained, nil
@@ -111,7 +140,7 @@ func (q *inputQueue) drainStepBoundaryInputs() (stepBoundaryInputs, error) {
 
 		select {
 		case <-q.ctx.Done():
-			return stepBoundaryInputs{}, q.ctx.Err()
+			return turnBoundaryInputs{}, q.ctx.Err()
 		case in, ok := <-q.input:
 			if !ok {
 				q.closed = true
@@ -141,47 +170,130 @@ func (q *inputQueue) popFollowUp() (event.Prompt, bool) {
 	return in, true
 }
 
-func (l *agentLoop) runTurn(in event.Input) error {
+func (l *agentLoop) runInteraction(in event.Input) error {
+	next := turnInput{input: in}
+	for {
+		outcome, err := l.runTurn(next)
+		if err != nil {
+			return err
+		}
+		if !outcome.continueNext {
+			return nil
+		}
+		next = outcome.nextInput
+	}
+}
+
+func (l *agentLoop) runTurn(in turnInput) (turnOutcome, error) {
 	l.turnNum++
-	turn := &hook.Turn{AgentName: l.agent.name, Turn: l.turnNum, Input: in}
+	turn := &hook.Turn{AgentName: l.agent.name, Turn: l.turnNum, Input: in.input}
 	state := newTurnState()
 
 	if err := l.beforeTurn(turn); err != nil {
 		state.abort()
 		l.endTurn(turn, state, err)
-		return abortAsNil(err)
+		return turnOutcome{}, abortAsNil(err)
 	}
 
-	msg, ok := inputToMessage(turn.Input)
-	if !ok {
-		err := fmt.Errorf("agent loop: unsupported turn input %T", turn.Input)
+	if err := l.appendTurnInput(turn.Input, in.merge); err != nil {
 		state.abort()
 		l.endTurn(turn, state, err)
-		return err
+		return turnOutcome{}, err
 	}
-	if err := l.sess.Append(l.ctx, msg); err != nil {
-		state.abort()
+
+	resp, err := l.runModelCall()
+	if err != nil {
+		if hook.IsAbort(err) {
+			state.abort()
+		}
 		l.endTurn(turn, state, err)
-		return err
+		return turnOutcome{}, abortAsNil(err)
+	}
+	state.recordResponse(resp)
+
+	toolUses := execute.ExtractToolUses(resp.Message)
+	if len(toolUses) > 0 {
+		return l.finishToolTurn(
+			turn,
+			&state,
+			resp,
+			toolUses,
+		)
 	}
 
-	for {
-		cont, err := l.runTurnStep(&state)
-		if err != nil {
-			if hook.IsAbort(err) {
-				state.abort()
-			}
-			l.endTurn(turn, state, err)
-			return abortAsNil(err)
+	return l.finishModelTurn(turn, &state, resp)
+}
+
+func (l *agentLoop) finishToolTurn(
+	turn *hook.Turn,
+	state *turnState,
+	resp *model.Response,
+	toolUses []content.ToolUse,
+) (turnOutcome, error) {
+	toolMsg, action, err := l.executeToolWave(toolUses)
+	l.emitAssistantMessageEnd(resp)
+	if err != nil {
+		if hook.IsAbort(err) {
+			state.abort()
 		}
-		if cont {
-			continue
-		}
-		break
+		l.endTurn(turn, *state, err)
+		return turnOutcome{}, abortAsNil(err)
+	}
+	if err := l.sess.Append(l.ctx, resp.Message, toolMsg); err != nil {
+		l.endTurn(turn, *state, err)
+		return turnOutcome{}, err
+	}
+	if action != nil {
+		state.stopForAction(action)
+		l.endTurn(turn, *state, nil)
+		return turnOutcome{}, nil
 	}
 
-	l.endTurn(turn, state, nil)
-	return nil
+	boundary, err := l.consumeTurnBoundaryInputs(state)
+	if err != nil {
+		l.endTurn(turn, *state, err)
+		return turnOutcome{}, err
+	}
+	l.endTurn(turn, *state, nil)
+	if boundary.aborted {
+		return turnOutcome{}, nil
+	}
+	return turnOutcome{
+		continueNext: true,
+		nextInput: turnInput{
+			input: boundary.steering,
+			merge: boundary.steering != nil,
+		},
+	}, nil
+}
+
+func (l *agentLoop) finishModelTurn(
+	turn *hook.Turn,
+	state *turnState,
+	resp *model.Response,
+) (turnOutcome, error) {
+	l.emitAssistantMessageEnd(resp)
+	if err := l.sess.Append(l.ctx, resp.Message); err != nil {
+		l.endTurn(turn, *state, err)
+		return turnOutcome{}, err
+	}
+
+	boundary, err := l.consumeTurnBoundaryInputs(state)
+	if err != nil {
+		l.endTurn(turn, *state, err)
+		return turnOutcome{}, err
+	}
+	l.endTurn(turn, *state, nil)
+	if boundary.aborted || boundary.steering == nil {
+		return turnOutcome{}, nil
+	}
+	return turnOutcome{
+		continueNext: true,
+		nextInput: turnInput{
+			input: boundary.steering,
+			merge: true,
+		},
+	}, nil
 }
 
 func abortAsNil(err error) error {
@@ -191,56 +303,26 @@ func abortAsNil(err error) error {
 	return err
 }
 
-func (l *agentLoop) runTurnStep(state *turnState) (bool, error) {
-	resp, err := l.runStep()
-	if err != nil {
-		return false, err
+func (l *agentLoop) appendTurnInput(in event.Input, merge bool) error {
+	if in == nil {
+		return nil
 	}
-	state.recordResponse(resp)
-	if l.agent.sendAssistantMessageEnd {
-		l.output <- convert.ResponseToAssistantMessageEnd(resp)
+	if merge {
+		steer, ok := in.(event.Steer)
+		if !ok {
+			return fmt.Errorf("agent loop: unsupported merged turn input %T", in)
+		}
+		return l.sess.AppendUser(l.ctx, steer.Parts...)
 	}
-
-	toolUses := execute.ExtractToolUses(resp.Message)
-	if len(toolUses) > 0 {
-		return l.handleToolStep(state, resp.Message, toolUses)
+	msg, ok := inputToMessage(in)
+	if !ok {
+		return fmt.Errorf("agent loop: unsupported turn input %T", in)
 	}
-
-	if err := l.commitStep(resp.Message); err != nil {
-		return false, err
-	}
-	state.finish(resp.StopReason)
-	return l.continueAfterModelStep(state)
+	return l.sess.Append(l.ctx, msg)
 }
 
-func (l *agentLoop) handleToolStep(state *turnState, assistantMsg *model.Message, toolUses []content.ToolUse) (bool, error) {
-	toolMsg, action, err := l.executeToolWave(toolUses)
-	if err != nil {
-		return false, err
-	}
-	if err := l.commitStep(assistantMsg, toolMsg); err != nil {
-		return false, err
-	}
-	if action != nil {
-		state.stopForAction(action)
-		return false, nil
-	}
-	inputs, err := l.consumeStepBoundaryInputs(state)
-	if err != nil {
-		return false, err
-	}
-	return !inputs.aborted, nil
-}
-
-func (l *agentLoop) continueAfterModelStep(state *turnState) (bool, error) {
-	inputs, err := l.consumeStepBoundaryInputs(state)
-	if err != nil {
-		return false, err
-	}
-	if inputs.aborted {
-		return false, nil
-	}
-	return inputs.hasSteering, nil
+func (l *agentLoop) emitAssistantMessageEnd(resp *model.Response) {
+	l.output <- convert.ResponseToAssistantMessageEnd(resp)
 }
 
 func (l *agentLoop) beforeTurn(turn *hook.Turn) error {
@@ -264,14 +346,17 @@ func (l *agentLoop) endTurn(turn *hook.Turn, result turnState, err error) {
 	summary := &hook.TurnSummary{
 		Parts:      result.parts,
 		StopReason: model.StopReason(result.stopReason),
-		Usage:      &model.Usage{InputTokens: result.usage.InputTokens, OutputTokens: result.usage.OutputTokens},
+		Usage: &model.Usage{
+			InputTokens:  result.usage.InputTokens,
+			OutputTokens: result.usage.OutputTokens,
+		},
 	}
 	for _, h := range l.agent.hooks {
 		_ = h.AfterTurn(l.ctx, turn, summary, err)
 	}
 }
 
-func (l *agentLoop) runStep() (*model.Response, error) {
+func (l *agentLoop) runModelCall() (*model.Response, error) {
 	req, err := l.buildRequest(l.ctx)
 	if err != nil {
 		return nil, err
@@ -283,7 +368,7 @@ func (l *agentLoop) runStep() (*model.Response, error) {
 		}
 	}
 
-	resp, err := l.streamStep(l.ctx, req)
+	resp, err := l.streamModelCall(l.ctx, req)
 	if err != nil {
 		for _, h := range l.agent.hooks {
 			_ = h.AfterModel(l.ctx, req, nil, err)
@@ -308,7 +393,7 @@ func (l *agentLoop) buildRequest(ctx context.Context) (*model.Request, error) {
 	}.Build(ctx)
 }
 
-func (l *agentLoop) streamStep(ctx context.Context, req *model.Request) (*model.Response, error) {
+func (l *agentLoop) streamModelCall(ctx context.Context, req *model.Request) (*model.Response, error) {
 	var (
 		parts      []content.Part
 		stopReason model.StopReason
@@ -322,8 +407,8 @@ func (l *agentLoop) streamStep(ctx context.Context, req *model.Request) (*model.
 		if chunk == nil {
 			continue
 		}
-		for _, o := range convert.ChunkToOutputs(chunk) {
-			l.output <- o
+		for _, eventOutput := range convert.ChunkToOutputs(chunk) {
+			l.output <- eventOutput
 		}
 		parts = append(parts, chunk.Parts...)
 		if chunk.StopReason != "" {
@@ -420,7 +505,11 @@ func (l *agentLoop) runToolCalls(runtime execute.Runtime, calls []content.ToolUs
 	return results, nil
 }
 
-func (l *agentLoop) finalizeToolResult(runtime execute.Runtime, call content.ToolUse, execResult execute.Result) (execute.Result, error) {
+func (l *agentLoop) finalizeToolResult(
+	runtime execute.Runtime,
+	call content.ToolUse,
+	execResult execute.Result,
+) (execute.Result, error) {
 	result := &tools.Result{Parts: execResult.Parts}
 	hookCall := &hook.ToolCall{
 		ID:        call.ID,
@@ -439,42 +528,33 @@ func (l *agentLoop) finalizeToolResult(runtime execute.Runtime, call content.Too
 }
 
 func (l *agentLoop) emitToolEnd(result execute.Result) {
-	l.output <- event.ToolEnd{ID: result.ID, Name: result.Name, Parts: result.Parts, IsError: result.IsError}
+	l.output <- event.ToolEnd{
+		ID:      result.ID,
+		Name:    result.Name,
+		Parts:   result.Parts,
+		IsError: result.IsError,
+	}
 }
 
-func (l *agentLoop) commitStep(msgs ...*model.Message) error {
-	filtered := make([]*model.Message, 0, len(msgs))
-	for _, msg := range msgs {
-		if msg != nil {
-			filtered = append(filtered, msg)
-		}
-	}
-	if len(filtered) == 0 {
-		return nil
-	}
-	return l.sess.Append(l.ctx, filtered...)
-}
-
-func (l *agentLoop) consumeStepBoundaryInputs(state *turnState) (stepBoundaryResult, error) {
-	drained, err := l.inputs.drainStepBoundaryInputs()
+func (l *agentLoop) consumeTurnBoundaryInputs(state *turnState) (turnBoundaryResult, error) {
+	drained, err := l.inputs.drainTurnBoundaryInputs()
 	if err != nil {
-		return stepBoundaryResult{}, err
+		return turnBoundaryResult{}, err
 	}
-	if len(drained.steering) > 0 {
-		parts := make([]content.Part, 0, len(drained.steering))
-		for _, steer := range drained.steering {
-			parts = append(parts, steer.Parts...)
-		}
-		if err := l.sess.AppendUser(l.ctx, parts...); err != nil {
-			return stepBoundaryResult{}, err
-		}
+	parts := make([]content.Part, 0, len(drained.steering))
+	for _, steer := range drained.steering {
+		parts = append(parts, steer.Parts...)
 	}
 	if drained.aborted {
 		state.abort()
 	}
-	return stepBoundaryResult{
-		hasSteering: len(drained.steering) > 0,
-		aborted:     drained.aborted,
+	var steering event.Input
+	if len(drained.steering) > 0 {
+		steering = event.Steer{Parts: parts}
+	}
+	return turnBoundaryResult{
+		steering: steering,
+		aborted:  drained.aborted,
 	}, nil
 }
 

@@ -2,7 +2,7 @@ package event
 
 import "github.com/go-kratos/blades/content"
 
-// StopReason indicates why a turn ended.
+// StopReason indicates why a model call stopped or its turn was aborted.
 type StopReason string
 
 const (
@@ -19,7 +19,7 @@ type Usage struct {
 	OutputTokens int64
 }
 
-// TurnEnd signals the completion of a full turn (one or more steps).
+// TurnEnd signals completion of one primary model call and its tool wave.
 type TurnEnd struct {
 	Parts      []content.Part
 	StopReason StopReason

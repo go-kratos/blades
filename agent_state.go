@@ -18,19 +18,16 @@ func newTurnState() turnState {
 }
 
 func (s *turnState) recordResponse(resp *model.Response) {
-	s.usage.InputTokens += resp.Usage.InputTokens
-	s.usage.OutputTokens += resp.Usage.OutputTokens
-	if resp.Message != nil {
-		s.parts = resp.Message.Parts
+	s.usage = event.Usage{
+		InputTokens:  resp.Usage.InputTokens,
+		OutputTokens: resp.Usage.OutputTokens,
 	}
+	s.parts = resp.Message.Parts
+	s.stopReason = outputStopReason(resp.StopReason)
 }
 
 func (s *turnState) abort() {
 	s.stopReason = event.StopAbort
-}
-
-func (s *turnState) finish(reason model.StopReason) {
-	s.stopReason = outputStopReason(reason)
 }
 
 func (s *turnState) stopForAction(action event.Action) {

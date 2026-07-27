@@ -34,6 +34,7 @@ func NewRunner(agent Agent, opts ...RunnerOption) *Runner {
 }
 
 // Run sends a single input and blocks until the agent produces a final result.
+// If the interaction uses multiple model calls, the last TurnEnd is returned.
 // Runtime errors are extracted from event.Error.
 func (r *Runner) Run(ctx context.Context, in event.Input) (Result, error) {
 	output, err := r.RunStream(ctx, in)

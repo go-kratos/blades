@@ -3,6 +3,7 @@ package blades
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/event"
@@ -49,7 +50,7 @@ func (t *agentTool) Handle(ctx context.Context, input json.RawMessage) (*tools.R
 	for out := range output {
 		switch v := out.(type) {
 		case event.TurnEnd:
-			parts = append(parts, v.Parts...)
+			parts = slices.Clone(v.Parts)
 		case event.Error:
 			return nil, v.Err
 		}

@@ -36,11 +36,11 @@ import (
 // Six methods cover the full Agent Loop boundary set; embed hook.Noop to
 // inherit no-op defaults and override only the methods you care about.
 type Hook interface {
-    // BeforeModel runs before each model step. Mutate *req in place
+    // BeforeModel runs before the turn's primary model call. Mutate *req in place
     // (e.g. inject system text, append messages, narrow tool spec).
     BeforeModel(ctx context.Context, req *model.Request) error
 
-    // AfterModel runs after each successful model step. If provider streaming
+    // AfterModel runs after each successful primary model call. If provider streaming
     // fails, it is called for observation with resp == nil and err set; the
     // original provider error still terminates the turn.
     AfterModel(ctx context.Context, req *model.Request, resp *model.Response, err error) error
@@ -51,14 +51,14 @@ type Hook interface {
     // AfterTool runs after each tool wave item completes (including policy
     // denial or tool errors) and before ToolEnd is emitted / tool result is
     // committed. Mutate result.Parts in place to rewrite the tool result seen
-    // by both event output and the next model step.
+    // by both event output and the next turn.
     AfterTool(ctx context.Context, call *ToolCall, result *tools.Result, err error) error
 
-    // BeforeTurn runs once at the start of a turn, before any model step.
+    // BeforeTurn runs once at the start of a turn, before its model call.
     BeforeTurn(ctx context.Context, t *Turn) error
 
     // AfterTurn runs once at the end of a turn (including errors).
-    // summary aggregates the parts / stop reason / usage of the turn.
+    // summary contains the call-local parts / stop reason / usage of the turn.
     AfterTurn(ctx context.Context, t *Turn, summary *TurnSummary, err error) error
 }
 
@@ -86,14 +86,15 @@ type ToolCall struct {
     Input     json.RawMessage
 }
 
-// Turn is the carrier passed to BeforeTurn / AfterTurn.
+// Turn is the carrier passed to BeforeTurn / AfterTurn. Input is nil for a
+// turn started only by tool results from the preceding turn.
 type Turn struct {
     AgentName string
     Turn      int
     Input     event.Input
 }
 
-// TurnSummary aggregates the result of a turn for AfterTurn observers.
+// TurnSummary contains call-local results for AfterTurn observers.
 // Current v1 treats AfterTurn as observation-only; mutations do not rewrite
 // already emitted events or committed session messages.
 type TurnSummary struct {
@@ -118,12 +119,13 @@ func Abort(reason string) error { return &AbortError{Reason: reason} }
 
 字段约定：
 
-- `AgentName` / `Turn` 用于在事件流中关联一轮执行；当前会话**不**通过 carrier 字段携带，统一由 `session.FromContext(ctx)` 读取（与 framework 的 ctx 三准则一致），避免同一信息在 ctx 与 carrier 上重复。
-- `*model.Request` / `*model.Response` 使用 v1 `model.Provider` 协议；Stream 路径下 Loop 消费 chunk 序列、发出增量事件，并在 step 完成后汇总为 `*model.Response` 再触发 `AfterModel`。
+- `AgentName` / `Turn` 用于在事件流中关联一次 primary model call 及其 tool wave；当前会话**不**通过 carrier 字段携带，统一由 `session.FromContext(ctx)` 读取（与 framework 的 ctx 三准则一致），避免同一信息在 ctx 与 carrier 上重复。
+- `*model.Request` / `*model.Response` 使用 v1 `model.Provider` 协议；Stream 路径下 Loop 消费 chunk 序列、发出增量事件，并在 call 完成后汇总为 `*model.Response` 再触发 `AfterModel`。
 - `tools.Tool` 使用 v1 两方法接口；如需工具名调用 `call.Tool.Spec().Name`，carrier 不再单独保留 `ToolName` 字段。
 - `event.Input` 使用 v1 文本由 `event.NewPrompt` / `event.NewSteer` 构造，具体类型为 `event.Prompt` / `event.Steer`。
 - `Parts` 直接使用 `content.Part`。
-- `Before/AfterModel` 即 model **step 边界**：一个 turn 可能包含多次 step（多轮 tool call），每个 step 对应一对 `BeforeModel` / `AfterModel`。当前 v1 不输出 `event.StepEnd`，`BeforeTurn` / `AfterTurn` 才是 turn 边界。
+- `Before/AfterModel` 与 `Before/AfterTurn` 是 **1:1** 的 primary-call 边界：一个 turn 只包含一次 `Provider.Stream`。该 response 触发的 tool wave 仍属于此 turn；若要把 tool result 反馈给模型，Loop 会结束当前 turn 并开启新 turn。纯工具续接 turn 的 `Turn.Input` 为 `nil`，active steering 续接 turn 的 `Input` 为 `event.Steer`。
+- `AssistantMessageEnd` 在全部 `ToolEnd` 后、对应 `TurnEnd` 前输出；`TurnSummary.Usage` 与两类事件中的 usage 都只描述本次 call。Compactor 内部用于摘要的 `Provider.Generate` 不触发这些 hook 或 event 边界。
 
 ## 3. 注册与组合
 
@@ -176,7 +178,7 @@ func (Guardrail) AfterTool(ctx context.Context, call *hook.ToolCall, result *too
 
 ### 4.3 拦截
 
-任意方法返回 `hook.Abort(reason)` 触发协议级 turn 中止。`Before*` 中止跳过对应调用；`AfterModel` 中止不再触发后续 tool wave 或下一 step；`AfterTool` 中止不把当前 tool result 反馈给模型，turn 以 abort 收尾。其它非 nil error 作为 fatal runtime error 进入输出流。
+任意方法返回 `hook.Abort(reason)` 触发协议级 turn 中止。`Before*` 中止跳过对应调用；`AfterModel` 中止不再触发后续 tool wave 或下一 turn；`AfterTool` 中止不把当前 tool result 反馈给模型，turn 以 abort 收尾。其它非 nil error 作为 fatal runtime error 进入输出流。
 
 ```go
 type Deny struct{ hook.Noop }
@@ -204,9 +206,9 @@ func (Deny) BeforeTool(ctx context.Context, call *hook.ToolCall) error {
 
 | 方法 | abort 含义 |
 |---|---|
-| `BeforeTurn` | 跳过本 turn 的所有 model step / tool wave，直接进 `TurnEnd` |
-| `BeforeModel` | 跳过本 step 的 provider 调用（不发请求），结束当前 step；若已无后续 step → turn 终止 |
-| `AfterModel` | 不再触发后续 tool wave 或下一个 step，turn 提前结束 |
+| `BeforeTurn` | 跳过本 turn 的 primary model call / tool wave，直接进 `TurnEnd` |
+| `BeforeModel` | 跳过本 turn 的 provider 调用（不发请求），直接结束 turn |
+| `AfterModel` | 不再触发后续 tool wave 或下一个 turn，丢弃已汇总的 response，且不输出 `AssistantMessageEnd` |
 | `BeforeTool` | 不执行当前 tool wave，turn 以 abort 收尾；若要给模型反馈可反思的工具拒绝结果，应使用 `policy.Policy` 的 `Deny` |
 | `AfterTool` | 不把当前 tool result 反馈给模型，turn 以 abort 收尾 |
 | `AfterTurn` | 当前 v1 忽略返回错误；无法回滚已发出事件或已提交 Session 的消息 |

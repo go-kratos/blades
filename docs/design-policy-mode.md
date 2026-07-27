@@ -172,16 +172,17 @@ core 不内置审计存储；可观测性走两条通路：
 ```
 Run
 └── Turn
-    └── Step
-        ├── Hook.BeforeModel     ← 模型请求改写在此发生（注入 system、裁剪 tools、调整 sampling）
-        ├── model.Generate / Stream
-        └── Tool Wave (默认并行，可配置顺序)
-            ├── Hook.BeforeTool
-            ├── event.ToolStart
-            ├── policy.Check(ToolRequest{Tool, Input}) ← v1 唯一 Policy 边界
-            ├── tool.Handle
-            ├── Hook.AfterTool
-            └── event.ToolEnd
+    ├── Hook.BeforeModel     ← 模型请求改写在此发生（注入 system、裁剪 tools、调整 sampling）
+    ├── model.Stream         ← 每个 Turn 恰好一次 primary call
+    ├── Tool Wave (默认并行，可配置顺序)
+    │   ├── Hook.BeforeTool
+    │   ├── event.ToolStart
+    │   ├── policy.Check(ToolRequest{Tool, Input}) ← v1 唯一 Policy 边界
+    │   ├── tool.Handle
+    │   ├── Hook.AfterTool
+    │   └── event.ToolEnd
+    ├── event.AssistantMessageEnd
+    └── event.TurnEnd
 ```
 
 ### 与 tools

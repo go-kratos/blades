@@ -114,9 +114,9 @@ func NewSteer(parts ...any) Steer {
 
 输入语义固定如下：
 
-- `Prompt`：发起一个新 turn。若当前 turn 正在运行，v1 中排队等待，不并发执行。
-- `Steer`：若当前 turn 正在运行，作为 current-turn steering 在下一个 step 边界消费，追加为当前 turn 的 user message，并在下一次 model step 构建 request 时生效；不打断正在 streaming 的 provider 调用，也不打断正在执行的 tool wave。若 Run 正处于 idle wait，`Steer` 与 `Prompt` 一样开启一个新 turn。
-- `Abort`：若当前 turn 正在运行，结束当前 turn，并携带人类可读原因；若 Run 正处于 idle wait，结束整个 Run。
+- `Prompt`：发起一个新 interaction 及其首个 turn。若当前 interaction 正在运行，作为 follow-up 排队等待，不并发执行。
+- `Steer`：若当前 turn 正在运行，在 turn 边界消费，追加为下一个 turn 的 user context，并在下一次 primary model call 构建 request 时生效；不打断正在 streaming 的 provider 调用，也不打断正在执行的 tool wave。若 Run 正处于 idle wait，`Steer` 与 `Prompt` 一样开启一个新 interaction。
+- `Abort`：若当前 turn 正在运行，结束当前 turn 及其 interaction，并携带人类可读原因；若 Run 正处于 idle wait，结束整个 Run。
 - `Pause` / `Resume`：当前 v1 保留为输入类型但默认 `llmAgent` 暂不实现暂停语义。
 
 `Abort` 与 `context.CancelFunc` 互补：`Abort` 是协议级 turn 控制，`context.CancelFunc` 负责结束整个 Run 调用栈和底层资源。
@@ -144,9 +144,9 @@ type ThinkingDelta struct {
 }
 ```
 
-当前 v1 只实现文本与 thinking 的 hot path delta。其他多模态 part 保留在最终 `TurnEnd.Parts` / Session message 中，不单独发出 `PartStart` / `PartDelta` / `PartEnd`。后续若需要 Blob 流式生命周期事件，应作为公开 Event 协议升级单独设计。
+当前 v1 只实现文本与 thinking 的 hot path delta。其他多模态 part 保留在最终 `AssistantMessageEnd.Parts`、`TurnEnd.Parts` 与 Session message 中，不单独发出 `PartStart` / `PartDelta` / `PartEnd`。后续若需要 Blob 流式生命周期事件，应作为公开 Event 协议升级单独设计。
 
-### 4.2 Step、工具与 Turn 生命周期
+### 4.2 Assistant response、工具与 Turn 生命周期
 
 工具执行由默认 `llmAgent` 编排并以事件形式公开：
 
@@ -171,6 +171,18 @@ type ToolEnd struct {
 ```
 
 `ToolStart` 只在默认 tool wave 实际调度某个工具调用时发出。Provider stream 中的 `content.ToolUse` 是 assistant message 的一部分，Loop 会收集它来决定是否进入 tool wave，但不会把它转换成 `ToolStart`，避免"模型提出调用"和"运行时开始处理"两类事件混淆。默认 Loop 不提供本地顺序/并行开关：同一 assistant message 中的 tool wave 固定按源顺序发出 `ToolStart`，实际 `Handle` 并发执行，`ToolEnd` 按完成顺序发出，而写回模型上下文的 `content.ToolResult` 仍保持 assistant 源顺序。若 provider 通过选项约束模型一次最多返回一个 tool use，这个 wave 自然退化为单工具调用。`ToolEnd.Parts` 直接复用 `tools.Result{Parts []content.Part}`，再包装为 `content.ToolResult` 写回模型上下文；若 policy deny / ask / error 在 `ToolStart` 后阻止了 `Tool.Handle`，对应 `ToolEnd` 会带 `IsError=true`。
+
+每个成功汇总且被全部 `AfterModel` hook 接受的 primary `model.Provider.Stream` 响应都必须输出一个 `AssistantMessageEnd`：
+
+```go
+type AssistantMessageEnd struct {
+    Parts      []content.Part
+    StopReason StopReason
+    Usage      Usage
+}
+```
+
+它是 LLM call-local 的响应与 usage 记账事件，不跨 turn 聚合。事件刻意延迟到该响应触发的整个 tool wave 完成之后：有工具时固定顺序为 `ToolEnd`（wave 中的全部调用）→ `AssistantMessageEnd` → `TurnEnd`；无工具时为 `AssistantMessageEnd` → `TurnEnd`。因此消费者在收到 `AssistantMessageEnd` 时，既能记录本次 primary LLM call 的 usage，也能确定它触发的工具批次已经结束。Provider stream 未能汇总出完整 response，或任一 `AfterModel` hook 返回错误时，不发出该事件；compact summarizer 等内部 `Generate` 调用也不进入用户事件流。
 
 工具控制信号在当前公开 API 中通过 `TurnEnd.Action` 聚合给 flow 层：
 
@@ -204,7 +216,7 @@ func (e TurnEnd) Text() string
 type Done struct{}
 ```
 
-`TurnEnd` 只在整个 turn 完成时输出一次。工具中间轮次不输出 `TurnEnd`；当前 v1 也不输出 `StepEnd`。`Done` 是整个 Run 的结束 sentinel，通常在 input channel 关闭、context 取消或 fatal error 后输出一次。
+`TurnEnd` 对每个 primary model call 输出一次；一个 turn 精确包含一次 call，以及该 response 触发的可选 tool wave。`Parts`、`StopReason` 与 `Usage` 都是 call-local，不再跨多次 call 聚合。工具结果需要继续交给模型时，当前 `TurnEnd` 仍先结束，Loop 再开启下一个 turn。`Done` 是整个 Run 的结束 sentinel，通常在 input channel 关闭、context 取消或 fatal error 后输出一次。
 
 运行期错误作为输出事件进入同一条流：
 
@@ -238,19 +250,19 @@ type Agent interface {
 - `agent_loop.go`：默认 LLM Agent 的私有运行循环；包含 `agentLoop`、input queue、turn loop、request 构建、provider stream、tool wave、Session commit 与 `Done` 输出。
 - `tool.go`：`NewAgentTool` 适配器，把一个 `Agent` 暴露为 `tools.Tool`。
 
-## 6. Run / Turn / Step / Tool Wave
+## 6. Run / Interaction / Turn / Tool Wave
 
 默认 `llmAgent` 使用四层运行模型：
 
-1. **Run**：长生命周期事件流，消费 input channel，顺序处理多个 turn，管理 context 取消和 `Done`。
-2. **Turn**：一次用户任务，从 `Prompt` 开始，到最终 assistant 响应、abort、错误或 max steps 结束。
-3. **Step**：一次 model provider 调用，包含 request 构建、stream 消费和 assistant delta 收集。
-4. **Tool Wave**：同一 step 中所有 `content.ToolUse` 的执行批次，产出 `ToolStart` / `ToolEnd`，并回填下一 step 的 `content.ToolResult`。
+1. **Run**：长生命周期事件流，消费 input channel，顺序处理多个 interaction，管理 context 取消和 `Done`。
+2. **Interaction**：由 `Prompt` 或 idle `Steer` 开启的私有调度分组。工具结果或 active steering 可以让它包含多个 turn；它没有对应的公开 lifecycle event。
+3. **Turn**：恰好一次 primary `model.Provider.Stream` 调用及其 response 触发的可选 tool wave。`BeforeTurn` / `AfterTurn` 与 `TurnEnd` 都按此边界执行。
+4. **Tool Wave**：同一 turn 的 assistant message 中所有 `content.ToolUse` 的执行批次，产出 `ToolStart` / `ToolEnd`，并将 `content.ToolResult` 回填给下一个 turn。
 
-单 turn 推荐流程：
+单 turn 流程：
 
-1. 收到 `Prompt` 或 idle `Steer`，触发 `Hook.BeforeTurn`，并 append 起始 user message（一次 `Session.Append`）。
-2. 构建第 0 个 model step 的 `*model.Request`。内置 request 构建按以下有序 pipeline 执行——**先 compact 再 prompt**，两段产物在最后汇合：
+1. 触发 `Hook.BeforeTurn`。interaction 首个 turn 的 `Input` 是 `Prompt` 或 idle `Steer`；纯工具续接 turn 的 `Input` 为 `nil`；active steering 续接 turn 的 `Input` 为合并后的 `Steer`。
+2. 将非 nil turn input 写入 Session，再构建本 turn 唯一一次 primary model call 的 `*model.Request`。内置 request 构建按以下有序 pipeline 执行——**先 compact 再 prompt**，两段产物在最后汇合：
    ```
    snapshot := session.Messages(ctx)            // 1. 全量原始消息（append-only 快照）
    view     := compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})
@@ -268,11 +280,12 @@ type Agent interface {
 4. 消费 provider stream，将文本与思考增量转为 `event.Output`；多模态 part 和 tool use 保留在最终 assistant message 中，tool use 只用于触发 tool wave。
 5. 触发 `Hook.AfterModel`。
 6. 若存在 tool use，先按 assistant 源顺序触发 `Hook.BeforeTool` 完成输入改写；随后同一 assistant message 中的 tool wave 并发执行，并由 Agent Loop 在每次调用真正调度 / 完成时发出 `ToolStart` / `ToolEnd`；识别 `ErrLoopExit` / `ErrHandoff` sentinel，并记录到 `TurnEnd.Action`。是否允许模型一次返回多个 tool use 由 provider 选项控制。
-7. 将本 step 的 `assistant` 消息与本轮 tool wave 的 `tool` 结果消息合并为一个语义组，调用一次 `Session.Append(ctx, assistantMsg, toolMsg)`。
-8. 在 model step 或 tool wave 完成后的边界非阻塞消费 input：`agent_loop.go` 的 input queue helper 先分类事件；turn commit 路径再把 `Steer` 追加为当前 turn 的 user message 并进入下一 step；`Prompt` 缓存为下一 turn 的 follow-up；`Abort` 结束当前 turn；input channel close 不 abort 当前 turn。
-9. 若没有 tool use 且没有 step-boundary steering，或收到 abort/error/tool action，输出 `TurnEnd`，触发 `Hook.AfterTurn`。`LoopExit` / `Handoff` 不进 `Session`（Session 只承载 `model.Message`）。
+7. 在全部 `ToolEnd` 之后输出被 `AfterModel` 接受的 response 对应的 `AssistantMessageEnd`。它位于 Session commit 之前，因此即使后续持久化失败，消费者仍能记录已经完成的 LLM usage。
+8. 将本 turn 的 `assistant` 消息与 tool wave 的 `tool` 结果消息合并为一个语义组，调用一次 `Session.Append(ctx, assistantMsg, toolMsg)`。
+9. 在 turn 边界非阻塞消费 input：`Steer` 合并后交给下一个 turn；`Prompt` 缓存为下一个 interaction 的 follow-up；`Abort` 结束当前 interaction；input channel close 不 abort 已开始的 interaction。
+10. 输出 call-local `TurnEnd`，再触发 `Hook.AfterTurn`。有 tool use 且无 abort/error/tool action 时开启工具续接 turn；无 tool use 时仅 active steering 会开启下一个 turn。`LoopExit` / `Handoff` 不进 `Session`（Session 只承载 `model.Message`）。
 
-Hook 回调位置固定为六个生命周期边界：`BeforeModel` / `AfterModel`（每个 model step 前后）、`BeforeTool` / `AfterTool`（每个工具调用前后）、`BeforeTurn` / `AfterTurn`（每个 turn 前后）。详见 `design-hook-extension.md`。
+Hook 回调位置固定为六个生命周期边界：`BeforeModel` / `AfterModel`（本 turn 唯一 primary model call 前后）、`BeforeTool` / `AfterTool`（每个工具调用前后）、`BeforeTurn` / `AfterTurn`（每个 turn 前后）。详见 `design-hook-extension.md`。
 
 ## 7. 扩展点
 
@@ -284,7 +297,7 @@ Hook 回调位置固定为六个生命周期边界：`BeforeModel` / `AfterModel
 - `WithPrompt(prompt.Builder)`：构建 system prompt。
 - `WithTools` / `WithToolsResolver`：配置静态或动态工具集。
 
-`RequestBuilder`、`ToolExecutor`、`WithMaxSteps` 目前不是公开 API。需要完全特殊的运行时或工具编排时，直接实现 `blades.Agent`；未来若要开放这些局部替换点，应作为独立协议变更补充测试和文档。
+`RequestBuilder`、`ToolExecutor` 与 turn limit 目前不是公开 API。需要完全特殊的运行时或工具编排时，直接实现 `blades.Agent`；未来若要开放这些局部替换点，应作为独立协议变更补充测试和文档。
 
 ## 8. Event ↔ Message 转换边界
 
@@ -295,8 +308,11 @@ Event 面向用户协议，Message 面向 provider 协议。二者通过 `conten
 - `event.Prompt` / `event.Steer` 转为 `model.Message{Role: model.RoleUser, Parts: ...}`。
 - provider 文本响应转为 `event.TextDelta`。
 - provider 思考响应转为 `event.ThinkingDelta`。
+- 完整 provider response 转为 call-local `event.AssistantMessageEnd`。
 - provider 返回的 `content.ToolUse` 保留为 assistant message part，用于触发 tool wave，不直接转为 output。
 - `tools.Result.Parts` 包装为 `content.ToolResult` 并复用同一 `[]content.Part`。
+
+`TurnEnd` 还包含 runtime error 与 tool action，因此由 Agent Loop 的 turn state 组装，不是 provider response 的直接转换。
 
 用户代码不应直接依赖 `internal/convert/`。需要完全不同的 runtime 时，实现 `blades.Agent`。
 
@@ -304,27 +320,22 @@ Event 面向用户协议，Message 面向 provider 协议。二者通过 `conten
 
 Session 历史只追加 protocol-only 的 `model.Message`，并以"语义组"为原子单元写入：
 
-1. **turn 起始**：append 起始 `Prompt` 或 idle `Steer` 转换出的 user message（一次 `Append(ctx, userMsg)`）。
-2. **每个 model step + tool wave 完成后**：将本 step 的 `assistant` 消息与同 step 的 `tool` 结果消息作为一组，调用一次 `Append(ctx, assistantMsg, toolMsg)`。该组写入是 step 级原子单元，避免崩溃留下"有 tool_call 但无 tool_result"的半截历史。
-3. **step / tool-wave 边界输入**：active turn 中收到的 `Steer` append 为 user message，并触发同一 turn 的下一次 model step；active turn 中收到的 `Prompt` 只排队为下一 turn 的 follow-up。
-4. final assistant message 完成且无新工具调用后输出 `TurnEnd`。
+1. **turn 输入**：interaction 首个 `Prompt` / idle `Steer` append 为 user message；active steering 在下一个 turn 开始时通过 `AppendUser` 合并；纯工具续接 turn 不追加 user message。
+2. **每个 turn + tool wave 完成后**：将本 turn 的 `assistant` 消息与同 turn 的 `tool` 结果消息作为一组，调用一次 `Append(ctx, assistantMsg, toolMsg)`。该组写入是 turn 级原子单元，避免崩溃留下"有 tool_call 但无 tool_result"的半截历史。
+3. **turn 边界输入**：active interaction 中收到的 `Steer` 触发下一个 turn；`Prompt` 只排队为下一个 interaction 的 follow-up。
+4. 每个成功汇总的 primary response 都先输出 `AssistantMessageEnd`，随后每个 turn 都输出 `TurnEnd`；是否还会继续工具 turn 不改变该规则。
 
-输入队列本身不写 Session。`nextTurnStart` / `drainStepBoundaryInputs` 只把 channel 事件分类为"开启 turn"、"current-turn steering"、"follow-up prompt"或"abort"；所有 `model.Message` 创建、hook 执行和 `Session.Append` 都集中在 `agent_loop.go` 的 turn / step commit 路径。这样不会出现 queue helper 持有 `session.Session`、又悄悄改变 transcript 的隐式副作用。
+输入队列本身不写 Session。`nextInteractionStart` / `drainTurnBoundaryInputs` 只把 channel 事件分类为"开启 interaction"、"next-turn steering"、"follow-up prompt"或"abort"；所有 `model.Message` 创建、hook 执行和 `Session.Append` 都集中在 `agent_loop.go` 的 turn commit 路径。这样不会出现 queue helper 持有 `session.Session`、又悄悄改变 transcript 的隐式副作用。
 
 **不写回 Session 的内容**：compact view、summary、被截断的 tool result 视图、以及 `event.LoopExit` / `event.Handoff` 等运行时控制信号。控制信号只出现在 `TurnEnd.Action`。Compactor 的 rolling state 通过 `session.State()` 的私有 key（保留前缀 `__compact_*__`，参见 [design-session.md](design-session.md) §State 键命名空间）持久化，与协议历史正交，不会出现在 `Session.Messages()` 中。
 
-Stateless mode 不读取 session history，但仍维护 turn-local transcript 以支持多 step 工具循环。Compact 只在构建 request 前运行，输入是 session 快照 + turn-local pending parts，输出必须满足 provider message invariant。
+Stateless mode 不读取持久化 session history，但 interaction 内仍维护足够的 transcript，使工具结果能够进入下一个 turn。Compact 只在构建 request 前运行，输出必须满足 provider message invariant。
 
-### 上下文超长的两层兜底
+### 上下文超长与 retry 边界
 
-provider 真实 token 计费与 Compactor 基于 `model.TokenCounter` 的 message view 估算之间总会存在偏差，因此在 Compactor 自身的[迭代压缩契约](design-compact.md#迭代压缩契约)之上，Loop 再提供一层 step 间的 hint 重试：
+Compactor 可以在一次 `Compact` 调用内迭代折叠消息；这仍属于当前 turn 的 request 构建阶段，尚未发生 primary model call。`NewModelSummarizer` 在此期间直接调用 `Provider.Generate`，但该内部摘要调用不属于 Agent turn，也不产生用户事件。
 
-| 层级 | 触发主体 | 触发条件 | 行为 |
-|------|----------|----------|------|
-| Step 内迭代 | Compactor 自身 | 当前视图估算超 `MaxTokens` | 在单次 `Compact` 调用内循环折叠批次（推进 offset / 调 Summarize LLM）直到 ① 满足预算 ② offset 抵达 `len(msgs) - KeepRecent` 无可压区 ③ 触发安全阀 |
-| Step 间 hint | Agent Loop | provider 实际返回 context-too-long 类错误 | Loop 透传 `compact.WithHint(ctx, HintShrink)` 重新进入**同一 step 的第二次**请求构造；Compactor 在 hint 模式下必须返回 token 严格单调下降的视图。最大重试 1 次；仍未下降 → `event.Error` fail-fast 终止 turn |
-
-两层是正交关系，不互相替代：step 内迭代解决"按预算逼近"，step 间 hint 解决"估算与真实账本之间的最后一公里"。Loop 不在估算阶段做任何阈值判断（保持 [触发时机](design-compact.md#触发时机) 中"Loop 无条件调用、Compactor 自适应"的契约）。
+当前默认 Loop 不隐藏 provider-level context-too-long retry：`Provider.Stream` 返回错误时，本 turn 以 `TurnEnd.Err` 和 runtime `Error` 结束，且因为没有完整 response，不发 `AssistantMessageEnd`。`compact.HintShrink` 可供自定义 runtime 构建 retry view；若未来默认 Loop 增加 provider retry，每次新的 `Provider.Stream` 尝试也必须开启新 turn，不能在一个 turn 中放入多次 primary LLM call。
 
 ## 与红线对照
 

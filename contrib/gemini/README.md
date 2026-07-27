@@ -63,4 +63,4 @@ for chunk, err := range provider.Stream(ctx, req) {
 
 Tool schemas are supplied on `model.Request.Tools`. Gemini function calls are converted to `content.ToolUse`, and function responses are represented as `content.ToolResult` in a `model.RoleTool` message.
 
-When used through `blades.NewAgent`, the Agent Loop owns tool execution, session commit, and follow-up model steps.
+When used through `blades.NewAgent`, the Agent Loop owns tool execution, session commit, and follow-up turns. Each turn corresponds to one primary model call.

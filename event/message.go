@@ -2,7 +2,9 @@ package event
 
 import "github.com/go-kratos/blades/content"
 
-// AssistantMessageEnd signals completion of one assistant model response.
+// AssistantMessageEnd reports one completed assistant model response.
+// The default Agent emits it after the response's tool wave has finished and
+// before the corresponding TurnEnd.
 type AssistantMessageEnd struct {
 	Parts      []content.Part
 	StopReason StopReason

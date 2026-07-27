@@ -14,7 +14,7 @@ tags: [agentos, context, compact, memory, budget]
 
 Context management is part of the root `blades` default Agent runtime. It is the request-view assembly layer between `session`, `compact`, `prompt`, `memory`, `tools`, and `model.Request`. It does not own long-term state and does not replace those packages. Its job is to build one model-call view and enforce budget limits.
 
-The default Agent Loop uses a private root `contextBuilder` for each model step. Applications configure budget coordination through:
+The default Agent Loop uses a private root `contextBuilder` for each turn's single primary model call. Applications configure budget coordination through:
 
 ```go
 blades.WithContextBudget(model.TokenCount{
@@ -99,7 +99,7 @@ These serve different purposes and are configured separately. Compact has its ow
 
 - `contextBuilder` reads from `session.Messages(ctx)`
 - `Compactor` transforms messages but does not write to session
-- `agentLoop.commitStep()` writes the final turn to session
+- `agentLoop.commitTurn()` writes the turn's assistant response and tool results to session
 - This keeps session as the append-only source of truth
 
 ### No Context Value Injection
@@ -121,4 +121,3 @@ compact.NewBlockSummarize(
     compact.WithSummarizer(compact.NewModelSummarizer(summaryProvider)),
 )
 ```
-

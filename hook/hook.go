@@ -10,7 +10,8 @@ import (
 	"github.com/go-kratos/blades/tools"
 )
 
-// Hook defines lifecycle callbacks for the agent loop.
+// Hook defines lifecycle callbacks for the agent loop. A turn wraps one
+// primary model call and the tool wave produced by its response.
 type Hook interface {
 	BeforeModel(ctx context.Context, req *model.Request) error
 	AfterModel(ctx context.Context, req *model.Request, resp *model.Response, err error) error
@@ -41,14 +42,15 @@ type ToolCall struct {
 	Input     json.RawMessage
 }
 
-// Turn carries context for BeforeTurn/AfterTurn hooks.
+// Turn carries context for BeforeTurn/AfterTurn hooks. Input is nil for a turn
+// started only by tool results from the preceding turn.
 type Turn struct {
 	AgentName string
 	Turn      int
 	Input     event.Input
 }
 
-// TurnSummary aggregates the result of a completed turn.
+// TurnSummary contains call-local results for a completed turn.
 type TurnSummary struct {
 	Parts      []content.Part
 	StopReason model.StopReason

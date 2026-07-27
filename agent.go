@@ -2,6 +2,7 @@ package blades
 
 import (
 	"context"
+	"slices"
 
 	"github.com/go-kratos/blades/compact"
 	"github.com/go-kratos/blades/event"
@@ -30,20 +31,19 @@ type Schemaer interface {
 
 // llmAgent is the default Agent implementation backed by an LLM provider.
 type llmAgent struct {
-	name                    string
-	description             string
-	inputSchema             *jsonschema.Schema
-	outputSchema            *jsonschema.Schema
-	hooks                   []hook.Hook
-	tools                   []tools.Tool
-	resolver                tools.Resolver
-	provider                model.Provider
-	promptBuilders          []prompt.Builder
-	compactor               compact.Compactor
-	contextWindow           model.ContextWindow
-	tokenCounter            model.TokenCounter
-	policy                  policy.Policy
-	sendAssistantMessageEnd bool
+	name           string
+	description    string
+	inputSchema    *jsonschema.Schema
+	outputSchema   *jsonschema.Schema
+	hooks          []hook.Hook
+	tools          []tools.Tool
+	resolver       tools.Resolver
+	provider       model.Provider
+	promptBuilders []prompt.Builder
+	compactor      compact.Compactor
+	contextWindow  model.ContextWindow
+	tokenCounter   model.TokenCounter
+	policy         policy.Policy
 }
 
 // NewAgent creates a new default LLM-backed Agent.
@@ -111,8 +111,8 @@ func (a *llmAgent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
 
 func (a *llmAgent) clone() *llmAgent {
 	fork := *a
-	fork.hooks = append([]hook.Hook(nil), a.hooks...)
-	fork.tools = append([]tools.Tool(nil), a.tools...)
-	fork.promptBuilders = append([]prompt.Builder(nil), a.promptBuilders...)
+	fork.hooks = slices.Clone(a.hooks)
+	fork.tools = slices.Clone(a.tools)
+	fork.promptBuilders = slices.Clone(a.promptBuilders)
 	return &fork
 }

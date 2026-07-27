@@ -191,17 +191,10 @@ for {
 2. **无可压缩区间**：`offset` 已抵达 `len(msgs) - KeepRecent`，最近 N 条不允许折叠；返回当前最佳视图，由 Loop 决定后续动作。
 3. **安全上限**：单次 `Compact` 调用内的折叠批次数达到内部上限（防御性，避免摘要 LLM 异常时陷入死循环）；建议默认 `maxFoldIterations = 8`，可由实现暴露选项调优。
 
-返回视图后两层兜底机制（与 [design-event-agent-loop.md](design-event-agent-loop.md) §HintShrink / §9 对齐）：
+返回视图后的边界（与 [design-event-agent-loop.md](design-event-agent-loop.md) §上下文超长与 retry 边界 对齐）：
 
-- **Step 内（Compactor 自身）**：上述循环；属于"step 内迭代折叠"。
-- **Step 间（Loop 透传 hint）**：若 provider 实际调用仍返回 context-too-long 错误，Loop 通过 `compact.WithHint(ctx, HintShrink)` 透传 hint 进入**同一 step 的第二次**请求构造。Compactor 在 hint 模式下应采取更激进的策略（例如降低 `KeepRecent`、启用更紧的 `ToolResultBudget`），并必须返回**严格单调下降**的视图（token 数严格小于上一次返回的视图）。最大重试次数默认 1 次；若返回视图未严格下降或仍超预算，Loop **fail-fast** 抛出 `event.Error` 并终止 turn。
-
-两层机制的职责边界：
-
-| 层级 | 触发主体 | 触发条件 | 期望效果 |
-|------|----------|----------|----------|
-| Step 内迭代 | Compactor 自身 | 当前视图超 `MaxTokens` 估算 | 在不调 provider 的前提下尽量逼近预算 |
-| Step 间 hint | Loop | provider 实际报 context-too-long | 在 Compactor 估算与 provider 真实账本之间补差 |
+- **Compactor 内部迭代**：上述循环在一次 `Compact` 调用内完成，属于当前 turn 的 request 构建阶段。
+- **Provider error**：当前默认 Loop 不在同一 turn 内隐藏 context-too-long retry；错误结束本 turn。`HintShrink` 保留给自定义 runtime 构建更激进且严格单调下降的 retry view。任何新的 primary `Provider.Stream` 尝试都必须属于新 turn。
 
 实现要点：
 
@@ -213,11 +206,11 @@ for {
 
 Compactor 的调用点位于 Agent Loop 的请求构造阶段，遵循**"Loop 无条件调用、Compactor 自适应"**契约：
 
-1. **Loop 无条件调用**：每个 model step 构建 `*model.Request` 之前，Loop 都调用一次 `compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})`（hint 通过 `compact.WithHint(ctx, ...)` 注入 ctx）。Loop 不再判断"是否到了该压缩的时机"。
+1. **Loop 无条件调用**：每个 turn 构建其唯一的 primary `*model.Request` 之前，Loop 都调用一次 `compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})`（hint 通过 `compact.WithHint(ctx, ...)` 注入 ctx）。Loop 不再判断"是否到了该压缩的时机"。
 2. **Compactor 自适应短路**：
    - `Window` / `ToolResultBudget` 等纯函数策略在已经低于预算时直接 `return msgs, nil` 零成本透传。
    - `Summarize` 等带状态策略读取 `Session.State()` 中的 rolling summary 键（`__compact_summary_offset__` / `__compact_summary_content__`），仅当未摘要部分增长跨过阈值时才调用 LLM；其余调用直接拼接已有摘要 + 增量原文返回。
-3. **provider 硬错误重试**：当 provider 返回 context-too-long 类错误后，Loop 用 hint 重新构造一次请求，并通过 `compact.WithHint(ctx, HintShrink)` 透传给 `compactor.Compact`，Compactor 必须返回**严格单调下降**的视图。最大重试次数默认 1 次；若仍未下降，Loop fail-fast 抛出 `event.Error` 并终止 turn。
+3. **provider 硬错误边界**：当前默认 Loop 不隐藏 context-too-long retry；错误结束本 turn。自定义 runtime 可以通过 `compact.WithHint(ctx, HintShrink)` 构建严格单调下降的 retry view，但新的 `Provider.Stream` 尝试必须开启新 turn。
 4. **应用层显式整理**：`/compact` 命令、TTL 触发等由应用层主动调用 `Compactor` 或 `Memory` API 完成，与 Loop 路径解耦。Compactor 自身只关心"按预算压"。
 5. **工具结果裁剪**：`compact.NewToolResultBudget(maxBytes)` 作为 Chain 中的一个阶段，统一受上述流程驱动，不需要在 Loop 中做特化分支。
 
@@ -225,7 +218,7 @@ Compactor 的调用点位于 Agent Loop 的请求构造阶段，遵循**"Loop �
 
 - compact 输出仅用于本次 `*model.Request.Messages`；
 - **不写回 Session**：Session 严格 view-only（参见 [design-session.md](design-session.md) §4）；Compactor 的 rolling state 通过 `Session.State()` 私有 key 持久化，与协议历史正交；
-- 下次 step 重新调用 compact，仍由 Compactor 自身决定是短路透传还是重新计算（Summarize 借助 rolling summary 复用，避免重复 LLM 调用）。
+- 下个 turn 重新调用 compact，仍由 Compactor 自身决定是短路透传还是重新计算（Summarize 借助 rolling summary 复用，避免重复 LLM 调用）。
 
 ## 与 Memory 的关系
 
@@ -274,7 +267,7 @@ Memory（`memory.Memory`，参见 [design-memory.md](design-memory.md)）和 Com
 
 推荐 metric / log：
 
-- `compact_triggered_total{reason=step|retry|explicit|tool}`
+- `compact_triggered_total{reason=turn|retry|explicit|tool}`
 - `compact_token_before` / `compact_token_after`（直方图）
 - `compact_summarize_latency_seconds`、`compact_summarize_tokens`
 - `compact_invariant_violations_total`（启用校验时）
@@ -288,7 +281,7 @@ Memory（`memory.Memory`，参见 [design-memory.md](design-memory.md)）和 Com
 5. **Loop 无条件调用、Compactor 自适应**：compact 实现不感知"是否到该压"，由策略自身决定短路或工作；Loop 不写"判断阈值再触发"分支，避免重复实现与漂移。
 6. **配对完整性是 compact 自身责任**：不外推到 provider adapter，避免重复实现。
 7. **增量基于 Session append-only**：消息下标稳定 ⇒ 单 `offset` 即可表达"已压缩边界"；不需要消息 ID 或内容指纹。无 Session 时退化为无状态全量计算。
-8. **Step 内迭代 + Step 间 hint 两层兜底**：单次 `Compact` 调用内部循环折叠到预算/无可压区/安全阀；provider 仍报 context-too-long 由 Loop 触发 `HintShrink` 重试 1 次；仍不下降 fail-fast。两层职责正交，不互相替代。
+8. **内部迭代不扩大 turn**：单次 `Compact` 调用内部循环折叠到预算/无可压区/安全阀；provider-level retry 不得隐藏在同一 turn，`HintShrink` 可由自定义 runtime 用于下一个 retry turn。
 9. **Memory 与 Compact 解耦**：Memory 走 system 段、Compact 走 messages 段；两者在请求构造阶段汇合但互不感知；预算由应用层三段分摊，不互相兜底。
 
 ## 与相邻设计的接口面

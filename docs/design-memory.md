@@ -106,16 +106,16 @@ Memory 与 Compact（[design-compact.md](design-compact.md)）在 Agent Loop 中
 | 调用入口 | `prompt.Memory(...)` section → `prompt.Builder.Build` | Agent Loop 请求构造阶段调用 `compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})` |
 | 数据源 | 跨 turn / 跨 session 的长期上下文存储 | 当前 Session 的 `Messages()` 快照 |
 | 是否进入 Session | 不进 | 不进（仅 rolling state 进 `State()`） |
-| 是否每 step 重新计算 | 是（每个 model step 重新 `Recall`，除非 section 内部缓存） | 是（带状态 Compactor 通过 `__compact_*__` state 增量复用） |
+| 是否每 turn 重新计算 | 是（每个 primary model call 前重新 `Recall`，除非 section 内部缓存） | 是（带状态 Compactor 通过 `__compact_*__` state 增量复用） |
 | 体量控制责任方 | Memory 实现 + 应用层（`Query.Limit`、section 内 token 估算） | Compactor（`MaxTokens`、`KeepRecent`、迭代折叠） |
 
 由此推出的应用层使用约束：
 
 - **不要依赖 Compact 兜底 memory**：Compactor 的输入只看 messages，永远不会再次裁剪 system 段中的 memory 召回结果。memory 段超限会直接堆到 system 上，一旦 provider 报 context-too-long，Loop 的 `HintShrink` 也只会让 Compactor 进一步压缩 messages，无法替你削减 memory。
 - **预算分摊在应用层完成**：建议在应用初始化处把 provider 上下文上限分为三段——`SystemBudget`（含 memory 召回 + 静态系统指令）/ `MessagesBudget`（compact 的 `MaxTokens`）/ `ResponseReserve`（输出预留），并分别注入 prompt 与 compact 的配置。
-- **每 step 重新 Recall 是默认行为**：让 query 随当前任务自适应；如果 memory 后端调用昂贵，应用层应自行在 prompt section 中实现 per-turn 缓存，不要要求 core 层做。
+- **每 turn 重新 Recall 是默认行为**：让 query 随当前任务自适应；如果 memory 后端调用昂贵，应用层应自行在 prompt section 中实现 per-turn 缓存，不要要求 core 层做。
 - **Forget 与 Compact 的 rolling summary 无关**：`mem.Forget(ctx, entry)` 删除的是长期上下文条目，不会影响任何 Session 的 `__compact_summary_*__` 状态；反之 Compactor 的 offset 推进也不会触发 memory 的 Forget。两者生命周期独立。
-- **Memory 召回不进入 compact 增量历史**：召回结果只存在于本次请求的 system 段，下次 step 时由 prompt builder 重新生成；不会被 Compactor 当作"未压缩消息"持续累积。
+- **Memory 召回不进入 compact 增量历史**：召回结果只存在于本次请求的 system 段，下个 turn 时由 prompt builder 重新生成；不会被 Compactor 当作"未压缩消息"持续累积。
 
 如需观测 system 段（含 memory）与 messages 段（含 compact view）的 token 占比，应用层通过 hook 或 observability 自行采样，core 不在 Memory 或 Compactor 接口上加协同字段。
 
