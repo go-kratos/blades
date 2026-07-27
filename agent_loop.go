@@ -59,6 +59,25 @@ type toolWaveResult struct {
 	result execute.Result
 }
 
+// run drives the outer interaction loop:
+//
+//	run
+//	 |
+//	 v
+//	nextInteractionStart
+//	 |
+//	 | Prompt or idle Steer
+//	 v
+//	runInteraction
+//	 |
+//	 +--> runTurn: model call -> optional tool wave -> TurnEnd
+//	 |                                      |
+//	 +<-------------------------------------+
+//	          tool result or active Steer starts the next turn
+//
+// A Prompt received during an active interaction is queued for the next
+// interaction. Abort ends the current interaction. Each runTurn contains
+// exactly one primary model call and its resulting tool wave.
 func (l *agentLoop) run() {
 	defer func() {
 		l.output <- event.Done{}
