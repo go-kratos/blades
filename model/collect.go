@@ -6,7 +6,8 @@ import (
 	"github.com/go-kratos/blades/content"
 )
 
-// Collect accumulates a streaming response into a complete Response.
+// Collect accumulates a streaming response into a complete Response. It adopts
+// the last reported usage snapshot and the last non-empty stop reason.
 func Collect(seq iter.Seq2[*Chunk, error]) (*Response, error) {
 	var (
 		parts      []content.Part
@@ -25,8 +26,7 @@ func Collect(seq iter.Seq2[*Chunk, error]) (*Response, error) {
 			stopReason = chunk.StopReason
 		}
 		if chunk.Usage != nil {
-			usage.InputTokens += chunk.Usage.InputTokens
-			usage.OutputTokens += chunk.Usage.OutputTokens
+			usage = *chunk.Usage
 		}
 	}
 	return &Response{

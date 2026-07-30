@@ -158,7 +158,11 @@ func toImageResponse(res *openai.ImagesResponse) (*model.Response, error) {
 			})
 		}
 	}
-	return &model.Response{Message: message, StopReason: model.StopEnd}, nil
+	return &model.Response{
+		Message:    message,
+		StopReason: model.StopEnd,
+		Usage:      imageUsageToModel(res.Usage),
+	}, nil
 }
 
 func imageMimeType(format openai.ImagesResponseOutputFormat) string {

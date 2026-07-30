@@ -1,6 +1,9 @@
 package event
 
-import "github.com/go-kratos/blades/content"
+import (
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
+)
 
 // AssistantMessageEnd reports one completed assistant model response.
 // The default Agent emits it after the response's tool wave has finished and
@@ -8,7 +11,7 @@ import "github.com/go-kratos/blades/content"
 type AssistantMessageEnd struct {
 	Parts      []content.Part
 	StopReason StopReason
-	Usage      Usage
+	Usage      model.Usage
 }
 
 // Text returns the concatenated text parts from the assistant message.

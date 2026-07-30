@@ -1,6 +1,9 @@
 package event
 
-import "github.com/go-kratos/blades/content"
+import (
+	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
+)
 
 // StopReason indicates why a model call stopped or its turn was aborted.
 type StopReason string
@@ -13,17 +16,11 @@ const (
 	StopAbort     StopReason = "abort"
 )
 
-// Usage tracks token consumption.
-type Usage struct {
-	InputTokens  int64
-	OutputTokens int64
-}
-
 // TurnEnd signals completion of one primary model call and its tool wave.
 type TurnEnd struct {
 	Parts      []content.Part
 	StopReason StopReason
-	Usage      Usage
+	Usage      model.Usage
 	Err        error
 	Action     Action
 }

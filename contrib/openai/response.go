@@ -580,16 +580,21 @@ func responseOutputHasToolUse(items []responses.ResponseOutputItemUnion) bool {
 
 func responseUsageToModel(usage responses.ResponseUsage) model.Usage {
 	return model.Usage{
-		InputTokens:  usage.InputTokens,
-		OutputTokens: usage.OutputTokens,
+		InputCachedTokens:     usage.InputTokensDetails.CachedTokens,
+		InputCacheMissTokens:  usage.InputTokens - usage.InputTokensDetails.CachedTokens,
+		OutputReasoningTokens: usage.OutputTokensDetails.ReasoningTokens,
+		TotalInputTokens:      usage.InputTokens,
+		TotalOutputTokens:     usage.OutputTokens,
+		TotalTokens:           usage.TotalTokens,
+		Raw:                   rawUsageJSON(usage.RawJSON()),
 	}
 }
 
 func responseUsagePtrToModel(usage responses.ResponseUsage) *model.Usage {
-	if usage.InputTokens == 0 && usage.OutputTokens == 0 {
+	m := responseUsageToModel(usage)
+	if m.TotalInputTokens == 0 && m.TotalOutputTokens == 0 && m.TotalTokens == 0 && len(m.Raw) == 0 {
 		return nil
 	}
-	m := responseUsageToModel(usage)
 	return &m
 }
 

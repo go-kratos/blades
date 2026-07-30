@@ -35,11 +35,11 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 				dummyprovider.ToolUse("calc-1", "calculate", json.RawMessage(`{"expression":"123 * 456"}`)),
 			},
 			dummyprovider.WithStopReason(model.StopToolUse),
-			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 10, OutputTokens: 3}),
+			dummyprovider.WithResponseUsage(model.Usage{TotalInputTokens: 10, TotalOutputTokens: 3, TotalTokens: 13}),
 		),
 		dummyprovider.TextResponse(
 			"The result is 56088.",
-			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 20, OutputTokens: 4}),
+			dummyprovider.WithResponseUsage(model.Usage{TotalInputTokens: 20, TotalOutputTokens: 4, TotalTokens: 24}),
 		),
 	)
 	agent, err := blades.NewAgent(
@@ -69,20 +69,20 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	messageEnds := assistantMessageEnds(outputs)
 	if assert.Len(t, messageEnds, 2) {
 		assert.Equal(t, event.StopToolUse, messageEnds[0].StopReason)
-		assert.Equal(t, event.Usage{InputTokens: 10, OutputTokens: 3}, messageEnds[0].Usage)
+		assert.Equal(t, model.Usage{TotalInputTokens: 10, TotalOutputTokens: 3, TotalTokens: 13}, messageEnds[0].Usage)
 		assert.Equal(t, "Let me calculate that.", messageEnds[0].Text())
 		assert.Equal(t, event.StopEnd, messageEnds[1].StopReason)
-		assert.Equal(t, event.Usage{InputTokens: 20, OutputTokens: 4}, messageEnds[1].Usage)
+		assert.Equal(t, model.Usage{TotalInputTokens: 20, TotalOutputTokens: 4, TotalTokens: 24}, messageEnds[1].Usage)
 		assert.Equal(t, "The result is 56088.", messageEnds[1].Text())
 	}
 
 	turns := turnEnds(outputs)
 	if assert.Len(t, turns, 2) {
 		assert.Equal(t, event.StopToolUse, turns[0].StopReason)
-		assert.Equal(t, event.Usage{InputTokens: 10, OutputTokens: 3}, turns[0].Usage)
+		assert.Equal(t, model.Usage{TotalInputTokens: 10, TotalOutputTokens: 3, TotalTokens: 13}, turns[0].Usage)
 		assert.Equal(t, "Let me calculate that.", turns[0].Text())
 		assert.Equal(t, event.StopEnd, turns[1].StopReason)
-		assert.Equal(t, event.Usage{InputTokens: 20, OutputTokens: 4}, turns[1].Usage)
+		assert.Equal(t, model.Usage{TotalInputTokens: 20, TotalOutputTokens: 4, TotalTokens: 24}, turns[1].Usage)
 		assert.Equal(t, "The result is 56088.", turns[1].Text())
 	}
 	toolEndIndex := outputIndex(outputs, event.ToolEnd{})
@@ -116,17 +116,162 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	}
 }
 
+func TestLLMAgentPreservesRawUsage(t *testing.T) {
+	rawUsage := json.RawMessage(`{
+		"input_tokens": 10,
+		"output_tokens": 3,
+		"cache_read_input_tokens": 7,
+		"reasoning_tokens": 2
+	}`)
+	provider := dummyprovider.NewProvider(dummyprovider.TextResponse(
+		"done",
+		dummyprovider.WithResponseUsage(model.Usage{
+			InputCachedTokens:     7,
+			InputCacheMissTokens:  3,
+			OutputReasoningTokens: 2,
+			TotalInputTokens:      10,
+			TotalOutputTokens:     3,
+			TotalTokens:           13,
+			Raw:                   rawUsage,
+		}),
+	))
+
+	usageCapture := &afterModelUsageCapture{}
+	turnCapture := &turnLifecycleCapture{}
+	agent, err := blades.NewAgent(
+		"usage",
+		blades.WithModel(provider),
+		blades.WithHooks(usageCapture, turnCapture),
+	)
+	assert.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("hello"))
+	assert.NoError(t, err)
+	assert.Equal(t, model.Usage{
+		InputCachedTokens:     7,
+		InputCacheMissTokens:  3,
+		OutputReasoningTokens: 2,
+		TotalInputTokens:      10,
+		TotalOutputTokens:     3,
+		TotalTokens:           13,
+		Raw:                   rawUsage,
+	}, usageCapture.usage)
+
+	messageEnds := assistantMessageEnds(outputs)
+	if assert.Len(t, messageEnds, 1) {
+		assert.Equal(t, model.Usage{
+			InputCachedTokens:     7,
+			InputCacheMissTokens:  3,
+			OutputReasoningTokens: 2,
+			TotalInputTokens:      10,
+			TotalOutputTokens:     3,
+			TotalTokens:           13,
+			Raw:                   rawUsage,
+		}, messageEnds[0].Usage)
+	}
+	turns := turnEnds(outputs)
+	if assert.Len(t, turns, 1) {
+		assert.Equal(t, model.Usage{
+			InputCachedTokens:     7,
+			InputCacheMissTokens:  3,
+			OutputReasoningTokens: 2,
+			TotalInputTokens:      10,
+			TotalOutputTokens:     3,
+			TotalTokens:           13,
+			Raw:                   rawUsage,
+		}, turns[0].Usage)
+	}
+	_, hookEnds, _ := turnCapture.Snapshot()
+	if assert.Len(t, hookEnds, 1) {
+		assert.Equal(t, model.Usage{
+			InputCachedTokens:     7,
+			InputCacheMissTokens:  3,
+			OutputReasoningTokens: 2,
+			TotalInputTokens:      10,
+			TotalOutputTokens:     3,
+			TotalTokens:           13,
+			Raw:                   rawUsage,
+		}, hookEnds[0].usage)
+	}
+}
+
+func TestLLMAgentUsesLastUsageSnapshot(t *testing.T) {
+	firstRaw := json.RawMessage(`{"total_tokens":7}`)
+	lastRaw := json.RawMessage(`{"total_tokens":13}`)
+	provider := &chunkProvider{chunks: []*model.Chunk{
+		{Parts: []content.Part{content.Text{Text: "done"}}},
+		{
+			Usage: &model.Usage{
+				TotalInputTokens:  3,
+				TotalOutputTokens: 4,
+				TotalTokens:       7,
+				Raw:               firstRaw,
+			},
+		},
+		{
+			Usage: &model.Usage{
+				InputCachedTokens: 5,
+				TotalInputTokens:  8,
+				TotalOutputTokens: 5,
+				TotalTokens:       13,
+				Raw:               lastRaw,
+			},
+		},
+		{StopReason: model.StopEnd},
+	}}
+
+	usageCapture := &afterModelUsageCapture{}
+	agent, err := blades.NewAgent(
+		"usage-snapshot",
+		blades.WithModel(provider),
+		blades.WithHooks(usageCapture),
+	)
+	assert.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("hello"))
+	assert.NoError(t, err)
+	assert.Equal(t, model.Usage{
+		InputCachedTokens: 5,
+		TotalInputTokens:  8,
+		TotalOutputTokens: 5,
+		TotalTokens:       13,
+		Raw:               lastRaw,
+	}, usageCapture.usage)
+
+	messageEnds := assistantMessageEnds(outputs)
+	if assert.Len(t, messageEnds, 1) {
+		assert.Equal(t, event.StopEnd, messageEnds[0].StopReason)
+		assert.Equal(t, model.Usage{
+			InputCachedTokens: 5,
+			TotalInputTokens:  8,
+			TotalOutputTokens: 5,
+			TotalTokens:       13,
+			Raw:               lastRaw,
+		}, messageEnds[0].Usage)
+	}
+	turns := turnEnds(outputs)
+	if assert.Len(t, turns, 1) {
+		assert.Equal(t, model.Usage{
+			InputCachedTokens: 5,
+			TotalInputTokens:  8,
+			TotalOutputTokens: 5,
+			TotalTokens:       13,
+			Raw:               lastRaw,
+		}, turns[0].Usage)
+	}
+}
+
 func TestLLMAgentTurnHooksWrapOneModelCall(t *testing.T) {
 	provider := dummyprovider.NewProvider(
 		dummyprovider.ToolUseResponse(
 			"calc-1",
 			"calculate",
 			json.RawMessage(`{"expression":"1 + 1"}`),
-			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 10, OutputTokens: 2}),
+			dummyprovider.WithResponseUsage(model.Usage{TotalInputTokens: 10, TotalOutputTokens: 2, TotalTokens: 12}),
 		),
 		dummyprovider.TextResponse(
 			"done",
-			dummyprovider.WithResponseUsage(model.Usage{InputTokens: 20, OutputTokens: 3}),
+			dummyprovider.WithResponseUsage(model.Usage{TotalInputTokens: 20, TotalOutputTokens: 3, TotalTokens: 23}),
 		),
 	)
 	capture := &turnLifecycleCapture{}
@@ -152,10 +297,10 @@ func TestLLMAgentTurnHooksWrapOneModelCall(t *testing.T) {
 	if assert.Len(t, ends, 2) {
 		assert.Equal(t, 1, ends[0].turn)
 		assert.Equal(t, model.StopToolUse, ends[0].stopReason)
-		assert.Equal(t, model.Usage{InputTokens: 10, OutputTokens: 2}, ends[0].usage)
+		assert.Equal(t, model.Usage{TotalInputTokens: 10, TotalOutputTokens: 2, TotalTokens: 12}, ends[0].usage)
 		assert.Equal(t, 2, ends[1].turn)
 		assert.Equal(t, model.StopEnd, ends[1].stopReason)
-		assert.Equal(t, model.Usage{InputTokens: 20, OutputTokens: 3}, ends[1].usage)
+		assert.Equal(t, model.Usage{TotalInputTokens: 20, TotalOutputTokens: 3, TotalTokens: 23}, ends[1].usage)
 	}
 	assert.Equal(t, []int{1}, toolTurns)
 }
@@ -179,7 +324,7 @@ func TestLLMAgentAfterModelFailureDiscardsResponse(t *testing.T) {
 	want := errors.New("after model failed")
 	provider := dummyprovider.NewProvider(dummyprovider.TextResponse(
 		"completed",
-		dummyprovider.WithResponseUsage(model.Usage{InputTokens: 4, OutputTokens: 2}),
+		dummyprovider.WithResponseUsage(model.Usage{TotalInputTokens: 4, TotalOutputTokens: 2, TotalTokens: 6}),
 	))
 	agent, err := blades.NewAgent(
 		"assistant",
@@ -195,7 +340,7 @@ func TestLLMAgentAfterModelFailureDiscardsResponse(t *testing.T) {
 	if assert.Len(t, turns, 1) {
 		assert.ErrorIs(t, turns[0].Err, want)
 		assert.Empty(t, turns[0].Parts)
-		assert.Equal(t, event.Usage{}, turns[0].Usage)
+		assert.Equal(t, model.Usage{}, turns[0].Usage)
 	}
 	assert.True(t, hasRuntimeError(outputs, want))
 }
@@ -1420,6 +1565,21 @@ func (h afterModelErrorHook) AfterModel(context.Context, *model.Request, *model.
 	return h.err
 }
 
+type afterModelUsageCapture struct {
+	hook.Noop
+	usage model.Usage
+}
+
+func (h *afterModelUsageCapture) AfterModel(
+	_ context.Context,
+	_ *model.Request,
+	resp *model.Response,
+	_ error,
+) error {
+	h.usage = resp.Usage
+	return nil
+}
+
 type runningAgentSnapshot struct {
 	ok          bool
 	name        string
@@ -1696,6 +1856,32 @@ type captureProvider struct {
 	mu        sync.Mutex
 	responses []*model.Response
 	requests  []*model.Request
+}
+
+type chunkProvider struct {
+	chunks []*model.Chunk
+}
+
+func (p *chunkProvider) Name() string {
+	return "chunks"
+}
+
+func (p *chunkProvider) Generate(ctx context.Context, req *model.Request) (*model.Response, error) {
+	return model.Collect(p.Stream(ctx, req))
+}
+
+func (p *chunkProvider) Stream(ctx context.Context, _ *model.Request) iter.Seq2[*model.Chunk, error] {
+	return func(yield func(*model.Chunk, error) bool) {
+		for _, chunk := range p.chunks {
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+	}
 }
 
 type failingCountingProvider struct {

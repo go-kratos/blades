@@ -3,11 +3,13 @@ package blades
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/event"
+	"github.com/go-kratos/blades/model"
 )
 
 type runnerAgent struct {
@@ -46,7 +48,11 @@ func (a outputAgent) Run(context.Context, <-chan event.Input) (<-chan event.Outp
 func TestRunnerRunReturnsFinalResult(t *testing.T) {
 	t.Parallel()
 
-	usage := event.Usage{InputTokens: 3, OutputTokens: 5}
+	usage := model.Usage{
+		TotalInputTokens:  3,
+		TotalOutputTokens: 5,
+		TotalTokens:       8,
+	}
 	runner := NewRunner(runnerAgent{outputs: []event.Output{
 		event.TextDelta{Text: "intermediate"},
 		event.TurnEnd{
@@ -70,7 +76,7 @@ func TestRunnerRunReturnsFinalResult(t *testing.T) {
 	if result.StopReason != event.StopEnd {
 		t.Fatalf("Run().StopReason = %q, want %q", result.StopReason, event.StopEnd)
 	}
-	if result.Usage != usage {
+	if !reflect.DeepEqual(result.Usage, usage) {
 		t.Fatalf("Run().Usage = %+v, want %+v", result.Usage, usage)
 	}
 }

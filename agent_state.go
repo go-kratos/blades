@@ -9,7 +9,7 @@ import (
 type turnState struct {
 	parts      []content.Part
 	stopReason event.StopReason
-	usage      event.Usage
+	usage      model.Usage
 	action     event.Action
 }
 
@@ -18,10 +18,7 @@ func newTurnState() turnState {
 }
 
 func (s *turnState) recordResponse(resp *model.Response) {
-	s.usage = event.Usage{
-		InputTokens:  resp.Usage.InputTokens,
-		OutputTokens: resp.Usage.OutputTokens,
-	}
+	s.usage = resp.Usage
 	s.parts = resp.Message.Parts
 	s.stopReason = outputStopReason(resp.StopReason)
 }

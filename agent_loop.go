@@ -346,10 +346,7 @@ func (l *agentLoop) endTurn(turn *hook.Turn, result turnState, err error) {
 	summary := &hook.TurnSummary{
 		Parts:      result.parts,
 		StopReason: model.StopReason(result.stopReason),
-		Usage: &model.Usage{
-			InputTokens:  result.usage.InputTokens,
-			OutputTokens: result.usage.OutputTokens,
-		},
+		Usage:      &result.usage,
 	}
 	for _, h := range l.agent.hooks {
 		_ = h.AfterTurn(l.ctx, turn, summary, err)
@@ -415,8 +412,7 @@ func (l *agentLoop) streamModelCall(ctx context.Context, req *model.Request) (*m
 			stopReason = chunk.StopReason
 		}
 		if chunk.Usage != nil {
-			usage.InputTokens += chunk.Usage.InputTokens
-			usage.OutputTokens += chunk.Usage.OutputTokens
+			usage = *chunk.Usage
 		}
 	}
 

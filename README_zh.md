@@ -130,7 +130,7 @@ provider := openai.NewChat("gpt-5",
 
 工具并发由模型输出驱动。如果 Provider 在同一个 assistant message 中返回多个 `content.ToolUse`，Agent loop 会并发执行这一批 tool wave。若希望模型每轮最多返回一个工具调用，可在 Provider 上配置，例如 `openai.WithParallelToolCalls(false)` 或 `anthropic.WithParallelToolCalls(false)`。
 
-每个 turn 精确对应一次 primary `Provider.Stream` 调用及其可选 tool wave。每个完整响应都强制输出携带 call-local usage 的 `event.AssistantMessageEnd`。有工具时顺序固定为全部 `ToolEnd` → `AssistantMessageEnd` → `TurnEnd`；无工具时为 `AssistantMessageEnd` → `TurnEnd`。
+每个 turn 精确对应一次 primary `Provider.Stream` 调用及其可选 tool wave。每个完整响应都强制输出携带标准化 call-local usage 的 `event.AssistantMessageEnd`。`AssistantMessageEnd.Usage` 与 `TurnEnd.Usage` 直接使用 `model.Usage`，包括 provider 特有的 `Raw`。有工具时顺序固定为全部 `ToolEnd` → `AssistantMessageEnd` → `TurnEnd`；无工具时为 `AssistantMessageEnd` → `TurnEnd`。
 
 ## 工具与 Agent
 

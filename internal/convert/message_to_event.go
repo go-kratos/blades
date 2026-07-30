@@ -26,9 +26,6 @@ func ResponseToAssistantMessageEnd(resp *model.Response) event.AssistantMessageE
 	return event.AssistantMessageEnd{
 		Parts:      resp.Message.Parts,
 		StopReason: event.StopReason(resp.StopReason),
-		Usage: event.Usage{
-			InputTokens:  resp.Usage.InputTokens,
-			OutputTokens: resp.Usage.OutputTokens,
-		},
+		Usage:      resp.Usage,
 	}
 }

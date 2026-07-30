@@ -14,7 +14,7 @@ import (
 func TestProviderReturnsPredefinedUsageAndTracksCalls(t *testing.T) {
 	provider := NewProvider(TextResponse(
 		"hello world",
-		WithResponseUsage(model.Usage{InputTokens: 3, OutputTokens: 4}),
+		WithResponseUsage(model.Usage{TotalInputTokens: 3, TotalOutputTokens: 4, TotalTokens: 7}),
 	))
 
 	resp, err := provider.Generate(context.Background(), &model.Request{
@@ -28,7 +28,7 @@ func TestProviderReturnsPredefinedUsageAndTracksCalls(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "dummy", provider.Name())
 	assert.Equal(t, "hello world", textParts(resp.Message.Parts))
-	assert.Equal(t, model.Usage{InputTokens: 3, OutputTokens: 4}, resp.Usage)
+	assert.Equal(t, model.Usage{TotalInputTokens: 3, TotalOutputTokens: 4, TotalTokens: 7}, resp.Usage)
 	assert.Equal(t, 1, provider.CallCount())
 }
 

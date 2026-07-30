@@ -378,10 +378,7 @@ func toContentParts(parts []content.Part) []openai.ChatCompletionContentPartUnio
 func choiceToResponse(cc *openai.ChatCompletion) (*model.Response, error) {
 	resp := &model.Response{
 		Message: &model.Message{Role: model.RoleAssistant},
-		Usage: model.Usage{
-			InputTokens:  cc.Usage.PromptTokens,
-			OutputTokens: cc.Usage.CompletionTokens,
-		},
+		Usage:   completionUsageToModel(cc.Usage),
 	}
 	for _, choice := range cc.Choices {
 		resp.StopReason = mapOpenAIStopReason(choice.FinishReason)
@@ -481,11 +478,9 @@ func (a *chatStreamAccumulator) toolParts(choiceIndex int64) ([]content.Part, er
 
 func chunkToModelChunk(chunk openai.ChatCompletionChunk) *model.Chunk {
 	converted := &model.Chunk{}
-	if chunk.Usage.PromptTokens != 0 || chunk.Usage.CompletionTokens != 0 {
-		converted.Usage = &model.Usage{
-			InputTokens:  chunk.Usage.PromptTokens,
-			OutputTokens: chunk.Usage.CompletionTokens,
-		}
+	usage := completionUsageToModel(chunk.Usage)
+	if usage.TotalInputTokens != 0 || usage.TotalOutputTokens != 0 || usage.TotalTokens != 0 || len(usage.Raw) > 0 {
+		converted.Usage = &usage
 	}
 	for _, choice := range chunk.Choices {
 		if reasoningContent := reasoningContentFromDelta(choice.Delta); reasoningContent != "" {

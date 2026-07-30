@@ -239,9 +239,32 @@ const (
 )
 
 type Usage struct {
-    InputTokens  int
-    OutputTokens int
-    TotalTokens  int
+    InputCachedTokens      int64 `json:"inputCachedTokens,omitempty"`
+    InputCacheMissTokens   int64 `json:"inputCacheMissTokens,omitempty"`
+    InputWriteCacheTokens  int64 `json:"inputWriteCacheTokens,omitempty"`
+    InputCachedTextTokens  int64 `json:"inputCachedTextTokens,omitempty"`
+    InputCachedImageTokens int64 `json:"inputCachedImageTokens,omitempty"`
+    InputCachedAudioTokens int64 `json:"inputCachedAudioTokens,omitempty"`
+    InputCachedVideoTokens int64 `json:"inputCachedVideoTokens,omitempty"`
+    InputTextTokens        int64 `json:"inputTextTokens,omitempty"`
+    InputImageTokens       int64 `json:"inputImageTokens,omitempty"`
+    InputAudioTokens       int64 `json:"inputAudioTokens,omitempty"`
+    InputVideoTokens       int64 `json:"inputVideoTokens,omitempty"`
+    InputCitationTokens    int64 `json:"inputCitationTokens,omitempty"`
+    InputToolTokens        int64 `json:"inputToolTokens,omitempty"`
+
+    OutputTextTokens      int64 `json:"outputTextTokens,omitempty"`
+    OutputImageTokens     int64 `json:"outputImageTokens,omitempty"`
+    OutputAudioTokens     int64 `json:"outputAudioTokens,omitempty"`
+    OutputReasoningTokens int64 `json:"outputReasoningTokens,omitempty"`
+
+    AcceptedPredictionTokens int64 `json:"acceptedPredictionTokens,omitempty"`
+    RejectedPredictionTokens int64 `json:"rejectedPredictionTokens,omitempty"`
+
+    TotalInputTokens  int64   `json:"totalInputTokens,omitempty"`
+    TotalOutputTokens int64   `json:"totalOutputTokens,omitempty"`
+    TotalTokens       int64   `json:"totalTokens,omitempty"`
+    Raw               json.RawMessage `json:"raw,omitempty"`
 }
 ```
 
@@ -249,6 +272,7 @@ type Usage struct {
 
 - **拆分而非复用**：`Response` 与 `Chunk` 用不同类型表达"终态"与"增量"两种语义，调用方在编译期即可区分，避免运行时判空 `Message != nil` 才能识别终态。
 - **复用 `content.Part`**：流式增量不引入 `TextDelta` / `ToolUseDelta` 等变体；text 增量就是 `content.Text{Text: "片段"}`，tool_use 增量按 `ToolUse.ID` 在多帧累加。
+- **Usage 单一类型**：`model.Usage` 是 model response、event、turn state 与 hook summary 共用的唯一 usage 类型。标准字段提供跨 provider 的 cache、modality、reasoning、prediction 与 total 计数，所有 JSON 字段均使用 `omitempty`；`Raw` 保留 provider 特有明细。Loop 把最后一个 `Usage` 快照原样传递到最终 response、事件与 hook。
 - **Chunk 不含 Role**：Stream 默认 assistant 角色；多 candidate / 多 turn 暂不在协议层表达，由上层组合。
 - **不完整或停止状态不放在 `Message` 上**：由 `Response.StopReason` / `Chunk.StopReason` 表达。
 
@@ -392,7 +416,7 @@ text 增量：`delta.content` → `content.Text{Text: chunk}`。tool_call 增量
 | `Generate` | `POST /v1/messages`（非流） |
 | `Stream` | SSE 事件流：`content_block_start` / `content_block_delta` / `content_block_stop` / `message_delta` |
 | `StopReason` | `message_delta.stop_reason`（end_turn / tool_use / max_tokens） |
-| `Usage` | `message_start.usage` + `message_delta.usage`（增量补充） |
+| `Usage` | 最后一个 `message_delta.usage` 快照 |
 
 Options 处理：
 

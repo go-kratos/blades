@@ -173,15 +173,88 @@ func convertGenAIToChunk(resp *genai.GenerateContentResponse) (*model.Chunk, err
 	}
 	chunk := &model.Chunk{Parts: parts, StopReason: stopReason}
 	if resp.UsageMetadata != nil {
-		chunk.Usage = &model.Usage{
-			InputTokens:  int64(resp.UsageMetadata.PromptTokenCount),
-			OutputTokens: int64(resp.UsageMetadata.CandidatesTokenCount),
+		rawUsage, err := json.Marshal(resp.UsageMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("marshal usage metadata: %w", err)
 		}
+		usage := geminiUsageToModel(resp.UsageMetadata, rawUsage)
+		chunk.Usage = &usage
 	}
 	if hasToolUse(parts) {
 		chunk.StopReason = model.StopToolUse
 	}
 	return chunk, nil
+}
+
+func geminiUsageToModel(metadata *genai.GenerateContentResponseUsageMetadata, raw json.RawMessage) model.Usage {
+	promptTokens := int64(metadata.PromptTokenCount)
+	cachedTokens := int64(metadata.CachedContentTokenCount)
+	toolTokens := int64(metadata.ToolUsePromptTokenCount)
+	outputTokens := int64(metadata.CandidatesTokenCount)
+	reasoningTokens := int64(metadata.ThoughtsTokenCount)
+	totalInputTokens := promptTokens + toolTokens
+	totalOutputTokens := outputTokens + reasoningTokens
+
+	usage := model.Usage{
+		InputCachedTokens:     cachedTokens,
+		InputCacheMissTokens:  promptTokens - cachedTokens,
+		InputToolTokens:       toolTokens,
+		OutputReasoningTokens: reasoningTokens,
+		TotalInputTokens:      totalInputTokens,
+		TotalOutputTokens:     totalOutputTokens,
+		TotalTokens:           int64(metadata.TotalTokenCount),
+		Raw:                   raw,
+	}
+	addGeminiInputModalities(&usage, metadata.PromptTokensDetails, false)
+	addGeminiInputModalities(&usage, metadata.CacheTokensDetails, true)
+	addGeminiOutputModalities(&usage, metadata.CandidatesTokensDetails)
+	return usage
+}
+
+func addGeminiInputModalities(usage *model.Usage, details []*genai.ModalityTokenCount, cached bool) {
+	for _, detail := range details {
+		tokens := int64(detail.TokenCount)
+		switch detail.Modality {
+		case genai.MediaModalityText:
+			if cached {
+				usage.InputCachedTextTokens += tokens
+			} else {
+				usage.InputTextTokens += tokens
+			}
+		case genai.MediaModalityImage:
+			if cached {
+				usage.InputCachedImageTokens += tokens
+			} else {
+				usage.InputImageTokens += tokens
+			}
+		case genai.MediaModalityAudio:
+			if cached {
+				usage.InputCachedAudioTokens += tokens
+			} else {
+				usage.InputAudioTokens += tokens
+			}
+		case genai.MediaModalityVideo:
+			if cached {
+				usage.InputCachedVideoTokens += tokens
+			} else {
+				usage.InputVideoTokens += tokens
+			}
+		}
+	}
+}
+
+func addGeminiOutputModalities(usage *model.Usage, details []*genai.ModalityTokenCount) {
+	for _, detail := range details {
+		tokens := int64(detail.TokenCount)
+		switch detail.Modality {
+		case genai.MediaModalityText:
+			usage.OutputTextTokens += tokens
+		case genai.MediaModalityImage:
+			usage.OutputImageTokens += tokens
+		case genai.MediaModalityAudio:
+			usage.OutputAudioTokens += tokens
+		}
+	}
 }
 
 // convertGenAIPartToBlades converts a GenAI Part to a shared Blades content Part.

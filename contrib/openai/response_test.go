@@ -130,11 +130,11 @@ func TestResponseToModelResponseReturnsTextAndToolUses(t *testing.T) {
 	if got, want := resp.StopReason, model.StopToolUse; got != want {
 		t.Fatalf("stop reason = %q, want %q", got, want)
 	}
-	if got, want := resp.Usage.InputTokens, int64(3); got != want {
-		t.Fatalf("input tokens = %d, want %d", got, want)
+	if got, want := resp.Usage.TotalInputTokens, int64(3); got != want {
+		t.Fatalf("total input tokens = %d, want %d", got, want)
 	}
-	if got, want := resp.Usage.OutputTokens, int64(4); got != want {
-		t.Fatalf("output tokens = %d, want %d", got, want)
+	if got, want := resp.Usage.TotalOutputTokens, int64(4); got != want {
+		t.Fatalf("total output tokens = %d, want %d", got, want)
 	}
 	text, ok := resp.Message.Parts[0].(content.Text)
 	if !ok {
@@ -342,11 +342,11 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 	if chunk.Usage == nil {
 		t.Fatal("usage is nil, want token usage")
 	}
-	if got, want := chunk.Usage.InputTokens, int64(5); got != want {
-		t.Fatalf("input tokens = %d, want %d", got, want)
+	if got, want := chunk.Usage.TotalInputTokens, int64(5); got != want {
+		t.Fatalf("total input tokens = %d, want %d", got, want)
 	}
-	if got, want := chunk.Usage.OutputTokens, int64(6); got != want {
-		t.Fatalf("output tokens = %d, want %d", got, want)
+	if got, want := chunk.Usage.TotalOutputTokens, int64(6); got != want {
+		t.Fatalf("total output tokens = %d, want %d", got, want)
 	}
 }
 

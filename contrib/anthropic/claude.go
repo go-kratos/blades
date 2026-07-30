@@ -148,13 +148,10 @@ func (m *Claude) Stream(ctx context.Context, req *model.Request) iter.Seq2[*mode
 					return
 				}
 			case anthropic.MessageDeltaEvent:
-				accumulator.messageDelta(ev)
+				usage := accumulator.messageDelta(ev)
 				chunk := &model.Chunk{
 					StopReason: mapClaudeStopReason(ev.Delta.StopReason),
-					Usage: &model.Usage{
-						InputTokens:  ev.Usage.InputTokens,
-						OutputTokens: ev.Usage.OutputTokens,
-					},
+					Usage:      &usage,
 				}
 				if !yield(chunk, nil) {
 					return

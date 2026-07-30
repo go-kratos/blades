@@ -12,11 +12,11 @@ tags: [agentos, event, agent-loop, llm-agent, content, protocol]
 
 ## 1. 概述
 
-`event/` 是 AgentOS 面向用户、应用接入、hook 与运行时的协议层。它只表达输入、输出、控制、工具生命周期和流式输出，不承载 provider 消息约束。
+`event/` 是 AgentOS 面向用户、应用接入、hook 与运行时的协议层。它只表达输入、输出、控制、工具生命周期和流式输出，不承载 provider 消息约束；usage 记账统一复用 `model.Usage`。
 
 默认 Agent Loop 不作为公开 `loop/` 包存在。Loop 是根包默认 `llmAgent` 的内部运行机制；用户只需要理解 `blades.Agent`、`blades.NewAgent`、`event.Input` 和 `event.Output`。高级定制通过根包 options 替换局部策略，例如 request 构建、tool wave 执行和 hook；完全不同的运行时直接实现 `blades.Agent`。
 
-Event 与 `model.Message` 不合并，转换边界集中在 `internal/convert/`。这样用户协议和 provider 协议保持独立，但通过 `content.Part` 共享同一多模态叶子。
+Event 与 `model.Message` 不合并，转换边界集中在 `internal/convert/`。用户事件和 provider 消息仍是独立协议，通过 `content.Part` 共享多模态内容，并通过 `model.Usage` 共享唯一 usage 表达。
 
 对 pi-agent 的参考结论：TS 实现把低层 loop、状态化 `Agent` wrapper、steering/follow-up queue 分开。Go 版本不照搬 class wrapper，因为 `Run(ctx, <-chan event.Input)` 已经把状态化 wrapper 的排队能力交给 channel；但保留同一个核心边界：input queue 只负责读取和分类事件，Agent Loop 负责 Session commit 与事件输出，tool wave 负责工具执行与结果归一化。`agent_loop.go` 中的 input queue helper 因此不依赖 `session.Session`，也不直接发 output。
 
@@ -178,11 +178,11 @@ type ToolEnd struct {
 type AssistantMessageEnd struct {
     Parts      []content.Part
     StopReason StopReason
-    Usage      Usage
+    Usage      model.Usage
 }
 ```
 
-它是 LLM call-local 的响应与 usage 记账事件，不跨 turn 聚合。事件刻意延迟到该响应触发的整个 tool wave 完成之后：有工具时固定顺序为 `ToolEnd`（wave 中的全部调用）→ `AssistantMessageEnd` → `TurnEnd`；无工具时为 `AssistantMessageEnd` → `TurnEnd`。因此消费者在收到 `AssistantMessageEnd` 时，既能记录本次 primary LLM call 的 usage，也能确定它触发的工具批次已经结束。Provider stream 未能汇总出完整 response，或任一 `AfterModel` hook 返回错误时，不发出该事件；compact summarizer 等内部 `Generate` 调用也不进入用户事件流。
+它是 LLM call-local 的响应与 usage 记账事件，不跨 turn 聚合。Model response、`AssistantMessageEnd`、`TurnEnd`、turn state、`AfterModel` 与 `AfterTurn` 都直接使用最后一个完整 `model.Usage` 快照，包括 provider 特有的 `Raw`，不再经过 event 专属类型或投影转换。事件刻意延迟到该响应触发的整个 tool wave 完成之后：有工具时固定顺序为 `ToolEnd`（wave 中的全部调用）→ `AssistantMessageEnd` → `TurnEnd`；无工具时为 `AssistantMessageEnd` → `TurnEnd`。因此消费者在收到 `AssistantMessageEnd` 时，既能记录本次 primary LLM call 的 usage，也能确定它触发的工具批次已经结束。Provider stream 未能汇总出完整 response，或任一 `AfterModel` hook 返回错误时，不发出该事件；compact summarizer 等内部 `Generate` 调用也不进入用户事件流。
 
 工具控制信号在当前公开 API 中通过 `TurnEnd.Action` 聚合给 flow 层：
 
@@ -206,7 +206,7 @@ type Handoff struct {
 type TurnEnd struct {
     Parts      []content.Part
     StopReason StopReason
-    Usage      Usage
+    Usage      model.Usage
     Err        error
     Action     Action
 }

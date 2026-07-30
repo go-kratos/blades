@@ -238,10 +238,10 @@ func setUsage(span trace.Span, usage *model.Usage) {
 	if usage == nil {
 		return
 	}
-	if usage.InputTokens > 0 {
-		span.SetAttributes(semconv.GenAIUsageInputTokens(int(usage.InputTokens)))
+	if usage.TotalInputTokens > 0 {
+		span.SetAttributes(semconv.GenAIUsageInputTokens(int(usage.TotalInputTokens)))
 	}
-	if usage.OutputTokens > 0 {
-		span.SetAttributes(semconv.GenAIUsageOutputTokens(int(usage.OutputTokens)))
+	if usage.TotalOutputTokens > 0 {
+		span.SetAttributes(semconv.GenAIUsageOutputTokens(int(usage.TotalOutputTokens)))
 	}
 }

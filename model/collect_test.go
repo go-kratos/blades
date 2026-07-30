@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"iter"
 	"testing"
 
@@ -20,12 +21,13 @@ func chunkSeq(chunks []*Chunk) iter.Seq2[*Chunk, error] {
 func TestCollectCoalescesStreamedText(t *testing.T) {
 	t.Parallel()
 
+	rawUsage := json.RawMessage(`{"output_tokens":3,"reasoning_tokens":2}`)
 	resp, err := Collect(chunkSeq([]*Chunk{
 		{Parts: []content.Part{content.Text{Text: "Hel"}}},
 		{Parts: []content.Part{content.Text{Text: "lo, "}}},
 		{Parts: []content.Part{content.Text{Text: "world"}}},
 		{Parts: []content.Part{content.ToolUse{ID: "t1", Name: "bash"}}},
-		{StopReason: StopToolUse, Usage: &Usage{OutputTokens: 3}},
+		{StopReason: StopToolUse, Usage: &Usage{TotalOutputTokens: 3, TotalTokens: 3, Raw: rawUsage}},
 	}))
 	if err != nil {
 		t.Fatalf("Collect() error = %v", err)
@@ -47,5 +49,60 @@ func TestCollectCoalescesStreamedText(t *testing.T) {
 	}
 	if resp.StopReason != StopToolUse {
 		t.Fatalf("stop reason = %q, want %q", resp.StopReason, StopToolUse)
+	}
+	if got, want := resp.Usage.TotalOutputTokens, int64(3); got != want {
+		t.Fatalf("total output tokens = %d, want %d", got, want)
+	}
+	if got, want := string(resp.Usage.Raw), string(rawUsage); got != want {
+		t.Fatalf("raw usage = %s, want %s", got, want)
+	}
+}
+
+func TestCollectUsesLastUsageAndLastNonEmptyStopReason(t *testing.T) {
+	t.Parallel()
+
+	firstRaw := json.RawMessage(`{"total_tokens":7}`)
+	lastRaw := json.RawMessage(`{"total_tokens":13}`)
+	resp, err := Collect(chunkSeq([]*Chunk{
+		{
+			StopReason: StopEnd,
+			Usage: &Usage{
+				TotalInputTokens:  3,
+				TotalOutputTokens: 4,
+				TotalTokens:       7,
+				Raw:               firstRaw,
+			},
+		},
+		{
+			Usage: &Usage{
+				InputCachedTokens: 5,
+				TotalInputTokens:  8,
+				TotalOutputTokens: 5,
+				TotalTokens:       13,
+				Raw:               lastRaw,
+			},
+		},
+		{StopReason: StopToolUse},
+	}))
+	if err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+
+	if got, want := resp.StopReason, StopToolUse; got != want {
+		t.Fatalf("stop reason = %q, want %q", got, want)
+	}
+	wantUsage := Usage{
+		InputCachedTokens: 5,
+		TotalInputTokens:  8,
+		TotalOutputTokens: 5,
+		TotalTokens:       13,
+		Raw:               lastRaw,
+	}
+	if got := resp.Usage; got.InputCachedTokens != wantUsage.InputCachedTokens ||
+		got.TotalInputTokens != wantUsage.TotalInputTokens ||
+		got.TotalOutputTokens != wantUsage.TotalOutputTokens ||
+		got.TotalTokens != wantUsage.TotalTokens ||
+		string(got.Raw) != string(wantUsage.Raw) {
+		t.Fatalf("usage = %+v, want %+v", got, wantUsage)
 	}
 }

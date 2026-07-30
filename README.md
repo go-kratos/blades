@@ -130,7 +130,7 @@ provider := openai.NewChat("gpt-5",
 
 Tool concurrency is driven by model output. If a provider returns multiple `content.ToolUse` parts in one assistant message, the Agent loop executes that tool wave concurrently. To request at most one tool call per turn, configure the provider, for example `openai.WithParallelToolCalls(false)` or `anthropic.WithParallelToolCalls(false)`.
 
-Each turn corresponds to exactly one primary `Provider.Stream` call and its optional tool wave. Every response accepted by `AfterModel` emits a mandatory `event.AssistantMessageEnd` with call-local usage. With tools, the order is all `ToolEnd` events, then `AssistantMessageEnd`, then `TurnEnd`; without tools, it is `AssistantMessageEnd`, then `TurnEnd`.
+Each turn corresponds to exactly one primary `Provider.Stream` call and its optional tool wave. Every response accepted by `AfterModel` emits a mandatory `event.AssistantMessageEnd` with normalized call-local usage. `AssistantMessageEnd.Usage` and `TurnEnd.Usage` use `model.Usage` directly, including provider-specific `Raw`. With tools, the order is all `ToolEnd` events, then `AssistantMessageEnd`, then `TurnEnd`; without tools, it is `AssistantMessageEnd`, then `TurnEnd`.
 
 ## Tools And Agents
 

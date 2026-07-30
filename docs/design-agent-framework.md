@@ -54,7 +54,7 @@ type Agent interface {
 }
 ```
 
-`event/` 是 Event 协议的唯一用户入口。根包不 re-export `event.Input`、`event.Output`，也不提供 `Prompt`、`Steer`、`Abort` 这类 Event 构造函数。事件中的多模态字段直接使用 `content.Part`。这样用户只需要理解一个 Event 包，避免同一类型同时出现在 `blades` 和 `event` 两个命名空间。
+`event/` 是 Event 协议的唯一用户入口。根包不 re-export `event.Input`、`event.Output`，也不提供 `Prompt`、`Steer`、`Abort` 这类 Event 构造函数。事件中的多模态字段直接使用 `content.Part`，usage 字段直接使用唯一的 `model.Usage`。这样不会在 `event` 与 `model` 两个命名空间重复定义 usage。
 
 `blades.NewAgent(name, opts...)` 返回默认 `llmAgent`。`llmAgent` 在根包内部实现 interaction loop / per-call turn / tool wave 运行模型；用户不需要导入公开 `loop/` 包。通过 `WithHooks`、`WithPolicy`、`WithCompact`、`WithPrompt` 等 options 注入扩展能力；完全不同的 runtime 直接实现 `blades.Agent`。
 
@@ -198,7 +198,7 @@ Event 和 Message 不合并。原因：
 | 原则 | 决策 |
 |------|------|
 | 根包极简 | `blades/` 放 `Agent`、`NewAgent`、Option、默认 `llmAgent`、必要错误、`Runner` helper 和 `NewAgentTool` |
-| 协议叶子互独立 | `content/`、`event/` 之间禁止形成循环；`model/` 单向依赖 `tools/`（ToolSpec）；`tools/` 单向依赖 `content/` |
+| 协议依赖单向 | `content/` 是共享叶子；`tools/` 单向依赖 `content/`；`model/` 单向依赖 `content/` 与 `tools/`；`event/` 单向依赖 `content/` 与 `model/`，仅复用 `model.Usage` |
 | 多模态共享叶子 | `content/` 仅依赖标准库；`Part` 为 sealed marker（私有 `part()`）；变体 = Text/FilePart/FileRefPart/DataPart/Thinking/ToolUse/ToolResult；Thinking 含 Signature |
 | Provider 协议 sealed | 三处 sealed 例外全部封闭：`content.Part`（私有 `part()`）、`event.Input`（私有 `input()`）、`event.Output`（私有 `output()`）。核心协议层无开放扩展接口；后台回流走 `event.Prompt`，应用业务事件由应用自己的 channel / event bus 承载。`hook/` 不再使用 sealed event union，改为单 `Hook` 接口（6 个生命周期方法）+ `hook.Noop` 嵌入式默认实现（详见 `design-hook-extension.md`） |
 | ToolSpec 定义在 tools/ | `tools.ToolSpec` 是唯一定义点；`model.Request.Tools` 直接使用 `[]tools.ToolSpec`；`model/` 单向依赖 `tools/` |
@@ -242,8 +242,8 @@ blades/
 │   ├── input.go                Prompt{Parts []content.Part}, Steer{Parts []content.Part}, NewPrompt/NewSteer 构造函数
 │   ├── stream.go               TextDelta/ThinkingDelta（hot path，紧凑值类型）
 │   ├── tool.go                 ToolStart{ID, Name, Input}, ToolDelta{ID, Data}, ToolEnd{ID, Name, Parts, IsError}
-│   ├── message.go              AssistantMessageEnd{Parts, StopReason, Usage}（mandatory call-local response event）
-│   └── terminal.go             TurnEnd{Parts, StopReason, Usage, Err, Action}, Error{Err}, Done{}；StopReason/Usage 类型
+│   ├── message.go              AssistantMessageEnd{Parts, StopReason, Usage model.Usage}（mandatory call-local response event）
+│   └── terminal.go             TurnEnd{Parts, StopReason, Usage model.Usage, Err, Action}, Error{Err}, Done{}；StopReason 类型
 │
 ├── model/
 │   ├── message.go              Message{Role, Parts, Metadata}, MessageMetadata{Provider, API, Model}, type Role string（RoleUser/RoleAssistant/RoleTool）
@@ -252,7 +252,7 @@ blades/
 │   ├── token.go                TokenCounter + TokenCount + ApproxTokenCounter request-level 计数能力
 │   ├── request.go              Request{Model, System string, Messages, Tools []tools.ToolSpec, Options []Option}
 │   ├── response.go             Response{Message *Message, StopReason, Usage}, Chunk{Parts []content.Part, StopReason, Usage *Usage}
-│   ├── usage.go                Usage{InputTokens, OutputTokens int64}, StopReason 常量
+│   ├── usage.go                Usage（cache/modality/reasoning/prediction/total 标准计数 + Raw）, StopReason 常量
 │   └── collect.go              Collect(iter.Seq2[*Chunk, error]) (*Response, error)
 │
 ├── tools/
@@ -379,9 +379,9 @@ run manager 语义（run ID、队列、daemon、cron、后台 job、主动通知
 
 ```
 content/    -> standard library only
-event/      -> content/
 tools/      -> content/ + jsonschema                    // ToolSpec 定义在此；Result.Parts: []content.Part
 model/      -> content/ + tools/                       // Request.Tools []tools.ToolSpec
+event/      -> content/ + model/                       // events reuse model.Usage
 
 session/    -> model/
 compact/    -> model/, content/, session/                // Compactor + provider-direct Summarizer
@@ -403,7 +403,7 @@ contrib/*   -> model/ 或 tools/
 
 - `content/` 是最底层叶子，**硬约束仅依赖标准库**（`go list -deps ./content/...` 不得出现非 stdlib 包）；任何包都可单向依赖它。
 - `tools/` 依赖 `content/` + `jsonschema`；`ToolSpec` 定义在 `tools/` 中。
-- `model/` 依赖 `content/` + `tools/`（仅 `tools.ToolSpec`）。`event/` 和 `model/` 互不依赖。
+- `model/` 依赖 `content/` + `tools/`（仅 `tools.ToolSpec`）；`event/` 单向依赖 `model/`，只复用唯一的 `model.Usage`，`model/` 不反向依赖 `event/`。
 - `policy/` 单向依赖 `tools/`，v1 仅 `ToolRequest`。
 - `compact/` 不依赖 root Agent；摘要能力通过 `Summarizer` 注入，内置 `NewModelSummarizer` 直接调用 `model.Provider.Generate`，不运行 Agent loop。
 - `memory/` 依赖 `content/`（`Recall` 返回 `[]content.Part`），不依赖 `model/`。

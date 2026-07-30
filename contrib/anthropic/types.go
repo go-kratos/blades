@@ -67,11 +67,8 @@ func convertBladesToolsToClaude(toolSpecs []tools.ToolSpec) ([]anthropic.ToolUni
 // convertClaudeToBlades converts a Claude Message to Blades model.Response.
 func convertClaudeToBlades(message *anthropic.Message) (*model.Response, error) {
 	resp := &model.Response{
-		Message: &model.Message{Role: model.RoleAssistant},
-		Usage: model.Usage{
-			InputTokens:  message.Usage.InputTokens,
-			OutputTokens: message.Usage.OutputTokens,
-		},
+		Message:    &model.Message{Role: model.RoleAssistant},
+		Usage:      claudeUsageToModel(message.Usage),
 		StopReason: mapClaudeStopReason(message.StopReason),
 	}
 	for _, block := range message.Content {
@@ -186,8 +183,9 @@ func (a *streamAccumulator) stopContentBlock(event anthropic.ContentBlockStopEve
 	return nil
 }
 
-func (a *streamAccumulator) messageDelta(event anthropic.MessageDeltaEvent) {
+func (a *streamAccumulator) messageDelta(event anthropic.MessageDeltaEvent) model.Usage {
 	a.stopReason = mapClaudeStopReason(event.Delta.StopReason)
+	return claudeDeltaUsageToModel(event.Usage)
 }
 
 func (a *streamAccumulator) toolParts() []content.Part {
@@ -216,6 +214,36 @@ func mapClaudeStopReason(reason anthropic.StopReason) model.StopReason {
 		return model.StopSafety
 	default:
 		return model.StopEnd
+	}
+}
+
+func rawUsageJSON(raw string) json.RawMessage {
+	return json.RawMessage(raw)
+}
+
+func claudeUsageToModel(usage anthropic.Usage) model.Usage {
+	totalInput := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+	return model.Usage{
+		InputCachedTokens:     usage.CacheReadInputTokens,
+		InputCacheMissTokens:  usage.InputTokens,
+		InputWriteCacheTokens: usage.CacheCreationInputTokens,
+		TotalInputTokens:      totalInput,
+		TotalOutputTokens:     usage.OutputTokens,
+		TotalTokens:           totalInput + usage.OutputTokens,
+		Raw:                   rawUsageJSON(usage.RawJSON()),
+	}
+}
+
+func claudeDeltaUsageToModel(usage anthropic.MessageDeltaUsage) model.Usage {
+	totalInput := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+	return model.Usage{
+		InputCachedTokens:     usage.CacheReadInputTokens,
+		InputCacheMissTokens:  usage.InputTokens,
+		InputWriteCacheTokens: usage.CacheCreationInputTokens,
+		TotalInputTokens:      totalInput,
+		TotalOutputTokens:     usage.OutputTokens,
+		TotalTokens:           totalInput + usage.OutputTokens,
+		Raw:                   rawUsageJSON(usage.RawJSON()),
 	}
 }
 

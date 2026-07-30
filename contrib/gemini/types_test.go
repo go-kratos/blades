@@ -83,6 +83,81 @@ func TestConvertGenAIToBlades_FunctionCallMappedToToolPart(t *testing.T) {
 	}
 }
 
+func TestConvertGenAIToChunkPreservesRawUsage(t *testing.T) {
+	t.Parallel()
+
+	metadata := &genai.GenerateContentResponseUsageMetadata{
+		PromptTokenCount:        10,
+		CandidatesTokenCount:    4,
+		CachedContentTokenCount: 7,
+		ToolUsePromptTokenCount: 2,
+		ThoughtsTokenCount:      3,
+		TotalTokenCount:         19,
+		PromptTokensDetails: []*genai.ModalityTokenCount{
+			{Modality: genai.MediaModalityText, TokenCount: 4},
+			{Modality: genai.MediaModalityImage, TokenCount: 3},
+			{Modality: genai.MediaModalityAudio, TokenCount: 2},
+			{Modality: genai.MediaModalityVideo, TokenCount: 1},
+		},
+		CacheTokensDetails: []*genai.ModalityTokenCount{
+			{Modality: genai.MediaModalityText, TokenCount: 2},
+			{Modality: genai.MediaModalityImage, TokenCount: 2},
+			{Modality: genai.MediaModalityAudio, TokenCount: 2},
+			{Modality: genai.MediaModalityVideo, TokenCount: 1},
+		},
+		CandidatesTokensDetails: []*genai.ModalityTokenCount{
+			{Modality: genai.MediaModalityText, TokenCount: 1},
+			{Modality: genai.MediaModalityImage, TokenCount: 2},
+			{Modality: genai.MediaModalityAudio, TokenCount: 1},
+		},
+	}
+	chunk, err := convertGenAIToChunk(&genai.GenerateContentResponse{UsageMetadata: metadata})
+	if err != nil {
+		t.Fatalf("convertGenAIToChunk returned error: %v", err)
+	}
+	if chunk.Usage == nil {
+		t.Fatal("chunk usage is nil")
+	}
+	for name, values := range map[string][2]int64{
+		"input cached tokens":       {chunk.Usage.InputCachedTokens, 7},
+		"input cache miss tokens":   {chunk.Usage.InputCacheMissTokens, 3},
+		"input cached text tokens":  {chunk.Usage.InputCachedTextTokens, 2},
+		"input cached image tokens": {chunk.Usage.InputCachedImageTokens, 2},
+		"input cached audio tokens": {chunk.Usage.InputCachedAudioTokens, 2},
+		"input cached video tokens": {chunk.Usage.InputCachedVideoTokens, 1},
+		"input text tokens":         {chunk.Usage.InputTextTokens, 4},
+		"input image tokens":        {chunk.Usage.InputImageTokens, 3},
+		"input audio tokens":        {chunk.Usage.InputAudioTokens, 2},
+		"input video tokens":        {chunk.Usage.InputVideoTokens, 1},
+		"input tool tokens":         {chunk.Usage.InputToolTokens, 2},
+		"output text tokens":        {chunk.Usage.OutputTextTokens, 1},
+		"output image tokens":       {chunk.Usage.OutputImageTokens, 2},
+		"output audio tokens":       {chunk.Usage.OutputAudioTokens, 1},
+		"output reasoning tokens":   {chunk.Usage.OutputReasoningTokens, 3},
+		"total input tokens":        {chunk.Usage.TotalInputTokens, 12},
+		"total output tokens":       {chunk.Usage.TotalOutputTokens, 7},
+		"total tokens":              {chunk.Usage.TotalTokens, 19},
+	} {
+		if got, want := values[0], values[1]; got != want {
+			t.Fatalf("%s = %d, want %d", name, got, want)
+		}
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(chunk.Usage.Raw, &raw); err != nil {
+		t.Fatalf("unmarshal raw usage %s: %v", chunk.Usage.Raw, err)
+	}
+	for name, want := range map[string]float64{
+		"cachedContentTokenCount": 7,
+		"thoughtsTokenCount":      3,
+		"totalTokenCount":         19,
+	} {
+		if got := raw[name]; got != want {
+			t.Fatalf("raw usage %s = %v, want %v: %s", name, got, want, chunk.Usage.Raw)
+		}
+	}
+}
+
 func TestConvertGenAIToBlades_MixedTextAndFunctionCallUsesToolRole(t *testing.T) {
 	t.Parallel()
 
