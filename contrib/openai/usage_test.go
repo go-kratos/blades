@@ -29,7 +29,7 @@ func TestChatConversionsPreserveRawUsage(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"choices":[],"usage":`+usageJSON+`}`), &completion); err != nil {
 		t.Fatalf("unmarshal chat completion: %v", err)
 	}
-	response, err := choiceToResponse(&completion)
+	response, err := choiceToResponse(&completion, nil)
 	if err != nil {
 		t.Fatalf("choiceToResponse returned error: %v", err)
 	}

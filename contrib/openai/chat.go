@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/jsonrepair"
 	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/tools"
 	openai "github.com/openai/openai-go/v3"
@@ -34,6 +35,9 @@ type ChatConfig struct {
 	RequestOptions   []sdkoption.RequestOption
 	ModelOptions     []model.Option
 	ReasoningEffort  shared.ReasoningEffort
+	// ToolInputJSONRepairer repairs malformed completed tool input before it is
+	// emitted. Nil disables repair.
+	ToolInputJSONRepairer jsonrepair.Repairer
 }
 
 // ChatOption configures an OpenAI chat model provider.
@@ -76,10 +80,18 @@ func WithParallelToolCalls(enabled bool) ChatOption {
 	}
 }
 
+// WithToolInputJSONRepairer configures receive-side repair for malformed tool
+// input JSON. Nil disables repair.
+func WithToolInputJSONRepairer(repairer jsonrepair.Repairer) ChatOption {
+	return func(c *ChatConfig) {
+		c.ToolInputJSONRepairer = repairer
+	}
+}
+
 // NewChat constructs an OpenAI chat provider. The API key is read
 // from the SDK default environment variables unless WithAPIKey is used.
 func NewChat(modelName string, opts ...ChatOption) model.Provider {
-	var config ChatConfig
+	config := ChatConfig{ToolInputJSONRepairer: jsonrepair.New()}
 	for _, opt := range opts {
 		opt(&config)
 	}
@@ -121,7 +133,7 @@ func (m *chatModel) Generate(ctx context.Context, req *model.Request) (*model.Re
 	if err != nil {
 		return nil, err
 	}
-	return choiceToResponse(chatResponse)
+	return choiceToResponse(chatResponse, m.config.ToolInputJSONRepairer)
 }
 
 // Stream streams chat completion chunks.
@@ -134,7 +146,7 @@ func (m *chatModel) Stream(ctx context.Context, req *model.Request) iter.Seq2[*m
 		}
 		streaming := m.client.Chat.Completions.NewStreaming(ctx, params)
 		defer streaming.Close()
-		accumulator := newChatStreamAccumulator()
+		accumulator := newChatStreamAccumulator(m.config.ToolInputJSONRepairer)
 		for streaming.Next() {
 			chunk := streaming.Current()
 			converted, err := accumulator.addChunk(chunk)
@@ -375,7 +387,7 @@ func toContentParts(parts []content.Part) []openai.ChatCompletionContentPartUnio
 }
 
 // choiceToResponse converts a non-streaming response to a model.Response.
-func choiceToResponse(cc *openai.ChatCompletion) (*model.Response, error) {
+func choiceToResponse(cc *openai.ChatCompletion, repairer jsonrepair.Repairer) (*model.Response, error) {
 	resp := &model.Response{
 		Message: &model.Message{Role: model.RoleAssistant},
 		Usage:   completionUsageToModel(cc.Usage),
@@ -396,10 +408,14 @@ func choiceToResponse(cc *openai.ChatCompletion) (*model.Response, error) {
 			if call.Function.Name == "" {
 				continue
 			}
+			input, err := normalizeToolInputJSON([]byte(call.Function.Arguments), repairer)
+			if err != nil {
+				return nil, fmt.Errorf("openai/chat: invalid tool input JSON for tool %q (%s): %w", call.Function.Name, call.ID, err)
+			}
 			resp.Message.Parts = append(resp.Message.Parts, content.ToolUse{
 				ID:    call.ID,
 				Name:  call.Function.Name,
-				Input: json.RawMessage(call.Function.Arguments),
+				Input: json.RawMessage(input),
 			})
 		}
 	}
@@ -412,6 +428,7 @@ func choiceToResponse(cc *openai.ChatCompletion) (*model.Response, error) {
 type chatStreamAccumulator struct {
 	sdk              openai.ChatCompletionAccumulator
 	emittedToolCalls map[chatToolCallKey]struct{}
+	repairer         jsonrepair.Repairer
 }
 
 type chatToolCallKey struct {
@@ -419,9 +436,10 @@ type chatToolCallKey struct {
 	toolIndex   int
 }
 
-func newChatStreamAccumulator() *chatStreamAccumulator {
+func newChatStreamAccumulator(repairer jsonrepair.Repairer) *chatStreamAccumulator {
 	return &chatStreamAccumulator{
 		emittedToolCalls: make(map[chatToolCallKey]struct{}),
+		repairer:         repairer,
 	}
 }
 
@@ -458,18 +476,14 @@ func (a *chatStreamAccumulator) toolParts(choiceIndex int64) ([]content.Part, er
 		if call.Function.Name == "" {
 			continue
 		}
-		input := []byte(call.Function.Arguments)
-		if len(input) == 0 {
-			input = []byte("{}")
-		}
-		var decoded any
-		if err := json.Unmarshal(input, &decoded); err != nil {
+		input, err := normalizeToolInputJSON([]byte(call.Function.Arguments), a.repairer)
+		if err != nil {
 			return nil, fmt.Errorf("openai/chat: invalid tool input JSON for tool %q (%s): %w", call.Function.Name, call.ID, err)
 		}
 		parts = append(parts, content.ToolUse{
 			ID:    call.ID,
 			Name:  call.Function.Name,
-			Input: json.RawMessage(append([]byte(nil), input...)),
+			Input: json.RawMessage(input),
 		})
 		a.emittedToolCalls[key] = struct{}{}
 	}

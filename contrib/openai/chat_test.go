@@ -21,6 +21,24 @@ func (f httpClientFunc) Do(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+func TestChatToolInputJSONRepairConfiguration(t *testing.T) {
+	t.Parallel()
+
+	defaultProvider := NewChat("gpt-test", WithAPIKey("test-key")).(*chatModel)
+	if defaultProvider.config.ToolInputJSONRepairer == nil {
+		t.Fatal("default tool input JSON repairer is nil")
+	}
+
+	strictProvider := NewChat(
+		"gpt-test",
+		WithAPIKey("test-key"),
+		WithToolInputJSONRepairer(nil),
+	).(*chatModel)
+	if strictProvider.config.ToolInputJSONRepairer != nil {
+		t.Fatal("tool input JSON repairer is enabled after WithToolInputJSONRepairer(nil)")
+	}
+}
+
 func TestToChatCompletionParamsAssistantRole(t *testing.T) {
 	t.Parallel()
 
@@ -147,7 +165,7 @@ func TestChoiceToResponseReturnsToolUses(t *testing.T) {
 				},
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("choiceToResponse returned error: %v", err)
 	}
@@ -167,10 +185,31 @@ func TestChoiceToResponseReturnsToolUses(t *testing.T) {
 	}
 }
 
+func TestChoiceToResponseRepairsToolInputJSONByDefault(t *testing.T) {
+	t.Parallel()
+
+	provider := NewChat("gpt-test", WithAPIKey("test-key")).(*chatModel)
+	response, err := choiceToResponse(
+		chatCompletionWithToolArguments(`{"city":"Paris"`),
+		provider.config.ToolInputJSONRepairer,
+	)
+	if err != nil {
+		t.Fatalf("choiceToResponse returned error: %v", err)
+	}
+
+	toolUse, ok := response.Message.Parts[0].(content.ToolUse)
+	if !ok {
+		t.Fatalf("part type = %T, want content.ToolUse", response.Message.Parts[0])
+	}
+	if got, want := string(toolUse.Input), `{"city":"Paris"}`; got != want {
+		t.Fatalf("tool input = %q, want %q", got, want)
+	}
+}
+
 func TestChatStreamAccumulatorEmitsToolUsesAfterDeltasComplete(t *testing.T) {
 	t.Parallel()
 
-	accumulator := newChatStreamAccumulator()
+	accumulator := newChatStreamAccumulator(nil)
 	chunks := []openaisdk.ChatCompletionChunk{
 		{
 			ID: "chatcmpl_1",
@@ -287,7 +326,12 @@ func TestChatStreamAccumulatorEmitsToolUsesAfterDeltasComplete(t *testing.T) {
 func TestChatStreamAccumulatorRejectsInvalidFinalToolInputJSON(t *testing.T) {
 	t.Parallel()
 
-	accumulator := newChatStreamAccumulator()
+	provider := NewChat(
+		"gpt-test",
+		WithAPIKey("test-key"),
+		WithToolInputJSONRepairer(nil),
+	).(*chatModel)
+	accumulator := newChatStreamAccumulator(provider.config.ToolInputJSONRepairer)
 	chunks := []openaisdk.ChatCompletionChunk{
 		{
 			ID: "chatcmpl_1",
@@ -351,6 +395,67 @@ func TestChatStreamAccumulatorRejectsInvalidFinalToolInputJSON(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, `invalid tool input JSON for tool "web_fetch" (call_1)`) {
 		t.Fatalf("error = %q, want invalid tool input JSON error", got)
+	}
+}
+
+func TestChatStreamAccumulatorRepairsFinalToolInputJSONByDefault(t *testing.T) {
+	t.Parallel()
+
+	provider := NewChat("gpt-test", WithAPIKey("test-key")).(*chatModel)
+	accumulator := newChatStreamAccumulator(provider.config.ToolInputJSONRepairer)
+	chunk, err := accumulator.addChunk(openaisdk.ChatCompletionChunk{
+		ID: "chatcmpl_1",
+		Choices: []openaisdk.ChatCompletionChunkChoice{
+			{
+				Index:        0,
+				FinishReason: "tool_calls",
+				Delta: openaisdk.ChatCompletionChunkChoiceDelta{
+					ToolCalls: []openaisdk.ChatCompletionChunkChoiceDeltaToolCall{
+						{
+							Index: 0,
+							ID:    "call_1",
+							Type:  "function",
+							Function: openaisdk.ChatCompletionChunkChoiceDeltaToolCallFunction{
+								Name:      "get_weather",
+								Arguments: `{"city":"Paris"`,
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("addChunk returned error: %v", err)
+	}
+	toolUse, ok := chunk.Parts[0].(content.ToolUse)
+	if !ok {
+		t.Fatalf("part type = %T, want content.ToolUse", chunk.Parts[0])
+	}
+	if got, want := string(toolUse.Input), `{"city":"Paris"}`; got != want {
+		t.Fatalf("tool input = %q, want %q", got, want)
+	}
+}
+
+func chatCompletionWithToolArguments(arguments string) *openaisdk.ChatCompletion {
+	return &openaisdk.ChatCompletion{
+		Choices: []openaisdk.ChatCompletionChoice{
+			{
+				FinishReason: "tool_calls",
+				Message: openaisdk.ChatCompletionMessage{
+					ToolCalls: []openaisdk.ChatCompletionMessageToolCallUnion{
+						{
+							ID:   "call_1",
+							Type: "function",
+							Function: openaisdk.ChatCompletionMessageFunctionToolCallFunction{
+								Name:      "get_weather",
+								Arguments: arguments,
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 }
 

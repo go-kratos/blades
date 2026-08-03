@@ -1,0 +1,5 @@
+event: content_block_start
+data: {"content_block":{"id":"toolu_fixture_truncated","input":{},"name":"bash","type":"tool_use"},"index":0,"type":"content_block_start"}
+
+event: content_block_delta
+data: {"delta":{"partial_json":"{\"command\":\"printf 'fixture，content'","type":"input_json_delta"},"index":0,"type":"content_block_delta"}

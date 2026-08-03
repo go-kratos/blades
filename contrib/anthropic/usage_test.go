@@ -8,7 +8,7 @@ import (
 func TestStreamAccumulatorUsesMessageDeltaUsage(t *testing.T) {
 	t.Parallel()
 
-	accumulator := newStreamAccumulator()
+	accumulator := newStreamAccumulator(nil)
 	usage := accumulator.messageDelta(decodeMessageDeltaEvent(t, `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"cache_creation_input_tokens":3,"cache_read_input_tokens":4,"input_tokens":5,"output_tokens":6,"server_tool_use":{"web_search_requests":1},"provider_extension":{"billable_tokens":12}}}`))
 
 	for name, values := range map[string][2]int64{

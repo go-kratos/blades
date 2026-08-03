@@ -14,6 +14,24 @@ import (
 	"github.com/go-kratos/blades/model"
 )
 
+func TestToolInputJSONRepairConfiguration(t *testing.T) {
+	t.Parallel()
+
+	defaultProvider := NewModel("claude-test", WithAPIKey("test-key")).(*Claude)
+	if defaultProvider.config.ToolInputJSONRepairer == nil {
+		t.Fatal("default tool input JSON repairer is nil")
+	}
+
+	strictProvider := NewModel(
+		"claude-test",
+		WithAPIKey("test-key"),
+		WithToolInputJSONRepairer(nil),
+	).(*Claude)
+	if strictProvider.config.ToolInputJSONRepairer != nil {
+		t.Fatal("tool input JSON repairer is enabled after WithToolInputJSONRepairer(nil)")
+	}
+}
+
 func TestStreamCollectsToolUseFromInputJSONDeltas(t *testing.T) {
 	t.Parallel()
 
@@ -116,7 +134,7 @@ func TestStreamPreservesThinkingSignatureForToolUseReplay(t *testing.T) {
 	}
 }
 
-func TestStreamReportsInvalidToolInputJSON(t *testing.T) {
+func TestStreamRejectsInvalidToolInputJSONWhenRepairDisabled(t *testing.T) {
 	t.Parallel()
 
 	var sse strings.Builder
@@ -127,7 +145,7 @@ func TestStreamReportsInvalidToolInputJSON(t *testing.T) {
 	writeSSEEvent(&sse, "message_delta", `{"delta":{"stop_reason":"tool_use","stop_sequence":null},"type":"message_delta","usage":{"input_tokens":1,"output_tokens":5}}`)
 	writeSSEEvent(&sse, "message_stop", `{"type":"message_stop"}`)
 
-	provider := newTestProvider(t, sse.String())
+	provider := newTestProvider(t, sse.String(), WithToolInputJSONRepairer(nil))
 	var streamErr error
 	for _, err := range provider.Stream(context.Background(), &model.Request{
 		Messages: []*model.Message{{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "read"}}}},
@@ -147,6 +165,152 @@ func TestStreamReportsInvalidToolInputJSON(t *testing.T) {
 	if got := streamErr.Error(); strings.Contains(got, "error converting content block to JSON") ||
 		strings.Contains(got, "json.RawMessage") {
 		t.Fatalf("Stream error = %q, want Blades error without SDK marshal detail", got)
+	}
+}
+
+func TestStreamRepairsInvalidToolInputJSONByDefault(t *testing.T) {
+	t.Parallel()
+
+	partialJSON := `{"question":{"prompt":"输入"已登录"后继续，或取消。"}}`
+	delta, err := json.Marshal(map[string]any{
+		"delta": map[string]any{
+			"partial_json": partialJSON,
+			"type":         "input_json_delta",
+		},
+		"index": 1,
+		"type":  "content_block_delta",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sse strings.Builder
+	writeSSEEvent(&sse, "message_start", `{"message":{"content":[],"id":"msg_1","model":"claude-test","role":"assistant","stop_reason":null,"stop_sequence":null,"type":"message","usage":{"input_tokens":1,"output_tokens":0}},"type":"message_start"}`)
+	writeSSEEvent(&sse, "content_block_start", `{"content_block":{"id":"toolu_1","input":{},"name":"ask_user_question","type":"tool_use"},"index":1,"type":"content_block_start"}`)
+	writeSSEEvent(&sse, "content_block_delta", string(delta))
+	writeSSEEvent(&sse, "content_block_stop", `{"index":1,"type":"content_block_stop"}`)
+	writeSSEEvent(&sse, "message_delta", `{"delta":{"stop_reason":"tool_use","stop_sequence":null},"type":"message_delta","usage":{"input_tokens":1,"output_tokens":5}}`)
+	writeSSEEvent(&sse, "message_stop", `{"type":"message_stop"}`)
+
+	provider := newTestProvider(t, sse.String())
+	var toolUse content.ToolUse
+	for chunk, streamErr := range provider.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "ask"}}}},
+	}) {
+		if streamErr != nil {
+			t.Fatalf("Stream returned error: %v", streamErr)
+		}
+		for _, part := range chunk.Parts {
+			if got, ok := part.(content.ToolUse); ok {
+				toolUse = got
+			}
+		}
+	}
+
+	var input struct {
+		Question struct {
+			Prompt string `json:"prompt"`
+		} `json:"question"`
+	}
+	if err := json.Unmarshal(toolUse.Input, &input); err != nil {
+		t.Fatalf("tool input = %s, unmarshal error = %v", toolUse.Input, err)
+	}
+	if got, want := input.Question.Prompt, `输入"已登录"后继续，或取消。`; got != want {
+		t.Fatalf("prompt = %q, want %q", got, want)
+	}
+}
+
+func TestStreamRepairsIncompleteToolInputJSONAtEOF(t *testing.T) {
+	t.Parallel()
+
+	partialJSON := `{"command":"printf '保留，全部内容'`
+	delta, err := json.Marshal(map[string]any{
+		"delta": map[string]any{
+			"partial_json": partialJSON,
+			"type":         "input_json_delta",
+		},
+		"index": 0,
+		"type":  "content_block_delta",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sse strings.Builder
+	writeSSEEvent(&sse, "message_start", `{"message":{"content":[],"id":"msg_1","model":"claude-test","role":"assistant","stop_reason":null,"stop_sequence":null,"type":"message","usage":{"input_tokens":1,"output_tokens":0}},"type":"message_start"}`)
+	writeSSEEvent(&sse, "content_block_start", `{"content_block":{"id":"toolu_1","input":{},"name":"bash","type":"tool_use"},"index":0,"type":"content_block_start"}`)
+	writeSSEEvent(&sse, "content_block_delta", string(delta))
+
+	provider := newTestProvider(t, sse.String())
+	var toolUse content.ToolUse
+	var stopReason model.StopReason
+	for chunk, streamErr := range provider.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "run"}}}},
+	}) {
+		if streamErr != nil {
+			t.Fatalf("Stream returned error: %v", streamErr)
+		}
+		if chunk.StopReason != "" {
+			stopReason = chunk.StopReason
+		}
+		for _, part := range chunk.Parts {
+			if got, ok := part.(content.ToolUse); ok {
+				toolUse = got
+			}
+		}
+	}
+
+	var input struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(toolUse.Input, &input); err != nil {
+		t.Fatalf("tool input = %s, unmarshal error = %v", toolUse.Input, err)
+	}
+	if got, want := input.Command, `printf '保留，全部内容'`; got != want {
+		t.Fatalf("command = %q, want %q", got, want)
+	}
+	if got, want := stopReason, model.StopToolUse; got != want {
+		t.Fatalf("stop reason = %q, want %q", got, want)
+	}
+}
+
+func TestStreamRejectsInvalidToolInputAtEOFWhenRepairDisabled(t *testing.T) {
+	t.Parallel()
+
+	partialJSON := `{"command":"printf 'received content'`
+	delta, err := json.Marshal(map[string]any{
+		"delta": map[string]any{
+			"partial_json": partialJSON,
+			"type":         "input_json_delta",
+		},
+		"index": 0,
+		"type":  "content_block_delta",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sse strings.Builder
+	writeSSEEvent(&sse, "message_start", `{"message":{"content":[],"id":"msg_1","model":"claude-test","role":"assistant","stop_reason":null,"stop_sequence":null,"type":"message","usage":{"input_tokens":1,"output_tokens":0}},"type":"message_start"}`)
+	writeSSEEvent(&sse, "content_block_start", `{"content_block":{"id":"toolu_1","input":{},"name":"bash","type":"tool_use"},"index":0,"type":"content_block_start"}`)
+	writeSSEEvent(&sse, "content_block_delta", string(delta))
+
+	provider := newTestProvider(t, sse.String(), WithToolInputJSONRepairer(nil))
+	var streamErr error
+	for _, err := range provider.Stream(context.Background(), &model.Request{
+		Messages: []*model.Message{{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "run"}}}},
+	}) {
+		if err != nil {
+			streamErr = err
+			break
+		}
+	}
+	if streamErr == nil {
+		t.Fatal("Stream error = nil, want invalid tool input JSON error")
+	}
+	if got := streamErr.Error(); !strings.Contains(got, `invalid tool input JSON for tool "bash" (toolu_1)`) ||
+		!strings.Contains(got, "unexpected end of JSON input") {
+		t.Fatalf("Stream error = %q, want invalid tool input JSON error", got)
 	}
 }
 
@@ -414,7 +578,7 @@ func TestToClaudeParamsToolMessages(t *testing.T) {
 	}
 }
 
-func newTestProvider(t *testing.T, sse string) model.Provider {
+func newTestProvider(t *testing.T, sse string, opts ...ModelOption) model.Provider {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/messages" {
@@ -426,7 +590,8 @@ func newTestProvider(t *testing.T, sse string) model.Provider {
 	}))
 	t.Cleanup(server.Close)
 
-	return NewModel("claude-test", WithBaseURL(server.URL), WithAPIKey("test-key"))
+	opts = append(opts, WithBaseURL(server.URL), WithAPIKey("test-key"))
+	return NewModel("claude-test", opts...)
 }
 
 func writeSSEEvent(sb *strings.Builder, event string, data string) {

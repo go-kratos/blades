@@ -20,6 +20,7 @@
 - [Compact 系统](./design-compact.md) - 单一 Compactor 接口与内置实现（Window/ToolResultBudget/Summarize/Chain） `[draft]`
 - [Context Management](./design-context-management.md) - root Agent request-view 构建、input/system/messages/tools 预算协同、context stats 与 summary request 边界 `[draft]`
 - [Model 与 Provider](./design-model-provider.md) - `model/` Message、Part、Provider（Name/Generate/Stream）、TokenCounter/TokenCount/ApproxTokenCounter、Request/Response/Chunk、Options sealed union `[draft]`
+- [JSON Repair Package](./design-json-repair.md) - Provider-neutral, source-preserving recovery for malformed tool-call JSON `[implemented]`
 
 ## 参考文档
 
@@ -34,6 +35,7 @@
 - [Event 系统与 Agent Loop](./design-event-agent-loop.md)
 - [Model 与 Provider](./design-model-provider.md)
 - [工具系统](./design-tool-system.md)
+- [JSON Repair Package](./design-json-repair.md)
 - [会话与持久化](./design-session.md)
 
 ### Capability
@@ -59,7 +61,7 @@
 - Draft: 12
 - Review: 0
 - Approved: 0
-- Implemented: 0
+- Implemented: 1
 - Deprecated: 0
 
 ---

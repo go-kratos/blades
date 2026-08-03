@@ -1,0 +1,8 @@
+event: content_block_start
+data: {"content_block":{"id":"toolu_fixture_unescaped_quotes","input":{},"name":"ask_user_question","type":"tool_use"},"index":0,"type":"content_block_start"}
+
+event: content_block_delta
+data: {"delta":{"partial_json":"{\"question\":{\"prompt\":\"输入\"已登录\"后继续，或取消。\"}}","type":"input_json_delta"},"index":0,"type":"content_block_delta"}
+
+event: content_block_stop
+data: {"index":0,"type":"content_block_stop"}

@@ -7,6 +7,7 @@ import (
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	sdkoption "github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/go-kratos/blades/jsonrepair"
 	"github.com/go-kratos/blades/model"
 )
 
@@ -23,6 +24,9 @@ type Config struct {
 	RequestOptions  []sdkoption.RequestOption
 	ModelOptions    []model.Option
 	Thinking        *anthropic.ThinkingConfigParamUnion
+	// ToolInputJSONRepairer repairs malformed streamed tool input before it is
+	// emitted. Nil disables repair.
+	ToolInputJSONRepairer jsonrepair.Repairer
 	// CacheControl enables prompt caching. When true, an ephemeral
 	// cache_control breakpoint is added to the last content block of the last
 	// message, as well as the final system block and the last tool, on every
@@ -70,9 +74,17 @@ func WithParallelToolCalls(enabled bool) ModelOption {
 	}
 }
 
+// WithToolInputJSONRepairer configures receive-side repair for malformed
+// streamed tool input JSON. Nil disables repair.
+func WithToolInputJSONRepairer(repairer jsonrepair.Repairer) ModelOption {
+	return func(c *Config) {
+		c.ToolInputJSONRepairer = repairer
+	}
+}
+
 // NewModel creates a Claude provider from model options.
 func NewModel(modelName string, opts ...ModelOption) model.Provider {
-	var config Config
+	config := Config{ToolInputJSONRepairer: jsonrepair.New()}
 	for _, opt := range opts {
 		opt(&config)
 	}
@@ -127,7 +139,7 @@ func (m *Claude) Stream(ctx context.Context, req *model.Request) iter.Seq2[*mode
 		}
 		streaming := m.client.Messages.NewStreaming(ctx, *params)
 		defer streaming.Close()
-		accumulator := newStreamAccumulator()
+		accumulator := newStreamAccumulator(m.config.ToolInputJSONRepairer)
 		for streaming.Next() {
 			event := streaming.Current()
 			switch ev := event.AsAny().(type) {
@@ -159,6 +171,10 @@ func (m *Claude) Stream(ctx context.Context, req *model.Request) iter.Seq2[*mode
 			}
 		}
 		if err := streaming.Err(); err != nil {
+			yield(nil, err)
+			return
+		}
+		if err := accumulator.finishStream(); err != nil {
 			yield(nil, err)
 			return
 		}

@@ -7,6 +7,7 @@ import (
 
 	anthropicSDK "github.com/anthropics/anthropic-sdk-go"
 	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/jsonrepair"
 	"github.com/go-kratos/blades/model"
 )
 
@@ -142,7 +143,7 @@ func TestConvertStreamDeltaToChunkPreservesThinkingSignature(t *testing.T) {
 func TestStreamAccumulatorCollectsToolUseInputJSONDeltas(t *testing.T) {
 	t.Parallel()
 
-	accumulator := newStreamAccumulator()
+	accumulator := newStreamAccumulator(nil)
 	accumulator.startContentBlock(decodeContentBlockStartEvent(t, `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"read","input":{}}}`))
 	if err := accumulator.deltaContentBlock(decodeContentBlockDeltaEvent(t, `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\": "}}`)); err != nil {
 		t.Fatalf("deltaContentBlock returned error: %v", err)
@@ -184,7 +185,7 @@ func TestStreamAccumulatorCollectsToolUseInputJSONDeltas(t *testing.T) {
 func TestStreamAccumulatorReportsInvalidToolInputJSON(t *testing.T) {
 	t.Parallel()
 
-	accumulator := newStreamAccumulator()
+	accumulator := newStreamAccumulator(nil)
 	accumulator.startContentBlock(decodeContentBlockStartEvent(t, `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"read","input":{}}}`))
 	if err := accumulator.deltaContentBlock(decodeContentBlockDeltaEvent(t, `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\": "}}`)); err != nil {
 		t.Fatalf("deltaContentBlock returned error: %v", err)
@@ -204,6 +205,43 @@ func TestStreamAccumulatorReportsInvalidToolInputJSON(t *testing.T) {
 	}
 	if got := len(accumulator.toolParts()); got != 0 {
 		t.Fatalf("tool parts len = %d, want 0 after invalid JSON", got)
+	}
+}
+
+func TestStreamAccumulatorRejectsInvalidRepairOutput(t *testing.T) {
+	t.Parallel()
+
+	repairer := jsonrepair.Func(func([]byte) (jsonrepair.Result, error) {
+		return jsonrepair.Result{JSON: []byte(`{`)}, nil
+	})
+	accumulator := newStreamAccumulator(repairer)
+	accumulator.startContentBlock(decodeContentBlockStartEvent(t, `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"read","input":{}}}`))
+	if err := accumulator.deltaContentBlock(decodeContentBlockDeltaEvent(t, `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\": "}}`)); err != nil {
+		t.Fatalf("deltaContentBlock returned error: %v", err)
+	}
+
+	err := accumulator.stopContentBlock(decodeContentBlockStopEvent(t, `{"type":"content_block_stop","index":0}`))
+	if err == nil || !strings.Contains(err.Error(), "repair produced invalid JSON") {
+		t.Fatalf("stopContentBlock error = %v, want invalid repair output error", err)
+	}
+}
+
+func TestStreamAccumulatorFinalizesCompleteJSONAtEOF(t *testing.T) {
+	t.Parallel()
+
+	accumulator := newStreamAccumulator(nil)
+	accumulator.startContentBlock(decodeContentBlockStartEvent(t, `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"read","input":{}}}`))
+	if err := accumulator.deltaContentBlock(decodeContentBlockDeltaEvent(t, `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"/tmp/file\"}"}}`)); err != nil {
+		t.Fatalf("deltaContentBlock returned error: %v", err)
+	}
+	if err := accumulator.finishStream(); err != nil {
+		t.Fatalf("finishStream returned error: %v", err)
+	}
+	if got, want := accumulator.stopReason, model.StopToolUse; got != want {
+		t.Fatalf("stop reason = %q, want %q", got, want)
+	}
+	if got := len(accumulator.toolParts()); got != 1 {
+		t.Fatalf("tool parts len = %d, want 1", got)
 	}
 }
 

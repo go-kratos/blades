@@ -15,6 +15,24 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
+func TestResponsesToolInputJSONRepairConfiguration(t *testing.T) {
+	t.Parallel()
+
+	defaultProvider := NewResponses("gpt-test", WithResponsesAPIKey("test-key")).(*responseModel)
+	if defaultProvider.config.ToolInputJSONRepairer == nil {
+		t.Fatal("default tool input JSON repairer is nil")
+	}
+
+	strictProvider := NewResponses(
+		"gpt-test",
+		WithResponsesAPIKey("test-key"),
+		WithResponsesToolInputJSONRepairer(nil),
+	).(*responseModel)
+	if strictProvider.config.ToolInputJSONRepairer != nil {
+		t.Fatal("tool input JSON repairer is enabled after WithResponsesToolInputJSONRepairer(nil)")
+	}
+}
+
 func TestToResponseParamsMapsRequest(t *testing.T) {
 	t.Parallel()
 
@@ -123,7 +141,7 @@ func TestResponseToModelResponseReturnsTextAndToolUses(t *testing.T) {
 				Arguments: `{"q":"blades"}`,
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("responseToModelResponse returned error: %v", err)
 	}
@@ -155,6 +173,40 @@ func TestResponseToModelResponseReturnsTextAndToolUses(t *testing.T) {
 	}
 }
 
+func TestResponseToModelResponseRepairsToolInputJSONByDefault(t *testing.T) {
+	t.Parallel()
+
+	provider := NewResponses("gpt-test", WithResponsesAPIKey("test-key")).(*responseModel)
+	resp, err := responseToModelResponse(responseWithToolArguments(`{"q":"blades"`), provider.config.ToolInputJSONRepairer)
+	if err != nil {
+		t.Fatalf("responseToModelResponse returned error: %v", err)
+	}
+	toolUse, ok := resp.Message.Parts[0].(content.ToolUse)
+	if !ok {
+		t.Fatalf("part type = %T, want content.ToolUse", resp.Message.Parts[0])
+	}
+	if got, want := string(toolUse.Input), `{"q":"blades"}`; got != want {
+		t.Fatalf("tool input = %q, want %q", got, want)
+	}
+}
+
+func TestResponseToModelResponseRejectsInvalidToolInputJSONWhenRepairDisabled(t *testing.T) {
+	t.Parallel()
+
+	provider := NewResponses(
+		"gpt-test",
+		WithResponsesAPIKey("test-key"),
+		WithResponsesToolInputJSONRepairer(nil),
+	).(*responseModel)
+	_, err := responseToModelResponse(responseWithToolArguments(`{"q":"blades"`), provider.config.ToolInputJSONRepairer)
+	if err == nil {
+		t.Fatal("responseToModelResponse returned nil error")
+	}
+	if got := err.Error(); !strings.Contains(got, `invalid tool input JSON for tool "lookup" (call_1)`) {
+		t.Fatalf("error = %q, want invalid tool input JSON error", got)
+	}
+}
+
 func TestResponseToModelResponseReturnsReasoningAsThinking(t *testing.T) {
 	t.Parallel()
 
@@ -170,7 +222,7 @@ func TestResponseToModelResponseReturnsReasoningAsThinking(t *testing.T) {
 	}`), &apiResponse); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	resp, err := responseToModelResponse(&apiResponse)
+	resp, err := responseToModelResponse(&apiResponse, nil)
 	if err != nil {
 		t.Fatalf("responseToModelResponse returned error: %v", err)
 	}
@@ -199,7 +251,7 @@ func TestResponseToModelResponseMapsIncompleteReasons(t *testing.T) {
 	resp, err := responseToModelResponse(&responses.Response{
 		Status:            responses.ResponseStatusIncomplete,
 		IncompleteDetails: responses.ResponseIncompleteDetails{Reason: "max_output_tokens"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("responseToModelResponse returned error: %v", err)
 	}
@@ -214,7 +266,7 @@ func TestResponseToModelResponseReturnsFailedStatusError(t *testing.T) {
 	_, err := responseToModelResponse(&responses.Response{
 		Status: responses.ResponseStatusFailed,
 		Error:  responses.ResponseError{Message: "model failed"},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("responseToModelResponse returned nil error")
 	}
@@ -230,7 +282,7 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 	chunk, err := responseStreamEventToChunk(responses.ResponseStreamEventUnion{
 		Type:  "response.output_text.delta",
 		Delta: "hi",
-	}, seen)
+	}, seen, nil)
 	if err != nil {
 		t.Fatalf("responseStreamEventToChunk text delta returned error: %v", err)
 	}
@@ -245,7 +297,7 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 	chunk, err = responseStreamEventToChunk(responses.ResponseStreamEventUnion{
 		Type:  "response.reasoning_text.delta",
 		Delta: "think",
-	}, seen)
+	}, seen, nil)
 	if err != nil {
 		t.Fatalf("responseStreamEventToChunk reasoning delta returned error: %v", err)
 	}
@@ -260,7 +312,7 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 	chunk, err = responseStreamEventToChunk(responses.ResponseStreamEventUnion{
 		Type:  "response.reasoning_summary_text.delta",
 		Delta: "summary",
-	}, seen)
+	}, seen, nil)
 	if err != nil {
 		t.Fatalf("responseStreamEventToChunk reasoning summary delta returned error: %v", err)
 	}
@@ -277,7 +329,7 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 		ItemID:    "item_1",
 		Name:      "lookup",
 		Arguments: `{"q":"blades"}`,
-	}, seen)
+	}, seen, nil)
 	if err != nil {
 		t.Fatalf("responseStreamEventToChunk arguments done returned error: %v", err)
 	}
@@ -294,7 +346,7 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 			Name:      "lookup",
 			Arguments: `{"q":"blades"}`,
 		},
-	}, seen)
+	}, seen, nil)
 	if err != nil {
 		t.Fatalf("responseStreamEventToChunk tool item returned error: %v", err)
 	}
@@ -318,7 +370,7 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 			Name:      "lookup",
 			Arguments: `{"q":"blades"}`,
 		},
-	}, seen)
+	}, seen, nil)
 	if err != nil {
 		t.Fatalf("responseStreamEventToChunk duplicate tool item returned error: %v", err)
 	}
@@ -332,7 +384,7 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 			Status: responses.ResponseStatusCompleted,
 			Usage:  responses.ResponseUsage{InputTokens: 5, OutputTokens: 6},
 		},
-	}, seen)
+	}, seen, nil)
 	if err != nil {
 		t.Fatalf("responseStreamEventToChunk completed returned error: %v", err)
 	}
@@ -347,6 +399,74 @@ func TestResponseStreamEventToChunk(t *testing.T) {
 	}
 	if got, want := chunk.Usage.TotalOutputTokens, int64(6); got != want {
 		t.Fatalf("total output tokens = %d, want %d", got, want)
+	}
+}
+
+func TestResponseStreamEventRepairsToolInputJSONByDefault(t *testing.T) {
+	t.Parallel()
+
+	provider := NewResponses("gpt-test", WithResponsesAPIKey("test-key")).(*responseModel)
+	event := responses.ResponseStreamEventUnion{
+		Type: "response.output_item.done",
+		Item: responses.ResponseOutputItemUnion{
+			ID:        "item_1",
+			Type:      "function_call",
+			CallID:    "call_1",
+			Name:      "lookup",
+			Arguments: `{"q":"blades"`,
+		},
+	}
+	seen := make(map[string]struct{})
+	chunk, err := responseStreamEventToChunk(event, seen, provider.config.ToolInputJSONRepairer)
+	if err != nil {
+		t.Fatalf("responseStreamEventToChunk returned error: %v", err)
+	}
+	toolUse, ok := chunk.Parts[0].(content.ToolUse)
+	if !ok {
+		t.Fatalf("part type = %T, want content.ToolUse", chunk.Parts[0])
+	}
+	if got, want := string(toolUse.Input), `{"q":"blades"}`; got != want {
+		t.Fatalf("tool input = %q, want %q", got, want)
+	}
+}
+
+func TestResponseStreamEventRejectsInvalidToolInputJSONWhenRepairDisabled(t *testing.T) {
+	t.Parallel()
+
+	provider := NewResponses(
+		"gpt-test",
+		WithResponsesAPIKey("test-key"),
+		WithResponsesToolInputJSONRepairer(nil),
+	).(*responseModel)
+	seen := make(map[string]struct{})
+	_, err := responseStreamEventToChunk(responses.ResponseStreamEventUnion{
+		Type: "response.output_item.done",
+		Item: responses.ResponseOutputItemUnion{
+			Type:      "function_call",
+			CallID:    "call_1",
+			Name:      "lookup",
+			Arguments: `{"q":"blades"`,
+		},
+	}, seen, provider.config.ToolInputJSONRepairer)
+	if err == nil {
+		t.Fatal("responseStreamEventToChunk returned nil error")
+	}
+	if len(seen) != 0 {
+		t.Fatalf("seen tool calls = %v, want empty after validation failure", seen)
+	}
+}
+
+func responseWithToolArguments(arguments string) *responses.Response {
+	return &responses.Response{
+		Status: responses.ResponseStatusCompleted,
+		Output: []responses.ResponseOutputItemUnion{
+			{
+				Type:      "function_call",
+				CallID:    "call_1",
+				Name:      "lookup",
+				Arguments: arguments,
+			},
+		},
 	}
 }
 

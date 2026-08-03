@@ -8,6 +8,7 @@ import (
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/jsonrepair"
 	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/tools"
 )
@@ -111,9 +112,10 @@ func convertStreamDeltaToChunk(event anthropic.ContentBlockDeltaEvent) *model.Ch
 // https://github.com/anthropics/anthropic-sdk-go/issues/164
 // https://github.com/anthropics/anthropic-sdk-go/issues/255
 type streamAccumulator struct {
-	tools      map[int64]*streamToolAccumulator
-	toolOrder  []int64
-	stopReason model.StopReason
+	tools                 map[int64]*streamToolAccumulator
+	toolOrder             []int64
+	stopReason            model.StopReason
+	toolInputJSONRepairer jsonrepair.Repairer
 }
 
 type streamToolAccumulator struct {
@@ -124,10 +126,11 @@ type streamToolAccumulator struct {
 	done     bool
 }
 
-func newStreamAccumulator() *streamAccumulator {
+func newStreamAccumulator(repairer jsonrepair.Repairer) *streamAccumulator {
 	return &streamAccumulator{
-		tools:      make(map[int64]*streamToolAccumulator),
-		stopReason: model.StopEnd,
+		tools:                 make(map[int64]*streamToolAccumulator),
+		stopReason:            model.StopEnd,
+		toolInputJSONRepairer: repairer,
 	}
 }
 
@@ -172,14 +175,50 @@ func (a *streamAccumulator) stopContentBlock(event anthropic.ContentBlockStopEve
 	if !ok {
 		return nil
 	}
+	return a.finishToolBlock(block)
+}
+
+func (a *streamAccumulator) finishToolBlock(block *streamToolAccumulator) error {
 	if len(block.input) == 0 {
 		block.input = []byte("{}")
 	}
 	var decoded any
 	if err := json.Unmarshal(block.input, &decoded); err != nil {
-		return fmt.Errorf("invalid tool input JSON for tool %q (%s): %w", block.name, block.id, err)
+		if a.toolInputJSONRepairer == nil {
+			return fmt.Errorf("invalid tool input JSON for tool %q (%s): %w", block.name, block.id, err)
+		}
+		repaired, repairErr := a.toolInputJSONRepairer.Repair(block.input)
+		if repairErr != nil {
+			return fmt.Errorf("invalid tool input JSON for tool %q (%s): %v; repair failed: %w", block.name, block.id, err, repairErr)
+		}
+		if !json.Valid(repaired.JSON) {
+			return fmt.Errorf("invalid tool input JSON for tool %q (%s): %v; repair produced invalid JSON", block.name, block.id, err)
+		}
+		block.input = append(block.input[:0], repaired.JSON...)
 	}
 	block.done = true
+	return nil
+}
+
+// finishStream treats a clean provider stream EOF as the terminal boundary for
+// any tool block that did not receive content_block_stop.
+func (a *streamAccumulator) finishStream() error {
+	hasTool := false
+	for _, index := range a.toolOrder {
+		block := a.tools[index]
+		if block == nil {
+			continue
+		}
+		if !block.done {
+			if err := a.finishToolBlock(block); err != nil {
+				return err
+			}
+		}
+		hasTool = hasTool || block.done
+	}
+	if hasTool && a.stopReason == model.StopEnd {
+		a.stopReason = model.StopToolUse
+	}
 	return nil
 }
 

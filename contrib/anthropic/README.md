@@ -52,6 +52,21 @@ When used through `blades.NewAgent`, the Agent Loop handles this cycle:
 
 `WithParallelToolCalls(false)` maps to Claude `tool_choice.auto.disable_parallel_tool_use=true`. The Agent Loop does not inspect this option; it executes the tool wave returned by the model.
 
+Completed streamed tool input is syntax-checked and conservatively repaired by default before a `content.ToolUse` is emitted. Disable repair to retain strict rejection:
+
+```go
+provider := anthropic.NewModel("claude-sonnet-4-20250514",
+    anthropic.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")),
+    anthropic.WithToolInputJSONRepairer(nil),
+)
+```
+
+The provider-neutral [`github.com/go-kratos/blades/jsonrepair`](../../jsonrepair) package uses only the Go standard library. Its conservative engine preserves every received byte, reports inserted syntax, and rejects repairs that require deleting or replacing input. Use `WithToolInputJSONRepairer` to supply an engine with custom limits; passing nil disables repair. It cannot reconstruct content that was never sent, so normal schema, policy, and authorization checks still apply.
+
+At clean stream EOF, the provider automatically finalizes an accumulated tool input block even if `content_block_stop` was not received. The default repairer can close truncated strings and containers at that boundary. With `WithToolInputJSONRepairer(nil)`, malformed EOF input remains a strict validation error.
+
+An EOF-truncated tool argument may be semantically incomplete even after its JSON syntax is repaired. Ensure the surrounding tool schema and policy can safely review or reject the recovered call.
+
 ## Request Options
 
 Provider defaults are configured on `NewModel` with functional options. Request-level hints can still be supplied with `model.Request.Options` and override provider defaults by option type.

@@ -5,7 +5,7 @@ This package adapts OpenAI-compatible chat, responses, image, and audio APIs to 
 ## Chat
 
 ```go
-provider := openai.NewModel("gpt-5",
+provider := openai.NewChat("gpt-5",
     openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")),
     openai.WithParallelToolCalls(true),
 )
@@ -40,6 +40,16 @@ for chunk, err := range provider.Stream(ctx, req) {
 
 `WithParallelToolCalls(false)` maps to OpenAI `parallel_tool_calls=false`. The Agent Loop does not read this option; it only executes the tool calls the model actually returns.
 
+Chat tool-call arguments are syntax-checked and conservatively repaired by default after all argument deltas have been accumulated. Disable receive-side repair to retain strict rejection:
+
+```go
+provider := openai.NewChat("gpt-5",
+    openai.WithToolInputJSONRepairer(nil),
+)
+```
+
+Use `WithToolInputJSONRepairer` to supply a custom [`jsonrepair.Repairer`](../../jsonrepair), for example to set tighter resource limits. Passing nil disables repair.
+
 ## Responses
 
 ```go
@@ -52,6 +62,16 @@ resp, err := provider.Generate(ctx, req)
 ```
 
 `NewResponses` uses the Responses API with Blades-managed full-history input by default. `WithResponsesPreviousResponseID` is available for explicit OpenAI server-side response chaining.
+
+Responses function-call arguments use the same default-on repair behavior. The Responses API has a prefixed opt-out because its option type is separate:
+
+```go
+provider := openai.NewResponses("gpt-5",
+    openai.WithResponsesToolInputJSONRepairer(nil),
+)
+```
+
+Use `WithResponsesToolInputJSONRepairer` for a custom repairer; passing nil disables repair. Valid JSON is preserved byte-for-byte, and repaired inputs still pass through normal schema, policy, and authorization checks.
 
 ## Image
 

@@ -9,6 +9,7 @@ import (
 	"iter"
 
 	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/jsonrepair"
 	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/tools"
 	openai "github.com/openai/openai-go/v3"
@@ -32,6 +33,9 @@ type ResponsesConfig struct {
 	RequestOptions     []sdkoption.RequestOption
 	ModelOptions       []model.Option
 	ReasoningEffort    shared.ReasoningEffort
+	// ToolInputJSONRepairer repairs malformed completed tool input before it is
+	// emitted. Nil disables repair.
+	ToolInputJSONRepairer jsonrepair.Repairer
 }
 
 // ResponsesOption configures an OpenAI Responses API model provider.
@@ -74,6 +78,14 @@ func WithResponsesParallelToolCalls(enabled bool) ResponsesOption {
 	}
 }
 
+// WithResponsesToolInputJSONRepairer configures receive-side repair for
+// malformed tool input JSON. Nil disables repair.
+func WithResponsesToolInputJSONRepairer(repairer jsonrepair.Repairer) ResponsesOption {
+	return func(c *ResponsesConfig) {
+		c.ToolInputJSONRepairer = repairer
+	}
+}
+
 // WithResponsesStore configures whether OpenAI stores generated responses for later retrieval.
 func WithResponsesStore(store bool) ResponsesOption {
 	return func(c *ResponsesConfig) {
@@ -92,7 +104,7 @@ func WithResponsesPreviousResponseID(id string) ResponsesOption {
 // NewResponses constructs an OpenAI Responses API provider. The API key is read
 // from the SDK default environment variables unless WithResponsesAPIKey is used.
 func NewResponses(modelName string, opts ...ResponsesOption) model.Provider {
-	var config ResponsesConfig
+	config := ResponsesConfig{ToolInputJSONRepairer: jsonrepair.New()}
 	for _, opt := range opts {
 		opt(&config)
 	}
@@ -134,7 +146,7 @@ func (m *responseModel) Generate(ctx context.Context, req *model.Request) (*mode
 	if err != nil {
 		return nil, err
 	}
-	return responseToModelResponse(apiResponse)
+	return responseToModelResponse(apiResponse, m.config.ToolInputJSONRepairer)
 }
 
 // Stream streams Responses API events as model chunks.
@@ -151,7 +163,7 @@ func (m *responseModel) Stream(ctx context.Context, req *model.Request) iter.Seq
 		seenToolCall := make(map[string]struct{})
 		for streaming.Next() {
 			event := streaming.Current()
-			chunk, err := responseStreamEventToChunk(event, seenToolCall)
+			chunk, err := responseStreamEventToChunk(event, seenToolCall, m.config.ToolInputJSONRepairer)
 			if err != nil {
 				yield(nil, err)
 				return
@@ -397,7 +409,7 @@ func toResponseTools(toolSpecs []tools.ToolSpec) ([]responses.ToolUnionParam, er
 	return params, nil
 }
 
-func responseToModelResponse(resp *responses.Response) (*model.Response, error) {
+func responseToModelResponse(resp *responses.Response, repairer jsonrepair.Repairer) (*model.Response, error) {
 	if resp == nil {
 		return &model.Response{
 			Message:    &model.Message{Role: model.RoleAssistant},
@@ -407,7 +419,7 @@ func responseToModelResponse(resp *responses.Response) (*model.Response, error) 
 	if resp.Status == responses.ResponseStatusFailed {
 		return nil, responseFailedError(*resp)
 	}
-	parts, err := responseOutputToParts(resp.Output)
+	parts, err := responseOutputToParts(resp.Output, repairer)
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +430,7 @@ func responseToModelResponse(resp *responses.Response) (*model.Response, error) 
 	}, nil
 }
 
-func responseOutputToParts(items []responses.ResponseOutputItemUnion) ([]content.Part, error) {
+func responseOutputToParts(items []responses.ResponseOutputItemUnion, repairer jsonrepair.Repairer) ([]content.Part, error) {
 	parts := make([]content.Part, 0, len(items))
 	for _, item := range items {
 		switch item.Type {
@@ -439,10 +451,14 @@ func responseOutputToParts(items []responses.ResponseOutputItemUnion) ([]content
 			if item.Name == "" {
 				continue
 			}
+			input, err := normalizeToolInputJSON([]byte(item.Arguments), repairer)
+			if err != nil {
+				return nil, fmt.Errorf("openai/response: invalid tool input JSON for tool %q (%s): %w", item.Name, item.CallID, err)
+			}
 			parts = append(parts, content.ToolUse{
 				ID:    item.CallID,
 				Name:  item.Name,
-				Input: json.RawMessage(item.Arguments),
+				Input: json.RawMessage(input),
 			})
 		case "reasoning":
 			reasoning := item.AsReasoning()
@@ -465,7 +481,7 @@ func responseOutputToParts(items []responses.ResponseOutputItemUnion) ([]content
 	return parts, nil
 }
 
-func responseStreamEventToChunk(event responses.ResponseStreamEventUnion, seenToolCall map[string]struct{}) (*model.Chunk, error) {
+func responseStreamEventToChunk(event responses.ResponseStreamEventUnion, seenToolCall map[string]struct{}, repairer jsonrepair.Repairer) (*model.Chunk, error) {
 	switch event.Type {
 	case "response.output_text.delta":
 		if event.Delta == "" {
@@ -496,10 +512,14 @@ func responseStreamEventToChunk(event responses.ResponseStreamEventUnion, seenTo
 		if _, ok := seenToolCall[id]; ok {
 			return nil, nil
 		}
+		input, err := normalizeToolInputJSON([]byte(event.Item.Arguments), repairer)
+		if err != nil {
+			return nil, fmt.Errorf("openai/response: invalid tool input JSON for tool %q (%s): %w", event.Item.Name, id, err)
+		}
 		seenToolCall[id] = struct{}{}
 		return &model.Chunk{
 			Parts: []content.Part{
-				content.ToolUse{ID: id, Name: event.Item.Name, Input: json.RawMessage(event.Item.Arguments)},
+				content.ToolUse{ID: id, Name: event.Item.Name, Input: json.RawMessage(input)},
 			},
 			StopReason: model.StopToolUse,
 		}, nil

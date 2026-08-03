@@ -1,0 +1,8 @@
+event: content_block_start
+data: {"content_block":{"id":"toolu_fixture_missing_close","input":{},"name":"ask_user_question","type":"tool_use"},"index":0,"type":"content_block_start"}
+
+event: content_block_delta
+data: {"delta":{"partial_json":"{\"question\":{\"mode\":\"form\",\"prompt\":\"Choose one：\"}","type":"input_json_delta"},"index":0,"type":"content_block_delta"}
+
+event: content_block_stop
+data: {"index":0,"type":"content_block_stop"}

@@ -105,6 +105,7 @@ type Agent interface {
 | `policy/` | Tool invocation decisions such as allow, deny, ask, and modify. |
 | `hook/` | Lifecycle callbacks around turns, model calls, and tool calls. |
 | `flow/` | Agent composition primitives for sequential, parallel, loop, routing, and deep flows. |
+| `jsonrepair/` | Provider-neutral recovery of malformed or truncated tool-call JSON. |
 | `contrib/` | Provider and integration modules for OpenAI, Anthropic, Gemini, MCP, and OpenTelemetry. |
 
 ## Providers

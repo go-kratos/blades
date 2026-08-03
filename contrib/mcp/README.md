@@ -4,6 +4,12 @@ The MCP integration exposes remote MCP tools through the Blades
 `tools.Resolver` interface. It uses the official Go MCP SDK for transport,
 discovery, and invocation.
 
+MCP is a tool resolver and executor, not a model response decoder. It receives
+`content.ToolUse.Input` only after a model provider has emitted the call, so it
+keeps strict JSON decoding and does not perform receive-side JSON repair. Repair
+belongs at a provider boundary where the original model argument bytes are
+available, before tool policy and execution.
+
 ## Dynamic request metadata
 
 Use `ClientConfig.SendingMiddleware` when outgoing MCP requests need dynamic

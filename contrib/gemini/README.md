@@ -63,4 +63,6 @@ for chunk, err := range provider.Stream(ctx, req) {
 
 Tool schemas are supplied on `model.Request.Tools`. Gemini function calls are converted to `content.ToolUse`, and function responses are represented as `content.ToolResult` in a `model.RoleTool` message.
 
+The Google GenAI SDK exposes function arguments to this adapter as `map[string]any`, not as the model's raw JSON bytes. The SDK has therefore already decoded the arguments before Blades receives them, so this package has no tool-input JSON repair option. A syntax failure during SDK response decoding must be handled before the provider adapter; re-marshaling the decoded map would always produce new valid JSON and could not recover bytes rejected upstream.
+
 When used through `blades.NewAgent`, the Agent Loop owns tool execution, session commit, and follow-up turns. Each turn corresponds to one primary model call.
