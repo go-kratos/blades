@@ -40,7 +40,7 @@ for chunk, err := range provider.Stream(ctx, req) {
 
 `WithParallelToolCalls(false)` maps to OpenAI `parallel_tool_calls=false`. The Agent Loop does not read this option; it only executes the tool calls the model actually returns.
 
-Chat tool-call arguments are syntax-checked and conservatively repaired by default after all argument deltas have been accumulated. Disable receive-side repair to retain strict rejection:
+Chat tool-call arguments are syntax-checked and semantically repaired by default after all argument deltas have been accumulated. The default `jsonrepair.PermissiveEngine` can normalize or discard malformed syntax, while valid JSON remains byte-for-byte unchanged. Disable receive-side repair to retain strict rejection:
 
 ```go
 provider := openai.NewChat("gpt-5",

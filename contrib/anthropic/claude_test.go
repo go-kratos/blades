@@ -11,6 +11,7 @@ import (
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/jsonrepair"
 	"github.com/go-kratos/blades/model"
 )
 
@@ -20,6 +21,9 @@ func TestToolInputJSONRepairConfiguration(t *testing.T) {
 	defaultProvider := NewModel("claude-test", WithAPIKey("test-key")).(*Claude)
 	if defaultProvider.config.ToolInputJSONRepairer == nil {
 		t.Fatal("default tool input JSON repairer is nil")
+	}
+	if _, ok := defaultProvider.config.ToolInputJSONRepairer.(*jsonrepair.PermissiveEngine); !ok {
+		t.Fatalf("default tool input JSON repairer type = %T, want *jsonrepair.PermissiveEngine", defaultProvider.config.ToolInputJSONRepairer)
 	}
 
 	strictProvider := NewModel(

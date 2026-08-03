@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/jsonrepair"
 	"github.com/go-kratos/blades/model"
 	openaisdk "github.com/openai/openai-go/v3"
 	sdkoption "github.com/openai/openai-go/v3/option"
@@ -27,6 +28,9 @@ func TestChatToolInputJSONRepairConfiguration(t *testing.T) {
 	defaultProvider := NewChat("gpt-test", WithAPIKey("test-key")).(*chatModel)
 	if defaultProvider.config.ToolInputJSONRepairer == nil {
 		t.Fatal("default tool input JSON repairer is nil")
+	}
+	if _, ok := defaultProvider.config.ToolInputJSONRepairer.(*jsonrepair.PermissiveEngine); !ok {
+		t.Fatalf("default tool input JSON repairer type = %T, want *jsonrepair.PermissiveEngine", defaultProvider.config.ToolInputJSONRepairer)
 	}
 
 	strictProvider := NewChat(

@@ -1,17 +1,21 @@
-// Package jsonrepair repairs malformed JSON by inserting missing syntax.
+// Package jsonrepair recovers valid JSON from malformed model output.
 //
-// The conservative repairer never deletes or replaces source bytes. Valid JSON
-// is returned byte-for-byte unchanged, and every insertion made for malformed
-// input is reported in Result.Edits.
+// The package has one repair strategy. Repair and New use PermissiveEngine,
+// which preserves valid JSON byte-for-byte and semantically recovers malformed
+// input. A malformed repair may normalize, replace, or discard invalid syntax;
+// the complete rewrite is reported in Result.Edits.
 package jsonrepair
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"unicode/utf8"
+)
 
 const (
 	defaultMaxInputBytes  = 1 << 20
 	defaultMaxOutputBytes = defaultMaxInputBytes + 64<<10
 	defaultMaxDepth       = 128
-	defaultMaxEdits       = 256
 )
 
 // Repairer repairs one complete sequence of received JSON bytes.
@@ -19,14 +23,14 @@ type Repairer interface {
 	Repair(input []byte) (Result, error)
 }
 
-// Engine is an immutable repairer and is safe for concurrent use. Its zero
-// value uses the default limits.
-type Engine struct {
+// PermissiveEngine recovers a semantic JSON value from malformed input. Its
+// zero value uses the default limits, and it is safe for concurrent use.
+type PermissiveEngine struct {
 	limits Limits
 }
 
-// Option configures an Engine during New.
-type Option func(*Engine)
+// Option configures a PermissiveEngine during New.
+type Option func(*PermissiveEngine)
 
 // Limits bounds work performed on untrusted input. A non-positive field uses
 // the package default for that field.
@@ -34,12 +38,11 @@ type Limits struct {
 	MaxInputBytes  int
 	MaxOutputBytes int
 	MaxDepth       int
-	MaxEdits       int
 }
 
-// New constructs a conservative repair engine.
-func New(options ...Option) *Engine {
-	engine := &Engine{}
+// New constructs the package repair engine.
+func New(options ...Option) *PermissiveEngine {
+	engine := &PermissiveEngine{}
 	for _, option := range options {
 		if option != nil {
 			option(engine)
@@ -51,7 +54,7 @@ func New(options ...Option) *Engine {
 // WithLimits configures repair resource limits. Non-positive fields retain
 // their default values.
 func WithLimits(limits Limits) Option {
-	return func(engine *Engine) {
+	return func(engine *PermissiveEngine) {
 		engine.limits = limits
 	}
 }
@@ -64,14 +67,15 @@ func (f Func) Repair(input []byte) (Result, error) {
 	return f(input)
 }
 
-// Repair uses the default conservative engine.
+// Repair uses the default PermissiveEngine.
 func Repair(input []byte) (Result, error) {
-	return Engine{}.Repair(input)
+	return PermissiveEngine{}.Repair(input)
 }
 
-// Repair repairs input by inserting only syntax required for an unambiguous
-// local recovery. It returns an error without partial JSON when repair fails.
-func (engine Engine) Repair(input []byte) (Result, error) {
+// Repair recovers and validates one JSON value. Valid input is returned
+// byte-for-byte unchanged. Malformed input is parsed into a recovered value,
+// serialized with encoding/json, and reported as one whole-document rewrite.
+func (engine PermissiveEngine) Repair(input []byte) (Result, error) {
 	limits := engine.effectiveLimits()
 	if len(input) > limits.MaxInputBytes {
 		return Result{}, newError(ErrLimitExceeded, limits.MaxInputBytes)
@@ -79,29 +83,41 @@ func (engine Engine) Repair(input []byte) (Result, error) {
 	if len(input) > limits.MaxOutputBytes {
 		return Result{}, newError(ErrLimitExceeded, limits.MaxOutputBytes)
 	}
-	if json.Valid(input) {
+	if utf8.Valid(input) && json.Valid(input) {
 		return Result{JSON: append([]byte(nil), input...)}, nil
 	}
 
-	state := parser{input: input, limits: limits}
-	if err := state.parse(); err != nil {
-		return Result{}, err
-	}
-	output, err := applyEdits(input, state.edits, limits.MaxOutputBytes)
+	state := newPermissiveParser(input, limits)
+	value, err := state.parseDocument()
 	if err != nil {
 		return Result{}, err
 	}
-	if !json.Valid(output) {
+	output, err := json.Marshal(value)
+	if err != nil {
+		return Result{}, newError(ErrInvalidOutput, state.byteOffset(state.position))
+	}
+	if len(output) > limits.MaxOutputBytes {
+		return Result{}, newError(ErrLimitExceeded, len(input))
+	}
+
+	edits := []Edit{{
+		Kind:        EditRewriteDocument,
+		Start:       0,
+		End:         len(input),
+		Replacement: string(output),
+	}}
+	applied, err := applyEdits(input, edits, limits.MaxOutputBytes)
+	if err != nil {
+		return Result{}, err
+	}
+	if !bytes.Equal(applied, output) || !json.Valid(applied) {
 		return Result{}, newError(ErrInvalidOutput, len(input))
 	}
 
-	return Result{
-		JSON:  output,
-		Edits: append([]Edit(nil), state.edits...),
-	}, nil
+	return Result{JSON: applied, Edits: edits}, nil
 }
 
-func (engine Engine) effectiveLimits() Limits {
+func (engine PermissiveEngine) effectiveLimits() Limits {
 	limits := engine.limits
 	if limits.MaxInputBytes <= 0 {
 		limits.MaxInputBytes = defaultMaxInputBytes
@@ -111,9 +127,6 @@ func (engine Engine) effectiveLimits() Limits {
 	}
 	if limits.MaxDepth <= 0 {
 		limits.MaxDepth = defaultMaxDepth
-	}
-	if limits.MaxEdits <= 0 {
-		limits.MaxEdits = defaultMaxEdits
 	}
 	return limits
 }

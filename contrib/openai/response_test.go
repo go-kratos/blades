@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/jsonrepair"
 	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -21,6 +22,9 @@ func TestResponsesToolInputJSONRepairConfiguration(t *testing.T) {
 	defaultProvider := NewResponses("gpt-test", WithResponsesAPIKey("test-key")).(*responseModel)
 	if defaultProvider.config.ToolInputJSONRepairer == nil {
 		t.Fatal("default tool input JSON repairer is nil")
+	}
+	if _, ok := defaultProvider.config.ToolInputJSONRepairer.(*jsonrepair.PermissiveEngine); !ok {
+		t.Fatalf("default tool input JSON repairer type = %T, want *jsonrepair.PermissiveEngine", defaultProvider.config.ToolInputJSONRepairer)
 	}
 
 	strictProvider := NewResponses(

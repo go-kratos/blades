@@ -19,28 +19,24 @@ func TestRepairSSEFixtures(t *testing.T) {
 		toolName     string
 		stopped      bool
 		expectedJSON string
-		editKinds    []EditKind
 	}{
 		{
 			filename:     "truncated-string-at-eof.sse",
 			toolName:     "bash",
 			stopped:      false,
 			expectedJSON: `{"command":"printf 'fixture，content'"}`,
-			editKinds:    []EditKind{EditCloseString, EditCloseObject},
 		},
 		{
 			filename:     "missing-object-close.sse",
 			toolName:     "ask_user_question",
 			stopped:      true,
 			expectedJSON: `{"question":{"mode":"form","prompt":"Choose one："}}`,
-			editKinds:    []EditKind{EditCloseObject},
 		},
 		{
 			filename:     "unescaped-quotes.sse",
 			toolName:     "ask_user_question",
 			stopped:      true,
 			expectedJSON: `{"question":{"prompt":"输入\"已登录\"后继续，或取消。"}}`,
-			editKinds:    []EditKind{EditEscapeQuote, EditEscapeQuote},
 		},
 	}
 
@@ -72,8 +68,8 @@ func TestRepairSSEFixtures(t *testing.T) {
 			if got := string(result.JSON); got != test.expectedJSON {
 				t.Fatalf("Repair() JSON = %q, want %q", got, test.expectedJSON)
 			}
-			if got := editKinds(result.Edits); !equalEditKinds(got, test.editKinds) {
-				t.Fatalf("edit kinds = %v, want %v", got, test.editKinds)
+			if len(result.Edits) != 1 || result.Edits[0].Kind != EditRewriteDocument {
+				t.Fatalf("edits = %#v, want one EditRewriteDocument", result.Edits)
 			}
 			assertRepairInvariants(t, fixture.input, result)
 		})

@@ -52,7 +52,7 @@ When used through `blades.NewAgent`, the Agent Loop handles this cycle:
 
 `WithParallelToolCalls(false)` maps to Claude `tool_choice.auto.disable_parallel_tool_use=true`. The Agent Loop does not inspect this option; it executes the tool wave returned by the model.
 
-Completed streamed tool input is syntax-checked and conservatively repaired by default before a `content.ToolUse` is emitted. Disable repair to retain strict rejection:
+Completed streamed tool input is syntax-checked and semantically repaired by default before a `content.ToolUse` is emitted. Disable repair to retain strict rejection:
 
 ```go
 provider := anthropic.NewModel("claude-sonnet-4-20250514",
@@ -61,7 +61,7 @@ provider := anthropic.NewModel("claude-sonnet-4-20250514",
 )
 ```
 
-The provider-neutral [`github.com/go-kratos/blades/jsonrepair`](../../jsonrepair) package uses only the Go standard library. Its conservative engine preserves every received byte, reports inserted syntax, and rejects repairs that require deleting or replacing input. Use `WithToolInputJSONRepairer` to supply an engine with custom limits; passing nil disables repair. It cannot reconstruct content that was never sent, so normal schema, policy, and authorization checks still apply.
+The provider-neutral [`github.com/go-kratos/blades/jsonrepair`](../../jsonrepair) package uses only the Go standard library. `jsonrepair.New()` returns the package's sole `PermissiveEngine`, which preserves valid JSON byte-for-byte and reports malformed recovery as a whole-document rewrite. Recovery can normalize or discard malformed syntax. Use `WithToolInputJSONRepairer` to supply an engine with custom limits; passing nil disables repair. It cannot reconstruct content that was never sent, so normal schema, policy, and authorization checks still apply.
 
 At clean stream EOF, the provider automatically finalizes an accumulated tool input block even if `content_block_stop` was not received. The default repairer can close truncated strings and containers at that boundary. With `WithToolInputJSONRepairer(nil)`, malformed EOF input remains a strict validation error.
 

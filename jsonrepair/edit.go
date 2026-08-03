@@ -6,10 +6,6 @@ import (
 )
 
 var (
-	// ErrUnrepairable reports syntax that cannot be fixed by insertion alone.
-	ErrUnrepairable = errors.New("json is not conservatively repairable")
-	// ErrAmbiguous reports input with more than one plausible local repair.
-	ErrAmbiguous = errors.New("json repair is ambiguous")
 	// ErrLimitExceeded reports that a configured resource limit was reached.
 	ErrLimitExceeded = errors.New("json repair limit exceeded")
 	// ErrInvalidOutput reports an internal repair that failed final validation.
@@ -22,13 +18,13 @@ type Result struct {
 	Edits []Edit
 }
 
-// Changed reports whether repair inserted any bytes.
+// Changed reports whether repair changed the input.
 func (result Result) Changed() bool {
 	return len(result.Edits) > 0
 }
 
-// Edit describes one source-relative change. Conservative repairs are always
-// insertions, so Start and End are equal byte offsets into the original input.
+// Edit describes one source-relative change. Start and End are byte offsets
+// into the original input.
 type Edit struct {
 	Kind        EditKind
 	Start       int
@@ -36,16 +32,13 @@ type Edit struct {
 	Replacement string
 }
 
-// EditKind identifies why bytes were inserted.
+// EditKind identifies a repair transformation.
 type EditKind string
 
 const (
-	EditEscapeQuote EditKind = "escape_quote"
-	EditCloseString EditKind = "close_string"
-	EditCloseObject EditKind = "close_object"
-	EditCloseArray  EditKind = "close_array"
-	EditInsertColon EditKind = "insert_colon"
-	EditInsertComma EditKind = "insert_comma"
+	// EditRewriteDocument replaces malformed input with a recovered JSON
+	// serialization.
+	EditRewriteDocument EditKind = "rewrite_document"
 )
 
 // Error reports a repair category and a zero-based byte offset. It never
@@ -70,25 +63,25 @@ func newError(kind error, offset int) *Error {
 }
 
 func applyEdits(input []byte, edits []Edit, maxOutputBytes int) ([]byte, error) {
-	inserted := 0
-	previous := 0
+	outputBytes := len(input)
+	previousEnd := 0
 	for _, edit := range edits {
-		if edit.Start != edit.End || edit.Start < previous || edit.Start > len(input) {
+		if edit.Start < previousEnd || edit.Start < 0 || edit.End < edit.Start || edit.End > len(input) {
 			return nil, newError(ErrInvalidOutput, edit.Start)
 		}
-		inserted += len(edit.Replacement)
-		if len(input)+inserted > maxOutputBytes {
+		outputBytes += len(edit.Replacement) - (edit.End - edit.Start)
+		if outputBytes > maxOutputBytes {
 			return nil, newError(ErrLimitExceeded, edit.Start)
 		}
-		previous = edit.Start
+		previousEnd = edit.End
 	}
 
-	output := make([]byte, 0, len(input)+inserted)
+	output := make([]byte, 0, outputBytes)
 	cursor := 0
 	for _, edit := range edits {
 		output = append(output, input[cursor:edit.Start]...)
 		output = append(output, edit.Replacement...)
-		cursor = edit.Start
+		cursor = edit.End
 	}
 	output = append(output, input[cursor:]...)
 	return output, nil

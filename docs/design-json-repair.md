@@ -19,120 +19,124 @@ sanitized SSE fixtures under `jsonrepair/testdata/`:
 2. an outer object terminator is missing; and
 3. quotation marks inside a string are not escaped.
 
-The first prototype delegated repair to
-`github.com/RealAlexandreAI/json-repair`. That dependency was GPL-3.0 and its
-normalization behavior could change received string content. It has been
-replaced by an implementation inside Blades with no external runtime
-dependency, usable by every provider adapter.
+An early prototype delegated repair to a GPL-3.0 implementation whose
+normalization behavior can change received content. Blades now uses an
+independently authored, standard-library-only implementation with no runtime
+dependency on third-party JSON repair code.
 
-The referenced project is useful as a public behavior survey. Its documented
-examples include unfinished arrays and objects, mixed quotation styles,
-unquoted tokens, comments, Markdown wrappers, and malformed separators. This
-design does not translate its source code or internal structure. The
-implementation requirements come from RFC 8259, independently written tests,
-and the captured Blades failures.
+The reviewed public compatibility corpus remains useful as an external
+behavior oracle. Its cases cover unfinished containers, mixed quotation styles,
+unquoted tokens, Markdown wrappers, invalid bytes, Unicode punctuation,
+malformed separators, and multiple documents. The implementation source and
+test file are not copied into this repository.
 
-## 2. Goals
+## 2. Decision
 
-1. Add a provider-neutral `jsonrepair/` package in the root Go module.
-2. Repair the three observed failure classes without removing or replacing any
-   received byte.
-3. Return valid JSON or an error; never return an unchecked partial result.
-4. Preserve already-valid JSON byte-for-byte.
-5. Report every inserted byte so callers can audit whether and how the input
-   changed.
-6. Keep runtime and memory usage bounded for untrusted model output.
-7. Keep repair separate from provider streaming, schema validation, policy, and
-   tool execution.
+The package exposes one repair strategy. `PermissiveEngine` is the sole engine,
+`New` constructs it, and `Repair` uses its zero value. There is no conservative
+mode and no separate permissive constructor.
 
-## 3. Non-goals
+The name `PermissiveEngine` keeps the recovery semantics visible: malformed
+input is interpreted heuristically and may require replacement or deletion.
+Provider adapters install this engine by default wherever they receive raw
+tool-argument bytes. Passing a nil `Repairer` remains the strict opt-out.
 
+## 3. Goals
+
+1. Keep JSON recovery provider-neutral and usable through `jsonrepair.Repairer`.
+2. Recover every malformed category in the reviewed compatibility corpus.
+3. Preserve already-valid UTF-8 JSON byte-for-byte.
+4. Return valid JSON or an error; never return unchecked partial output.
+5. Report a complete rewrite when malformed input changes.
+6. Bound input, output, nesting, and lookahead for untrusted model output.
+7. Keep repair separate from schema validation, policy, authorization, and tool
+   execution.
+
+## 4. Non-goals
+
+- Guarantee that recovery reconstructs the model's intent.
 - Reconstruct content that the model or transport never sent.
+- Preserve every malformed source byte.
 - Infer schema fields or business values.
 - Decide whether a repaired tool call is safe to execute.
-- Accept every malformed format documented by another repair library in v1.
-- Normalize whitespace, punctuation, Unicode, number formatting, object key
-  order, or duplicate keys.
-- Extract JSON from prose or Markdown in the conservative implementation.
+- Track compatibility with unreviewed future corpus changes.
 
-## 4. Preservation Contract
+## 5. Repair Contract
 
-“No data loss” needs a narrower definition than “the model's original intent
-was recovered.” The latter cannot be guaranteed for truncated or ambiguous
-input.
+### 5.1 Valid Input
 
-The v1 contract is:
+If the input is valid UTF-8 JSON:
 
-- If input is valid JSON, output is a byte-for-byte copy of the input and the
-  edit list is empty.
-- If repair succeeds, every input byte occurs in the output in the same order.
-  V1 may insert bytes but may not delete or replace source bytes.
-- Each insertion is recorded at a byte boundary in the original input.
-- The repaired output passes `encoding/json.Valid` before it is returned.
-- Calling `Repair` again on repaired output returns it unchanged.
+- the output is a non-aliasing, byte-for-byte copy;
+- `Result.Edits` is nil;
+- `Result.Changed()` is false; and
+- repeated repair returns the same bytes unchanged.
 
-This contract can close a string or container and can insert an escape before
-an unescaped quotation mark. It cannot safely fix syntax that requires removal
-or substitution, including comments, trailing commas, single-quoted strings,
-invalid control characters inside strings, or case changes such as `TRUE` to
-`true`. V1 returns an error for those inputs.
+### 5.2 Malformed Input
 
-Closing a truncated string preserves all received bytes, but it does not prove
-that the received value is complete. Callers must treat `EditCloseString` and
-EOF container edits as recovery from truncation, not as evidence that no
-content is missing.
+Malformed input is recovered into a Go value and serialized with
+`encoding/json`. Recovery may:
 
-## 5. Package Boundary
+- normalize quotation marks, literal spelling, or number syntax;
+- remove Markdown, prose, comments, trailing separators, or junk tokens;
+- discard invalid UTF-8 bytes;
+- close containers and strings;
+- resolve missing or mismatched separators;
+- resolve duplicate object keys using the last recovered value; and
+- combine multiple root documents into one JSON array.
+
+A successful malformed repair contains one `EditRewriteDocument` from byte zero
+through the original input length. Applying the edit reproduces the returned
+JSON. Repaired output passes `encoding/json.Valid` and is idempotent.
+
+This contract does not promise no data loss. Removing a trailing comma or an
+invalid byte cannot satisfy an insertion-only contract. A truncated string may
+also be syntactically recoverable while still missing semantic content.
+
+### 5.3 Failure
+
+The engine returns no partial JSON when a configured resource limit is reached
+or an internal serialization invariant fails. Error text contains a category
+and byte offset but never includes source content, which may contain credentials
+or user data.
+
+## 6. Package Boundary and API
 
 The package belongs at `github.com/go-kratos/blades/jsonrepair`:
 
 ```text
 jsonrepair/
-    repair.go       public API and defaults
-    edit.go         edit and error types
-    parser.go       tolerant recursive-descent parser
-    string.go       JSON string and quotation handling
-    repair_test.go  focused and property tests
-    testdata/       small, reviewed malformed inputs
+    repair.go                public API, engine, and limits
+    edit.go                  edit and error types
+    permissive_parser.go     semantic recovery parser
+    api_test.go              public API and benchmarks
+    permissive_test.go       recovery, limit, invariant, and fuzz tests
+    sse_fixture_test.go      sanitized session regressions
+    testdata/                reviewed SSE fixtures
 ```
 
-This location keeps it independent of Anthropic, OpenAI, Gemini, and any
-provider SDK. It is a sibling package in the provider-agnostic root module; it
-does not add symbols to the root `blades` package. The implementation should
-use only the Go standard library.
-
-## 6. API
+It is a sibling package in the provider-agnostic root module and adds no symbols
+to the root `blades` package.
 
 ```go
 package jsonrepair
 
-// Repairer repairs one complete sequence of received JSON bytes.
 type Repairer interface {
     Repair(input []byte) (Result, error)
 }
 
-// Engine is an immutable repairer and is safe for concurrent use. Its zero
-// value uses the default limits.
-type Engine struct {
-    // unexported limits and parser configuration
+// PermissiveEngine is immutable after construction and safe for concurrent use.
+type PermissiveEngine struct {
+    // unexported limits
 }
 
-// Option configures an Engine during New.
-type Option func(*Engine)
+type Option func(*PermissiveEngine)
 
-// New constructs a conservative repair engine.
-func New(options ...Option) *Engine
-
-// Repair uses the default conservative engine.
+func New(options ...Option) *PermissiveEngine
 func Repair(input []byte) (Result, error)
+func (e PermissiveEngine) Repair(input []byte) (Result, error)
 
-// Repair repairs input with this engine.
-func (e *Engine) Repair(input []byte) (Result, error)
-
-// Func adapts a function to Repairer, primarily for provider injection and
-// tests.
 type Func func(input []byte) (Result, error)
-
 func (f Func) Repair(input []byte) (Result, error)
 
 type Result struct {
@@ -151,134 +155,100 @@ type Edit struct {
 
 type EditKind string
 
-const (
-    EditEscapeQuote  EditKind = "escape_quote"
-    EditCloseString  EditKind = "close_string"
-    EditCloseObject  EditKind = "close_object"
-    EditCloseArray   EditKind = "close_array"
-    EditInsertColon  EditKind = "insert_colon"
-    EditInsertComma  EditKind = "insert_comma"
-)
+const EditRewriteDocument EditKind = "rewrite_document"
 
 type Limits struct {
     MaxInputBytes  int
     MaxOutputBytes int
     MaxDepth       int
-    MaxEdits       int
 }
 
 func WithLimits(limits Limits) Option
 ```
 
-`Edit.Start` and `Edit.End` are offsets into the original byte slice. In the
-conservative v1 implementation they are always equal, which identifies an
-insertion boundary. Keeping both fields allows a future, explicitly permissive
-API to report replacements without changing the result shape.
+The defaults are 1 MiB input, 1 MiB plus 64 KiB output, and depth 128. A
+non-positive limit field retains its default value.
 
-The defaults are 1 MiB input, 1 MiB plus 64 KiB output, depth 128, and
-256 edits. A caller can lower these limits for a particular provider or tool.
-
-Errors should support `errors.Is` for the following categories:
+Errors support `errors.Is` for these categories:
 
 ```go
 var (
-    ErrUnrepairable   = errors.New("json is not conservatively repairable")
-    ErrAmbiguous      = errors.New("json repair is ambiguous")
-    ErrLimitExceeded  = errors.New("json repair limit exceeded")
-    ErrInvalidOutput  = errors.New("json repair produced invalid output")
+    ErrLimitExceeded = errors.New("json repair limit exceeded")
+    ErrInvalidOutput = errors.New("json repair produced invalid output")
 )
 ```
 
-A concrete error can additionally expose the original byte offset and parser
-state for diagnostics. It should not include the full tool input in its error
-text because arguments may contain credentials or user data.
-
-## 7. Repair Algorithm
+## 7. Recovery Algorithm
 
 ### 7.1 Pipeline
 
-1. Enforce the input limit.
-2. If `encoding/json.Valid(input)` is true, return a copy without edits.
-3. Parse the original bytes with a tolerant recursive-descent parser while
-   writing them unchanged to an output buffer.
-4. Insert only grammar characters that are required by an unambiguous local
-   recovery.
-5. Enforce depth, edit, and output limits during parsing.
-6. Validate the completed output with `encoding/json.Valid`.
-7. Return the output and ordered edit list, or return an error without JSON.
+1. Enforce the input and initial output bounds.
+2. Return valid UTF-8 JSON unchanged.
+3. Decode input into runes while retaining original byte offsets for errors.
+4. Locate object or array roots and ignore surrounding prose or Markdown.
+5. Parse objects, arrays, strings, bare tokens, literals, and numbers into Go
+   values using a depth-limited recursive-descent parser.
+6. Serialize the recovered value with `encoding/json`.
+7. Enforce the final output bound and validate the serialization.
+8. Return one whole-document rewrite edit.
 
-The parser should operate directly on bytes and spans. It must not unmarshal
-into `map[string]any` and marshal again, because doing so can change whitespace,
-number spelling, escaped Unicode, key order, and duplicate keys.
+### 7.2 Structural Normalization
 
-### 7.2 Parser States
+The parser recognizes smart and full-width quotation marks as string
+delimiters. Full-width braces, brackets, commas, and colons are interpreted as
+JSON syntax only in structural parser states. The same punctuation remains
+unchanged when it occurs inside a recovered string value.
 
-The parser tracks the same structural expectations as the JSON grammar:
+This distinction matters for multilingual tool arguments. For example, the
+full-width comma in a Chinese prompt is content, while the same rune between
+two full-width object members is syntax.
 
-- root value;
-- object key or object end;
-- colon;
-- object value;
-- object comma or object end;
-- array value or array end; and
-- array comma or array end.
+### 7.3 Strings and Quotes
 
-The container stack is also the source of EOF repairs. At EOF, an open string
-is closed first, followed by open arrays and objects in reverse order.
+The parser tracks whether a string is an object key or value and uses container
+context plus bounded lookahead to decide whether a quotation mark closes the
+string. It supports:
 
-### 7.3 Unescaped Quotation Marks
+- unescaped double quotes inside double-quoted values;
+- single-quoted keys and values;
+- repeated quotation marks around keys or values;
+- missing closing quotation marks;
+- invalid escapes by retaining the escaped character; and
+- raw key newlines by omitting the invalid control character.
 
-When an unescaped `"` appears inside a string, the parser considers the
-surrounding grammar state and bounded lookahead:
+Single and double quotation marks are not interchangeable after a string has
+opened. This preserves apostrophes inside double-quoted tool values, including
+EOF-truncated shell commands.
 
-- A key string can close before a colon.
-- A value string can close before a comma, matching container terminator, or
-  EOF.
-- A quote followed by content that cannot legally follow a closed string is
-  treated as string content and receives an inserted backslash.
-- If closing and escaping are both plausible, repair fails with
-  `ErrAmbiguous` rather than choosing silently.
+### 7.4 Objects, Arrays, and Bare Tokens
 
-For the observed input:
+Objects accept quoted or bare keys, missing colons or commas, trailing commas,
+junk between members, and missing or mismatched terminators. Arrays accept
+missing commas, trailing commas, invalid empty items, and a misplaced object
+closer before the array terminator.
 
-```json
-{"question":{"prompt":"输入"已登录"后继续，或取消。"}}
-```
+Bare values are mapped case-insensitively to `true`, `false`, and `null` where
+applicable. Valid number syntax is retained, and leading-decimal forms such as
+`.25` receive a zero prefix. Other bare values become strings.
 
-the quotation marks around `已登录` cannot terminate the value at those
-positions, so the output becomes:
+### 7.5 Resource Behavior
 
-```json
-{"question":{"prompt":"输入\"已登录\"后继续，或取消。"}}
-```
-
-No character in the prompt is removed or normalized.
-
-### 7.4 Missing Separators
-
-A colon or comma may be inserted only when the current state requires it and
-the next token can begin the corresponding value or member unambiguously.
-Inputs that admit multiple interpretations return `ErrAmbiguous`.
-
-### 7.5 Unsupported Repairs
-
-The conservative parser rejects repairs that require deleting or replacing
-source bytes. A later permissive mode could support those cases, but it should
-have a separate constructor or explicit mode and its result must report source
-ranges that were replaced. It must not weaken the v1 preservation contract.
+The parser uses no general backtracking. Whitespace lookup is precomputed, and
+ambiguous quote/key lookahead is capped at 4096 runes. Input, output, and depth
+limits bound work on untrusted arguments. Final object serialization may sort
+map keys through `encoding/json`.
 
 ## 8. Provider Integration
 
-Provider adapters accumulate their native JSON deltas and invoke the repairer
-only after strict validation fails at a provider-defined terminal boundary.
-The package itself has no streaming API and knows nothing about tool IDs, tool
-names, stop reasons, or provider events.
+Repair is enabled by default at contrib boundaries that can access raw model
+tool-argument bytes:
 
-Repair is enabled by default at every contrib boundary where the adapter can
-access raw model tool-argument bytes: Anthropic streaming, OpenAI Chat, and
-OpenAI Responses. Each constructor creates its own default immutable engine;
-there is no mutable global repair configuration. Strict behavior remains an
-explicit option:
+- Anthropic accumulated `input_json_delta` bytes at block stop or clean EOF;
+- OpenAI Chat completed function arguments; and
+- OpenAI Responses completed function arguments.
+
+Each constructor installs `jsonrepair.New()`, whose concrete type is
+`*jsonrepair.PermissiveEngine`. Passing nil preserves strict rejection:
 
 ```go
 anthropic.NewModel(modelName,
@@ -294,118 +264,80 @@ openai.NewResponses(modelName,
 )
 ```
 
-Providers also accept a custom `jsonrepair.Repairer` for resource limits and
-test doubles. Conceptually, each applicable provider configuration includes:
-
-```go
-type Config struct {
-    ToolInputJSONRepairer jsonrepair.Repairer
-}
-```
-
-Each constructor seeds this field with `jsonrepair.New()` before applying
-options. A nil value after option application therefore unambiguously disables
-repair, whether supplied through the repairer option or a full config. This
-keeps repair out of `model.Option`: JSON repair is local receive-side recovery,
-not a request hint sent to a model provider.
+Provider options continue to accept any custom `jsonrepair.Repairer` for tests
+or application-specific behavior.
 
 Gemini receives `genai.FunctionCall.Args` as an already-decoded
-`map[string]any`; raw malformed JSON has either been accepted or rejected by
-the Google SDK before the adapter runs. Re-marshaling that map and applying a
-repairer would be a no-op and would not recover rejected source bytes. MCP is a
-tool execution integration, and OTel is an observation integration, so neither
-is a model response repair boundary.
+`map[string]any`; malformed source JSON has already been accepted or rejected by
+the Google SDK. MCP is a tool execution integration, and OTel is an observation
+integration, so neither is a raw model-response repair boundary.
 
-Anthropic treats clean stream EOF as the terminal boundary for every
-accumulated tool block, even when `content_block_stop` was not received. The
-block passes through the same strict-validation-then-repair path as a normally
-completed block. Disabling JSON repair still rejects malformed EOF input, and
-an SDK or transport error remains an error rather than a repair boundary.
+After repair, normal schema validation, policy checks, and authorization still
+apply. JSON recovery does not make a tool invocation trusted.
 
-After repair, normal tool schema validation, policy checks, and authorization
-still apply. The repair package does not make a tool invocation trusted.
+## 9. Test and Compatibility Evidence
 
-## 9. Test Strategy
+### 9.1 Repository Tests
 
-### 9.1 Required Examples
+Blades-owned tests cover:
 
-Focused tests cover:
+- the three sanitized SSE failure classes;
+- Markdown and prose wrappers;
+- truncated strings, objects, and arrays;
+- single, repeated, smart, and full-width quotes;
+- bare keys, values, literals, and numbers;
+- invalid escapes, control characters, and UTF-8 bytes;
+- missing and mismatched separators or closers;
+- multiple documents and duplicate keys;
+- preservation of valid input and punctuation inside string values;
+- input, output, and depth limits;
+- byte-offset error reporting;
+- edit replay and idempotence; and
+- arbitrary byte input through fuzzing.
 
-- the three captured failure classes;
-- nested combinations of truncated strings, arrays, and objects;
-- quotes inside ASCII and non-ASCII string values;
-- missing separators that have one valid interpretation;
-- ambiguous quote and separator cases;
-- unsupported comments, trailing commas, single quotes, and raw control
-  characters;
-- every configured limit; and
-- inputs containing secrets to ensure errors do not echo source text.
+The raw CSV exports are not retained. The SSE fixtures contain only synthetic
+tool-call events, safe argument text, and the minimum fields required to
+reproduce each failure.
 
-The raw CSV exports are not retained. Small reviewed SSE fixtures reproduce
-their syntax failures without storage metadata, traces, real tool-call IDs, or
-original argument content. Fixture tests validate both the SSE framing and the
-restricted event/data fields before exercising repair.
+### 9.2 External Compatibility
 
-### 9.2 Invariants
+An out-of-tree adapter runs `jsonrepair.Repair` against all 80 active cases in
+a public compatibility corpus. All 80 produce semantically equal JSON values.
+The GPL implementation, test file, and compatibility adapter remain outside
+the Blades worktree.
 
-Fuzz and property tests should verify:
+Passing this reviewed corpus establishes compatibility with those cases. It
+does not establish that every possible malformed byte sequence has one correct
+repair.
 
-1. valid input is byte-for-byte unchanged;
-2. successful output is valid JSON;
-3. input is a byte subsequence of every successfully repaired output;
-4. every output change is represented by an edit;
-5. applying the edit list to the input reproduces the output;
-6. repair is deterministic and idempotent; and
-7. arbitrary bytes never cause a panic or unbounded recursion.
-
-### 9.3 Performance
-
-The target is O(n) time and O(n + depth + edits) memory. Lookahead must be
-bounded and the implementation must not use general backtracking. Benchmarks
-should include a valid 1 MiB document, a deeply nested document at the depth
-limit, and a quote-heavy invalid string.
-
-## 10. Implementation Status
-
-The implemented v1 includes:
-
-1. a standard-library-only engine and edit-report API in `jsonrepair/`;
-2. focused, fuzz-seed, limit, and source-preservation invariant tests;
-3. sanitized SSE regression fixtures derived from the three exported sessions;
-4. default-on Anthropic streaming repair with a nil repairer as the strict
-   opt-out;
-5. default-on OpenAI Chat and Responses repair for both completed streaming
-   and non-streaming tool calls, with matching strict opt-outs;
-6. custom repairer injection on each applicable provider;
-7. automatic Anthropic tool-block finalization at clean stream EOF; and
-8. no `github.com/RealAlexandreAI/json-repair` dependency in any module graph.
-
-## 11. Independent Implementation Rules
+## 10. Independent Implementation Rules
 
 To keep the implementation independently authored:
 
 - use RFC 8259 as the grammar source;
-- use the public feature descriptions of other projects only to identify
-  problem categories;
+- use public behavior examples only to identify recovery categories;
 - do not translate GPL source, comments, function structure, or test files;
-- write Blades test cases from the captured failures and this document; and
+- keep repository test inputs independently authored or derived from sanitized
+  Blades sessions;
+- keep external compatibility tests and adapters outside the worktree; and
 - retain normal project copyright and license review before release.
 
 These engineering rules reduce source-copying risk but are not a substitute
 for legal advice or a formal clean-room process.
 
-## 12. Future Review Decisions
+## 11. Implementation Status
 
-V1 uses insertion-only repair, returns a full edit report, finalizes Anthropic
-tool blocks at clean stream EOF, and retains only sanitized SSE fixtures.
-Future review can still consider:
+The implemented package includes:
 
-1. a separately named permissive mode for replacements or deletions;
-2. a convenience API that returns only repaired bytes;
-3. provider-specific default limits; and
-4. adding more reviewed and sanitized session-derived fixtures.
+1. one standard-library-only `PermissiveEngine` behind `New` and `Repair`;
+2. default-on Anthropic, OpenAI Chat, and OpenAI Responses integration;
+3. a nil repairer as the strict provider opt-out;
+4. sanitized SSE regression fixtures;
+5. independently authored unit, invariant, limit, benchmark, and fuzz tests;
+6. semantic compatibility with all 80 active cases in the reviewed external
+   corpus; and
+7. no third-party JSON repair dependency in any module graph.
 
-## 13. References
+## 12. References
 
 - [RFC 8259: The JavaScript Object Notation Data Interchange Format](https://www.rfc-editor.org/rfc/rfc8259)
-- [`RealAlexandreAI/json-repair` public README and API](https://pkg.go.dev/github.com/RealAlexandreAI/json-repair) (behavior survey only; GPL-3.0 implementation is not reused)
