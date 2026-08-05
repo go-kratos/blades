@@ -44,6 +44,7 @@ type llmAgent struct {
 	contextWindow  model.ContextWindow
 	tokenCounter   model.TokenCounter
 	policy         policy.Policy
+	thinkingAsText bool
 }
 
 // NewAgent creates a new default LLM-backed Agent.

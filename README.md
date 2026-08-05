@@ -91,6 +91,8 @@ type Agent interface {
 
 `blades.NewAgent(name, opts...)` builds the default LLM-backed Agent. If you need a custom runtime, implement `Agent` directly and it can still be used by `Runner`, `flow/`, or `blades.NewAgentTool`.
 
+Some models return a completed assistant message containing only `content.Thinking`. Use `blades.WithThinkingAsText(true)` to expose that content as `content.Text` in `event.AssistantMessageEnd`. Mixed-content messages are not converted, and streaming deltas, turn results, and session history retain the original thinking parts.
+
 ## Runtime Building Blocks
 
 | Package | Purpose |

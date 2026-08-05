@@ -322,7 +322,11 @@ func (l *agentLoop) appendTurnInput(in event.Input, merge bool) error {
 }
 
 func (l *agentLoop) emitAssistantMessageEnd(resp *model.Response) {
-	l.output <- convert.ResponseToAssistantMessageEnd(resp)
+	messageEnd := convert.ResponseToAssistantMessageEnd(resp)
+	if l.agent.thinkingAsText {
+		messageEnd.Parts, _ = thinkingOnlyAsText(messageEnd.Parts)
+	}
+	l.output <- messageEnd
 }
 
 func (l *agentLoop) beforeTurn(turn *hook.Turn) error {

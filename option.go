@@ -78,6 +78,16 @@ func WithTokenCounter(counter model.TokenCounter) AgentOption {
 	}
 }
 
+// WithThinkingAsText controls a compatibility fallback for models that emit
+// assistant messages containing only thinking content. When enabled, the
+// Agent exposes that content as text in the AssistantMessageEnd event. The
+// model response, streaming deltas, turn result, and session remain unchanged.
+func WithThinkingAsText(enabled bool) AgentOption {
+	return func(a *llmAgent) {
+		a.thinkingAsText = enabled
+	}
+}
+
 // WithInstruction appends a static instruction to the system prompt.
 func WithInstruction(instruction string) AgentOption {
 	return func(a *llmAgent) {

@@ -116,6 +116,80 @@ func TestLLMAgentExecutesCalculateTool(t *testing.T) {
 	}
 }
 
+func TestLLMAgentThinkingAsText(t *testing.T) {
+	tests := []struct {
+		name          string
+		option        blades.AgentOption
+		wantText      string
+		wantFirstPart content.Part
+	}{
+		{
+			name:          "disabled by default",
+			wantFirstPart: content.Thinking{},
+		},
+		{
+			name:          "enabled",
+			option:        blades.WithThinkingAsText(true),
+			wantText:      "I found the answer.",
+			wantFirstPart: content.Text{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := dummyprovider.NewProvider(
+				dummyprovider.AssistantResponse([]content.Part{
+					dummyprovider.Thinking("I found the answer."),
+				}),
+			)
+			opts := []blades.AgentOption{
+				blades.WithModel(provider),
+			}
+			if tt.option != nil {
+				opts = append(opts, tt.option)
+			}
+			agent, err := blades.NewAgent("assistant", opts...)
+			assert.NoError(t, err)
+
+			sess := session.NewSession()
+			ctx := session.NewContext(context.Background(), sess)
+			outputs, err := collectAllAgentOutputs(ctx, agent, promptInputs("calculate"))
+			assert.NoError(t, err)
+
+			var streamedText, streamedThinking string
+			for _, output := range outputs {
+				switch delta := output.(type) {
+				case event.TextDelta:
+					streamedText += delta.Text
+				case event.ThinkingDelta:
+					streamedThinking += delta.Text
+				}
+			}
+			assert.Empty(t, streamedText)
+			assert.Equal(t, "I found the answer.", streamedThinking)
+
+			messageEnds := assistantMessageEnds(outputs)
+			if assert.Len(t, messageEnds, 1) && assert.Len(t, messageEnds[0].Parts, 1) {
+				assert.Equal(t, tt.wantText, messageEnds[0].Text())
+				assert.IsType(t, tt.wantFirstPart, messageEnds[0].Parts[0])
+			}
+
+			turns := turnEnds(outputs)
+			if assert.Len(t, turns, 1) && assert.Len(t, turns[0].Parts, 1) {
+				assert.Empty(t, turns[0].Text())
+				assert.IsType(t, content.Thinking{}, turns[0].Parts[0])
+			}
+
+			messages, err := sess.Messages(ctx)
+			assert.NoError(t, err)
+			if assert.Len(t, messages, 2) && assert.Len(t, messages[1].Parts, 1) {
+				assert.Empty(t, textFromParts(messages[1].Parts))
+				assert.IsType(t, content.Thinking{}, messages[1].Parts[0])
+			}
+		})
+	}
+}
+
 func TestLLMAgentPreservesRawUsage(t *testing.T) {
 	rawUsage := json.RawMessage(`{
 		"input_tokens": 10,

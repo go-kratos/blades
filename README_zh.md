@@ -91,6 +91,8 @@ type Agent interface {
 
 `blades.NewAgent(name, opts...)` 会构建默认的 LLM Agent。如果需要完全自定义运行时，直接实现 `Agent` 即可继续被 `Runner`、`flow/` 或 `blades.NewAgentTool` 使用。
 
+部分模型返回的完整 assistant message 只包含 `content.Thinking`。可通过 `blades.WithThinkingAsText(true)` 将这类内容在 `event.AssistantMessageEnd` 中暴露为 `content.Text`。混合内容消息不会被转换，streaming delta、turn result 和 session history 仍保留原始 thinking part。
+
 ## 运行时模块
 
 | 包 | 职责 |
