@@ -22,10 +22,6 @@ func (b contextBuilder) Build(ctx context.Context) (*model.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-	msgs, err = b.compactIfNeeded(ctx, msgs)
-	if err != nil {
-		return nil, err
-	}
 
 	systemParts, err := buildSystemParts(ctx, b.agent.promptBuilders)
 	if err != nil {
@@ -48,26 +44,35 @@ func (b contextBuilder) Build(ctx context.Context) (*model.Request, error) {
 			Strict: true,
 		})
 	}
+	msgs, err = b.compactIfNeeded(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	req.Messages = msgs
 	return req, nil
 }
 
-func (b contextBuilder) compactIfNeeded(ctx context.Context, msgs []*model.Message) ([]*model.Message, error) {
+func (b contextBuilder) compactIfNeeded(ctx context.Context, req *model.Request) ([]*model.Message, error) {
 	if b.agent.compactor == nil {
-		return msgs, nil
+		return req.Messages, nil
+	}
+	counter := b.agent.tokenCounter
+	if counter == nil {
+		counter = model.ApproxTokenCounter{}
 	}
 	threshold := b.agent.contextWindow.Threshold()
 	if threshold > 0 {
-		count, err := b.agent.tokenCounter.CountTokens(ctx, &model.Request{Messages: msgs})
+		count, err := counter.CountTokens(ctx, req)
 		if err != nil {
 			return nil, err
 		}
 		if count.Total() <= threshold {
-			return msgs, nil
+			return req.Messages, nil
 		}
 	}
 	return b.agent.compactor.Compact(ctx, compact.Request{
-		Messages:     msgs,
-		TokenCounter: b.agent.tokenCounter,
+		Messages:     req.Messages,
+		TokenCounter: counter,
 	})
 }
 

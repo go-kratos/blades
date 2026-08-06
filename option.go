@@ -74,6 +74,10 @@ func WithContextWindow(w model.ContextWindow) AgentOption {
 // default approximate counter.
 func WithTokenCounter(counter model.TokenCounter) AgentOption {
 	return func(a *llmAgent) {
+		if counter == nil {
+			a.tokenCounter = model.ApproxTokenCounter{}
+			return
+		}
 		a.tokenCounter = counter
 	}
 }
