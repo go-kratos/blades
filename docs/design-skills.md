@@ -1,10 +1,10 @@
-# Skills 渐进式加载
+# Progressive Skill Loading
 
-## 目标
+## Goals
 
-Skills 用于承载只在特定任务中需要的操作规则、业务流程和参考资料。Agent 的常驻系统提示词只注入 Skill 名称与简介，模型判断相关后再读取完整内容，从而减少无关上下文和规则干扰。
+Skills contain task-specific operating rules, business workflows, and reference material. An Agent's persistent system prompt includes only each Skill's name and description. The model loads the complete content only after deciding that a Skill is relevant, reducing unrelated context and instruction interference.
 
-本实现兼容常见的 `SKILL.md` 目录约定：
+The implementation follows the common `SKILL.md` directory convention:
 
 ```text
 skills/
@@ -15,41 +15,41 @@ skills/
     └── scripts/
 ```
 
-`SKILL.md` 使用 YAML frontmatter 描述名称、简介、兼容性等元数据，正文保存完整指令。Skill 可以从本地目录、`fs.FS` 或应用自己的数据库适配器加载。
+`SKILL.md` uses YAML frontmatter for metadata such as the name, description, and compatibility requirements. Its Markdown body contains the complete instructions. Skills can be loaded from a local directory, an `fs.FS`, or an application-specific database adapter.
 
-## 运行流程
+## Runtime Flow
 
 ```mermaid
 flowchart LR
-    A["创建 Agent"] --> B["校验 Skills"]
-    B --> C["系统提示词注入名称与简介"]
-    C --> D["模型判断是否相关"]
-    D -->|"相关"| E["调用 load_skill"]
-    E --> F["完整指令进入工具结果"]
-    F --> G["下一次模型调用使用完整指令"]
-    G -->|"需要附件"| H["调用 load_skill_resource"]
-    D -->|"无关"| I["直接回答"]
+    A["Create Agent"] --> B["Validate Skills"]
+    B --> C["Inject names and descriptions into the system prompt"]
+    C --> D["Model determines relevance"]
+    D -->|"Relevant"| E["Call load_skill"]
+    E --> F["Return complete instructions as a tool result"]
+    F --> G["Use the instructions in the next model call"]
+    G -->|"Resource required"| H["Call load_skill_resource"]
+    D -->|"Not relevant"| I["Respond directly"]
 ```
 
-Blades 的 Agent Loop 已经会把工具调用和工具结果写入会话，并继续发起下一次模型调用。因此 Skills 只需要复用现有 Tool 机制，不需要修改模型循环。
+The Blades Agent Loop already appends tool calls and tool results to the session before starting the next model call. Skills therefore reuse the existing Tool mechanism without changing the model loop.
 
-## 对外接口
+## Public API
 
-- `skills.Skill`：最小能力接口，便于数据库或远端注册中心实现。
-- `skills.New`：创建内存 Skill。
-- `skills.NewFromDir`：从本地目录加载。
-- `skills.NewFromEmbed`：从 `fs.FS` 加载。
-- `blades.WithSkills`：把 Skills 绑定到 Agent。
-- `list_skills`：返回当前可用 Skill 目录。
-- `load_skill`：返回一个 Skill 的完整指令、元数据和资源索引。
-- `load_skill_resource`：按路径读取 Skill 附带资源。
+- `skills.Skill`: the minimal interface for database or remote registry implementations.
+- `skills.New`: creates an in-memory Skill.
+- `skills.NewFromDir`: loads Skills from a local directory.
+- `skills.NewFromEmbed`: loads Skills from an `fs.FS`.
+- `blades.WithSkills`: attaches Skills to an Agent.
+- `list_skills`: returns the catalog available to the current Agent.
+- `load_skill`: returns one Skill's complete instructions, metadata, and resource index.
+- `load_skill_resource`: reads an additional resource by path.
 
-## 权限边界
+## Authorization Boundary
 
-Skill 内容负责告诉模型“怎么做”，不负责决定“能不能做”。三个内置 Skill 工具和其他 Tool 一样经过 Blades Policy；`allowed-tools` 仅保留为标准 frontmatter 元数据，不会扩大 Agent 权限。
+Skill content tells the model how to perform a task; it does not decide whether the task is permitted. The three built-in Skill tools pass through Blades Policy like every other Tool. The `allowed-tools` frontmatter field is retained as standard metadata and cannot expand an Agent's permissions.
 
-内置实现不执行 `scripts/` 下的文件，只允许模型按资源读取。需要脚本执行的应用应单独提供受 Policy 管理的沙箱工具。
+The built-in implementation allows files under `scripts/` to be inspected as resources but never executes them. Applications that require script execution should provide a separate sandboxed Tool protected by Policy.
 
-## 当前范围
+## Current Scope
 
-当前阶段实现 Skill 说明的渐进式加载。业务工具仍在 Agent 启动时解析并提供给模型；“加载某个 Skill 后才暴露其绑定工具”属于下一阶段，需要在模型调用之间维护已激活 Skill 集合，并让 Tool Resolver 按该集合重新生成工具快照。
+This stage implements progressive loading for Skill instructions. Business tools are still resolved and exposed when the Agent starts. Exposing tools only after their associated Skill has been loaded is a separate stage: it requires tracking the active Skill set between model calls and rebuilding the Tool Resolver snapshot from that state.
