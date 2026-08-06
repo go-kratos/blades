@@ -106,11 +106,6 @@ func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan ev
 	var skillRuntime *skills.Runtime
 	if a.skillToolset != nil {
 		skillRuntime = a.skillToolset.NewRuntime()
-		messages, err := sess.Messages(ctx)
-		if err != nil {
-			return nil, err
-		}
-		skillRuntime.Restore(messages)
 		allTools = append(allTools, skillRuntime.Tools()...)
 	}
 	output := make(chan event.Output, 64)

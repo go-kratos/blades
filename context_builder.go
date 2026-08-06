@@ -8,6 +8,7 @@ import (
 	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/prompt"
 	"github.com/go-kratos/blades/session"
+	"github.com/go-kratos/blades/skills"
 	"github.com/go-kratos/blades/tools"
 )
 
@@ -15,6 +16,7 @@ type contextBuilder struct {
 	agent    *llmAgent
 	sess     session.Session
 	allTools []tools.Tool
+	skills   *skills.Runtime
 }
 
 func (b contextBuilder) Build(ctx context.Context) (*model.Request, error) {
@@ -37,9 +39,13 @@ func (b contextBuilder) Build(ctx context.Context) (*model.Request, error) {
 		return nil, err
 	}
 
+	visibleTools := b.allTools
+	if b.skills != nil {
+		visibleTools = b.skills.DisclosureFromMessages(msgs).FilterTools(b.allTools)
+	}
 	req := &model.Request{
 		Model:    b.agent.provider.Name(),
-		Tools:    specsFromTools(b.allTools),
+		Tools:    specsFromTools(visibleTools),
 		System:   system,
 		Messages: msgs,
 	}
@@ -54,6 +60,10 @@ func (b contextBuilder) Build(ctx context.Context) (*model.Request, error) {
 		return nil, err
 	}
 	req.Messages = msgs
+	if b.skills != nil {
+		disclosure := b.skills.DisclosureFromMessages(msgs)
+		req.Tools = specsFromTools(disclosure.FilterTools(b.allTools))
+	}
 	return req, nil
 }
 

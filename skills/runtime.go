@@ -7,7 +7,6 @@ import (
 	"path"
 	"sort"
 	"strings"
-	"sync"
 	"unicode"
 
 	"github.com/go-kratos/blades/content"
@@ -18,8 +17,6 @@ import (
 // Runtime owns the skill disclosure state for one agent run.
 type Runtime struct {
 	toolset *Toolset
-	mu      sync.RWMutex
-	loaded  map[string]struct{}
 	tools   []tools.Tool
 }
 
@@ -31,7 +28,7 @@ type Disclosure struct {
 
 // NewRuntime creates isolated disclosure state for one agent run.
 func (t *Toolset) NewRuntime() *Runtime {
-	runtime := &Runtime{toolset: t, loaded: make(map[string]struct{})}
+	runtime := &Runtime{toolset: t}
 	if t == nil || len(t.skills) == 0 {
 		return runtime
 	}
@@ -48,27 +45,15 @@ func (r *Runtime) Tools() []tools.Tool {
 	return append([]tools.Tool(nil), r.tools...)
 }
 
-// Snapshot returns a stable disclosure view for one model request or tool wave.
-func (r *Runtime) Snapshot() Disclosure {
-	if r == nil {
-		return Disclosure{}
-	}
-	r.mu.RLock()
-	loaded := make(map[string]struct{}, len(r.loaded))
-	for name := range r.loaded {
-		loaded[name] = struct{}{}
-	}
-	r.mu.RUnlock()
-	return Disclosure{toolset: r.toolset, loaded: loaded}
-}
-
-// Restore loads disclosure state from successful load_skill results that are
-// still present in the model context. Stale results from a different Skill
-// definition are ignored.
-func (r *Runtime) Restore(messages []*model.Message) {
+// DisclosureFromMessages derives an immutable disclosure view from successful
+// load_skill results in the exact model context. Stale results from a different
+// Skill definition are ignored.
+func (r *Runtime) DisclosureFromMessages(messages []*model.Message) Disclosure {
+	disclosure := Disclosure{loaded: make(map[string]struct{})}
 	if r == nil || r.toolset == nil {
-		return
+		return disclosure
 	}
+	disclosure.toolset = r.toolset
 	for _, message := range messages {
 		if message == nil || message.Role != model.RoleTool {
 			continue
@@ -79,10 +64,11 @@ func (r *Runtime) Restore(messages []*model.Message) {
 				continue
 			}
 			if name, ok := r.restorableSkill(result.Parts); ok {
-				r.markLoaded(name)
+				disclosure.loaded[name] = struct{}{}
 			}
 		}
 	}
+	return disclosure
 }
 
 func (r *Runtime) restorableSkill(parts []content.Part) (string, bool) {
@@ -112,28 +98,24 @@ func (r *Runtime) restorableSkill(parts []content.Part) (string, bool) {
 	return "", false
 }
 
-func (r *Runtime) markLoaded(name string) {
-	r.mu.Lock()
-	r.loaded[name] = struct{}{}
-	r.mu.Unlock()
-}
-
-func (r *Runtime) isLoaded(name string) bool {
-	r.mu.RLock()
-	_, loaded := r.loaded[name]
-	r.mu.RUnlock()
-	return loaded
-}
-
 // FilterTools removes skill-gated tools that have not been disclosed yet.
 func (d Disclosure) FilterTools(allTools []tools.Tool) []tools.Tool {
 	visible := make([]tools.Tool, 0, len(allTools))
 	for _, tool := range allTools {
 		if tool != nil && d.AllowsTool(tool.Spec().Name) {
+			if resourceTool, ok := tool.(loadSkillResourceTool); ok {
+				resourceTool.disclosure = d
+				tool = resourceTool
+			}
 			visible = append(visible, tool)
 		}
 	}
 	return visible
+}
+
+func (d Disclosure) hasLoadedSkill(name string) bool {
+	_, loaded := d.loaded[name]
+	return loaded
 }
 
 // AllowsTool reports whether a tool is visible in this disclosure snapshot.

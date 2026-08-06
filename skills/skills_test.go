@@ -63,8 +63,9 @@ func TestToolsetDisclosesSkillProgressively(t *testing.T) {
 	assert.Contains(t, toolset.Instruction(), "add-friend")
 	assert.NotContains(t, toolset.Instruction(), "Search first")
 
+	runtime := toolset.NewRuntime()
 	toolByName := make(map[string]tools.Tool)
-	for _, tool := range toolset.Tools() {
+	for _, tool := range runtime.Tools() {
 		toolByName[tool.Spec().Name] = tool
 	}
 
@@ -72,6 +73,9 @@ func TestToolsetDisclosesSkillProgressively(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, content.TextFromParts(loaded.Parts), "Search first")
 	assert.Contains(t, content.TextFromParts(loaded.Parts), "references")
+	for _, tool := range runtime.DisclosureFromMessages(skillLoadResultHistory(loaded)).FilterTools(runtime.Tools()) {
+		toolByName[tool.Spec().Name] = tool
+	}
 
 	reference, err := toolByName[ToolLoadSkillResourceName].Handle(context.Background(), json.RawMessage(`{"skill_name":"add-friend","path":"references/flow.md"}`))
 	require.NoError(t, err)
@@ -144,20 +148,21 @@ func TestRuntimeDisclosesOnlyToolsFromLoadedSkills(t *testing.T) {
 		namedSkillTestTool("friend_add"),
 	}, runtime.Tools()...)
 
-	beforeLoad := runtime.Snapshot()
+	beforeLoad := runtime.DisclosureFromMessages(nil)
 	assert.ElementsMatch(t, []string{
 		"current_time", ToolListSkillsName, ToolLoadSkillName, ToolLoadSkillResourceName,
 	}, skillTestToolNames(beforeLoad.FilterTools(allTools)))
 
-	_, err = runtime.Tools()[1].Handle(context.Background(), json.RawMessage(`{"name":"add-friend"}`))
+	loadResult, err := runtime.Tools()[1].Handle(context.Background(), json.RawMessage(`{"name":"add-friend"}`))
 	require.NoError(t, err)
+	afterLoad := runtime.DisclosureFromMessages(skillLoadResultHistory(loadResult))
 	assert.ElementsMatch(t, []string{
 		"current_time", "friend_search", "friend_add",
 		ToolListSkillsName, ToolLoadSkillName, ToolLoadSkillResourceName,
-	}, skillTestToolNames(runtime.Snapshot().FilterTools(allTools)))
+	}, skillTestToolNames(afterLoad.FilterTools(allTools)))
 
 	assert.NotContains(t, skillTestToolNames(beforeLoad.FilterTools(allTools)), "friend_search")
-	assert.NotContains(t, skillTestToolNames(toolset.NewRuntime().Snapshot().FilterTools(allTools)), "friend_search")
+	assert.NotContains(t, skillTestToolNames(toolset.NewRuntime().DisclosureFromMessages(nil).FilterTools(allTools)), "friend_search")
 }
 
 func TestNewToolsetRejectsInvalidAllowedToolPattern(t *testing.T) {
@@ -211,9 +216,10 @@ func TestLoadSkillResourceRequiresLoadedSkill(t *testing.T) {
 	_, err = runtime.Tools()[2].Handle(context.Background(), json.RawMessage(`{"skill_name":"support","path":"references/guide.md"}`))
 	assert.ErrorContains(t, err, "SKILL_NOT_LOADED")
 
-	_, err = runtime.Tools()[1].Handle(context.Background(), json.RawMessage(`{"name":"support"}`))
+	loadResult, err := runtime.Tools()[1].Handle(context.Background(), json.RawMessage(`{"name":"support"}`))
 	require.NoError(t, err)
-	result, err := runtime.Tools()[2].Handle(context.Background(), json.RawMessage(`{"skill_name":"support","path":"references/guide.md"}`))
+	toolsAfterLoad := runtime.DisclosureFromMessages(skillLoadResultHistory(loadResult)).FilterTools(runtime.Tools())
+	result, err := toolsAfterLoad[2].Handle(context.Background(), json.RawMessage(`{"skill_name":"support","path":"references/guide.md"}`))
 	require.NoError(t, err)
 	assert.Contains(t, content.TextFromParts(result.Parts), "guide")
 }
@@ -240,8 +246,7 @@ func TestRuntimeRestoresMatchingSkillFromHistory(t *testing.T) {
 	}}
 
 	restoredRuntime := toolset.NewRuntime()
-	restoredRuntime.Restore(history)
-	assert.True(t, restoredRuntime.Snapshot().AllowsTool("friend_search"))
+	assert.True(t, restoredRuntime.DisclosureFromMessages(history).AllowsTool("friend_search"))
 
 	changedSkill, err := New(
 		Frontmatter{Name: "add-friend", Description: "Add a friend.", AllowedTools: "friend_search"},
@@ -252,8 +257,16 @@ func TestRuntimeRestoresMatchingSkillFromHistory(t *testing.T) {
 	changedToolset, err := NewToolset([]Skill{changedSkill})
 	require.NoError(t, err)
 	changedRuntime := changedToolset.NewRuntime()
-	changedRuntime.Restore(history)
-	assert.False(t, changedRuntime.Snapshot().AllowsTool("friend_search"))
+	assert.False(t, changedRuntime.DisclosureFromMessages(history).AllowsTool("friend_search"))
+}
+
+func skillLoadResultHistory(result *tools.Result) []*model.Message {
+	return []*model.Message{{
+		Role: model.RoleTool,
+		Parts: []content.Part{content.ToolResult{
+			ID: "skill-1", Name: ToolLoadSkillName, Parts: result.Parts,
+		}},
+	}}
 }
 
 func TestSkillToolFailuresReturnErrors(t *testing.T) {
@@ -267,12 +280,16 @@ func TestSkillToolFailuresReturnErrors(t *testing.T) {
 	require.NoError(t, err)
 	toolset, err := NewToolset([]Skill{skill})
 	require.NoError(t, err)
+	runtime := toolset.NewRuntime()
 	toolsByName := make(map[string]tools.Tool)
-	for _, tool := range toolset.Tools() {
+	for _, tool := range runtime.Tools() {
 		toolsByName[tool.Spec().Name] = tool
 	}
-	_, err = toolsByName[ToolLoadSkillName].Handle(context.Background(), json.RawMessage(`{"name":"safe-skill"}`))
+	loadResult, err := toolsByName[ToolLoadSkillName].Handle(context.Background(), json.RawMessage(`{"name":"safe-skill"}`))
 	require.NoError(t, err)
+	for _, tool := range runtime.DisclosureFromMessages(skillLoadResultHistory(loadResult)).FilterTools(runtime.Tools()) {
+		toolsByName[tool.Spec().Name] = tool
+	}
 
 	tests := []struct {
 		name      string

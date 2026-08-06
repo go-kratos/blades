@@ -23,6 +23,7 @@ type agentLoop struct {
 	sess         session.Session
 	allTools     []tools.Tool
 	skillRuntime *skills.Runtime
+	disclosure   skills.Disclosure
 	inputs       *inputQueue
 
 	turnNum int
@@ -389,15 +390,19 @@ func (l *agentLoop) runModelCall() (*model.Response, error) {
 }
 
 func (l *agentLoop) buildRequest(ctx context.Context) (*model.Request, error) {
-	allTools := l.allTools
-	if l.skillRuntime != nil {
-		allTools = l.skillRuntime.Snapshot().FilterTools(allTools)
-	}
-	return contextBuilder{
+	request, err := contextBuilder{
 		agent:    l.agent,
 		sess:     l.sess,
-		allTools: allTools,
+		allTools: l.allTools,
+		skills:   l.skillRuntime,
 	}.Build(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if l.skillRuntime != nil {
+		l.disclosure = l.skillRuntime.DisclosureFromMessages(request.Messages)
+	}
+	return request, nil
 }
 
 func (l *agentLoop) streamModelCall(ctx context.Context, req *model.Request) (*model.Response, error) {
@@ -437,9 +442,8 @@ func (l *agentLoop) executeToolWave(calls []content.ToolUse) (*model.Message, ev
 	allTools := l.allTools
 	resolver := l.agent.resolver
 	if l.skillRuntime != nil {
-		disclosure := l.skillRuntime.Snapshot()
-		allTools = disclosure.FilterTools(allTools)
-		resolver = disclosure.FilterResolver(resolver)
+		allTools = l.disclosure.FilterTools(allTools)
+		resolver = l.disclosure.FilterResolver(resolver)
 	}
 	runtime := execute.NewRuntime(allTools, resolver, l.agent.policy)
 	executableCalls, err := l.prepareToolCalls(runtime, calls)

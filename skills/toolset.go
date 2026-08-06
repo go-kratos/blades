@@ -196,11 +196,13 @@ func (t loadSkillTool) Handle(_ context.Context, input json.RawMessage) (*tools.
 	if err != nil {
 		return nil, err
 	}
-	t.runtime.markLoaded(request.Name)
 	return result, nil
 }
 
-type loadSkillResourceTool struct{ runtime *Runtime }
+type loadSkillResourceTool struct {
+	runtime    *Runtime
+	disclosure Disclosure
+}
 
 func (t loadSkillResourceTool) Spec() tools.ToolSpec {
 	return tools.ToolSpec{
@@ -236,7 +238,7 @@ func (t loadSkillResourceTool) Handle(_ context.Context, input json.RawMessage) 
 	if err != nil {
 		return nil, newToolError("INVALID_RESOURCE_PATH", err.Error())
 	}
-	if !t.runtime.isLoaded(request.SkillName) {
+	if !t.disclosure.hasLoadedSkill(request.SkillName) {
 		return nil, newToolError("SKILL_NOT_LOADED", fmt.Sprintf("skill %q must be loaded before reading its resources", request.SkillName))
 	}
 	content, found := readResource(entry.resources, resourceType, resourceName)

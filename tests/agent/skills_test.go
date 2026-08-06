@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/compact"
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/hook"
 	"github.com/go-kratos/blades/model"
@@ -253,6 +254,129 @@ func TestAgentRestoresSkillToolsFromCarriedHistory(t *testing.T) {
 	requests := capture.Requests()
 	require.Len(t, requests, 2)
 	assert.Contains(t, toolNames(requests[0].Tools), "friend_search")
+}
+
+func TestAgentDoesNotDiscloseToolsAfterLoadResultIsRewritten(t *testing.T) {
+	t.Parallel()
+
+	skill, err := skills.New(
+		skills.Frontmatter{Name: "add-friend", Description: "Add a friend.", AllowedTools: "friend_search"},
+		"Search before adding.",
+		skills.Resources{},
+	)
+	require.NoError(t, err)
+	friendSearch := &countedSkillTool{name: "friend_search"}
+	provider := dummyprovider.New(
+		dummyprovider.ToolUseResponse("skill-1", skills.ToolLoadSkillName, json.RawMessage(`{"name":"add-friend"}`)),
+		dummyprovider.ToolUseResponse("tool-1", "friend_search", json.RawMessage(`{"query":"Alice"}`)),
+		dummyprovider.TextResponse("The Skill result was unavailable."),
+	)
+	capture := &skillRequestCapture{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(friendSearch),
+		blades.WithSkills(skill),
+		blades.WithHooks(&rewriteToolResultHook{}, capture),
+	)
+	require.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("Add Alice"))
+	require.NoError(t, err)
+	assert.Zero(t, friendSearch.calls.Load())
+	toolEnd, found := findToolEnd(outputs, "tool-1")
+	require.True(t, found)
+	assert.True(t, toolEnd.IsError)
+
+	requests := capture.Requests()
+	require.Len(t, requests, 3)
+	assert.NotContains(t, toolNames(requests[1].Tools), "friend_search")
+}
+
+func TestAgentRecomputesDisclosureAfterCompaction(t *testing.T) {
+	t.Parallel()
+
+	skill, err := skills.New(
+		skills.Frontmatter{Name: "add-friend", Description: "Add a friend.", AllowedTools: "friend_search"},
+		"Search before adding.",
+		skills.Resources{},
+	)
+	require.NoError(t, err)
+	loadResult := `{"frontmatter":{"name":"add-friend","description":"Add a friend.","allowed-tools":"friend_search"},"instructions":"Search before adding.","resources":{"assets":[],"references":[],"scripts":[]},"skill_name":"add-friend"}`
+	sess := session.NewSession(session.WithMessages(
+		&model.Message{Role: model.RoleTool, Parts: []content.Part{
+			content.ToolResult{ID: "skill-old", Name: skills.ToolLoadSkillName, Parts: []content.Part{content.Text{Text: loadResult}}},
+		}},
+	))
+	friendSearch := &countedSkillTool{name: "friend_search"}
+	provider := dummyprovider.New(
+		dummyprovider.ToolUseResponse("tool-1", "friend_search", json.RawMessage(`{"query":"Alice"}`)),
+		dummyprovider.TextResponse("The old Skill was compacted."),
+	)
+	capture := &skillRequestCapture{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(friendSearch),
+		blades.WithSkills(skill),
+		blades.WithHooks(capture),
+		blades.WithCompact(compact.CompactorFunc(func(_ context.Context, request compact.Request) ([]*model.Message, error) {
+			return request.Messages[1:], nil
+		})),
+		blades.WithContextWindow(model.ContextWindow{MaxTokens: 14_000}),
+		blades.WithTokenCounter(model.TokenCounterFunc(func(context.Context, *model.Request) (model.TokenCount, error) {
+			return model.TokenCount{Input: 10_000}, nil
+		})),
+	)
+	require.NoError(t, err)
+
+	ctx := session.NewContext(context.Background(), sess)
+	outputs, err := collectAllAgentOutputs(ctx, agent, promptInputs("Continue"))
+	require.NoError(t, err)
+	assert.Zero(t, friendSearch.calls.Load())
+	toolEnd, found := findToolEnd(outputs, "tool-1")
+	require.True(t, found)
+	assert.True(t, toolEnd.IsError)
+
+	requests := capture.Requests()
+	require.Len(t, requests, 2)
+	assert.NotContains(t, toolNames(requests[0].Tools), "friend_search")
+}
+
+func TestAgentFreezesSkillResourceEligibilityForToolWave(t *testing.T) {
+	t.Parallel()
+
+	skill, err := skills.New(
+		skills.Frontmatter{Name: "support", Description: "Support procedures."},
+		"Read the guide.",
+		skills.Resources{References: map[string]string{"guide.md": "guide content"}},
+	)
+	require.NoError(t, err)
+	provider := dummyprovider.New(
+		dummyprovider.AssistantResponse([]content.Part{
+			dummyprovider.ToolUse("skill-1", skills.ToolLoadSkillName, json.RawMessage(`{"name":"support"}`)),
+			dummyprovider.ToolUse("resource-early", skills.ToolLoadSkillResourceName, json.RawMessage(`{"skill_name":"support","path":"references/guide.md"}`)),
+		}, dummyprovider.WithStopReason(model.StopToolUse)),
+		dummyprovider.ToolUseResponse("resource-next", skills.ToolLoadSkillResourceName, json.RawMessage(`{"skill_name":"support","path":"references/guide.md"}`)),
+		dummyprovider.TextResponse("Guide loaded."),
+	)
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithSkills(skill),
+	)
+	require.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("Load the guide"))
+	require.NoError(t, err)
+	early, found := findToolEnd(outputs, "resource-early")
+	require.True(t, found)
+	assert.True(t, early.IsError)
+	assert.Contains(t, textFromParts(early.Parts), "SKILL_NOT_LOADED")
+	next, found := findToolEnd(outputs, "resource-next")
+	require.True(t, found)
+	assert.False(t, next.IsError)
+	assert.Contains(t, textFromParts(next.Parts), "guide content")
 }
 
 type skillRequestCapture struct {
