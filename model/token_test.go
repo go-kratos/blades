@@ -2,10 +2,12 @@ package model
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/tools"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 func TestApproxTokenCounterReturnsSegmentBreakdown(t *testing.T) {
@@ -41,5 +43,30 @@ func TestApproxTokenCounterHonorsCanceledContext(t *testing.T) {
 	_, err := ApproxTokenCounter{}.CountTokens(ctx, &Request{})
 	if err != context.Canceled {
 		t.Fatalf("ApproxTokenCounter.CountTokens() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestApproxTokenCounterIncludesResponseFormat(t *testing.T) {
+	t.Parallel()
+
+	counter := ApproxTokenCounter{}
+	base, err := counter.CountTokens(context.Background(), &Request{})
+	if err != nil {
+		t.Fatalf("ApproxTokenCounter.CountTokens() error = %v", err)
+	}
+	withSchema, err := counter.CountTokens(context.Background(), &Request{
+		Options: []Option{ResponseFormat{
+			Schema: &jsonschema.Schema{
+				Type:        "object",
+				Description: strings.Repeat("structured output schema ", 20),
+			},
+			Strict: true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ApproxTokenCounter.CountTokens() error = %v", err)
+	}
+	if withSchema.Total() <= base.Total() {
+		t.Fatalf("count with response schema = %d, want greater than base count %d", withSchema.Total(), base.Total())
 	}
 }
