@@ -118,12 +118,35 @@ func (t listSkillsTool) Spec() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        ToolListSkillsName,
 		Description: "List the skills available to this agent with their names and descriptions.",
-		InputSchema: emptyObjectSchema(),
+		InputSchema: &jsonschema.Schema{
+			Type: "object",
+			Properties: map[string]*jsonschema.Schema{
+				"query": {Type: "string", Description: "Optional case-insensitive substring used to filter skill names and descriptions."},
+			},
+		},
 	}
 }
 
-func (t listSkillsTool) Handle(context.Context, json.RawMessage) (*tools.Result, error) {
-	return tools.TextResult(FormatSkillsAsXML(t.toolset.skills)), nil
+func (t listSkillsTool) Handle(_ context.Context, input json.RawMessage) (*tools.Result, error) {
+	var request struct {
+		Query string `json:"query"`
+	}
+	if len(input) > 0 {
+		if err := json.Unmarshal(input, &request); err != nil {
+			return nil, newToolError("INVALID_ARGUMENTS", fmt.Sprintf("invalid tool arguments: %v", err))
+		}
+	}
+	query := strings.ToLower(strings.TrimSpace(request.Query))
+	if query == "" {
+		return tools.TextResult(FormatSkillsAsXML(t.toolset.skills)), nil
+	}
+	matched := make([]Skill, 0, len(t.toolset.skills))
+	for _, skill := range t.toolset.skills {
+		if strings.Contains(strings.ToLower(skill.Name()), query) || strings.Contains(strings.ToLower(skill.Description()), query) {
+			matched = append(matched, skill)
+		}
+	}
+	return tools.TextResult(FormatSkillsAsXML(matched)), nil
 }
 
 type loadSkillTool struct{ toolset *Toolset }
@@ -217,10 +240,6 @@ func (t loadSkillResourceTool) Handle(_ context.Context, input json.RawMessage) 
 		response["content_base64"] = base64.StdEncoding.EncodeToString(content)
 	}
 	return jsonResult(response)
-}
-
-func emptyObjectSchema() *jsonschema.Schema {
-	return &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{}}
 }
 
 func frontmatterMap(frontmatter Frontmatter) map[string]any {
