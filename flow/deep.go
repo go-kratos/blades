@@ -42,41 +42,31 @@ func (a *deepAgent) run(ctx context.Context, input <-chan event.Input, output ch
 		close(output)
 	}()
 
+	if len(a.cfg.SubAgents) == 0 {
+		return
+	}
+
 	// Deep agent delegates to sub-agents based on handoff events
+	currentAgent := a.cfg.SubAgents[0]
 	currentInput := input
 	for i := 0; i < a.cfg.MaxIterations; i++ {
-		for _, sub := range a.cfg.SubAgents {
-			subOut, err := sub.Run(ctx, currentInput)
-			if err != nil {
-				output <- event.Error{Err: err}
-				return
-			}
-
-			var lastTurn event.TurnEnd
-			for o := range subOut {
-				switch v := o.(type) {
-				case event.Done:
-					continue
-				case event.TurnEnd:
-					lastTurn = v
-					output <- o
-				default:
-					output <- o
-				}
-			}
-
-			if h, ok := lastTurn.Action.(event.Handoff); ok {
-				target := a.findAgent(h.Agent)
-				if target != nil {
-					ch := make(chan event.Input, 1)
-					ch <- event.Prompt{Parts: lastTurn.Parts}
-					close(ch)
-					currentInput = ch
-					break
-				}
-			}
+		subOut, err := currentAgent.Run(ctx, currentInput)
+		if err != nil {
+			output <- event.Error{Err: err}
 			return
 		}
+
+		lastTurn := forwardAgentOutput(subOut, output)
+		handoff, ok := lastTurn.Action.(event.Handoff)
+		if !ok {
+			return
+		}
+		target := a.findAgent(handoff.Agent)
+		if target == nil || len(lastTurn.Parts) == 0 {
+			return
+		}
+		currentAgent = target
+		currentInput = promptInput(lastTurn.Parts)
 	}
 }
 
@@ -87,4 +77,20 @@ func (a *deepAgent) findAgent(name string) blades.Agent {
 		}
 	}
 	return nil
+}
+
+func forwardAgentOutput(input <-chan event.Output, output chan<- event.Output) event.TurnEnd {
+	var lastTurn event.TurnEnd
+	for item := range input {
+		switch value := item.(type) {
+		case event.Done:
+			continue
+		case event.TurnEnd:
+			lastTurn = value
+			output <- item
+		default:
+			output <- item
+		}
+	}
+	return lastTurn
 }
