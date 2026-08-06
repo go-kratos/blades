@@ -11,6 +11,9 @@ func Fork(agent Agent, opts ...AgentOption) (Agent, error) {
 	for _, opt := range opts {
 		opt(fork)
 	}
+	if err := fork.configureSkills(); err != nil {
+		return nil, err
+	}
 	return fork, nil
 }
 

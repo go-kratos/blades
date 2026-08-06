@@ -17,6 +17,7 @@
 - [Agent 组合与编排](./design-agent-orchestration.md) - `flow/` 组合（Sequential/Parallel/Loop/Routing/Deep）与多 Agent 边界 `[draft]`
 - [Memory 系统](./design-memory.md) - Memory 接口（Recall+Remember+Forget）、`Entry` / `Query` 数据载体、应用层经 prompt.Memory 注入策略 `[draft]`
 - [Prompt 系统](./design-prompt.md) - Builder 接口 + Section 函数类型；Static/Text/Memory 工厂 `[draft]`
+- [Skills 渐进式加载](./design-skills.md) - `SKILL.md`、目录注入、按需加载工具与 Policy 边界 `[implemented]`
 - [Compact 系统](./design-compact.md) - 单一 Compactor 接口与内置实现（Window/ToolResultBudget/Summarize/Chain） `[draft]`
 - [Context Management](./design-context-management.md) - root Agent request-view 构建、input/system/messages/tools 预算协同、context stats 与 summary request 边界 `[draft]`
 - [Model 与 Provider](./design-model-provider.md) - `model/` Message、Part、Provider（Name/Generate/Stream）、TokenCounter/TokenCount/ApproxTokenCounter、Request/Response/Chunk、Options sealed union `[draft]`
@@ -44,6 +45,7 @@
 - [扩展与 Hook 系统](./design-hook-extension.md)
 - [Memory 系统](./design-memory.md)
 - [Prompt 系统](./design-prompt.md)
+- [Skills 渐进式加载](./design-skills.md)
 - [Compact 系统](./design-compact.md)
 - [Context Management](./design-context-management.md)
 
@@ -61,7 +63,7 @@
 - Draft: 12
 - Review: 0
 - Approved: 0
-- Implemented: 1
+- Implemented: 2
 - Deprecated: 0
 
 ---

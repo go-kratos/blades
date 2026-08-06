@@ -158,6 +158,24 @@ writer, _ := blades.NewAgent(
 _ = writer
 ```
 
+## Skills
+
+Skills keep specialized instructions out of the always-on system prompt. The Agent receives only a compact catalog, then uses `load_skill` and `load_skill_resource` when a task actually needs the full instructions.
+
+```go
+skillList, err := skills.NewFromDir("./skills")
+if err != nil {
+    return err
+}
+agent, err := blades.NewAgent(
+    "assistant",
+    blades.WithModel(provider),
+    blades.WithSkills(skillList...),
+)
+```
+
+Each skill follows the `SKILL.md` layout and may include `references/`, `assets/`, and `scripts/`. Script files can be inspected as resources but are not executed by the built-in toolset. Skill tools are regular Blades tools, so `WithPolicy` remains the authorization boundary. The `allowed-tools` frontmatter field is exposed as metadata and does not bypass policy.
+
 ## Streaming
 
 Use `Runner.RunStream` when the application needs incremental output:
