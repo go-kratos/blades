@@ -6,6 +6,7 @@ import (
 	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/policy"
 	"github.com/go-kratos/blades/prompt"
+	"github.com/go-kratos/blades/skills"
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -38,6 +39,13 @@ func WithTools(t ...tools.Tool) AgentOption {
 func WithToolsResolver(r tools.Resolver) AgentOption {
 	return func(a *llmAgent) {
 		a.resolver = r
+	}
+}
+
+// WithSkills adds reusable instructions that the model can load on demand.
+func WithSkills(skillList ...skills.Skill) AgentOption {
+	return func(a *llmAgent) {
+		a.skills = append(a.skills, skillList...)
 	}
 }
 

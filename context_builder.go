@@ -31,6 +31,11 @@ func (b contextBuilder) Build(ctx context.Context) (*model.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+	if b.agent.skillToolset != nil {
+		if instruction := b.agent.skillToolset.Instruction(); instruction != "" {
+			systemParts = append(systemParts, content.Text{Text: instruction})
+		}
+	}
 	system, err := prompt.JoinText(systemParts)
 	if err != nil {
 		return nil, err

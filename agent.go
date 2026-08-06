@@ -11,6 +11,7 @@ import (
 	"github.com/go-kratos/blades/policy"
 	"github.com/go-kratos/blades/prompt"
 	"github.com/go-kratos/blades/session"
+	"github.com/go-kratos/blades/skills"
 	"github.com/go-kratos/blades/tools"
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -37,6 +38,8 @@ type llmAgent struct {
 	outputSchema   *jsonschema.Schema
 	hooks          []hook.Hook
 	tools          []tools.Tool
+	skills         []skills.Skill
+	skillToolset   *skills.Toolset
 	resolver       tools.Resolver
 	provider       model.Provider
 	promptBuilders []prompt.Builder
@@ -60,7 +63,23 @@ func NewAgent(name string, opts ...AgentOption) (Agent, error) {
 	if a.provider == nil {
 		return nil, ErrModelProviderRequired
 	}
+	if err := a.configureSkills(); err != nil {
+		return nil, err
+	}
 	return a, nil
+}
+
+func (a *llmAgent) configureSkills() error {
+	a.skillToolset = nil
+	if len(a.skills) == 0 {
+		return nil
+	}
+	toolset, err := skills.NewToolset(a.skills)
+	if err != nil {
+		return err
+	}
+	a.skillToolset = toolset
+	return nil
 }
 
 // Name returns the name of the agent.
@@ -98,8 +117,13 @@ func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan ev
 }
 
 func (a *llmAgent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
-	allTools := make([]tools.Tool, 0, len(a.tools))
+	var skillTools []tools.Tool
+	if a.skillToolset != nil {
+		skillTools = a.skillToolset.Tools()
+	}
+	allTools := make([]tools.Tool, 0, len(a.tools)+len(skillTools))
 	allTools = append(allTools, a.tools...)
+	allTools = append(allTools, skillTools...)
 	if a.resolver != nil {
 		resolved, err := a.resolver.List(ctx)
 		if err != nil {
@@ -114,6 +138,7 @@ func (a *llmAgent) clone() *llmAgent {
 	fork := *a
 	fork.hooks = slices.Clone(a.hooks)
 	fork.tools = slices.Clone(a.tools)
+	fork.skills = slices.Clone(a.skills)
 	fork.promptBuilders = slices.Clone(a.promptBuilders)
 	return &fork
 }

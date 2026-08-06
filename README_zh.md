@@ -157,6 +157,24 @@ writer, _ := blades.NewAgent(
 _ = writer
 ```
 
+## Skills
+
+Skills 用来把特定任务才需要的规则从常驻系统提示词中拆出去。Agent 启动时只看到精简目录，真正需要时再通过 `load_skill` 和 `load_skill_resource` 加载完整规则与资源。
+
+```go
+skillList, err := skills.NewFromDir("./skills")
+if err != nil {
+    return err
+}
+agent, err := blades.NewAgent(
+    "assistant",
+    blades.WithModel(provider),
+    blades.WithSkills(skillList...),
+)
+```
+
+每个 Skill 遵循 `SKILL.md` 目录格式，并可包含 `references/`、`assets/` 和 `scripts/`。内置工具可以读取脚本文件，但不会执行脚本。Skill 工具仍是普通 Blades 工具，因此权限边界继续由 `WithPolicy` 控制；frontmatter 中的 `allowed-tools` 仅作为元数据暴露，不会绕过 Policy。
+
 ## 流式输出
 
 应用需要增量输出时，可以使用 `Runner.RunStream`：
