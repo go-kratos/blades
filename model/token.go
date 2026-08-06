@@ -61,8 +61,12 @@ func (ApproxTokenCounter) CountTokens(ctx context.Context, req *Request) (TokenC
 	system := estimateTextTokens(req.System)
 	messages := estimateMessagesTokens(req.Messages)
 	tools := estimateJSONTokens(req.Tools)
+	var options int64
+	if len(req.Options) > 0 {
+		options = estimateJSONTokens(req.Options)
+	}
 	return TokenCount{
-		Input:    system + messages + tools,
+		Input:    system + messages + tools + options,
 		System:   system,
 		Messages: messages,
 		Tools:    tools,

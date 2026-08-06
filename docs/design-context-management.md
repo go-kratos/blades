@@ -72,15 +72,15 @@ The counter is deliberately request-view oriented rather than message-only, beca
 The private root context builder assembles requests in a fixed order:
 
 1. Read `Session.Messages(ctx)` as the full append-only transcript.
-2. Call `Compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})` on the messages segment only.
-3. Build prompt sections into `model.Request.System`; `prompt.Memory` recall happens here.
-4. Render tool specs into `model.Request.Tools`.
-5. Assemble `model.Request` and check budget limits.
-6. Return `*model.Request` or `BudgetError`.
+2. Build prompt sections into `model.Request.System`; `prompt.Memory` recall happens here.
+3. Render tool specs into `model.Request.Tools` and attach response options.
+4. Count the complete provider request to decide whether compaction is needed.
+5. If the threshold is exceeded, call `Compactor.Compact(ctx, compact.Request{Messages: snapshot, TokenCounter: counter})` on the messages segment only.
+6. Assemble the request with the compacted message view and return `*model.Request` or `BudgetError`.
 
 The default loop calls `contextBuilder.Build()` to get the request. Since `BeforeModel` hooks may mutate `*model.Request`, the loop re-checks budget after all `BeforeModel` hooks finish; the provider call and `AfterModel` receive the final request.
 
-`Input` can be enforced whenever the counter returns total input usage. Segment budgets (`System`, `Messages`, `Tools`) require `TokenCount.HasSegments()`; otherwise enforcement fails with `BudgetError{Unavailable: true}` instead of silently accepting an unchecked budget.
+`Input` can be enforced whenever the counter returns total input usage. The default estimator includes request options such as structured-output schemas in `Input`; the exposed segment breakdown remains `System`, `Messages`, and `Tools`. Segment budgets require `TokenCount.HasSegments()`; otherwise enforcement fails with `BudgetError{Unavailable: true}` instead of silently accepting an unchecked budget.
 
 ## Design Principles
 
