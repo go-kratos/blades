@@ -2,6 +2,7 @@ package flow
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -39,6 +40,38 @@ func TestLoopAgentBridgesEachSubAgentOutput(t *testing.T) {
 
 	assert.Equal(t, []string{"start"}, first.Inputs())
 	assert.Equal(t, []string{"start -> first"}, second.Inputs())
+}
+
+func TestLoopAgentEvaluatesConditionAfterFinalEmptyOutput(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("stop empty turn")
+	conditionCalled := false
+	agent := NewLoopAgent(LoopConfig{
+		Name: "loop",
+		SubAgents: []blades.Agent{&recordingAgent{
+			name: "empty",
+			respond: func(string) event.TurnEnd {
+				return event.TurnEnd{}
+			},
+		}},
+		MaxIterations: 1,
+		Condition: func(_ context.Context, state LoopState) (bool, error) {
+			conditionCalled = true
+			assert.Empty(t, state.LastOutput.Parts)
+			return false, wantErr
+		},
+	})
+
+	outputs, err := agent.Run(context.Background(), promptInput([]content.Part{content.Text{Text: "start"}}))
+	require.NoError(t, err)
+	items := collectOutputs(outputs)
+
+	require.True(t, conditionCalled)
+	require.Len(t, items, 3)
+	assert.IsType(t, event.TurnEnd{}, items[0])
+	assert.ErrorIs(t, items[1].(event.Error).Err, wantErr)
+	assert.IsType(t, event.Done{}, items[2])
 }
 
 type recordingAgent struct {
