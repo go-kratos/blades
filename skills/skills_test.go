@@ -8,6 +8,7 @@ import (
 	"testing/fstest"
 
 	"github.com/go-kratos/blades/content"
+	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -122,6 +123,56 @@ func TestListSkillsSupportsProviderCompatibleFiltering(t *testing.T) {
 	assert.NotContains(t, text, "weather")
 }
 
+func TestRuntimeDisclosesOnlyToolsFromLoadedSkills(t *testing.T) {
+	t.Parallel()
+
+	addFriend, err := New(
+		Frontmatter{
+			Name: "add-friend", Description: "Use when the user wants to add a friend.",
+			AllowedTools: "friend_search, friend_add",
+		},
+		"Search first, then add after confirmation.",
+		Resources{},
+	)
+	require.NoError(t, err)
+	toolset, err := NewToolset([]Skill{addFriend})
+	require.NoError(t, err)
+	runtime := toolset.NewRuntime()
+	allTools := append([]tools.Tool{
+		namedSkillTestTool("current_time"),
+		namedSkillTestTool("friend_search"),
+		namedSkillTestTool("friend_add"),
+	}, runtime.Tools()...)
+
+	beforeLoad := runtime.Snapshot()
+	assert.ElementsMatch(t, []string{
+		"current_time", ToolListSkillsName, ToolLoadSkillName, ToolLoadSkillResourceName,
+	}, skillTestToolNames(beforeLoad.FilterTools(allTools)))
+
+	_, err = runtime.Tools()[1].Handle(context.Background(), json.RawMessage(`{"name":"add-friend"}`))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{
+		"current_time", "friend_search", "friend_add",
+		ToolListSkillsName, ToolLoadSkillName, ToolLoadSkillResourceName,
+	}, skillTestToolNames(runtime.Snapshot().FilterTools(allTools)))
+
+	assert.NotContains(t, skillTestToolNames(beforeLoad.FilterTools(allTools)), "friend_search")
+	assert.NotContains(t, skillTestToolNames(toolset.NewRuntime().Snapshot().FilterTools(allTools)), "friend_search")
+}
+
+func TestNewToolsetRejectsInvalidAllowedToolPattern(t *testing.T) {
+	t.Parallel()
+
+	skill, err := New(
+		Frontmatter{Name: "invalid-tools", Description: "Invalid allowed tools.", AllowedTools: "[invalid"},
+		"instructions",
+		Resources{},
+	)
+	require.NoError(t, err)
+	_, err = NewToolset([]Skill{skill})
+	assert.ErrorContains(t, err, "invalid allowed-tools pattern")
+}
+
 func TestLoadSkillResourceRejectsTraversal(t *testing.T) {
 	t.Parallel()
 
@@ -144,6 +195,67 @@ func TestLoadSkillResourceRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestLoadSkillResourceRequiresLoadedSkill(t *testing.T) {
+	t.Parallel()
+
+	skill, err := New(
+		Frontmatter{Name: "support", Description: "Support procedures."},
+		"Follow the support procedure.",
+		Resources{References: map[string]string{"guide.md": "guide"}},
+	)
+	require.NoError(t, err)
+	toolset, err := NewToolset([]Skill{skill})
+	require.NoError(t, err)
+	runtime := toolset.NewRuntime()
+
+	_, err = runtime.Tools()[2].Handle(context.Background(), json.RawMessage(`{"skill_name":"support","path":"references/guide.md"}`))
+	assert.ErrorContains(t, err, "SKILL_NOT_LOADED")
+
+	_, err = runtime.Tools()[1].Handle(context.Background(), json.RawMessage(`{"name":"support"}`))
+	require.NoError(t, err)
+	result, err := runtime.Tools()[2].Handle(context.Background(), json.RawMessage(`{"skill_name":"support","path":"references/guide.md"}`))
+	require.NoError(t, err)
+	assert.Contains(t, content.TextFromParts(result.Parts), "guide")
+}
+
+func TestRuntimeRestoresMatchingSkillFromHistory(t *testing.T) {
+	t.Parallel()
+
+	skill, err := New(
+		Frontmatter{Name: "add-friend", Description: "Add a friend.", AllowedTools: "friend_search"},
+		"Search before adding.",
+		Resources{},
+	)
+	require.NoError(t, err)
+	toolset, err := NewToolset([]Skill{skill})
+	require.NoError(t, err)
+	loadedRuntime := toolset.NewRuntime()
+	result, err := loadedRuntime.Tools()[1].Handle(context.Background(), json.RawMessage(`{"name":"add-friend"}`))
+	require.NoError(t, err)
+	history := []*model.Message{{
+		Role: model.RoleTool,
+		Parts: []content.Part{content.ToolResult{
+			ID: "skill-1", Name: ToolLoadSkillName, Parts: result.Parts,
+		}},
+	}}
+
+	restoredRuntime := toolset.NewRuntime()
+	restoredRuntime.Restore(history)
+	assert.True(t, restoredRuntime.Snapshot().AllowsTool("friend_search"))
+
+	changedSkill, err := New(
+		Frontmatter{Name: "add-friend", Description: "Add a friend.", AllowedTools: "friend_search"},
+		"Use the new procedure.",
+		Resources{},
+	)
+	require.NoError(t, err)
+	changedToolset, err := NewToolset([]Skill{changedSkill})
+	require.NoError(t, err)
+	changedRuntime := changedToolset.NewRuntime()
+	changedRuntime.Restore(history)
+	assert.False(t, changedRuntime.Snapshot().AllowsTool("friend_search"))
+}
+
 func TestSkillToolFailuresReturnErrors(t *testing.T) {
 	t.Parallel()
 
@@ -159,6 +271,8 @@ func TestSkillToolFailuresReturnErrors(t *testing.T) {
 	for _, tool := range toolset.Tools() {
 		toolsByName[tool.Spec().Name] = tool
 	}
+	_, err = toolsByName[ToolLoadSkillName].Handle(context.Background(), json.RawMessage(`{"name":"safe-skill"}`))
+	require.NoError(t, err)
 
 	tests := []struct {
 		name      string
@@ -204,4 +318,22 @@ func TestNewFromEmbedLoadsStandardSkillLayout(t *testing.T) {
 	assert.Equal(t, []string{"api.md"}, resources.ListReferences())
 	assert.Equal(t, []string{"icon.png"}, resources.ListAssets())
 	assert.Equal(t, []string{"check.sh"}, resources.ListScripts())
+}
+
+type namedSkillTestTool string
+
+func (t namedSkillTestTool) Spec() tools.ToolSpec {
+	return tools.ToolSpec{Name: string(t), Description: string(t)}
+}
+
+func (namedSkillTestTool) Handle(context.Context, json.RawMessage) (*tools.Result, error) {
+	return tools.TextResult("ok"), nil
+}
+
+func skillTestToolNames(toolList []tools.Tool) []string {
+	names := make([]string, 0, len(toolList))
+	for _, tool := range toolList {
+		names = append(names, tool.Spec().Name)
+	}
+	return names
 }

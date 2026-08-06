@@ -103,27 +103,33 @@ func (a *llmAgent) Run(ctx context.Context, input <-chan event.Input) (<-chan ev
 	if err != nil {
 		return nil, err
 	}
+	var skillRuntime *skills.Runtime
+	if a.skillToolset != nil {
+		skillRuntime = a.skillToolset.NewRuntime()
+		messages, err := sess.Messages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		skillRuntime.Restore(messages)
+		allTools = append(allTools, skillRuntime.Tools()...)
+	}
 	output := make(chan event.Output, 64)
 	l := &agentLoop{
-		agent:    a,
-		ctx:      ctx,
-		output:   output,
-		allTools: allTools,
-		sess:     sess,
-		inputs:   newInputQueue(ctx, input),
+		agent:        a,
+		ctx:          ctx,
+		output:       output,
+		allTools:     allTools,
+		skillRuntime: skillRuntime,
+		sess:         sess,
+		inputs:       newInputQueue(ctx, input),
 	}
 	go l.run()
 	return output, nil
 }
 
 func (a *llmAgent) resolveTools(ctx context.Context) ([]tools.Tool, error) {
-	var skillTools []tools.Tool
-	if a.skillToolset != nil {
-		skillTools = a.skillToolset.Tools()
-	}
-	allTools := make([]tools.Tool, 0, len(a.tools)+len(skillTools))
+	allTools := make([]tools.Tool, 0, len(a.tools))
 	allTools = append(allTools, a.tools...)
-	allTools = append(allTools, skillTools...)
 	if a.resolver != nil {
 		resolved, err := a.resolver.List(ctx)
 		if err != nil {

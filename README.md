@@ -174,7 +174,7 @@ agent, err := blades.NewAgent(
 )
 ```
 
-Each skill follows the `SKILL.md` layout and may include `references/`, `assets/`, and `scripts/`. Script files can be inspected as resources but are not executed by the built-in toolset. Skill tools are regular Blades tools, so `WithPolicy` remains the authorization boundary. The `allowed-tools` frontmatter field is exposed as metadata and does not bypass policy.
+Each skill follows the `SKILL.md` layout and may include `references/`, `assets/`, and `scripts/`. Script files can be inspected as resources but are not executed by the built-in toolset. Tools named by `allowed-tools` stay hidden until that Skill is loaded; this controls disclosure only. Skill and business tools remain subject to `WithPolicy`, which is the authorization boundary.
 
 ## Streaming
 

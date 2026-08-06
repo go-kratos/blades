@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-kratos/blades"
+	"github.com/go-kratos/blades/content"
 	"github.com/go-kratos/blades/hook"
 	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/policy"
+	"github.com/go-kratos/blades/session"
 	"github.com/go-kratos/blades/skills"
 	"github.com/go-kratos/blades/tests/dummyprovider"
 	"github.com/go-kratos/blades/tools"
@@ -122,6 +125,136 @@ func TestAgentMarksSkillToolFailureAsError(t *testing.T) {
 	assert.Contains(t, textFromParts(toolEnd.Parts), "SKILL_NOT_FOUND")
 }
 
+func TestAgentDisclosesSkillToolsAfterLoading(t *testing.T) {
+	t.Parallel()
+
+	skill, err := skills.New(
+		skills.Frontmatter{
+			Name: "add-friend", Description: "Use when the user asks to add a friend.",
+			AllowedTools: "friend_search",
+		},
+		"Search for the friend before replying.",
+		skills.Resources{},
+	)
+	require.NoError(t, err)
+	friendSearch := &countedSkillTool{name: "friend_search"}
+	provider := dummyprovider.New(
+		dummyprovider.ToolUseResponse("skill-1", skills.ToolLoadSkillName, json.RawMessage(`{"name":"add-friend"}`)),
+		dummyprovider.ToolUseResponse("tool-1", "friend_search", json.RawMessage(`{"query":"Alice"}`)),
+		dummyprovider.TextResponse("Alice found."),
+	)
+	capture := &skillRequestCapture{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(friendSearch),
+		blades.WithSkills(skill),
+		blades.WithHooks(capture),
+	)
+	require.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("Add Alice as a friend"))
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), friendSearch.calls.Load())
+	assert.Equal(t, "Alice found.", turnEnds(outputs)[2].Text())
+
+	requests := capture.Requests()
+	require.Len(t, requests, 3)
+	assert.NotContains(t, toolNames(requests[0].Tools), "friend_search")
+	assert.Contains(t, toolNames(requests[1].Tools), "friend_search")
+}
+
+func TestAgentRejectsSkillToolLoadedInSameWave(t *testing.T) {
+	t.Parallel()
+
+	skill, err := skills.New(
+		skills.Frontmatter{
+			Name: "add-friend", Description: "Use when the user asks to add a friend.",
+			AllowedTools: "friend_add",
+		},
+		"Add the selected friend.",
+		skills.Resources{},
+	)
+	require.NoError(t, err)
+	friendAdd := &countedSkillTool{name: "friend_add"}
+	provider := dummyprovider.New(
+		dummyprovider.AssistantResponse([]content.Part{
+			dummyprovider.ToolUse("skill-1", skills.ToolLoadSkillName, json.RawMessage(`{"name":"add-friend"}`)),
+			dummyprovider.ToolUse("tool-1", "friend_add", json.RawMessage(`{"user_id":"1001"}`)),
+		}, dummyprovider.WithStopReason(model.StopToolUse)),
+		dummyprovider.TextResponse("I need to call the tool in the next wave."),
+	)
+	capture := &skillRequestCapture{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(friendAdd),
+		blades.WithSkills(skill),
+		blades.WithHooks(capture),
+	)
+	require.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("Add Alice"))
+	require.NoError(t, err)
+	assert.Zero(t, friendAdd.calls.Load())
+	toolEnd, found := findToolEnd(outputs, "tool-1")
+	require.True(t, found)
+	assert.True(t, toolEnd.IsError)
+	assert.Contains(t, textFromParts(toolEnd.Parts), "tool not found")
+
+	requests := capture.Requests()
+	require.Len(t, requests, 2)
+	assert.NotContains(t, toolNames(requests[0].Tools), "friend_add")
+	assert.Contains(t, toolNames(requests[1].Tools), "friend_add")
+}
+
+func TestAgentRestoresSkillToolsFromCarriedHistory(t *testing.T) {
+	t.Parallel()
+
+	skill, err := skills.New(
+		skills.Frontmatter{
+			Name: "add-friend", Description: "Use when the user asks to add a friend.",
+			AllowedTools: "friend_search",
+		},
+		"Search for the friend before replying.",
+		skills.Resources{},
+	)
+	require.NoError(t, err)
+	loadResult := `{"frontmatter":{"name":"add-friend","description":"Use when the user asks to add a friend.","allowed-tools":"friend_search"},"instructions":"Search for the friend before replying.","resources":{"assets":[],"references":[],"scripts":[]},"skill_name":"add-friend"}`
+	sess := session.NewSession(session.WithMessages(
+		&model.Message{Role: model.RoleAssistant, Parts: []content.Part{
+			content.ToolUse{ID: "skill-previous", Name: skills.ToolLoadSkillName, Input: json.RawMessage(`{"name":"add-friend"}`)},
+		}},
+		&model.Message{Role: model.RoleTool, Parts: []content.Part{
+			content.ToolResult{ID: "skill-previous", Name: skills.ToolLoadSkillName, Parts: []content.Part{content.Text{Text: loadResult}}},
+		}},
+	))
+	friendSearch := &countedSkillTool{name: "friend_search"}
+	provider := dummyprovider.New(
+		dummyprovider.ToolUseResponse("tool-1", "friend_search", json.RawMessage(`{"query":"Alice"}`)),
+		dummyprovider.TextResponse("Alice found."),
+	)
+	capture := &skillRequestCapture{}
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithTools(friendSearch),
+		blades.WithSkills(skill),
+		blades.WithHooks(capture),
+	)
+	require.NoError(t, err)
+
+	ctx := session.NewContext(context.Background(), sess)
+	outputs, err := collectAllAgentOutputs(ctx, agent, promptInputs("Use the previous result"))
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), friendSearch.calls.Load())
+	assert.Equal(t, "Alice found.", turnEnds(outputs)[1].Text())
+
+	requests := capture.Requests()
+	require.Len(t, requests, 2)
+	assert.Contains(t, toolNames(requests[0].Tools), "friend_search")
+}
+
 type skillRequestCapture struct {
 	hook.Noop
 	mu       sync.Mutex
@@ -150,4 +283,18 @@ func toolNames(specs []tools.ToolSpec) []string {
 		names = append(names, spec.Name)
 	}
 	return names
+}
+
+type countedSkillTool struct {
+	name  string
+	calls atomic.Int32
+}
+
+func (t *countedSkillTool) Spec() tools.ToolSpec {
+	return tools.ToolSpec{Name: t.name, Description: t.name}
+}
+
+func (t *countedSkillTool) Handle(context.Context, json.RawMessage) (*tools.Result, error) {
+	t.calls.Add(1)
+	return tools.TextResult("ok"), nil
 }

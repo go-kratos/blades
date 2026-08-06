@@ -30,17 +30,19 @@ type skillEntry struct {
 
 // Toolset exposes progressive skill discovery as regular Blades tools.
 type Toolset struct {
-	skills      []Skill
-	skillByName map[string]skillEntry
-	tools       []tools.Tool
-	instruction string
+	skills              []Skill
+	skillByName         map[string]skillEntry
+	toolPatternsBySkill map[string][]string
+	gatedToolPatterns   []string
+	instruction         string
 }
 
 // NewToolset validates skills and creates their prompt catalog and tools.
 func NewToolset(skillList []Skill) (*Toolset, error) {
 	toolset := &Toolset{
-		skills:      make([]Skill, 0, len(skillList)),
-		skillByName: make(map[string]skillEntry, len(skillList)),
+		skills:              make([]Skill, 0, len(skillList)),
+		skillByName:         make(map[string]skillEntry, len(skillList)),
+		toolPatternsBySkill: make(map[string][]string, len(skillList)),
 	}
 	for _, skill := range skillList {
 		if skill == nil {
@@ -62,6 +64,12 @@ func NewToolset(skillList []Skill) (*Toolset, error) {
 			frontmatter: frontmatter,
 			resources:   resolveResources(skill),
 		}
+		patterns, err := validateAllowedToolPatterns(skill.Name(), frontmatter.AllowedTools)
+		if err != nil {
+			return nil, err
+		}
+		toolset.toolPatternsBySkill[skill.Name()] = patterns
+		toolset.gatedToolPatterns = append(toolset.gatedToolPatterns, patterns...)
 	}
 	if len(toolset.skills) == 0 {
 		return toolset, nil
@@ -70,17 +78,13 @@ func NewToolset(skillList []Skill) (*Toolset, error) {
 		DefaultSystemInstruction,
 		FormatSkillsAsXML(toolset.skills),
 	}, "\n\n")
-	toolset.tools = []tools.Tool{
-		listSkillsTool{toolset: toolset},
-		loadSkillTool{toolset: toolset},
-		loadSkillResourceTool{toolset: toolset},
-	}
+	toolset.gatedToolPatterns = uniqueSortedPatterns(toolset.gatedToolPatterns)
 	return toolset, nil
 }
 
-// Tools returns a copy of the skill tools.
+// Tools returns core skill tools with fresh disclosure state.
 func (t *Toolset) Tools() []tools.Tool {
-	return append([]tools.Tool(nil), t.tools...)
+	return t.NewRuntime().Tools()
 }
 
 // Instruction returns the system instruction and compact skill catalog.
@@ -112,7 +116,7 @@ func resolveResources(skill Skill) Resources {
 	return provider.Resources()
 }
 
-type listSkillsTool struct{ toolset *Toolset }
+type listSkillsTool struct{ runtime *Runtime }
 
 func (t listSkillsTool) Spec() tools.ToolSpec {
 	return tools.ToolSpec{
@@ -138,10 +142,10 @@ func (t listSkillsTool) Handle(_ context.Context, input json.RawMessage) (*tools
 	}
 	query := strings.ToLower(strings.TrimSpace(request.Query))
 	if query == "" {
-		return tools.TextResult(FormatSkillsAsXML(t.toolset.skills)), nil
+		return tools.TextResult(FormatSkillsAsXML(t.runtime.toolset.skills)), nil
 	}
-	matched := make([]Skill, 0, len(t.toolset.skills))
-	for _, skill := range t.toolset.skills {
+	matched := make([]Skill, 0, len(t.runtime.toolset.skills))
+	for _, skill := range t.runtime.toolset.skills {
 		if strings.Contains(strings.ToLower(skill.Name()), query) || strings.Contains(strings.ToLower(skill.Description()), query) {
 			matched = append(matched, skill)
 		}
@@ -149,7 +153,7 @@ func (t listSkillsTool) Handle(_ context.Context, input json.RawMessage) (*tools
 	return tools.TextResult(FormatSkillsAsXML(matched)), nil
 }
 
-type loadSkillTool struct{ toolset *Toolset }
+type loadSkillTool struct{ runtime *Runtime }
 
 func (t loadSkillTool) Spec() tools.ToolSpec {
 	return tools.ToolSpec{
@@ -175,11 +179,11 @@ func (t loadSkillTool) Handle(_ context.Context, input json.RawMessage) (*tools.
 	if request.Name == "" {
 		return nil, newToolError("MISSING_SKILL_NAME", "skill name is required")
 	}
-	entry, found := t.toolset.skillByName[request.Name]
+	entry, found := t.runtime.toolset.skillByName[request.Name]
 	if !found {
 		return nil, newToolError("SKILL_NOT_FOUND", fmt.Sprintf("skill %q not found", request.Name))
 	}
-	return jsonResult(map[string]any{
+	result, err := jsonResult(map[string]any{
 		"skill_name":   entry.skill.Name(),
 		"instructions": entry.skill.Instruction(),
 		"frontmatter":  frontmatterMap(entry.frontmatter),
@@ -189,9 +193,14 @@ func (t loadSkillTool) Handle(_ context.Context, input json.RawMessage) (*tools.
 			"scripts":    entry.resources.ListScripts(),
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+	t.runtime.markLoaded(request.Name)
+	return result, nil
 }
 
-type loadSkillResourceTool struct{ toolset *Toolset }
+type loadSkillResourceTool struct{ runtime *Runtime }
 
 func (t loadSkillResourceTool) Spec() tools.ToolSpec {
 	return tools.ToolSpec{
@@ -219,13 +228,16 @@ func (t loadSkillResourceTool) Handle(_ context.Context, input json.RawMessage) 
 	if request.SkillName == "" || request.Path == "" {
 		return nil, newToolError("INVALID_ARGUMENTS", "skill_name and path are required")
 	}
-	entry, found := t.toolset.skillByName[request.SkillName]
+	entry, found := t.runtime.toolset.skillByName[request.SkillName]
 	if !found {
 		return nil, newToolError("SKILL_NOT_FOUND", fmt.Sprintf("skill %q not found", request.SkillName))
 	}
 	resourceType, resourceName, err := normalizeResourcePath(request.Path)
 	if err != nil {
 		return nil, newToolError("INVALID_RESOURCE_PATH", err.Error())
+	}
+	if !t.runtime.isLoaded(request.SkillName) {
+		return nil, newToolError("SKILL_NOT_LOADED", fmt.Sprintf("skill %q must be loaded before reading its resources", request.SkillName))
 	}
 	content, found := readResource(entry.resources, resourceType, resourceName)
 	if !found {
