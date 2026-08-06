@@ -101,8 +101,48 @@ func TestLoadSkillResourceRejectsTraversal(t *testing.T) {
 		input, err := json.Marshal(map[string]string{"skill_name": "safe-skill", "path": resourcePath})
 		require.NoError(t, err)
 		result, err := resourceTool.Handle(context.Background(), input)
-		require.NoError(t, err)
-		assert.Contains(t, content.TextFromParts(result.Parts), "INVALID_RESOURCE_PATH")
+		assert.Nil(t, result)
+		assert.ErrorContains(t, err, "INVALID_RESOURCE_PATH")
+	}
+}
+
+func TestSkillToolFailuresReturnErrors(t *testing.T) {
+	t.Parallel()
+
+	skill, err := New(
+		Frontmatter{Name: "safe-skill", Description: "A safe skill."},
+		"instructions",
+		Resources{References: map[string]string{"inside.md": "inside"}},
+	)
+	require.NoError(t, err)
+	toolset, err := NewToolset([]Skill{skill})
+	require.NoError(t, err)
+	toolsByName := make(map[string]tools.Tool)
+	for _, tool := range toolset.Tools() {
+		toolsByName[tool.Spec().Name] = tool
+	}
+
+	tests := []struct {
+		name      string
+		tool      tools.Tool
+		input     json.RawMessage
+		errorCode string
+	}{
+		{name: "invalid load arguments", tool: toolsByName[ToolLoadSkillName], input: json.RawMessage(`{`), errorCode: "INVALID_ARGUMENTS"},
+		{name: "missing skill name", tool: toolsByName[ToolLoadSkillName], input: json.RawMessage(`{}`), errorCode: "MISSING_SKILL_NAME"},
+		{name: "unknown skill", tool: toolsByName[ToolLoadSkillName], input: json.RawMessage(`{"name":"unknown"}`), errorCode: "SKILL_NOT_FOUND"},
+		{name: "invalid resource arguments", tool: toolsByName[ToolLoadSkillResourceName], input: json.RawMessage(`{`), errorCode: "INVALID_ARGUMENTS"},
+		{name: "missing resource arguments", tool: toolsByName[ToolLoadSkillResourceName], input: json.RawMessage(`{}`), errorCode: "INVALID_ARGUMENTS"},
+		{name: "unknown resource skill", tool: toolsByName[ToolLoadSkillResourceName], input: json.RawMessage(`{"skill_name":"unknown","path":"references/a.md"}`), errorCode: "SKILL_NOT_FOUND"},
+		{name: "invalid resource path", tool: toolsByName[ToolLoadSkillResourceName], input: json.RawMessage(`{"skill_name":"safe-skill","path":"../secret"}`), errorCode: "INVALID_RESOURCE_PATH"},
+		{name: "missing resource", tool: toolsByName[ToolLoadSkillResourceName], input: json.RawMessage(`{"skill_name":"safe-skill","path":"references/missing.md"}`), errorCode: "RESOURCE_NOT_FOUND"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := test.tool.Handle(context.Background(), test.input)
+			assert.Nil(t, result)
+			assert.ErrorContains(t, err, test.errorCode)
+		})
 	}
 }
 

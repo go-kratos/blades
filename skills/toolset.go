@@ -147,14 +147,14 @@ func (t loadSkillTool) Handle(_ context.Context, input json.RawMessage) (*tools.
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(input, &request); err != nil {
-		return jsonResult(toolError("INVALID_ARGUMENTS", fmt.Sprintf("invalid tool arguments: %v", err))), nil
+		return nil, newToolError("INVALID_ARGUMENTS", fmt.Sprintf("invalid tool arguments: %v", err))
 	}
 	if request.Name == "" {
-		return jsonResult(toolError("MISSING_SKILL_NAME", "skill name is required")), nil
+		return nil, newToolError("MISSING_SKILL_NAME", "skill name is required")
 	}
 	entry, found := t.toolset.skillByName[request.Name]
 	if !found {
-		return jsonResult(toolError("SKILL_NOT_FOUND", fmt.Sprintf("skill %q not found", request.Name))), nil
+		return nil, newToolError("SKILL_NOT_FOUND", fmt.Sprintf("skill %q not found", request.Name))
 	}
 	return jsonResult(map[string]any{
 		"skill_name":   entry.skill.Name(),
@@ -165,7 +165,7 @@ func (t loadSkillTool) Handle(_ context.Context, input json.RawMessage) (*tools.
 			"assets":     entry.resources.ListAssets(),
 			"scripts":    entry.resources.ListScripts(),
 		},
-	}), nil
+	})
 }
 
 type loadSkillResourceTool struct{ toolset *Toolset }
@@ -191,22 +191,22 @@ func (t loadSkillResourceTool) Handle(_ context.Context, input json.RawMessage) 
 		Path      string `json:"path"`
 	}
 	if err := json.Unmarshal(input, &request); err != nil {
-		return jsonResult(toolError("INVALID_ARGUMENTS", fmt.Sprintf("invalid tool arguments: %v", err))), nil
+		return nil, newToolError("INVALID_ARGUMENTS", fmt.Sprintf("invalid tool arguments: %v", err))
 	}
 	if request.SkillName == "" || request.Path == "" {
-		return jsonResult(toolError("INVALID_ARGUMENTS", "skill_name and path are required")), nil
+		return nil, newToolError("INVALID_ARGUMENTS", "skill_name and path are required")
 	}
 	entry, found := t.toolset.skillByName[request.SkillName]
 	if !found {
-		return jsonResult(toolError("SKILL_NOT_FOUND", fmt.Sprintf("skill %q not found", request.SkillName))), nil
+		return nil, newToolError("SKILL_NOT_FOUND", fmt.Sprintf("skill %q not found", request.SkillName))
 	}
 	resourceType, resourceName, err := normalizeResourcePath(request.Path)
 	if err != nil {
-		return jsonResult(toolError("INVALID_RESOURCE_PATH", err.Error())), nil
+		return nil, newToolError("INVALID_RESOURCE_PATH", err.Error())
 	}
 	content, found := readResource(entry.resources, resourceType, resourceName)
 	if !found {
-		return jsonResult(toolError("RESOURCE_NOT_FOUND", fmt.Sprintf("resource %q not found in skill %q", request.Path, request.SkillName))), nil
+		return nil, newToolError("RESOURCE_NOT_FOUND", fmt.Sprintf("resource %q not found in skill %q", request.Path, request.SkillName))
 	}
 	response := map[string]any{"skill_name": request.SkillName, "path": path.Join(resourceType, resourceName)}
 	if utf8.Valid(content) {
@@ -216,7 +216,7 @@ func (t loadSkillResourceTool) Handle(_ context.Context, input json.RawMessage) 
 		response["encoding"] = "base64"
 		response["content_base64"] = base64.StdEncoding.EncodeToString(content)
 	}
-	return jsonResult(response), nil
+	return jsonResult(response)
 }
 
 func emptyObjectSchema() *jsonschema.Schema {
@@ -240,16 +240,29 @@ func frontmatterMap(frontmatter Frontmatter) map[string]any {
 	return result
 }
 
-func toolError(code, message string) map[string]any {
-	return map[string]any{"error_code": code, "error": message}
+type skillToolError struct {
+	code    string
+	message string
 }
 
-func jsonResult(value any) *tools.Result {
+func newToolError(code, message string) error {
+	return skillToolError{code: code, message: message}
+}
+
+func (e skillToolError) Error() string {
+	data, err := json.Marshal(map[string]string{"error_code": e.code, "error": e.message})
+	if err != nil {
+		return e.code + ": " + e.message
+	}
+	return string(data)
+}
+
+func jsonResult(value any) (*tools.Result, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
-		return tools.TextResult(`{"error_code":"INTERNAL_ERROR","error":"failed to marshal tool result"}`)
+		return nil, newToolError("INTERNAL_ERROR", fmt.Sprintf("failed to marshal tool result: %v", err))
 	}
-	return tools.TextResult(string(data))
+	return tools.TextResult(string(data)), nil
 }
 
 func normalizeResourcePath(resourcePath string) (string, string, error) {

@@ -94,6 +94,34 @@ func TestAgentSkillToolsRespectPolicy(t *testing.T) {
 	assert.Contains(t, textFromParts(toolEnd.Parts), "denied by policy")
 }
 
+func TestAgentMarksSkillToolFailureAsError(t *testing.T) {
+	t.Parallel()
+
+	skill, err := skills.New(
+		skills.Frontmatter{Name: "known-skill", Description: "A known skill."},
+		"known instructions",
+		skills.Resources{},
+	)
+	require.NoError(t, err)
+	provider := dummyprovider.New(
+		dummyprovider.ToolUseResponse("skill-1", skills.ToolLoadSkillName, json.RawMessage(`{"name":"unknown-skill"}`)),
+		dummyprovider.TextResponse("That skill is unavailable."),
+	)
+	agent, err := blades.NewAgent(
+		"assistant",
+		blades.WithModel(provider),
+		blades.WithSkills(skill),
+	)
+	require.NoError(t, err)
+
+	outputs, err := collectAllAgentOutputs(context.Background(), agent, promptInputs("load it"))
+	require.NoError(t, err)
+	toolEnd, found := findToolEnd(outputs, "skill-1")
+	require.True(t, found)
+	assert.True(t, toolEnd.IsError)
+	assert.Contains(t, textFromParts(toolEnd.Parts), "SKILL_NOT_FOUND")
+}
+
 type skillRequestCapture struct {
 	hook.Noop
 	mu       sync.Mutex
