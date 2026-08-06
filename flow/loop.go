@@ -56,7 +56,8 @@ func (a *loopAgent) run(ctx context.Context, input <-chan event.Input, output ch
 	for i := 0; i < a.cfg.MaxIterations; i++ {
 		var lastTurn event.TurnEnd
 
-		for _, sub := range a.cfg.SubAgents {
+		for index, sub := range a.cfg.SubAgents {
+			var subTurn event.TurnEnd
 			subOut, err := sub.Run(ctx, currentInput)
 			if err != nil {
 				output <- event.Error{Err: err}
@@ -67,6 +68,7 @@ func (a *loopAgent) run(ctx context.Context, input <-chan event.Input, output ch
 				case event.Done:
 					continue
 				case event.TurnEnd:
+					subTurn = v
 					lastTurn = v
 					output <- o
 					if _, ok := v.Action.(event.LoopExit); ok {
@@ -76,6 +78,13 @@ func (a *loopAgent) run(ctx context.Context, input <-chan event.Input, output ch
 					output <- o
 				}
 			}
+			if len(subTurn.Parts) == 0 {
+				if index < len(a.cfg.SubAgents)-1 {
+					return
+				}
+				break
+			}
+			currentInput = promptInput(subTurn.Parts)
 		}
 
 		// Check condition
@@ -89,15 +98,9 @@ func (a *loopAgent) run(ctx context.Context, input <-chan event.Input, output ch
 				return
 			}
 		}
-
-		// Bridge last output to next input
-		if len(lastTurn.Parts) > 0 {
-			ch := make(chan event.Input, 1)
-			ch <- event.Prompt{Parts: lastTurn.Parts}
-			close(ch)
-			currentInput = ch
-		} else {
+		if len(lastTurn.Parts) == 0 {
 			return
 		}
+
 	}
 }
