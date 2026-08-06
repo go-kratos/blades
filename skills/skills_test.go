@@ -84,6 +84,44 @@ func TestToolsetDisclosesSkillProgressively(t *testing.T) {
 	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte{0xff, 0x00}), assetResult["content_base64"])
 }
 
+func TestListSkillsSupportsProviderCompatibleFiltering(t *testing.T) {
+	t.Parallel()
+
+	addFriend, err := New(
+		Frontmatter{Name: "add-friend", Description: "Use when the user wants to add a friend."},
+		"add friend instructions",
+		Resources{},
+	)
+	require.NoError(t, err)
+	weather, err := New(
+		Frontmatter{Name: "weather", Description: "Look up a forecast."},
+		"weather instructions",
+		Resources{},
+	)
+	require.NoError(t, err)
+	toolset, err := NewToolset([]Skill{addFriend, weather})
+	require.NoError(t, err)
+	listTool := toolset.Tools()[0]
+
+	schema, err := json.Marshal(listTool.Spec().InputSchema)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"type":"object",
+		"properties":{
+			"query":{
+				"type":"string",
+				"description":"Optional case-insensitive substring used to filter skill names and descriptions."
+			}
+		}
+	}`, string(schema))
+
+	result, err := listTool.Handle(context.Background(), json.RawMessage(`{"query":"FRIEND"}`))
+	require.NoError(t, err)
+	text := content.TextFromParts(result.Parts)
+	assert.Contains(t, text, "add-friend")
+	assert.NotContains(t, text, "weather")
+}
+
 func TestLoadSkillResourceRejectsTraversal(t *testing.T) {
 	t.Parallel()
 
@@ -129,6 +167,7 @@ func TestSkillToolFailuresReturnErrors(t *testing.T) {
 		errorCode string
 	}{
 		{name: "invalid load arguments", tool: toolsByName[ToolLoadSkillName], input: json.RawMessage(`{`), errorCode: "INVALID_ARGUMENTS"},
+		{name: "invalid list arguments", tool: toolsByName[ToolListSkillsName], input: json.RawMessage(`{`), errorCode: "INVALID_ARGUMENTS"},
 		{name: "missing skill name", tool: toolsByName[ToolLoadSkillName], input: json.RawMessage(`{}`), errorCode: "MISSING_SKILL_NAME"},
 		{name: "unknown skill", tool: toolsByName[ToolLoadSkillName], input: json.RawMessage(`{"name":"unknown"}`), errorCode: "SKILL_NOT_FOUND"},
 		{name: "invalid resource arguments", tool: toolsByName[ToolLoadSkillResourceName], input: json.RawMessage(`{`), errorCode: "INVALID_ARGUMENTS"},
