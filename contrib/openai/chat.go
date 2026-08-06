@@ -354,6 +354,10 @@ func toContentParts(parts []content.Part) []openai.ChatCompletionContentPartUnio
 		switch v := part.(type) {
 		case content.Text:
 			out = append(out, openai.TextContentPart(v.Text))
+		case content.FileRefPart:
+			out = append(out, openai.FileContentPart(openai.ChatCompletionContentPartFileFileParam{
+				FileID: param.NewOpt(v.ID),
+			}))
 		case content.FilePart:
 			switch mimeKind(v.MIME) {
 			case "image":

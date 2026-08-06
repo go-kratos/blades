@@ -110,6 +110,28 @@ func TestToChatCompletionParamsPreservesToolMessageTextParts(t *testing.T) {
 	}
 }
 
+func TestToContentPartsPreservesFileReference(t *testing.T) {
+	t.Parallel()
+
+	parts := toContentParts([]content.Part{
+		content.Text{Text: "Review this file."},
+		content.FileRefPart{ID: "file_123", MIME: "application/pdf"},
+	})
+	if got, want := len(parts), 2; got != want {
+		t.Fatalf("parts length = %d, want %d", got, want)
+	}
+	file := parts[1].GetFile()
+	if file == nil {
+		t.Fatal("file content part is nil")
+	}
+	if !file.FileID.Valid() {
+		t.Fatal("file_id is omitted")
+	}
+	if got, want := file.FileID.Value, "file_123"; got != want {
+		t.Fatalf("file_id = %q, want %q", got, want)
+	}
+}
+
 func TestToChatCompletionParamsParallelToolCalls(t *testing.T) {
 	t.Parallel()
 
