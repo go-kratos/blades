@@ -30,7 +30,7 @@ func TestVideoGenerateCreatesPollsAndReturnsURL(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			if body.Model != ModelH3 || body.Resolution != VideoResolution2K || body.Duration != 7 || body.Ratio != "9:16" {
+			if body.Model != ModelH3 || body.Resolution != VideoResolution2K || body.Duration != 7 || body.Ratio != "adaptive" {
 				t.Fatalf("create body = %+v", body)
 			}
 			if len(body.Content) != 1 || body.Content[0].Type != "text" || body.Content[0].Text != "A lighthouse in a storm" {
@@ -47,7 +47,7 @@ func TestVideoGenerateCreatesPollsAndReturnsURL(t *testing.T) {
 			}
 			writeJSON(t, w, map[string]any{"task": VideoTask{
 				ID: "task-1", Model: ModelH3, Status: status, Content: content,
-				Resolution: VideoResolution2K, Duration: 7, Ratio: "9:16",
+				Resolution: VideoResolution2K, Duration: 7, Ratio: "adaptive",
 			}})
 		default:
 			http.NotFound(w, r)
@@ -56,7 +56,7 @@ func TestVideoGenerateCreatesPollsAndReturnsURL(t *testing.T) {
 	defer server.Close()
 
 	model := NewVideo(ModelH3, VideoConfig{
-		BaseURL: server.URL, APIKey: "test-key", Duration: 7, Ratio: "9:16",
+		BaseURL: server.URL, APIKey: "test-key", Duration: 7, Ratio: "adaptive",
 		PollInterval: time.Nanosecond, MaxPollCount: 3,
 	})
 	response, err := model.Generate(context.Background(), &blades.ModelRequest{
@@ -92,7 +92,9 @@ func TestVideoLifecycleAndChinaEndpoint(t *testing.T) {
 			}
 			writeJSON(t, w, CreateVideoResponse{TaskID: "task-cn"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v2/query/video_generation/task-cn":
-			writeJSON(t, w, map[string]any{"task": VideoTask{ID: "task-cn", Status: "queued"}})
+			writeJSON(t, w, map[string]any{"task": map[string]any{
+				"id": "task-cn", "status": "queued", "usage": map[string]any{"image_count": 3},
+			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v2/query/video_generation":
 			if r.URL.Query().Get("page_num") != "2" || r.URL.Query().Get("filter.status") != "queued" {
 				t.Fatalf("list query = %s", r.URL.RawQuery)
@@ -112,7 +114,7 @@ func TestVideoLifecycleAndChinaEndpoint(t *testing.T) {
 		t.Fatalf("CreateVideo() = %+v, %v", created, err)
 	}
 	queried, err := model.QueryVideo(context.Background(), created.TaskID)
-	if err != nil || queried.Status != "queued" {
+	if err != nil || queried.Status != "queued" || queried.Usage.ImageCount != 3 {
 		t.Fatalf("QueryVideo() = %+v, %v", queried, err)
 	}
 	listed, err := model.ListVideos(context.Background(), ListVideoRequest{PageNumber: 2, Status: "queued"})
@@ -140,7 +142,6 @@ func TestVideoInputValidation(t *testing.T) {
 		{name: "empty prompt", request: CreateVideoRequest{}, want: ErrVideoPromptRequired},
 		{name: "duration too short", request: CreateVideoRequest{Prompt: "x", Duration: 3}, want: ErrVideoDurationInvalid},
 		{name: "duration too long", request: CreateVideoRequest{Prompt: "x", Duration: 16}, want: ErrVideoDurationInvalid},
-		{name: "adaptive text ratio", request: CreateVideoRequest{Prompt: "x", Ratio: "adaptive"}, want: ErrVideoRatioInvalid},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

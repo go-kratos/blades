@@ -108,10 +108,10 @@ type VideoTaskContent struct {
 
 // VideoTaskUsage records the billed media quantities returned by the service.
 type VideoTaskUsage struct {
-	TotalSeconds    int `json:"total_seconds"`
-	InputSeconds    int `json:"input_seconds"`
-	OutputSeconds   int `json:"output_seconds"`
-	InputImageCount int `json:"input_image_count"`
+	TotalSeconds  int `json:"total_seconds"`
+	InputSeconds  int `json:"input_seconds"`
+	OutputSeconds int `json:"output_seconds"`
+	ImageCount    int `json:"image_count"`
 }
 
 // VideoTask is a v2 video generation task.
@@ -431,7 +431,7 @@ func promptFromMessages(messages []*blades.Message) string {
 
 func validTextToVideoRatio(ratio string) bool {
 	switch ratio {
-	case "21:9", "16:9", "4:3", "1:1", "3:4", "9:16":
+	case "adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16":
 		return true
 	default:
 		return false
