@@ -26,8 +26,9 @@ flowchart LR
     C --> D["Model determines relevance"]
     D -->|"Relevant"| E["Call load_skill"]
     E --> F["Return complete instructions as a tool result"]
-    F --> G["Use the instructions in the next model call"]
-    G -->|"Resource required"| H["Call load_skill_resource"]
+    F --> G["Disclose tools declared by allowed-tools"]
+    G --> H["Use the instructions and tools in the next model call"]
+    H -->|"Resource required"| J["Call load_skill_resource"]
     D -->|"Not relevant"| I["Respond directly"]
 ```
 
@@ -46,10 +47,12 @@ The Blades Agent Loop already appends tool calls and tool results to the session
 
 ## Authorization Boundary
 
-Skill content tells the model how to perform a task; it does not decide whether the task is permitted. The three built-in Skill tools pass through Blades Policy like every other Tool. The `allowed-tools` frontmatter field is retained as standard metadata and cannot expand an Agent's permissions.
+Skill content tells the model how to perform a task; it does not decide whether the task is permitted. The three built-in Skill tools pass through Blades Policy like every other Tool. The `allowed-tools` frontmatter field controls progressive disclosure: a matching business tool is omitted from model requests until that Skill has been loaded. It cannot add a Tool to the Agent or expand the Agent's permissions.
+
+Disclosure state belongs to one `Agent.Run`. Concurrent runs never share mutable state. A new run restores a Skill only when a successful `load_skill` result for the same Skill definition is still present in the model history; therefore the tools visible to the model remain consistent with the instructions it can see. Each tool wave uses an immutable disclosure snapshot, so a model cannot call `load_skill` and a newly disclosed business Tool in the same parallel wave.
 
 The built-in implementation allows files under `scripts/` to be inspected as resources but never executes them. Applications that require script execution should provide a separate sandboxed Tool protected by Policy.
 
 ## Current Scope
 
-This stage implements progressive loading for Skill instructions. Business tools are still resolved and exposed when the Agent starts. Exposing tools only after their associated Skill has been loaded is a separate stage: it requires tracking the active Skill set between model calls and rebuilding the Tool Resolver snapshot from that state.
+This stage implements progressive loading for Skill instructions and Tools declared by `allowed-tools`. Tools that are not declared by any Skill remain visible for the whole run. Skill loading changes visibility from the next model call. Across runs, disclosure is derived from the history actually supplied to the model rather than from shared process state.

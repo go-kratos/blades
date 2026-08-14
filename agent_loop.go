@@ -11,17 +11,20 @@ import (
 	"github.com/go-kratos/blades/internal/execute"
 	"github.com/go-kratos/blades/model"
 	"github.com/go-kratos/blades/session"
+	"github.com/go-kratos/blades/skills"
 	"github.com/go-kratos/blades/tools"
 )
 
 type agentLoop struct {
 	agent *llmAgent
 
-	ctx      context.Context
-	output   chan<- event.Output
-	sess     session.Session
-	allTools []tools.Tool
-	inputs   *inputQueue
+	ctx          context.Context
+	output       chan<- event.Output
+	sess         session.Session
+	allTools     []tools.Tool
+	skillRuntime *skills.Runtime
+	disclosure   skills.Disclosure
+	inputs       *inputQueue
 
 	turnNum int
 }
@@ -387,11 +390,19 @@ func (l *agentLoop) runModelCall() (*model.Response, error) {
 }
 
 func (l *agentLoop) buildRequest(ctx context.Context) (*model.Request, error) {
-	return contextBuilder{
+	request, err := contextBuilder{
 		agent:    l.agent,
 		sess:     l.sess,
 		allTools: l.allTools,
+		skills:   l.skillRuntime,
 	}.Build(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if l.skillRuntime != nil {
+		l.disclosure = l.skillRuntime.DisclosureFromMessages(request.Messages)
+	}
+	return request, nil
 }
 
 func (l *agentLoop) streamModelCall(ctx context.Context, req *model.Request) (*model.Response, error) {
@@ -428,7 +439,13 @@ func (l *agentLoop) streamModelCall(ctx context.Context, req *model.Request) (*m
 }
 
 func (l *agentLoop) executeToolWave(calls []content.ToolUse) (*model.Message, event.Action, error) {
-	runtime := execute.NewRuntime(l.allTools, l.agent.resolver, l.agent.policy)
+	allTools := l.allTools
+	resolver := l.agent.resolver
+	if l.skillRuntime != nil {
+		allTools = l.disclosure.FilterTools(allTools)
+		resolver = l.disclosure.FilterResolver(resolver)
+	}
+	runtime := execute.NewRuntime(allTools, resolver, l.agent.policy)
 	executableCalls, err := l.prepareToolCalls(runtime, calls)
 	if err != nil {
 		return nil, nil, err
