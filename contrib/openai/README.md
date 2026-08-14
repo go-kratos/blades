@@ -38,6 +38,47 @@ for chunk, err := range provider.Stream(ctx, req) {
 }
 ```
 
+### Custom content parts
+
+Applications and integration packages can implement `content.Part` with a
+namespaced `ContentKind`. OpenAI-compatible extensions can register an encoder
+without forking the provider:
+
+```go
+type videoURLPart struct {
+    URL string
+    FPS float64
+}
+
+func (videoURLPart) ContentKind() content.Kind { return "example.video_url" }
+
+provider := openai.NewChat("compatible-model",
+    openai.WithContentPartEncoders(openai.ChatContentPartEncoderFunc(
+        func(part content.Part) (openaisdk.ChatCompletionContentPartUnionParam, bool, error) {
+            video, ok := part.(videoURLPart)
+            if !ok {
+                return openaisdk.ChatCompletionContentPartUnionParam{}, false, nil
+            }
+            raw, err := json.Marshal(map[string]any{
+                "type": "video_url",
+                "video_url": map[string]any{"url": video.URL, "fps": video.FPS},
+            })
+            if err != nil {
+                return openaisdk.ChatCompletionContentPartUnionParam{}, true, err
+            }
+            encoded := param.Override[openaisdk.ChatCompletionContentPartUnionParam](json.RawMessage(raw))
+            return encoded, true, nil
+        },
+    )),
+)
+```
+
+Encoders run in registration order before built-in conversion, so they can
+also customize built-in parts. If neither a custom nor built-in encoder can
+represent a user content part, request construction returns
+`ErrUnsupportedContentPart` instead of silently dropping it. The Responses API
+provides the equivalent `WithResponsesContentPartEncoders` option.
+
 `WithParallelToolCalls(false)` maps to OpenAI `parallel_tool_calls=false`. The Agent Loop does not read this option; it only executes the tool calls the model actually returns.
 
 Chat tool-call arguments are syntax-checked and semantically repaired by default after all argument deltas have been accumulated. The default `jsonrepair.PermissiveEngine` can normalize or discard malformed syntax, while valid JSON remains byte-for-byte unchanged. Disable receive-side repair to retain strict rejection:

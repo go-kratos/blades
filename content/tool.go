@@ -9,7 +9,7 @@ type ToolUse struct {
 	Input json.RawMessage
 }
 
-func (ToolUse) part() {}
+func (ToolUse) ContentKind() Kind { return KindToolUse }
 
 // ToolResult represents the result of a tool invocation.
 type ToolResult struct {
@@ -19,4 +19,4 @@ type ToolResult struct {
 	IsError bool
 }
 
-func (ToolResult) part() {}
+func (ToolResult) ContentKind() Kind { return KindToolResult }

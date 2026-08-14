@@ -146,12 +146,12 @@ type Output interface{ output() }
 | `Error` | 运行期错误（实现 `Output`，与其他事件同流；`event.Error{Err error}` 用 Go 标准 error，靠 `errors.Is/As` + 包内 sentinel 判断；启动期错误走 `Run` 签名第二返回值） |
 | `Done` | Run 结束 sentinel；channel 关闭前发送，便于多 channel `select` 分支区分 |
 
-输入和输出都必须支持多模态 Part。**`content.Part` 是 AgentOS 唯一的 Part union**（sealed marker：私有 `part()` 方法），定义在 `content/` 包中（仅依赖标准库），统一覆盖用户协议与 provider 协议两类变体：
+输入和输出都必须支持多模态 Part。**`content.Part` 是 AgentOS 唯一的 Part 接口**，通过公开的 `ContentKind()` 允许应用与集成包扩展，同时保持 `content/` 仅依赖标准库。内置实现统一覆盖用户协议与 provider 协议两类变体：
 
 - 用户多模态变体：`Text`、`FilePart`、`FileRefPart`、`DataPart`、`Thinking`。`FilePart` 表达 URI 引用，`FileRefPart` 表达 provider-managed file ID，`DataPart` 表达 inline bytes；`Thinking` 携带 `Signature []byte` 以承载 Anthropic extended thinking / OpenAI o1 reasoning 的 provider 校验签名；JSON 通过 `DataPart{MIME:"application/json"}` 或 `Text` 表达。
 - Provider/工具协议变体：`ToolUse{ID, Name, Input json.RawMessage}` 与 `ToolResult{ID, Name, Parts []content.Part, IsError bool}`。
 
-`event` 中的多模态字段、`tools.Result.Parts`、`model.Message.Parts`、`model.Chunk.Parts` 全部直接使用 `content.Part`，三个协议包不再各自定义 Part。`content/` 不引入统一 `Metadata map[string]any`——业务扩展通过应用层嵌入业务结构体实现。
+`event` 中的多模态字段、`tools.Result.Parts`、`model.Message.Parts`、`model.Chunk.Parts` 全部直接使用 `content.Part`，三个协议包不再各自定义 Part。应用扩展应使用带命名空间的 kind，provider-specific 编码留在对应 adapter，不得把厂商 SDK 类型引入 core。
 
 文本和多模态输入都用 `event.NewPrompt(...)` / `event.NewSteer(...)` 构造函数返回 `Prompt` / `Steer`，可混合 string 与 `content.Part`（底层调用 `content.NewParts`）。流式文本/思考输出走紧凑值类型 `event.TextDelta` / `event.ThinkingDelta`（hot path，避免 interface boxing）。其他多模态 part 当前只出现在最终 `AssistantMessageEnd.Parts`、`TurnEnd.Parts`、`ToolEnd.Parts` 和 Session message 中；Blob 流式生命周期事件留给后续公开协议升级。
 
@@ -199,8 +199,8 @@ Event 和 Message 不合并。原因：
 |------|------|
 | 根包极简 | `blades/` 放 `Agent`、`NewAgent`、Option、默认 `llmAgent`、必要错误、`Runner` helper 和 `NewAgentTool` |
 | 协议依赖单向 | `content/` 是共享叶子；`tools/` 单向依赖 `content/`；`model/` 单向依赖 `content/` 与 `tools/`；`event/` 单向依赖 `content/` 与 `model/`，仅复用 `model.Usage` |
-| 多模态共享叶子 | `content/` 仅依赖标准库；`Part` 为 sealed marker（私有 `part()`）；变体 = Text/FilePart/FileRefPart/DataPart/Thinking/ToolUse/ToolResult；Thinking 含 Signature |
-| Provider 协议 sealed | 三处 sealed 例外全部封闭：`content.Part`（私有 `part()`）、`event.Input`（私有 `input()`）、`event.Output`（私有 `output()`）。核心协议层无开放扩展接口；后台回流走 `event.Prompt`，应用业务事件由应用自己的 channel / event bus 承载。`hook/` 不再使用 sealed event union，改为单 `Hook` 接口（6 个生命周期方法）+ `hook.Noop` 嵌入式默认实现（详见 `design-hook-extension.md`） |
+| 多模态共享叶子 | `content/` 仅依赖标准库；`Part` 通过 `ContentKind()` 开放扩展；内置变体 = Text/FilePart/FileRefPart/DataPart/Thinking/ToolUse/ToolResult；外部 kind 使用命名空间；Thinking 含 Signature |
+| Event 协议 sealed | `event.Input`（私有 `input()`）与 `event.Output`（私有 `output()`）保持封闭。后台回流走 `event.Prompt`，应用业务事件由应用自己的 channel / event bus 承载。`hook/` 不再使用 sealed event union，改为单 `Hook` 接口（6 个生命周期方法）+ `hook.Noop` 嵌入式默认实现（详见 `design-hook-extension.md`） |
 | ToolSpec 定义在 tools/ | `tools.ToolSpec` 是唯一定义点；`model.Request.Tools` 直接使用 `[]tools.ToolSpec`；`model/` 单向依赖 `tools/` |
 | Runtime 根包内置 | 默认 Agent Loop 是根包 `llmAgent` 的内部机制，不暴露公开 `loop/` 包；run/interaction/turn/tool wave 私有控制流集中在 `agent_loop.go` |
 | Turn 与 call 1:1 | 每个 turn 恰好执行一次 primary `Provider.Stream`；工具续接和 active steering 都开启新 turn，call-local usage 不跨 turn 聚合 |
@@ -229,7 +229,7 @@ blades/
 ├── errors.go
 │
 ├── content/
-│   ├── part.go                 Part 接口（sealed marker：私有 part()）
+│   ├── part.go                 Part 接口（公开 ContentKind()，支持带命名空间的扩展）
 │   ├── text.go                 Text{Text string}
 │   ├── blob.go                 FilePart{URI, MIME, Filename}, FileRefPart{ID, MIME}, DataPart{Bytes, MIME, Filename}
 │   ├── thinking.go             Thinking{Text string, Signature []byte}
@@ -414,7 +414,7 @@ contrib/*   -> model/ 或 tools/
 | 包 | 核心类型 | 示例 |
 |----|----------|------|
 | `blades` (root) | `Agent`, `RunningAgent`, `NewAgent`, `AgentOption`, `NewAgentTool`, `NewContext`/`FromContext`, `ContextWindow`, `BudgetError`, `ContextWindowFrom`, `Runner`/`Result`/`NewRunner`/`RunnerOption`（`Run`/`RunStream`/`RunLive`）, `WithModel`/`WithTools`/`WithToolsResolver`/`WithPolicy`/`WithHooks`/`WithCompact`/`WithContextBudget`/`WithTokenCounter`/`WithPrompt`/`WithDescription` | `blades.Agent` |
-| `content` | `Part`（sealed marker：私有 `part()`），`Text`，`TextFromParts`，`NewParts(inputs ...any) []Part`，`FilePart{URI, MIME, Filename}`，`FileRefPart{ID, MIME}`，`DataPart{Bytes, MIME, Filename}`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.NewParts("hi", content.FilePart{...})` |
+| `content` | `Part`（公开 `ContentKind() Kind`），`Kind` 与内置 kind，`Text`，`TextFromParts`，`NewParts(inputs ...any) []Part`，`FilePart{URI, MIME, Filename}`，`FileRefPart{ID, MIME}`，`DataPart{Bytes, MIME, Filename}`，`Thinking{Text, Signature []byte}`，`ToolUse{ID, Name, Input}`，`ToolResult{ID, Name, Parts, IsError}` | `content.NewParts("hi", content.FilePart{...})` |
 | `event` | `Input`（sealed：`input()`）, `Output`（sealed：`output()`）, `Prompt`, `Steer`, `Abort{Reason}`, `Pause`, `Resume`, `TextDelta`, `ThinkingDelta`, `ToolStart`, `ToolDelta`, `ToolEnd`, `AssistantMessageEnd`（含 call-local `Usage`）, `Action`, `LoopExit{Escalate}`, `Handoff{Agent}`, `TurnEnd`（含 `Text()`）, `Error`, `Done`, `StopReason`, `Usage`；构造糖：`NewPrompt`, `NewSteer` | `event.NewPrompt("hi", content.DataPart{...})` |
 | `model` | `Message{Role, Parts []content.Part, Metadata MessageMetadata}`, `MessageMetadata{Provider, API, Model}`, `Role`, `RoleUser`/`RoleAssistant`/`RoleTool`, `Provider`(Name+Generate+Stream `iter.Seq2`), `TokenCounter`/`TokenCount`/`ApproxTokenCounter`, `EmbeddingProvider`, `Request{Model, System, Messages, Tools []tools.ToolSpec, Options}`, `Response{Message, StopReason, Usage}`, `Chunk{Parts, StopReason, Usage}`, `Option` sealed（`CacheHint`/`ReasoningEffort`/`ResponseFormat`/`Sampling`/`ParallelToolCalls`）, `Usage`, `StopReason`, `Collect`, `MergeOptions` | `model.Provider` |
 | `tools` | `Tool`(Spec+Handle 两方法), `ToolSpec{Name, Description, InputSchema, OutputSchema}`, `Result{Parts []content.Part}`, `Resolver`(List+Resolve), `ToolFilter`, `ToolContext`(ID+Spec), `NewContext`/`FromContext`, `ErrLoopExit`/`ErrHandoff` | `tools.Tool` |

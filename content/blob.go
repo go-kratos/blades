@@ -20,6 +20,6 @@ type DataPart struct {
 	Filename string
 }
 
-func (FilePart) part()    {}
-func (FileRefPart) part() {}
-func (DataPart) part()    {}
+func (FilePart) ContentKind() Kind    { return KindFile }
+func (FileRefPart) ContentKind() Kind { return KindFileRef }
+func (DataPart) ContentKind() Kind    { return KindData }

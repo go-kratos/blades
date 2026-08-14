@@ -7,4 +7,4 @@ type Thinking struct {
 	Signature []byte
 }
 
-func (Thinking) part() {}
+func (Thinking) ContentKind() Kind { return KindThinking }

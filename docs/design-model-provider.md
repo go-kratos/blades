@@ -35,7 +35,7 @@ tags: [agentos, model, provider, protocol]
 1. **协议最小化**：`model/` 只定义 wire-equivalent 协议；运行态、调度、重试、限速一律不入侵协议字段。
 2. **同步与流式语义一致**：`Generate` 的结果应等价于把 `Stream` 全部 `Chunk` 经 `model.Collect` 合成出的 `Response`。
 3. **provider-agnostic**：字段尽量是各家 provider 的最小公共集合；私有字段由 adapter 内部处理。
-4. **复用 `content.Part`**：通用模态与协议模态共享同一 sealed union，避免在 `model/` 重复定义 Part 体系。
+4. **复用 `content.Part`**：通用模态与协议模态共享同一可扩展接口，避免在 `model/` 重复定义 Part 体系；provider adapter 负责扩展类型的协议编码。
 5. **ctx-only 资源管理**：不提供 Close 方法；取消、deadline、连接释放统一通过 `context.Context` 表达。
 6. **可演进**：协议接口稳定，具体能力（Embed、Rerank、Vision、Audio）以平级独立接口扩展。
 
@@ -326,7 +326,7 @@ const (
 
 ## 7. Part
 
-`Message.Parts` 与 `Chunk.Parts` 直接使用 `content.Part`：通用模态变体（`Text` / `Blob` / `Thinking`）与协议变体（`ToolUse` / `ToolResult`）都在 `content/` 同一 sealed union 内，`model/` 不再定义独立 Part 类型。
+`Message.Parts` 与 `Chunk.Parts` 直接使用 `content.Part`：通用模态变体（`Text` / `Blob` / `Thinking`）、协议变体（`ToolUse` / `ToolResult`）与带命名空间的应用扩展共享同一接口，`model/` 不再定义独立 Part 类型。Provider adapter 可以注册扩展编码器；没有编码器的输入必须返回明确错误，不能静默丢弃。
 
 ```go
 msg := &model.Message{
