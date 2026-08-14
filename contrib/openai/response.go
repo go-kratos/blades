@@ -33,6 +33,8 @@ type ResponsesConfig struct {
 	RequestOptions     []sdkoption.RequestOption
 	ModelOptions       []model.Option
 	ReasoningEffort    shared.ReasoningEffort
+	// ContentPartEncoders extend user-content encoding for OpenAI-compatible APIs.
+	ContentPartEncoders []ResponsesContentPartEncoder
 	// ToolInputJSONRepairer repairs malformed completed tool input before it is
 	// emitted. Nil disables repair.
 	ToolInputJSONRepairer jsonrepair.Repairer
@@ -40,6 +42,13 @@ type ResponsesConfig struct {
 
 // ResponsesOption configures an OpenAI Responses API model provider.
 type ResponsesOption func(*ResponsesConfig)
+
+// WithResponsesContentPartEncoders appends custom Responses API content encoders.
+func WithResponsesContentPartEncoders(encoders ...ResponsesContentPartEncoder) ResponsesOption {
+	return func(c *ResponsesConfig) {
+		c.ContentPartEncoders = append(c.ContentPartEncoders, encoders...)
+	}
+}
 
 // WithResponsesConfig applies a full ResponsesConfig value.
 func WithResponsesConfig(config ResponsesConfig) ResponsesOption {
@@ -191,7 +200,7 @@ func (m *responseModel) toResponseParams(_ bool, req *model.Request) (responses.
 	if err != nil {
 		return responses.ResponseNewParams{}, err
 	}
-	input, err := toResponseInput(req.Messages)
+	input, err := m.toResponseInput(req.Messages)
 	if err != nil {
 		return responses.ResponseNewParams{}, err
 	}
@@ -264,13 +273,13 @@ func applyResponseOptions(params *responses.ResponseNewParams, opts []model.Opti
 	}
 }
 
-func toResponseInput(messages []*model.Message) (responses.ResponseInputParam, error) {
+func (m *responseModel) toResponseInput(messages []*model.Message) (responses.ResponseInputParam, error) {
 	input := make(responses.ResponseInputParam, 0, len(messages))
 	for _, msg := range messages {
 		if msg == nil {
 			continue
 		}
-		items, err := toResponseInputItems(msg)
+		items, err := m.toResponseInputItems(msg)
 		if err != nil {
 			return nil, err
 		}
@@ -279,7 +288,7 @@ func toResponseInput(messages []*model.Message) (responses.ResponseInputParam, e
 	return input, nil
 }
 
-func toResponseInputItems(msg *model.Message) ([]responses.ResponseInputItemUnionParam, error) {
+func (m *responseModel) toResponseInputItems(msg *model.Message) ([]responses.ResponseInputItemUnionParam, error) {
 	var items []responses.ResponseInputItemUnionParam
 	switch msg.Role {
 	case model.RoleAssistant:
@@ -305,7 +314,7 @@ func toResponseInputItems(msg *model.Message) ([]responses.ResponseInputItemUnio
 			}
 			userParts = append(userParts, part)
 		}
-		contentParts, err := toResponseInputContent(userParts)
+		contentParts, err := m.toResponseInputContent(userParts)
 		if err != nil {
 			return nil, err
 		}
@@ -315,7 +324,7 @@ func toResponseInputItems(msg *model.Message) ([]responses.ResponseInputItemUnio
 	case model.RoleUser:
 		fallthrough
 	default:
-		contentParts, err := toResponseInputContent(msg.Parts)
+		contentParts, err := m.toResponseInputContent(msg.Parts)
 		if err != nil {
 			return nil, err
 		}
@@ -326,68 +335,84 @@ func toResponseInputItems(msg *model.Message) ([]responses.ResponseInputItemUnio
 	return items, nil
 }
 
-func toResponseInputContent(parts []content.Part) (responses.ResponseInputMessageContentListParam, error) {
+func (m *responseModel) toResponseInputContent(parts []content.Part) (responses.ResponseInputMessageContentListParam, error) {
 	out := make(responses.ResponseInputMessageContentListParam, 0, len(parts))
 	for _, part := range parts {
-		switch v := part.(type) {
-		case content.Text:
-			out = append(out, responses.ResponseInputContentParamOfInputText(v.Text))
-		case content.FileRefPart:
-			switch mimeKind(v.MIME) {
-			case "image":
-				out = append(out, responses.ResponseInputContentUnionParam{
-					OfInputImage: &responses.ResponseInputImageParam{
-						FileID: param.NewOpt(v.ID),
-						Detail: responses.ResponseInputImageDetailAuto,
-					},
-				})
-			default:
-				out = append(out, responses.ResponseInputContentUnionParam{
-					OfInputFile: &responses.ResponseInputFileParam{FileID: param.NewOpt(v.ID)},
-				})
-			}
-		case content.FilePart:
-			switch mimeKind(v.MIME) {
-			case "image":
-				out = append(out, responses.ResponseInputContentUnionParam{
-					OfInputImage: &responses.ResponseInputImageParam{
-						ImageURL: param.NewOpt(v.URI),
-						Detail:   responses.ResponseInputImageDetailAuto,
-					},
-				})
-			default:
-				out = append(out, responses.ResponseInputContentUnionParam{
-					OfInputFile: &responses.ResponseInputFileParam{
-						FileURL:  param.NewOpt(v.URI),
-						Filename: param.NewOpt(v.Filename),
-					},
-				})
-			}
-		case content.DataPart:
-			switch mimeKind(v.MIME) {
-			case "image":
-				imageURL := "data:" + v.MIME + ";base64," + base64.StdEncoding.EncodeToString(v.Bytes)
-				out = append(out, responses.ResponseInputContentUnionParam{
-					OfInputImage: &responses.ResponseInputImageParam{
-						ImageURL: param.NewOpt(imageURL),
-						Detail:   responses.ResponseInputImageDetailAuto,
-					},
-				})
-			default:
-				fileData := base64.StdEncoding.EncodeToString(v.Bytes)
-				if v.MIME != "" {
-					fileData = "data:" + v.MIME + ";base64," + fileData
-				}
-				out = append(out, responses.ResponseInputContentUnionParam{
-					OfInputFile: &responses.ResponseInputFileParam{
-						FileData: param.NewOpt(fileData),
-						Filename: param.NewOpt(v.Filename),
-					},
-				})
-			}
+		encoded, err := m.encodeContentPart(part)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, encoded)
 	}
 	return out, nil
+}
+
+func (m *responseModel) encodeContentPart(part content.Part) (responses.ResponseInputContentUnionParam, error) {
+	for _, encoder := range m.config.ContentPartEncoders {
+		if encoder == nil {
+			continue
+		}
+		encoded, handled, err := encoder.EncodeResponsesContentPart(part)
+		if err != nil {
+			return responses.ResponseInputContentUnionParam{}, fmt.Errorf("openai/responses: encode content part %q with %T: %w", contentPartKind(part), encoder, err)
+		}
+		if handled {
+			return encoded, nil
+		}
+	}
+
+	switch v := part.(type) {
+	case content.Text:
+		return responses.ResponseInputContentParamOfInputText(v.Text), nil
+	case content.FileRefPart:
+		if mimeKind(v.MIME) == "image" {
+			return responses.ResponseInputContentUnionParam{
+				OfInputImage: &responses.ResponseInputImageParam{
+					FileID: param.NewOpt(v.ID),
+					Detail: responses.ResponseInputImageDetailAuto,
+				},
+			}, nil
+		}
+		return responses.ResponseInputContentUnionParam{
+			OfInputFile: &responses.ResponseInputFileParam{FileID: param.NewOpt(v.ID)},
+		}, nil
+	case content.FilePart:
+		if mimeKind(v.MIME) == "image" {
+			return responses.ResponseInputContentUnionParam{
+				OfInputImage: &responses.ResponseInputImageParam{
+					ImageURL: param.NewOpt(v.URI),
+					Detail:   responses.ResponseInputImageDetailAuto,
+				},
+			}, nil
+		}
+		return responses.ResponseInputContentUnionParam{
+			OfInputFile: &responses.ResponseInputFileParam{
+				FileURL:  param.NewOpt(v.URI),
+				Filename: param.NewOpt(v.Filename),
+			},
+		}, nil
+	case content.DataPart:
+		if mimeKind(v.MIME) == "image" {
+			imageURL := "data:" + v.MIME + ";base64," + base64.StdEncoding.EncodeToString(v.Bytes)
+			return responses.ResponseInputContentUnionParam{
+				OfInputImage: &responses.ResponseInputImageParam{
+					ImageURL: param.NewOpt(imageURL),
+					Detail:   responses.ResponseInputImageDetailAuto,
+				},
+			}, nil
+		}
+		fileData := base64.StdEncoding.EncodeToString(v.Bytes)
+		if v.MIME != "" {
+			fileData = "data:" + v.MIME + ";base64," + fileData
+		}
+		return responses.ResponseInputContentUnionParam{
+			OfInputFile: &responses.ResponseInputFileParam{
+				FileData: param.NewOpt(fileData),
+				Filename: param.NewOpt(v.Filename),
+			},
+		}, nil
+	}
+	return responses.ResponseInputContentUnionParam{}, unsupportedContentPart("responses", part)
 }
 
 func toResponseTools(toolSpecs []tools.ToolSpec) ([]responses.ToolUnionParam, error) {

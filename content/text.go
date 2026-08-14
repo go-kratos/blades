@@ -7,7 +7,7 @@ type Text struct {
 	Text string
 }
 
-func (Text) part() {}
+func (Text) ContentKind() Kind { return KindText }
 
 // TextFromParts concatenates text parts in order and ignores non-text parts.
 func TextFromParts(parts []Part) string {

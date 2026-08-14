@@ -22,12 +22,16 @@ Event 与 `model.Message` 不合并，转换边界集中在 `internal/convert/`�
 
 ## 2. `content.Part` 共享叶子
 
-通用模态定义在 `content/` 包，仅依赖 Go 标准库。`content.Part` 是 sealed marker，使用私有 `part()` 方法收口扩展点，所有变体都在 `content/` 内定义。
+通用模态定义在 `content/` 包，仅依赖 Go 标准库。`content.Part` 通过 `ContentKind()` 开放扩展；内置类型使用稳定 kind，应用与集成包使用带命名空间的 kind。provider-specific 编码仍由 adapter 负责。
 
 ```go
 package content
 
-type Part interface{ part() }
+type Kind string
+
+type Part interface {
+    ContentKind() Kind
+}
 
 type Text struct {
     Text string
@@ -69,7 +73,7 @@ type ToolResult struct {
 }
 ```
 
-`content/` 不提供统一元数据字段，也不读取二进制内容。业务扩展、二进制拉取、权限校验、缓存与传输由应用层处理。`event` / `model` / `tools` 都直接使用 `content.Part`，不再各自定义同构 Part。
+`content/` 不读取二进制内容，也不包含 provider SDK 类型。业务扩展、二进制拉取、权限校验、缓存与传输由应用层处理。`event` / `model` / `tools` 都直接使用 `content.Part`，不再各自定义同构 Part；adapter 对无法编码的扩展 Part 必须返回明确错误。
 
 ## 3. Event Input 协议
 

@@ -17,7 +17,7 @@ The framework is designed for applications that need LLM agents as normal Go com
 
 - **Event-first runtime**: applications interact with Agents through `event.Input` and `event.Output`, including streaming text, tool lifecycle events, call-local assistant endings, turn endings, errors, and `Done`.
 - **Provider-neutral core**: OpenAI, Anthropic, Gemini, MCP, and observability integrations live in `contrib/`; the root module does not depend on provider SDKs.
-- **Multimodal protocol**: `content.Part` is the shared content union used by events, model messages, and tool results.
+- **Multimodal protocol**: `content.Part` is the shared, extensible content interface used by events, model messages, and tool results.
 - **Tool-ready Agent loop**: tools are described by `tools.ToolSpec`, executed by `tools.Tool`, filtered by policy, observed by hooks, and committed back into session history.
 - **Composable agents**: use `flow/` for sequential, parallel, loop, routing, and deep agent composition, or wrap any Agent as a tool with `blades.NewAgentTool`.
 

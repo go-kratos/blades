@@ -35,6 +35,8 @@ type ChatConfig struct {
 	RequestOptions   []sdkoption.RequestOption
 	ModelOptions     []model.Option
 	ReasoningEffort  shared.ReasoningEffort
+	// ContentPartEncoders extend user-content encoding for OpenAI-compatible APIs.
+	ContentPartEncoders []ChatContentPartEncoder
 	// ToolInputJSONRepairer repairs malformed completed tool input before it is
 	// emitted. Nil disables repair.
 	ToolInputJSONRepairer jsonrepair.Repairer
@@ -42,6 +44,13 @@ type ChatConfig struct {
 
 // ChatOption configures an OpenAI chat model provider.
 type ChatOption func(*ChatConfig)
+
+// WithContentPartEncoders appends custom Chat Completions content encoders.
+func WithContentPartEncoders(encoders ...ChatContentPartEncoder) ChatOption {
+	return func(c *ChatConfig) {
+		c.ContentPartEncoders = append(c.ContentPartEncoders, encoders...)
+	}
+}
 
 // WithConfig applies a full ChatConfig value.
 func WithConfig(config ChatConfig) ChatOption {
@@ -217,7 +226,11 @@ func (m *chatModel) toChatCompletionParams(isStreaming bool, req *model.Request)
 		params.Messages = append(params.Messages, openai.SystemMessage([]openai.ChatCompletionContentPartTextParam{{Text: req.System}}))
 	}
 	for _, msg := range req.Messages {
-		params.Messages = append(params.Messages, toMessageParams(msg)...)
+		messages, err := m.toMessageParams(msg)
+		if err != nil {
+			return openai.ChatCompletionNewParams{}, err
+		}
+		params.Messages = append(params.Messages, messages...)
 	}
 	return params, nil
 }
@@ -265,19 +278,27 @@ func applyModelOptions(params *openai.ChatCompletionNewParams, opts []model.Opti
 	}
 }
 
-func toMessageParams(msg *model.Message) []openai.ChatCompletionMessageParamUnion {
+func (m *chatModel) toMessageParams(msg *model.Message) ([]openai.ChatCompletionMessageParamUnion, error) {
 	if msg == nil {
-		return nil
+		return nil, nil
 	}
 	switch msg.Role {
 	case model.RoleUser:
-		return []openai.ChatCompletionMessageParamUnion{openai.UserMessage(toContentParts(msg.Parts))}
+		parts, err := m.toContentParts(msg.Parts)
+		if err != nil {
+			return nil, err
+		}
+		return []openai.ChatCompletionMessageParamUnion{openai.UserMessage(parts)}, nil
 	case model.RoleAssistant:
-		return []openai.ChatCompletionMessageParamUnion{toAssistantMessage(msg.Parts)}
+		return []openai.ChatCompletionMessageParamUnion{toAssistantMessage(msg.Parts)}, nil
 	case model.RoleTool:
-		return toToolMessages(msg.Parts)
+		return m.toToolMessages(msg.Parts)
 	default:
-		return []openai.ChatCompletionMessageParamUnion{openai.UserMessage(toContentParts(msg.Parts))}
+		parts, err := m.toContentParts(msg.Parts)
+		if err != nil {
+			return nil, err
+		}
+		return []openai.ChatCompletionMessageParamUnion{openai.UserMessage(parts)}, nil
 	}
 }
 
@@ -307,7 +328,7 @@ func toAssistantMessage(parts []content.Part) openai.ChatCompletionMessageParamU
 	return openai.ChatCompletionMessageParamUnion{OfAssistant: &msg}
 }
 
-func toToolMessages(parts []content.Part) []openai.ChatCompletionMessageParamUnion {
+func (m *chatModel) toToolMessages(parts []content.Part) ([]openai.ChatCompletionMessageParamUnion, error) {
 	var messages []openai.ChatCompletionMessageParamUnion
 	var userParts []content.Part
 	for _, part := range parts {
@@ -317,10 +338,14 @@ func toToolMessages(parts []content.Part) []openai.ChatCompletionMessageParamUni
 		}
 		userParts = append(userParts, part)
 	}
-	if contentParts := toContentParts(userParts); len(contentParts) > 0 {
+	contentParts, err := m.toContentParts(userParts)
+	if err != nil {
+		return nil, err
+	}
+	if len(contentParts) > 0 {
 		messages = append(messages, openai.UserMessage(contentParts))
 	}
-	return messages
+	return messages, nil
 }
 
 func toTools(toolSpecs []tools.ToolSpec) ([]openai.ChatCompletionToolUnionParam, error) {
@@ -348,42 +373,63 @@ func toTools(toolSpecs []tools.ToolSpec) ([]openai.ChatCompletionToolUnionParam,
 }
 
 // toContentParts converts message parts to OpenAI content parts.
-func toContentParts(parts []content.Part) []openai.ChatCompletionContentPartUnionParam {
+func (m *chatModel) toContentParts(parts []content.Part) ([]openai.ChatCompletionContentPartUnionParam, error) {
 	out := make([]openai.ChatCompletionContentPartUnionParam, 0, len(parts))
 	for _, part := range parts {
-		switch v := part.(type) {
-		case content.Text:
-			out = append(out, openai.TextContentPart(v.Text))
-		case content.FilePart:
-			switch mimeKind(v.MIME) {
-			case "image":
-				out = append(out, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: v.URI}))
-			case "audio":
-				out = append(out, openai.InputAudioContentPart(openai.ChatCompletionContentPartInputAudioInputAudioParam{
-					Data:   v.URI,
-					Format: mimeFormat(v.MIME),
-				}))
-			default:
-			}
-		case content.DataPart:
-			switch mimeKind(v.MIME) {
-			case "image":
-				base64Data := "data:" + v.MIME + ";base64," + base64.StdEncoding.EncodeToString(v.Bytes)
-				out = append(out, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: base64Data}))
-			case "audio":
-				out = append(out, openai.InputAudioContentPart(openai.ChatCompletionContentPartInputAudioInputAudioParam{
-					Data:   base64.StdEncoding.EncodeToString(v.Bytes),
-					Format: mimeFormat(v.MIME),
-				}))
-			default:
-				out = append(out, openai.FileContentPart(openai.ChatCompletionContentPartFileFileParam{
-					FileData: param.NewOpt(base64.StdEncoding.EncodeToString(v.Bytes)),
-					Filename: param.NewOpt(v.Filename),
-				}))
-			}
+		encoded, err := m.encodeContentPart(part)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, encoded)
+	}
+	return out, nil
+}
+
+func (m *chatModel) encodeContentPart(part content.Part) (openai.ChatCompletionContentPartUnionParam, error) {
+	for _, encoder := range m.config.ContentPartEncoders {
+		if encoder == nil {
+			continue
+		}
+		encoded, handled, err := encoder.EncodeChatContentPart(part)
+		if err != nil {
+			return openai.ChatCompletionContentPartUnionParam{}, fmt.Errorf("openai/chat: encode content part %q with %T: %w", contentPartKind(part), encoder, err)
+		}
+		if handled {
+			return encoded, nil
 		}
 	}
-	return out
+
+	switch v := part.(type) {
+	case content.Text:
+		return openai.TextContentPart(v.Text), nil
+	case content.FilePart:
+		switch mimeKind(v.MIME) {
+		case "image":
+			return openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: v.URI}), nil
+		case "audio":
+			return openai.InputAudioContentPart(openai.ChatCompletionContentPartInputAudioInputAudioParam{
+				Data:   v.URI,
+				Format: mimeFormat(v.MIME),
+			}), nil
+		}
+	case content.DataPart:
+		switch mimeKind(v.MIME) {
+		case "image":
+			base64Data := "data:" + v.MIME + ";base64," + base64.StdEncoding.EncodeToString(v.Bytes)
+			return openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{URL: base64Data}), nil
+		case "audio":
+			return openai.InputAudioContentPart(openai.ChatCompletionContentPartInputAudioInputAudioParam{
+				Data:   base64.StdEncoding.EncodeToString(v.Bytes),
+				Format: mimeFormat(v.MIME),
+			}), nil
+		default:
+			return openai.FileContentPart(openai.ChatCompletionContentPartFileFileParam{
+				FileData: param.NewOpt(base64.StdEncoding.EncodeToString(v.Bytes)),
+				Filename: param.NewOpt(v.Filename),
+			}), nil
+		}
+	}
+	return openai.ChatCompletionContentPartUnionParam{}, unsupportedContentPart("chat", part)
 }
 
 // choiceToResponse converts a non-streaming response to a model.Response.

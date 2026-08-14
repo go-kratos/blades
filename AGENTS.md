@@ -58,7 +58,7 @@ Provider adapters should implement `model.Provider` and translate provider-speci
 
 Follow idiomatic Go and keep all files `gofmt`-clean. Use short lowercase package names, `PascalCase` for exported identifiers, and `camelCase` for internal identifiers. Prefer small interfaces, table-driven logic, clear error wrapping, and option-style configuration.
 
-Respect sealed protocol types in their owning packages. Do not create parallel event, part, or option unions outside `event/`, `content/`, or `model/`. Keep comments useful for exported API documentation and non-obvious runtime behavior; avoid comments that restate simple code.
+Respect sealed event and model option types in their owning packages. Extend the shared `content.Part` interface instead of creating a parallel part union, and keep provider-specific encoders at the adapter boundary. Keep comments useful for exported API documentation and non-obvious runtime behavior; avoid comments that restate simple code.
 
 When adding public API, update relevant README or design docs when the behavior is not self-evident from tests. For larger changes, follow `docs/DEVELOPMENT_GUIDE.md` and update `docs/INDEX.md`.
 

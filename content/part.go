@@ -2,10 +2,25 @@ package content
 
 import "bytes"
 
-// Part is the sealed interface for all multimodal content types.
-// It is shared across event, model, and tools packages.
+// Kind identifies the semantic type of a content part.
+type Kind string
+
+const (
+	KindText       Kind = "text"
+	KindThinking   Kind = "thinking"
+	KindFile       Kind = "file"
+	KindFileRef    Kind = "file_ref"
+	KindData       Kind = "data"
+	KindToolUse    Kind = "tool_use"
+	KindToolResult Kind = "tool_result"
+)
+
+// Part is the shared multimodal content interface used by events, model
+// messages, and tool results. Implementations outside this package should use
+// a namespaced kind, such as "acme.video_url", to avoid collisions with
+// built-in kinds.
 type Part interface {
-	part()
+	ContentKind() Kind
 }
 
 // Coalesce merges adjacent same-kind parts produced by streaming into single

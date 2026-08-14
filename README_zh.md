@@ -17,7 +17,7 @@ Blades 适合把 LLM Agent 当作普通 Go 组件嵌入应用：输入输出显�
 
 - **事件优先的运行时**：应用通过 `event.Input` 和 `event.Output` 与 Agent 交互，覆盖流式文本、工具生命周期、call-local assistant 结束、turn 结束、错误和 `Done` 等事件。
 - **Provider 无关的核心**：OpenAI、Anthropic、Gemini、MCP 和可观测集成都放在 `contrib/`，根模块不依赖任何模型厂商 SDK。
-- **统一多模态协议**：`content.Part` 是 Event、模型消息和工具结果共享的内容 union。
+- **统一多模态协议**：`content.Part` 是 Event、模型消息和工具结果共享、可扩展的内容接口。
 - **内置工具循环**：工具由 `tools.ToolSpec` 描述、由 `tools.Tool` 执行，可经过 policy 校验、hook 观测，并写回 session 历史。
 - **可组合的 Agent**：使用 `flow/` 做顺序、并行、循环、路由和 deep flow 编排，也可以用 `blades.NewAgentTool` 把任意 Agent 包装成工具。
 

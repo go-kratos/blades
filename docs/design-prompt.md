@@ -38,7 +38,7 @@ type Section func(ctx context.Context) ([]content.Part, error)
 
 `Section` 是函数类型，不是结构体，也不是接口。它足以表达静态文本、动态环境、memory recall、工具提示和应用层 mode 提示等输入，同时保持组合成本很低。
 
-Section 必须返回 `[]content.Part`。`content.Part` 是 sealed marker，仅由 content 包定义公共叶子，如 Text、Blob、Thinking。
+Section 必须返回 `[]content.Part`。`content.Part` 提供 Text、Blob、Thinking 等内置叶子，也允许应用通过 `ContentKind()` 定义扩展叶子。
 
 `Section` 自身实现 `Builder`，单段 prompt 可以直接传给 `WithPrompt`，多段 prompt 再用 `prompt.New(...)` 组合。
 
@@ -151,4 +151,4 @@ Cache control 不进入 `model.Request` 顶层字段；走 `model.Request.Option
 
 - r24：`Builder.Build(ctx) ([]content.Part, error)` 与 `Section func(ctx) ([]content.Part, error)`。
 - r21：Memory 通过 `prompt.Memory(mem, query)` 注入 recall 结果，不进入 root Agent 配置。Memory 接口本身固定为 Recall+Remember+Forget 三方法，详见 [design-memory.md](design-memory.md)。
-- r1-r3：遵守 `content.Part` sealed marker、`model.Message` 与 `model.Request` v1 协议形态。
+- r1-r3：遵守 `content.Part` 单一共享接口、`model.Message` 与 `model.Request` v1 协议形态。
