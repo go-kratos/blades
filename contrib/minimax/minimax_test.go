@@ -33,27 +33,6 @@ func TestEndpointsCoverBothRegions(t *testing.T) {
 func TestModelMetadata(t *testing.T) {
 	t.Parallel()
 
-	m31, ok := Models[ModelM31Flash]
-	if !ok {
-		t.Fatalf("model %q missing from Models", ModelM31Flash)
-	}
-	if m31.ContextWindow != 1000000 {
-		t.Errorf("M3.1 Flash ContextWindow = %d, want 1000000", m31.ContextWindow)
-	}
-	if got, want := len(m31.PricingTiers), 1; got != want {
-		t.Fatalf("M3.1 Flash PricingTiers len = %d, want %d", got, want)
-	}
-	flashPrice := m31.PricingTiers[0]
-	if flashPrice.MaxContextTokens != 1000000 || flashPrice.Pricing.Input != 0.15 || flashPrice.Pricing.Output != 0.6 || flashPrice.Pricing.CacheRead != 0.015 {
-		t.Errorf("M3.1 Flash pricing tier = %+v, want max 1000000 input 0.15 output 0.6 cacheRead 0.015", flashPrice)
-	}
-	if got, want := len(m31.InputModalities), 3; got != want || !contains(m31.InputModalities, "text") || !contains(m31.InputModalities, "image") || !contains(m31.InputModalities, "video") {
-		t.Errorf("M3.1 Flash InputModalities = %v, want text, image and video", m31.InputModalities)
-	}
-	if got, want := m31.Thinking, []string{ThinkingAdaptive}; !equalStrings(got, want) {
-		t.Errorf("M3.1 Flash Thinking = %v, want %v", got, want)
-	}
-
 	m3, ok := Models[ModelM3]
 	if !ok {
 		t.Fatalf("model %q missing from Models", ModelM3)
@@ -61,16 +40,11 @@ func TestModelMetadata(t *testing.T) {
 	if m3.ContextWindow != 1000000 {
 		t.Errorf("M3 ContextWindow = %d, want 1000000", m3.ContextWindow)
 	}
-	if got, want := len(m3.PricingTiers), 2; got != want {
-		t.Fatalf("M3 PricingTiers len = %d, want %d", got, want)
+	if m3.Pricing.Input != 0.6 || m3.Pricing.Output != 2.4 || m3.Pricing.CacheRead != 0.12 {
+		t.Errorf("M3 pricing = %+v, want input 0.6 output 2.4 cacheRead 0.12", m3.Pricing)
 	}
-	shortPrice := m3.PricingTiers[0]
-	if shortPrice.MaxContextTokens != 512000 || shortPrice.Pricing.Input != 0.3 || shortPrice.Pricing.Output != 1.2 || shortPrice.Pricing.CacheRead != 0.06 {
-		t.Errorf("M3 short-context pricing tier = %+v, want max 512000 input 0.3 output 1.2 cacheRead 0.06", shortPrice)
-	}
-	longPrice := m3.PricingTiers[1]
-	if longPrice.MaxContextTokens != 1000000 || longPrice.Pricing.Input != 0.6 || longPrice.Pricing.Output != 2.4 || longPrice.Pricing.CacheRead != 0.12 {
-		t.Errorf("M3 long-context pricing tier = %+v, want max 1000000 input 0.6 output 2.4 cacheRead 0.12", longPrice)
+	if m3.Pricing.CacheWrite != nil {
+		t.Errorf("M3 CacheWrite = %v, want nil", *m3.Pricing.CacheWrite)
 	}
 	if got, want := len(m3.InputModalities), 3; got != want {
 		t.Errorf("M3 InputModalities len = %d, want %d", got, want)
@@ -80,6 +54,26 @@ func TestModelMetadata(t *testing.T) {
 	}
 	if !contains(m3.Thinking, ThinkingAdaptive) || !contains(m3.Thinking, ThinkingDisabled) {
 		t.Errorf("M3 Thinking = %v, want adaptive and disabled", m3.Thinking)
+	}
+
+	m27, ok := Models[ModelM27]
+	if !ok {
+		t.Fatalf("model %q missing from Models", ModelM27)
+	}
+	if m27.ContextWindow != 204800 {
+		t.Errorf("M2.7 ContextWindow = %d, want 204800", m27.ContextWindow)
+	}
+	if m27.Pricing.Input != 0.3 || m27.Pricing.Output != 1.2 || m27.Pricing.CacheRead != 0.06 {
+		t.Errorf("M2.7 pricing = %+v, want input 0.3 output 1.2 cacheRead 0.06", m27.Pricing)
+	}
+	if m27.Pricing.CacheWrite == nil || *m27.Pricing.CacheWrite != 0.375 {
+		t.Errorf("M2.7 CacheWrite = %v, want 0.375", m27.Pricing.CacheWrite)
+	}
+	if got, want := len(m27.InputModalities), 1; got != want || m27.InputModalities[0] != "text" {
+		t.Errorf("M2.7 InputModalities = %v, want [text]", m27.InputModalities)
+	}
+	if got, want := len(m27.Thinking), 1; got != want || m27.Thinking[0] != ThinkingAlwaysOn {
+		t.Errorf("M2.7 Thinking = %v, want [always_on]", m27.Thinking)
 	}
 }
 
@@ -112,28 +106,16 @@ func TestNewModelReportsName(t *testing.T) {
 	if got := NewModel(ModelM3, Config{APIKey: "test"}).Name(); got != ModelM3 {
 		t.Errorf("NewModel Name = %q, want %q", got, ModelM3)
 	}
-	if got := NewAnthropicModel(ModelM31Flash, Config{Region: RegionChina, APIKey: "test"}).Name(); got != ModelM31Flash {
-		t.Errorf("NewAnthropicModel Name = %q, want %q", got, ModelM31Flash)
+	if got := NewAnthropicModel(ModelM27, Config{Region: RegionChina, APIKey: "test"}).Name(); got != ModelM27 {
+		t.Errorf("NewAnthropicModel Name = %q, want %q", got, ModelM27)
 	}
 }
 
-func TestDefaultModelIsM31Flash(t *testing.T) {
+func TestDefaultModelIsM3(t *testing.T) {
 	t.Parallel()
-	if DefaultModel != ModelM31Flash {
-		t.Errorf("DefaultModel = %q, want %q", DefaultModel, ModelM31Flash)
+	if DefaultModel != ModelM3 {
+		t.Errorf("DefaultModel = %q, want %q", DefaultModel, ModelM3)
 	}
-}
-
-func equalStrings(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func contains(values []string, want string) bool {

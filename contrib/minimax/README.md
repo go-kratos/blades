@@ -17,12 +17,11 @@ defaults to `RegionGlobal`. The base URL is derived from the region unless
 | `RegionGlobal` | `https://api.minimax.io/v1`    | `https://api.minimax.io/anthropic`  |
 | `RegionChina`  | `https://api.minimaxi.com/v1`  | `https://api.minimaxi.com/anthropic`|
 
-The `Models` table records the context window, tiered token pricing, cache
-pricing, input modalities and thinking modes for MiniMax-M3.1-Flash and
-MiniMax-M3.
+The `Models` table records the context window, token pricing, cache pricing,
+input modalities and thinking modes for each supported model.
 
 ```go
-provider := minimax.NewModel(minimax.ModelM31Flash, minimax.Config{
+provider := minimax.NewModel(minimax.ModelM3, minimax.Config{
     Region: minimax.RegionGlobal,
     APIKey: os.Getenv("MINIMAX_API_KEY"),
 })
@@ -35,7 +34,7 @@ res, err := provider.Generate(ctx, req)
 ```
 
 ```go
-provider := minimax.NewAnthropicModel(minimax.ModelM3, minimax.Config{
+provider := minimax.NewAnthropicModel(minimax.ModelM27, minimax.Config{
     Region: minimax.RegionChina,
     APIKey: os.Getenv("MINIMAX_API_KEY"),
 })
