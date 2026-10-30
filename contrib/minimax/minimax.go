@@ -26,21 +26,21 @@ const (
 
 // Model identifiers exposed by this package.
 const (
+	// ModelM31Flash is the fast, cost-efficient model with a one-million token
+	// context window and text, image and video input.
+	ModelM31Flash = "MiniMax-M3.1-Flash"
 	// ModelM3 is the flagship model with a one-million token context window and
 	// text, image and video input.
 	ModelM3 = "MiniMax-M3"
-	// ModelM27 is the lighter always-on reasoning model.
-	ModelM27 = "MiniMax-M2.7"
 )
 
 // DefaultModel is the recommended default text model.
-const DefaultModel = ModelM3
+const DefaultModel = ModelM31Flash
 
 // Thinking modes advertised by MiniMax models.
 const (
 	ThinkingAdaptive = "adaptive"
 	ThinkingDisabled = "disabled"
-	ThinkingAlwaysOn = "always_on"
 )
 
 // Endpoint holds the per-region base URLs and documentation root.
@@ -76,12 +76,20 @@ type Pricing struct {
 	CacheWrite *float64
 }
 
+// PricingTier associates token pricing with the largest request context for
+// which that pricing applies.
+type PricingTier struct {
+	MaxContextTokens int
+	Pricing          Pricing
+}
+
 // ModelInfo describes a MiniMax text model.
 type ModelInfo struct {
 	// ContextWindow is the maximum number of tokens the model accepts.
 	ContextWindow int
-	// Pricing is the USD cost per one million tokens.
-	Pricing Pricing
+	// PricingTiers contains the USD cost per one million tokens, ordered by
+	// increasing context size.
+	PricingTiers []PricingTier
 	// InputModalities lists the accepted input modalities.
 	InputModalities []string
 	// Thinking lists the supported thinking modes.
@@ -90,21 +98,24 @@ type ModelInfo struct {
 
 // Models describes the text models exposed by this package.
 var Models = map[string]ModelInfo{
+	ModelM31Flash: {
+		ContextWindow: 1000000,
+		PricingTiers: []PricingTier{
+			{MaxContextTokens: 1000000, Pricing: Pricing{Input: 0.15, Output: 0.6, CacheRead: 0.015}},
+		},
+		InputModalities: []string{"text", "image", "video"},
+		Thinking:        []string{ThinkingAdaptive},
+	},
 	ModelM3: {
-		ContextWindow:   1000000,
-		Pricing:         Pricing{Input: 0.6, Output: 2.4, CacheRead: 0.12, CacheWrite: nil},
+		ContextWindow: 1000000,
+		PricingTiers: []PricingTier{
+			{MaxContextTokens: 512000, Pricing: Pricing{Input: 0.3, Output: 1.2, CacheRead: 0.06}},
+			{MaxContextTokens: 1000000, Pricing: Pricing{Input: 0.6, Output: 2.4, CacheRead: 0.12}},
+		},
 		InputModalities: []string{"text", "image", "video"},
 		Thinking:        []string{ThinkingAdaptive, ThinkingDisabled},
 	},
-	ModelM27: {
-		ContextWindow:   204800,
-		Pricing:         Pricing{Input: 0.3, Output: 1.2, CacheRead: 0.06, CacheWrite: floatPtr(0.375)},
-		InputModalities: []string{"text"},
-		Thinking:        []string{ThinkingAlwaysOn},
-	},
 }
-
-func floatPtr(v float64) *float64 { return &v }
 
 // Config configures a MiniMax provider. Region selects the service region and
 // defaults to RegionGlobal. BaseURL, when set, overrides the region base URL.
