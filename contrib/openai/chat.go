@@ -304,8 +304,12 @@ func (m *chatModel) toMessageParams(msg *model.Message) ([]openai.ChatCompletion
 
 func toAssistantMessage(parts []content.Part) openai.ChatCompletionMessageParamUnion {
 	text := textFromParts(parts)
+	var reasoning strings.Builder
 	toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0)
 	for _, part := range parts {
+		if thinking, ok := part.(content.Thinking); ok {
+			reasoning.WriteString(thinking.Text)
+		}
 		if toolUse, ok := part.(content.ToolUse); ok {
 			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
 				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
@@ -318,12 +322,12 @@ func toAssistantMessage(parts []content.Part) openai.ChatCompletionMessageParamU
 			})
 		}
 	}
-	if len(toolCalls) == 0 {
-		return openai.AssistantMessage(text)
-	}
 	msg := openai.ChatCompletionAssistantMessageParam{ToolCalls: toolCalls}
-	if text != "" {
+	if text != "" || len(toolCalls) == 0 {
 		msg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{OfString: openai.String(text)}
+	}
+	if reasoning.Len() > 0 {
+		msg.SetExtraFields(map[string]any{"reasoning_content": reasoning.String()})
 	}
 	return openai.ChatCompletionMessageParamUnion{OfAssistant: &msg}
 }

@@ -70,6 +70,49 @@ func TestToChatCompletionParamsAssistantRole(t *testing.T) {
 	}
 }
 
+func TestToAssistantMessagePreservesThinking(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		text     string
+		withTool bool
+	}{
+		{name: "reply", text: "answer"},
+		{name: "tool call with text", text: "answer", withTool: true},
+		{name: "tool call without text", withTool: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			parts := []content.Part{
+				content.Thinking{Text: "first "},
+				content.Thinking{Text: "second"},
+			}
+			if tc.text != "" {
+				parts = append(parts, content.Text{Text: tc.text})
+			}
+			if tc.withTool {
+				parts = append(parts, content.ToolUse{ID: "call-1", Name: "lookup", Input: json.RawMessage(`{}`)})
+			}
+			payload, err := json.Marshal(toAssistantMessage(parts))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var message struct {
+				Role             string            `json:"role"`
+				Content          string            `json:"content"`
+				ReasoningContent string            `json:"reasoning_content"`
+				ToolCalls        []json.RawMessage `json:"tool_calls"`
+			}
+			if err := json.Unmarshal(payload, &message); err != nil {
+				t.Fatal(err)
+			}
+			if message.Role != "assistant" || message.Content != tc.text || message.ReasoningContent != "first second" || (len(message.ToolCalls) == 1) != tc.withTool {
+				t.Fatalf("unexpected assistant message: %s", payload)
+			}
+		})
+	}
+}
+
 func TestToChatCompletionParamsPreservesToolMessageTextParts(t *testing.T) {
 	t.Parallel()
 
