@@ -143,6 +143,8 @@ func (m *Claude) Stream(ctx context.Context, req *model.Request) iter.Seq2[*mode
 		for streaming.Next() {
 			event := streaming.Current()
 			switch ev := event.AsAny().(type) {
+			case anthropic.MessageStartEvent:
+				accumulator.messageStart(ev)
 			case anthropic.ContentBlockStartEvent:
 				accumulator.startContentBlock(ev)
 			case anthropic.ContentBlockDeltaEvent:
