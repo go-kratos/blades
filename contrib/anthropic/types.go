@@ -116,6 +116,8 @@ type streamAccumulator struct {
 	toolOrder             []int64
 	stopReason            model.StopReason
 	toolInputJSONRepairer jsonrepair.Repairer
+	// startUsage is message_start's usage; some gateways report input counts only there.
+	startUsage anthropic.Usage
 }
 
 type streamToolAccumulator struct {
@@ -222,9 +224,18 @@ func (a *streamAccumulator) finishStream() error {
 	return nil
 }
 
+func (a *streamAccumulator) messageStart(event anthropic.MessageStartEvent) {
+	a.startUsage = event.Message.Usage
+}
+
 func (a *streamAccumulator) messageDelta(event anthropic.MessageDeltaEvent) model.Usage {
 	a.stopReason = mapClaudeStopReason(event.Delta.StopReason)
-	return claudeDeltaUsageToModel(event.Usage)
+	// Delta counts are cumulative, so an omitted or zero input count falls back to message_start's.
+	usage := event.Usage
+	usage.InputTokens = max(usage.InputTokens, a.startUsage.InputTokens)
+	usage.CacheReadInputTokens = max(usage.CacheReadInputTokens, a.startUsage.CacheReadInputTokens)
+	usage.CacheCreationInputTokens = max(usage.CacheCreationInputTokens, a.startUsage.CacheCreationInputTokens)
+	return claudeDeltaUsageToModel(usage)
 }
 
 func (a *streamAccumulator) toolParts() []content.Part {
