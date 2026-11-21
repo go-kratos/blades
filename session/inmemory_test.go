@@ -21,6 +21,7 @@ func textParts(msg *model.Message) []string {
 
 func TestAppendUser(t *testing.T) {
 	t.Parallel()
+	metadata := model.MessageMetadata{Provider: "test-provider", API: "test-api", Model: "test-model"}
 	tests := []struct {
 		name     string
 		initial  []*model.Message
@@ -45,26 +46,26 @@ func TestAppendUser(t *testing.T) {
 		{
 			name: "merges into trailing user message",
 			initial: []*model.Message{
-				{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello"}}},
+				{Role: model.RoleUser, Parts: []content.Part{content.Text{Text: "hello"}}, Metadata: metadata},
 			},
 			parts:   []content.Part{content.Text{Text: " world"}},
 			wantLen: 1,
 			wantLast: &model.Message{Role: model.RoleUser, Parts: []content.Part{
 				content.Text{Text: "hello"},
 				content.Text{Text: " world"},
-			}},
+			}, Metadata: metadata},
 		},
 		{
 			name: "merges into trailing tool message and keeps tool role",
 			initial: []*model.Message{
-				{Role: model.RoleTool, Parts: []content.Part{content.ToolResult{ID: "call_1"}}},
+				{Role: model.RoleTool, Parts: []content.Part{content.ToolResult{ID: "call_1"}}, Metadata: metadata},
 			},
 			parts:   []content.Part{content.Text{Text: "steer"}},
 			wantLen: 1,
 			wantLast: &model.Message{Role: model.RoleTool, Parts: []content.Part{
 				content.ToolResult{ID: "call_1"},
 				content.Text{Text: "steer"},
-			}},
+			}, Metadata: metadata},
 		},
 		{
 			name: "does not merge into trailing assistant message",
@@ -93,6 +94,9 @@ func TestAppendUser(t *testing.T) {
 			last := msgs[len(msgs)-1]
 			if last.Role != tt.wantLast.Role {
 				t.Fatalf("last role = %q, want %q", last.Role, tt.wantLast.Role)
+			}
+			if last.Metadata != tt.wantLast.Metadata {
+				t.Fatalf("last metadata = %+v, want %+v", last.Metadata, tt.wantLast.Metadata)
 			}
 			gotText := textParts(last)
 			wantText := textParts(tt.wantLast)
