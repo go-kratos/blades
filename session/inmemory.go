@@ -118,7 +118,9 @@ func (s *inMemorySession) AppendUser(_ context.Context, parts ...content.Part) e
 			// Preserve the target role: merging into a RoleTool message keeps it
 			// RoleTool so provider adapters still split tool results out and emit
 			// the appended parts as trailing user content.
-			s.messages[n-1] = &model.Message{Role: last.Role, Parts: merged}
+			updated := *last
+			updated.Parts = merged
+			s.messages[n-1] = &updated
 			return nil
 		}
 	}
